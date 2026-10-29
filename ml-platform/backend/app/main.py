@@ -278,6 +278,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         bootstrap_default_llm_profile(session_factory)
     except Exception:  # noqa: BLE001 - bootstrap must never block app startup
         logger.warning("LLM profile env bootstrap failed", exc_info=True)
+    # A-10：启动期清扫僵尸 running run（存活期间由 beat 60s 周期兜底）；
+    # 本地无 celery 时 inspect 无响应属正常，异常不阻塞启动
+    try:
+        from app.tasks.recovery import sweep_stale_workflow_runs_startup
+
+        reconciled = sweep_stale_workflow_runs_startup()
+        if reconciled:
+            logger.info("startup swept %s stale workflow runs", reconciled)
+    except Exception:  # noqa: BLE001 - 清扫失败不阻塞启动
+        logger.warning("startup workflow-run sweep failed", exc_info=True)
     with session_factory() as db:
         repair_orphaned_project_owners(db)
         recover_orphaned_local_quality_runs(db)

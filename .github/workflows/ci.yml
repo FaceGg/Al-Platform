@@ -871,7 +871,8 @@ jobs:
             python -m unittest tests.test_week11_12_tools tests.test_week11_contracts tests.test_week12_security_gates tests.test_evidence_manifest -v
       - name: Run security scans
         working-directory: ml-platform/backend
-        continue-on-error: true
+        # A 批次十四：扫描失败必须阻断合并（历史 continue-on-error 使安全扫描
+        # 形同虚设——2026-10-28 三项真实漏洞即由该开关漏进 main）
         env:
           ACCEPTANCE_IMAGE: ml-platform-backend:week11-12-${{ github.sha }}
           ACCEPTANCE_ADDITIONAL_IMAGES: ml-platform-worker:week11-12-${{ github.sha }},ml-platform-inference:week11-12-${{ github.sha }},ml-platform-tensorboard:week11-12-${{ github.sha }}
@@ -882,7 +883,6 @@ jobs:
             --output "$ML_PLATFORM_EVIDENCE_DIR/security/security.json"
       - name: Run frozen-stack web security gate
         shell: bash
-        continue-on-error: true
         env:
           MLFLOW_WHEEL_DIR: ${{ runner.temp }}/mlflow-wheel
         run: |

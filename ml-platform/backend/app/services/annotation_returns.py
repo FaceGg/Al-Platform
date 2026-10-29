@@ -591,30 +591,31 @@ def accept_return_batch(db: Session, return_batch_id, expected_revision: int, ac
         )
         if source_row_count != int(source.row_count):
             raise AnnotationReturnError("RETURN_SOURCE_ROW_COUNT_MISMATCH")
-        latest = db.query(DatasetVersion.version).filter(
-            DatasetVersion.project_id == task.project_id,
-        ).order_by(DatasetVersion.version.desc()).first()
-        accepted = DatasetVersion(
-            project_id=task.project_id,
-            operator_id=actor.id,
-            version=(int(latest[0]) if latest else 0) + 1,
-            status="pending",
-            row_count=source_row_count,
-            column_count=len(final_columns),
-            content_hash=content_hash,
-            schema_hash=_schema_hash(final_columns),
-            parse_contract={
-                "source_format": "annotation_return",
-                "source_dataset_version_id": str(source.id),
-                "return_batch_id": str(batch.id),
-                "task_id": str(task.id),
-                "task_revision": int(batch.task_revision),
-                "validated_row_count": frozen_count,
-                "task_scope_fully_accepted": coverage.all_accepted,
-            },
-        )
-        db.add(accepted)
-        db.flush()
+        # A-18：版本号经共享助手分配（唯一索引冲突换号重试）
+        from app.services.dataset_version_alloc import allocate_dataset_version
+
+        def _build_accepted(next_version: int) -> DatasetVersion:
+            return DatasetVersion(
+                project_id=task.project_id,
+                operator_id=actor.id,
+                version=next_version,
+                status="pending",
+                row_count=source_row_count,
+                column_count=len(final_columns),
+                content_hash=content_hash,
+                schema_hash=_schema_hash(final_columns),
+                parse_contract={
+                    "source_format": "annotation_return",
+                    "source_dataset_version_id": str(source.id),
+                    "return_batch_id": str(batch.id),
+                    "task_id": str(task.id),
+                    "task_revision": int(batch.task_revision),
+                    "validated_row_count": frozen_count,
+                    "task_scope_fully_accepted": coverage.all_accepted,
+                },
+            )
+
+        accepted = allocate_dataset_version(db, task.project_id, _build_accepted)
         db.bulk_insert_mappings(DatasetSchemaColumn, [
             {
                 "id": uuid.uuid4(),
@@ -963,32 +964,33 @@ def export_return_batch_dataset(db: Session, return_batch_id, name: str, actor, 
                 },
                 commit=False,
             )
-        latest = db.query(DatasetVersion.version).filter(
-            DatasetVersion.project_id == task.project_id,
-        ).order_by(DatasetVersion.version.desc()).first()
-        exported = DatasetVersion(
-            project_id=task.project_id,
-            operator_id=actor.id,
-            original_artifact_id=artifact.id,
-            version=(int(latest[0]) if latest else 0) + 1,
-            status="ready",
-            row_count=count,
-            column_count=len(final_columns),
-            content_hash="sha256:" + digest.hexdigest(),
-            schema_hash=_schema_hash(final_columns),
-            parse_contract={
-                "source_format": "annotation_return_export",
-                "source_dataset_version_id": str(accepted.id),
-                "source_file_format": file_format,
-                "return_batch_id": str(batch.id),
-                "task_id": str(task.id),
-                "task_revision": int(batch.task_revision),
-                "label_mappings": mapping_by_key,
-                "label_renames": dict(renames),
-            },
-        )
-        db.add(exported)
-        db.flush()
+        # A-18：版本号经共享助手分配（唯一索引冲突换号重试）
+        from app.services.dataset_version_alloc import allocate_dataset_version
+
+        def _build_exported(next_version: int) -> DatasetVersion:
+            return DatasetVersion(
+                project_id=task.project_id,
+                operator_id=actor.id,
+                original_artifact_id=artifact.id,
+                version=next_version,
+                status="ready",
+                row_count=count,
+                column_count=len(final_columns),
+                content_hash="sha256:" + digest.hexdigest(),
+                schema_hash=_schema_hash(final_columns),
+                parse_contract={
+                    "source_format": "annotation_return_export",
+                    "source_dataset_version_id": str(accepted.id),
+                    "source_file_format": file_format,
+                    "return_batch_id": str(batch.id),
+                    "task_id": str(task.id),
+                    "task_revision": int(batch.task_revision),
+                    "label_mappings": mapping_by_key,
+                    "label_renames": dict(renames),
+                },
+            )
+
+        exported = allocate_dataset_version(db, task.project_id, _build_exported)
         db.bulk_insert_mappings(DatasetSchemaColumn, [
             {
                 "id": uuid.uuid4(),

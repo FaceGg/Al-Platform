@@ -54,6 +54,7 @@ def production_values(**overrides):
         "app_mode": "production",
         "database_url": "postgresql+psycopg://app:db-password@db/ml_platform",
         "secret_key": "j" * 32,
+        "annotator_service_secret": "annotator-service-secret-value-1234567890",
         "task_backend": "celery",
         "celery_broker_url": "redis://:broker-password@redis:6379/0",
         "redis_events_url": "redis://:events-password@redis:6379/1",

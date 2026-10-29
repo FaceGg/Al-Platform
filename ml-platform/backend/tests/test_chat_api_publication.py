@@ -122,7 +122,12 @@ class TestChatAPIPublication(unittest.TestCase):
             "choices": [{"message": {"content": "点焊飞溅与电流过大有关 [1]。"}}],
             "usage": {"prompt_tokens": 42, "completion_tokens": 7},
         }
-        with mock.patch("requests.post", return_value=fake) as llm_call, \
+        # A-15：出站调用改走网关共享客户端（连接复用），mock 目标同步
+        from app.services import llm_gateway as gateway_module
+
+        with mock.patch.object(
+            gateway_module._HTTP_CLIENT, "post", return_value=fake,
+        ) as llm_call, \
                 mock.patch.object(settings, "llm_api_key", "test-key"):
             r = client.post(
                 f"/api/platform/apis/chat/{self.kb_id}/invoke",

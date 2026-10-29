@@ -618,12 +618,19 @@ export default function AutoMLPage() {
     let active = true;
     const artifacts = qualityRun?.output_artifacts || {};
     if (!selectedProject || qualityRun?.status !== "completed") {
-      setQualityChartUrls({});
+      // A 批次十四：替换/清空前回收既有 blob URL
+      setQualityChartUrls((current) => {
+        for (const url of Object.values(current)) URL.revokeObjectURL(url);
+        return {};
+      });
       return () => { active = false; };
     }
     const available = QUALITY_CHARTS.filter(({ key }) => artifacts[key]);
     if (available.length === 0) {
-      setQualityChartUrls({});
+      setQualityChartUrls((current) => {
+        for (const url of Object.values(current)) URL.revokeObjectURL(url);
+        return {};
+      });
       return () => { active = false; };
     }
     void Promise.all(available.map(async ({ key }) => {
@@ -635,7 +642,13 @@ export default function AutoMLPage() {
         return [key, ""] as const;
       }
     })).then((entries) => {
-      if (!active) return;
+      if (!active) {
+        // A 批次十四：组件卸载/切换 run 后回收未消费的 blob URL
+        for (const [, url] of entries) {
+          if (url) URL.revokeObjectURL(url);
+        }
+        return;
+      }
       setQualityChartUrls(Object.fromEntries(entries.filter(([, url]) => url)));
     });
     return () => { active = false; };

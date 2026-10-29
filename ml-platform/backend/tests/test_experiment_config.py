@@ -16,6 +16,7 @@ class TestExperimentConfiguration(unittest.TestCase):
             "app_mode": "production",
             "database_url": "postgresql+psycopg://app:experiment-db-secret@db/ml_platform",
             "secret_key": "s" * 32,
+            "annotator_service_secret": "annotator-service-secret-value-1234567890",
             "task_backend": "celery",
             "celery_broker_url": "redis://redis:6379/0",
             "redis_events_url": "redis://redis:6379/1",

@@ -529,15 +529,17 @@ def rag_query(
     # Step 4: Call LLM API through the gateway
     config = resolve_llm_profile(db, purpose="knowledge_rag")
 
-    headers = {"Content-Type": "application/json"}
-    if config.api_key:
-        headers["Authorization"] = f"Bearer {config.api_key}"
-
-    import requests
+    # A-15：出站调用走网关共享客户端（keepalive 复用），且先归还 DB 连接
+    db.rollback()
     try:
-        resp = requests.post(
+        from app.services.llm_gateway import _HTTP_CLIENT
+
+        resp = _HTTP_CLIENT.post(
             config.api_url,
-            headers=headers,
+            headers={
+                "Content-Type": "application/json",
+                **({"Authorization": f"Bearer {config.api_key}"} if config.api_key else {}),
+            },
             json={
                 "model": config.model_id,
                 "messages": [{"role": "user", "content": prompt}],
@@ -671,15 +673,17 @@ def chat(
     # Step 5: Call LLM API through the gateway
     config = resolve_llm_profile(db, purpose="knowledge_chat")
 
-    headers = {"Content-Type": "application/json"}
-    if config.api_key:
-        headers["Authorization"] = f"Bearer {config.api_key}"
-
-    import requests
+    # A-15：出站调用走网关共享客户端；外呼前归还 DB 连接
+    db.rollback()
     try:
-        resp = requests.post(
+        from app.services.llm_gateway import _HTTP_CLIENT
+
+        resp = _HTTP_CLIENT.post(
             config.api_url,
-            headers=headers,
+            headers={
+                "Content-Type": "application/json",
+                **({"Authorization": f"Bearer {config.api_key}"} if config.api_key else {}),
+            },
             json={
                 "model": config.model_id,
                 "messages": llm_messages,
@@ -1300,15 +1304,18 @@ def rag_enhanced(
     ).first()
     if not kb:
         raise HTTPException(404, "Knowledge base not found")
-    vstore = get_vector_store()
-    query_emb = _compute_tfidf_embedding([query], single_text=query)
-    query_vec = np.array(json.loads(query_emb), dtype=np.float32)
-    results = vstore.search(query_vec, top_k=top_k)
-    
+    # A-14：历史直接 vstore.search——语料/查询维度不一致时 np.dot 冒泡 500；
+    # 改走统一检索路径（语料级缓存 vectorizer + DB 兜底）
+    results = retrieve_chunks(
+        db, kb, query, top_k=top_k, use_vector_store=True,
+    )
+
     context_chunks = []
     sources = []
     for r in results:
-        chunk = db.query(Chunk).filter(Chunk.id == uuid.UUID(r["id"])).first()
+        chunk = db.query(Chunk).filter(
+            Chunk.id == uuid.UUID(r["chunk_id"]),
+        ).first()
         if chunk:
             doc = db.query(Document).filter(Document.id == chunk.doc_id).first()
             context_chunks.append(chunk.content)

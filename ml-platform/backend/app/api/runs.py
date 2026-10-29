@@ -288,7 +288,24 @@ def cancel_run(
 
 
 @router.websocket("/ws/runs/{run_id}")
-async def run_websocket(websocket: WebSocket, run_id: str):
+async def run_websocket(websocket: WebSocket, run_id: str, token: str = ""):
+    # A-08：运行事件 WS 历史无鉴权（知道 run_id 即可订阅他人节点输出）；
+    # query token 经与主站同一 JWT 校验 + resolve_run_access 项目访问检查
+    from app.database import SessionLocal
+    from app.services.security import websocket_user_id
+
+    user_id = websocket_user_id(token)
+    if user_id is None:
+        await websocket.close(code=4401)
+        return
+    db = SessionLocal()
+    try:
+        resolve_run_access(db, run_id, user_id)
+    except HTTPException:
+        await websocket.close(code=4403)
+        return
+    finally:
+        db.close()
     await manager.connect(run_id, websocket)
     try:
         while True:

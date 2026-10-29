@@ -475,6 +475,8 @@ export default function DataAnnotationPage() {
   const [operationsLoading, setOperationsLoading] = useState(false);
   const [genericTaskLoading, setGenericTaskLoading] = useState(false);
   const [previewDrawer, setPreviewDrawer] = useState<PreviewDrawerState | null>(null);
+  // A 批次十四：终态预览也要先拉一次（progress/samples 装载），此后停轮
+  const [previewPollSettled, setPreviewPollSettled] = useState(false);
   const [assignmentTask, setAssignmentTask] = useState<AnnotationTask | null>(null);
   const [annotators, setAnnotators] = useState<AnnotatorSubject[]>([]);
   const [assignmentExisting, setAssignmentExisting] = useState<Assignment[]>([]);
@@ -826,17 +828,16 @@ export default function DataAnnotationPage() {
     signature: genericTasks.map((task) => task.status).join(","),
   });
 
-  useEffect(() => {
-    if (!previewDrawer?.previewId) return undefined;
-    const taskId = previewDrawer.taskId;
-    const previewId = previewDrawer.previewId;
-    const operationId = previewDrawer.operationId;
-    let active = true;
-    let timer: ReturnType<typeof setInterval> | undefined;
-    const refresh = async () => {
+  // A 批次十四：三处 1s 预览轮询迁 useAdaptivePolling（签名含状态，终态由
+  // enabled=false 停轮——原裸 setInterval 的 clearInterval 逻辑等价）
+  const previewDrawerStatus = previewDrawer?.status ?? null;
+  useAdaptivePolling(() => {
+    const taskId = previewDrawer?.taskId;
+    const previewId = previewDrawer?.previewId;
+    if (!previewId || !taskId) return;
+    (async () => {
       try {
         const preview = await getAnnotationPreview(taskId, previewId);
-        if (!active) return;
         const previewStatus = String(preview.status);
         const previewSummary = preview.summary || {};
         const taskStatus = previewStatus === "completed" || previewStatus === "ready"
@@ -851,7 +852,7 @@ export default function DataAnnotationPage() {
               preview: {
                 ...preview,
                 id: preview.id || previewId,
-                operation_id: preview.operation_id || operationId || null,
+                operation_id: preview.operation_id || previewDrawer?.operationId || null,
               },
             }
           : item));
@@ -864,10 +865,9 @@ export default function DataAnnotationPage() {
           errorMessage: preview.error_code || preview.error?.message || null,
         } : current);
         const terminal = ["completed", "ready", "failed", "cancelled"].includes(previewStatus);
-        if (terminal && timer) clearInterval(timer);
+        if (terminal) setPreviewPollSettled(true);
         if (terminal && previewStatus !== "failed" && previewStatus !== "cancelled") {
           const page = await listAnnotationPreviewSamples(taskId, previewId, 50);
-          if (!active) return;
           setPreviewDrawer((current) => current ? {
             ...current,
             samples: page.items.map((item) => ({ sample_id: item.sample_id, row_index: item.row_index, values: item.values })),
@@ -876,74 +876,69 @@ export default function DataAnnotationPage() {
           } : current);
         }
       } catch (error) {
-        if (active) setPreviewDrawer((current) => current ? { ...current, errorMessage: formatApiError(error, "预览状态加载失败") } : current);
+        setPreviewDrawer((current) => current ? { ...current, errorMessage: formatApiError(error, "预览状态加载失败") } : current);
       }
-    };
-    void refresh();
-    timer = setInterval(() => { void refresh(); }, 1000);
-    return () => { active = false; if (timer) clearInterval(timer); };
-  }, [previewDrawer?.previewId, previewDrawer?.taskId]);
+    })();
+  }, {
+    // A 批次十四：终态预览也要先拉一次（progress/samples 装载）再停；
+    // settled 在轮询见到终态时置位，是唯一停止条件
+    enabled: Boolean(previewDrawer?.previewId) && !previewPollSettled,
+    intervalMs: 1000,
+    signature: String(previewDrawerStatus ?? ""),
+  });
 
-  useEffect(() => {
-    if (!genericDiscoveryPreviewId || !genericDiscoveryTask || genericFinalStage) return;
-    const taskId = genericDiscoveryTask.id;
+  // A 批次十四：发现预览轮询迁 useAdaptivePolling
+  useAdaptivePolling(() => {
+    const taskId = genericDiscoveryTask?.id;
     const previewId = genericDiscoveryPreviewId;
-    let active = true;
-    let timer: ReturnType<typeof setInterval> | undefined;
-    const refresh = async () => {
+    if (!taskId || !previewId) return;
+    (async () => {
       try {
         const preview = await getAnnotationPreview(taskId, previewId);
-        if (!active) return;
         setGenericDiscoveryTask((current) => current ? { ...current, preview: { ...preview, id: previewId } } : current);
         const previewStatus = String(preview.status);
-        if (["completed", "ready"].includes(previewStatus)) {
-          if (timer) clearInterval(timer);
-        } else if (["failed", "cancelled"].includes(previewStatus)) {
-          if (timer) clearInterval(timer);
+        if (["failed", "cancelled"].includes(previewStatus)) {
           setGenericDiscoveryError(preview.error_code || preview.error?.message || copy.clusterPreviewFailed);
         }
       } catch (error) {
-        if (active) setGenericDiscoveryError(formatApiError(error, copy.clusterPreviewFailed));
+        setGenericDiscoveryError(formatApiError(error, copy.clusterPreviewFailed));
       }
-    };
-    void refresh();
-    timer = setInterval(() => { void refresh(); }, 1000);
-    return () => { active = false; if (timer) clearInterval(timer); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [genericDiscoveryPreviewId, genericDiscoveryTask?.id, genericFinalStage]);
+    })();
+  }, {
+    enabled: Boolean(genericDiscoveryPreviewId) && Boolean(genericDiscoveryTask) && !genericFinalStage
+      && !genericDiscoveryTask?.preview?.status || false,
+    intervalMs: 1000,
+    signature: String(genericDiscoveryTask?.preview?.status ?? ""),
+  });
 
-  useEffect(() => {
-    if (!genericFinalStage || !genericFinalPreviewId || !genericDiscoveryTask) return;
-    const taskId = genericDiscoveryTask.id;
+  // A 批次十四：最终预览轮询迁 useAdaptivePolling
+  useAdaptivePolling(() => {
+    const taskId = genericDiscoveryTask?.id;
     const previewId = genericFinalPreviewId;
-    let active = true;
-    let timer: ReturnType<typeof setInterval> | undefined;
-    const refresh = async () => {
+    if (!taskId || !previewId) return;
+    (async () => {
       try {
         const preview = await getAnnotationPreview(taskId, previewId);
-        if (!active) return;
         setGenericDiscoveryTask((current) => current && current.task_revision === preview.task_revision
           ? { ...current, preview: { ...preview, id: previewId } } : current);
         const previewStatus = String(preview.status);
         if (["completed", "ready"].includes(previewStatus)) {
-          if (timer) clearInterval(timer);
           const page = await listAnnotationPreviewSamples(taskId, previewId, 50);
-          if (active) {
-            setGenericFinalSamples(page);
-            setGenericFinalPreviewError(null);
-          }
+          setGenericFinalSamples(page);
+          setGenericFinalPreviewError(null);
         } else if (["failed", "cancelled"].includes(previewStatus)) {
-          if (timer) clearInterval(timer);
           setGenericFinalPreviewError(preview.error_code || preview.error?.message || "最终预览生成失败");
         }
       } catch (error) {
-        if (active) setGenericFinalPreviewError(formatApiError(error, "最终预览状态加载失败"));
+        setGenericFinalPreviewError(formatApiError(error, "最终预览状态加载失败"));
       }
-    };
-    void refresh();
-    timer = setInterval(() => { void refresh(); }, 1000);
-    return () => { active = false; if (timer) clearInterval(timer); };
-  }, [genericFinalPreviewId, genericDiscoveryTask?.id, genericFinalAttempt, genericFinalStage]);
+    })();
+  }, {
+    enabled: Boolean(genericFinalStage) && Boolean(genericFinalPreviewId) && Boolean(genericDiscoveryTask)
+      && !genericFinalSamples,
+    intervalMs: 1000,
+    signature: String(genericDiscoveryTask?.preview?.status ?? ""),
+  });
 
   const openTaskPreview = async (task: AnnotationTask) => {
     const configHash = String(task.task_snapshot?.config_hash || "sha256:task");
@@ -967,6 +962,7 @@ export default function DataAnnotationPage() {
         samples: [],
         sampleCursor: null,
       });
+      setPreviewPollSettled(false);
     } catch (error) {
       if (isRevisionConflict(error)) setRevisionConflict(revisionConflictFromError(error, task));
       else message.error(formatApiError(error, "任务预览失败"));

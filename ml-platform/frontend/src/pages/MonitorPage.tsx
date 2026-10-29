@@ -326,12 +326,18 @@ export default function MonitorPage() {
     void fetchHistory();
   }, [fetchHistory]);
 
-  // 指标有动静时保持 3s 节奏，系统安静时退避到 9s
+  // 指标有动静时保持 3s 节奏，系统安静时退避到 9s。
+  // 签名剔除 timestamp（后端每次发新时间戳，会让退避永久失效——批次五缺陷）
+  const monitorSignature = (() => {
+    if (!data) return "";
+    const { timestamp: _ignored, ...comparable } = data as unknown as Record<string, unknown>;
+    return JSON.stringify(comparable);
+  })();
   useAdaptivePolling(() => { void fetchData(); }, {
     enabled: true,
     intervalMs: 3000,
     maxIntervalMs: 9000,
-    signature: JSON.stringify(data ?? null),
+    signature: monitorSignature,
     immediate: true,
   });
 

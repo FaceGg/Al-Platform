@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import date, datetime
@@ -407,6 +408,13 @@ class DAGExecutor:
                 last_error = TimeoutError(
                     f"Node '{node_id}' timed out after {policy.timeout_seconds:g} seconds"
                 )
+                # A-20：被放弃的算子线程不可终止，会继续持有原 Session 并可能
+                # 写制品——记录孤儿线程告警（后续 claim_run 接管需先确认无活跃 task）
+                logging.getLogger(__name__).warning(
+                    "node %s orphaned operator thread after %ss timeout (run %s); "
+                    "thread keeps running detached and must not share the run Session",
+                    node_id, policy.timeout_seconds, run_id,
+                )
                 self._emit_status(
                     status_callback, run_id, node_id, "timed_out",
                     {"error": str(last_error), "error_code": "NODE_TIMED_OUT"}, metadata,
@@ -516,14 +524,22 @@ class DAGExecutor:
                         for pn, pv in iter_outputs.items():
                             body_inputs[pn] = pv
 
+                # A-09：取消必须先于 Exception 冒泡（历史上被同一分支吞掉，
+                # 循环体内取消要跑满 max_iterations）；失败不再伪装 completed
                 try:
                     body_result, _ = self._execute_with_policy(
                         body_op, body_inputs, body_data["params"], run_id,
                         body_node_id, status_callback, run_control,
                     )
                     body_outputs = body_result.outputs
-                except Exception:
-                    body_outputs = {}
+                except RunCancelled:
+                    raise
+                except Exception as body_error:
+                    if status_callback:
+                        status_callback(run_id, body_node_id, "failed",
+                                        {"iteration": iteration + 1,
+                                         "error": str(body_error)[:500]})
+                    raise
 
                 body_node_results: dict[str, str] = {}
                 for pn, data in body_outputs.items():

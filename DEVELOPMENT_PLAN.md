@@ -242,10 +242,15 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 
 > **✅ 批次九已落地（2026-10-29，A-01/A-04/A-05/A-02 全部四项）**：① A-01——新建 `app/engine/safe_expression.py` AST 白名单求值器（Name[row]/Constant/Subscript/Slice/算术/比较/逻辑/条件；Attribute/Call/Import/推导式/lambda 一概拒绝 + 序列重复与幂指数上限防 DoS），`blending.py::GenerateAttributesOp` 换用之；② A-04——新建 `app/engine/path_guard.py`（读取仅允许上传目录+运行工作区两根，`resolve` 后 `is_relative_to` 判定，稳定码 `OPERATOR_PATH_OUTSIDE_WORKSPACE`），CSVImport/ImageImport/JSONImport/ReadExcel 四读取算子接入；`export_paths.py` 删 `legacy_file_path` 分支（三处调用方旧 `file_path` 参数降级为文件名提示，导出一律落工作区 exports）；③ A-05——新建 `app/services/outbound.py`（`validate_outbound_url` 复用 webhook_security 的 DNS 解析+受限地址判定，泛化为 http/https 任意端口；`fetch_url_bytes/fetch_url_frame` 出口 + 重定向逐跳重校验），CSVImport 下载与 ReadURL 全部改走该服务（file://、内网、环回、链路本地、元数据服务全拒，DNS 重绑定至内网同拒）；④ A-02——config production 校验拒绝默认 `ANNOTATOR_SERVICE_SECRET`（`AliasChoices` 保字段名传参 + env 名解析测试）、门户管理员 Cookie 密钥改域分离派生（旧默认密钥签的 Cookie 自然失效）、`_resolve_admin_identity` 补 DB 存在性+admin 角色复核（降权/删除后旧 Cookie 失效）、compose 锚点+annotator sidecar `${ANNOTATOR_SERVICE_SECRET:?}` 强制注入、backend/annotator 端口默认回环绑定（`BACKEND_BIND_ADDRESS`/`ANNOTATOR_BIND_ADDRESS` 可覆盖）、根 nginx `/api/internal/` 与 `/portal/` 全 404 收口（门户流量走 annotator-frontend 自有反代）；部署侧联动——根 .env 已补键、installer 全新生成+升级幂等补键、CI 三个 compose job（browser/experiment/security）注入 ci 专用值。测试：新建 `test_safe_expression`（10 用例）+ `test_outbound_security`（10 用例）登记 week5 清单；`test_all_operators` 文件路径用例改工作区口径 + 新增越界拒读用例；`test_config` 新增默认/短密钥拒绝两用例。受影响面回归 333 passed/1 skipped（含 test_ci_workflow 合同）。**注意**：本地部署栈重启前需确认根 .env 已有 `ANNOTATOR_SERVICE_SECRET`（已补）；已部署线上升级走 installer 幂等补键，缺键时 backend 将拒绝启动（fail-closed 设计）。
 
-1. **批次十**（认证边界与限流：client_ip 信任代理感知、门户登录限流、WS 鉴权、错误脱敏）。
-2. **批次十一**（性能收益最大且与本周已做的性能批次衔接；`chat` 改 `def` 是一行级改动）。
-3. **批次十二**（并发/幂等，需先补复现用例再改，避免回归）。
-4. **批次十三 + 批次十四**（批量治理，可与上面并行）。
-5. **审计收尾**：① 复核 `pickle/joblib` 反序列化通道（枚举所有 `Artifact` 创建点的字节来源，确认是否存在用户可直接上传 `.joblib` 的入口）；② `app/services/agent/sandbox.py:193` 的子进程**未传 `env=`**（与 `python_script_runtime._child_env` 做法相反），需确认 Agent 特征脚本的威胁模型；③ 生产 `DATABASE_POOL_SIZE`/`DATABASE_MAX_OVERFLOW` 实际取值（compose 未覆盖，走默认值）需运维确认；④ `/api/internal/**` 的生产网络隔离策略待确认（根 nginx 已 404，容器网络层隔离另行评估）。
-6. **CI 状态**：main HEAD `dbc0f7e3` 全量六 job 全绿（run 40795562091，2026-10-29）；本批修复推送后将再触发验证。
+> **✅ 批次九~十四已全部落地（2026-10-29~30，第二轮审计 A-01~A-20 收敛完成）**：
+> - **批次九**（A-01/A-04/A-05/A-02，08a9446f+8855a4f0）：AST 求值器/路径边界/出站 SSRF/密钥 fail-closed + 部署联动（详见 git log 与批次表）。
+> - **批次十**（认证边界与限流）：security.client_ip 受信代理 XFF 还原（auth._client_key 换用，消除"nginx IP 共享桶→5 次锁全站"）；门户登录接 IP+账号双维度限流；WS /ws/runs/{id} 鉴权（websocket_user_id 校验 JWT + resolve_run_access 复核，WorkspacePage 补 token，4401/4403）；workflow_execution 失败 error_message 脱敏为 error_code（SQL 原文只进日志）。
+> - **批次十一**（运行时与检索）：chat/chat_stream 改同步 def（不再冻结事件循环；stream 生成器同步化走网关共享 _HTTP_CLIENT）；knowledge_retrieval 语料级 vectorizer 缓存（(kb_id, chunk_count) 键，query 只 transform——快路径从死代码复活）；rag-enhanced 改走 retrieve_chunks（修向量库非空即 500）；三处 requests.post 改 _HTTP_CLIENT + 外呼前 db.rollback() 归还连接。
+> - **批次十二**（并发与幂等）：DAG 循环体 RunCancelled 先于 Exception 冒泡 + 失败上报 failed；reconcile_stale_runs 接入 beat（workflow-run-recovery 60s）+ lifespan 启动清扫；闭环错误集追加改 DB 级 CAS（storage_uri 前置 UPDATE + 重读重试 ≤3，删 prefork 下不互斥的 threading.Lock）；AgentRun resume 放行 CAS（WHERE status=waiting_guidance，防并发双跑）；DatasetVersion 版本号分配收敛 dataset_version_alloc（IntegrityError 换号重试，四处 max+1 收口）；心跳线程 DB 异常容错 + 超时孤儿线程告警。
+> - **批次十三**（索引）：迁移 20261029_85 建 16 个二级索引（12 张主键-only 表 + created_by + 过滤列），database_migrations._SQLITE_INDEXES 同步；alembic upgrade 验证落地。
+> - **批次十四**（前端/部署/CI）：MonitorPage 轮询签名剔除 timestamp（修批次五退避在监控页永久失效）；DataAnnotationPage 三处 1s 预览轮询迁 useAdaptivePolling（previewPollSettled 终态停轮 + 终态首次拉取保留）；AutoMLPage blob URL 三路径回收；compose 长驻服务日志轮转（x-logging 50m×5）；CI 安全扫描去 continue-on-error（扫描失败阻断合并）。
+> - 验证：前端全量 89 文件 504 passed + tsc；后端受影响套件全绿；demo_loop 共享库漂移确证与代码无关（新库 27 passed）。**遗留**：A-16/A-17 列表批量化（涉及 API 合同变更需前端同批）；chat 同步化后 DB 池校准待压测。
+1. **CI 状态**：main 全量六 job 全绿后本节收敛（进度区记录 run 号）。
+2. **审计收尾**：① pickle/joblib 反序列化通道复核；② agent/sandbox.py:193 子进程 env= 缺失威胁模型确认；③ 生产连接池取值运维确认。
+3. **测试卫生批次**：demo_loop 套件密封化、model-inference e2e 按 v2 UI 重写、test_fake NO TESTS RAN 噪音。
 

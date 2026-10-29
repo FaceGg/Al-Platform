@@ -175,3 +175,52 @@ def recover_operations():
                     return_dispatcher(batch.id, operation.id)
                     recovered.append(operation_id)
     return {"recovered_operation_ids": recovered, "count": len(recovered)}
+
+
+def _active_workflow_task_ids() -> set[str]:
+    """A-10：正执行/预留/排队的 workflow 任务 id（照 training_tasks 同款）。"""
+    inspector = celery_app.control.inspect(timeout=1)
+    known: set[str] = set()
+    for snapshot in (
+        inspector.active() or {},
+        inspector.reserved() or {},
+        inspector.scheduled() or {},
+    ):
+        for tasks in snapshot.values():
+            for task in tasks or []:
+                if str(task.get("name", "")).startswith("ml_platform.execute_workflow"):
+                    known.add(str(task["id"]))
+    return known
+
+
+def _workflow_recovery_hard_timeout_seconds() -> int:
+    from app.config import settings
+
+    return int(getattr(settings, "task_hard_timeout_seconds", 3600))
+
+
+@celery_app.task(name="ml_platform.recover_stale_workflow_runs")
+def recover_stale_workflow_runs():
+    """A-10：把僵尸 running run 判失败——历史上无任何调用者（beat 不含、
+    lifespan 不接），worker 被 SIGKILL/OOM 后 run 永久停在 running。"""
+    with SessionLocal() as db:
+        reconciled = reconcile_stale_runs(
+            db,
+            active_task_ids=_active_workflow_task_ids(),
+            hard_timeout=timedelta(
+                seconds=_workflow_recovery_hard_timeout_seconds(),
+            ),
+        )
+    return {"reconciled_runs": reconciled}
+
+
+def sweep_stale_workflow_runs_startup() -> int:
+    """lifespan 启动期清扫（进程存活期间由 beat 周期兜底）。"""
+    with SessionLocal() as db:
+        return reconcile_stale_runs(
+            db,
+            active_task_ids=_active_workflow_task_ids(),
+            hard_timeout=timedelta(
+                seconds=_workflow_recovery_hard_timeout_seconds(),
+            ),
+        )

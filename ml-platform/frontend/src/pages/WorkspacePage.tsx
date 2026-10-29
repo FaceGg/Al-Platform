@@ -396,8 +396,11 @@ export default function WorkspacePage() {
   };
 
   const attachRunListeners = (runId: string) => {
+    // A-08：WS 现要求与主站同一 JWT（query token），无 token 后端 4401 关闭
+    const token = localStorage.getItem("token") || "";
     const wsUrl = (window.location.protocol === "https:" ? "wss:" : "ws:") +
-      "//" + window.location.host + "/ws/runs/" + runId;
+      "//" + window.location.host + "/ws/runs/" + runId +
+      "?token=" + encodeURIComponent(token);
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 

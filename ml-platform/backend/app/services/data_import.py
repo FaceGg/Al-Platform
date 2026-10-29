@@ -528,6 +528,7 @@ def confirm_dataset_import_schema(
         confirmed.to_json(orient="records", date_format="iso", double_precision=15).encode()
     ).hexdigest()
     confirmed_artifact = None
+    # A-18：版本号改由共享助手在 freeze 内部分配（唯一索引冲突换号重试）
     try:
         with tempfile.TemporaryDirectory() as directory:
             confirmed_path = Path(directory) / "confirmed.parquet"
@@ -540,7 +541,6 @@ def confirm_dataset_import_schema(
         return _freeze_confirmed_import(
             db, process, original, confirmed_artifact, operator_id, confirmed,
             sample_ids, confirmed_schema, parse_contract, content_hash, schema_hash,
-            (latest[0] if latest else 0) + 1,
         )
     except Exception:
         db.rollback()
@@ -551,23 +551,26 @@ def confirm_dataset_import_schema(
 
 def _freeze_confirmed_import(
     db, process, original, normalized, operator_id, confirmed, sample_ids,
-    confirmed_schema, parse_contract, content_hash, schema_hash, version_number,
+    confirmed_schema, parse_contract, content_hash, schema_hash,
 ):
-    version = DatasetVersion(
-        project_id=process.project_id,
-        operator_id=operator_id,
-        version=version_number,
-        status="ready",
-        row_count=len(confirmed),
-        column_count=len(confirmed.columns),
-        content_hash=content_hash,
-        schema_hash=schema_hash,
-        parse_contract=parse_contract,
-        original_artifact_id=original.id,
-        normalized_artifact_id=normalized.id,
-    )
-    db.add(version)
-    db.flush()
+    from app.services.dataset_version_alloc import allocate_dataset_version
+
+    def _build_version(next_version: int) -> DatasetVersion:
+        return DatasetVersion(
+            project_id=process.project_id,
+            operator_id=operator_id,
+            version=next_version,
+            status="ready",
+            row_count=len(confirmed),
+            column_count=len(confirmed.columns),
+            content_hash=content_hash,
+            schema_hash=schema_hash,
+            parse_contract=parse_contract,
+            original_artifact_id=original.id,
+            normalized_artifact_id=normalized.id,
+        )
+
+    version = allocate_dataset_version(db, process.project_id, _build_version)
     for position, item in enumerate(confirmed_schema):
         db.add(DatasetSchemaColumn(
             dataset_version_id=version.id,

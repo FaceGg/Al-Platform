@@ -8,6 +8,7 @@ Chinese similarity to near-exact substring matching.
 """
 import json
 import logging
+import threading
 import uuid as uuid_mod
 
 import numpy as np
@@ -80,6 +81,43 @@ def _compute_tfidf_embedding(texts, single_text=None):
     return [json.dumps(e.tolist()) for e in embeddings]
 
 
+# A-13：语料级 vectorizer 缓存。历史上 query 用 [query] 单独 fit，词表与
+# 语料向量必然不等 → np.dot 必抛 ValueError → 向量库快路径是死代码，每次
+# 检索都退回全语料重算 TF-IDF（实测 5k chunk 6.95s/请求）。缓存按
+# (kb_id, chunk_count) 失效——语料变更后维度漂移会被调用方 try/except 兜底。
+_corpus_vectorizer_cache: dict[tuple[str, int], TfidfVectorizer] = {}
+_corpus_vectorizer_lock = threading.Lock()
+
+def _query_vector_for_kb(db, kb, query: str) -> np.ndarray:
+    """用 KB 语料级缓存 vectorizer transform 查询（维度与索引时语料一致）。"""
+    from app.models.knowledge import Chunk, Document
+
+    chunk_count = (
+        db.query(Chunk).join(Document).filter(Document.kb_id == kb.id).count()
+    )
+    cache_key = (str(kb.id), chunk_count)
+    with _corpus_vectorizer_lock:
+        vectorizer = _corpus_vectorizer_cache.get(cache_key)
+    if vectorizer is None:
+        texts = [
+            row[0]
+            for row in db.query(Chunk.content)
+            .join(Document)
+            .filter(Document.kb_id == kb.id)
+            .all()
+        ]
+        if not texts:
+            raise ValueError("empty corpus")
+        vectorizer = TfidfVectorizer(preprocessor=tokenize_text)
+        vectorizer.fit(texts)
+        with _corpus_vectorizer_lock:
+            # 上限防护：多 KB 长驻进程不无限增长
+            if len(_corpus_vectorizer_cache) > 32:
+                _corpus_vectorizer_cache.clear()
+            _corpus_vectorizer_cache[cache_key] = vectorizer
+    return vectorizer.transform([query]).toarray()[0].astype(np.float32)
+
+
 def _l2_normalize(vec):
     """L2-normalize a numpy vector in-place."""
     norm = np.linalg.norm(vec)
@@ -146,14 +184,16 @@ def retrieve_chunks(db, kb, query, top_k=5, metric="cosine", use_vector_store=Tr
             # so a dim mismatch or cross-KB pollution must never break search:
             # any failure falls back to the stateless DB path below.
             try:
-                query_vec = np.array(
-                    json.loads(_compute_tfidf_embedding([query], single_text=query)),
-                    dtype=np.float32,
-                )
+                query_vec = _query_vector_for_kb(db, kb, query)
                 vs_results = vstore.search(
                     query_vec, top_k=top_k, metadata_filter={"kb_id": str(kb.id)},
                 )
             except (ValueError, TypeError):
+                logger.warning(
+                    "vector fast path miss for kb %s, falling back to DB scan",
+                    kb.id,
+                    exc_info=True,
+                )
                 vs_results = None
             if vs_results:
                 results = []

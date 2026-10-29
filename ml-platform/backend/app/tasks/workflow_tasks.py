@@ -55,17 +55,24 @@ def heartbeat_run(
 ) -> None:
     if session_factory is None:
         session_factory = SessionLocal
+    # A-20：心跳线程一次 DB 异常即永久死亡 → 2 分钟后 claim_run 允许第二个
+    # worker 接管仍在跑的 run。异常记日志并继续下一轮（run 消失才退出）。
     while not stop_event.is_set():
-        with session_factory() as db:
-            run = db.query(WorkflowRun).filter(
-                WorkflowRun.id == run_id,
-                WorkflowRun.task_id == task_id,
-                WorkflowRun.status.in_(["running", "cancel_requested"]),
-            ).first()
-            if run is None:
-                return
-            run.heartbeat_at = utcnow()
-            db.commit()
+        try:
+            with session_factory() as db:
+                run = db.query(WorkflowRun).filter(
+                    WorkflowRun.id == run_id,
+                    WorkflowRun.task_id == task_id,
+                    WorkflowRun.status.in_(["running", "cancel_requested"]),
+                ).first()
+                if run is None:
+                    return
+                run.heartbeat_at = utcnow()
+                db.commit()
+        except Exception:  # noqa: BLE001 - 心跳必须存活，DB 抖动下轮重试
+            logger.warning(
+                "workflow heartbeat update failed for run %s", run_id, exc_info=True,
+            )
         if stop_event.wait(interval_seconds):
             return
 

@@ -1,8 +1,18 @@
 # AI Model Training Platform - Docker Compose
+
+# A 批次十四：日志轮转（json-file 默认无上限）——所有长驻服务共用，
+# via YAML anchor；一次性服务（migrate/minio-init）不需要。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   postgres:
     image: postgres:16
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-ml_platform}
       POSTGRES_USER: ${POSTGRES_USER:-ml_platform}
@@ -18,10 +28,12 @@ services:
   redis:
     image: redis:7
     restart: unless-stopped
+    logging: *default-logging
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
   minio:
     restart: unless-stopped
+    logging: *default-logging
     image: cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
     command: server /data --console-address :9001
     environment:
@@ -150,6 +162,7 @@ services:
       minio-init:
         condition: service_completed_successfully
     restart: unless-stopped
+    logging: *default-logging
 
   tensorboard-gateway:
     build:
@@ -171,6 +184,7 @@ services:
       timeout: 5s
       retries: 20
     restart: unless-stopped
+    logging: *default-logging
 
   inference-runtime:
     build:
@@ -227,6 +241,7 @@ services:
       timeout: 5s
       retries: 20
     restart: unless-stopped
+    logging: *default-logging
 
   backend:
     build:
@@ -250,6 +265,7 @@ services:
       - ./ml-platform/backend/uploads:/app/app/uploads
       - python-script-venv:/data/python-script-venv
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -284,6 +300,7 @@ services:
       backend:
         condition: service_started
     restart: unless-stopped
+    logging: *default-logging
 
   annotator-frontend:
     build:
@@ -295,9 +312,11 @@ services:
     depends_on:
       - annotator
     restart: unless-stopped
+    logging: *default-logging
 
   worker:
     restart: unless-stopped
+    logging: *default-logging
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.worker
@@ -351,6 +370,7 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    logging: *default-logging
 
   nginx:
     image: nginx:alpine
@@ -362,6 +382,7 @@ services:
       - backend
       - frontend
     restart: unless-stopped
+    logging: *default-logging
 
 volumes:
   postgres-data:

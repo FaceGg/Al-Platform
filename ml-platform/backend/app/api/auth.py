@@ -33,6 +33,7 @@ from app.services.security import (
     PASSWORD_POLICY_MESSAGE,
     RateLimitPolicy,
     REGISTRATION_LIMIT,
+    client_ip,
     enforce_rate_limit,
     password_policy_error,
 )
@@ -47,8 +48,9 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
 def _client_key(request: Request) -> str:
-    client = request.client
-    return (client.host if client is not None and client.host else "unknown").strip() or "unknown"
+    # A-06：经 nginx 时 request.client.host 恒为容器 IP（全站共享限流桶）；
+    # client_ip 信任内网代理的 XFF/X-Real-IP 还原真实来源
+    return client_ip(request)
 
 
 def _normalize_username(value: str) -> str:

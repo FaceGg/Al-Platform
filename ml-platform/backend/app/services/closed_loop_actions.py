@@ -117,10 +117,15 @@ def append_rows_to_dataset_artifact(
     if not rows:
         return int((artifact.metadata_ or {}).get("row_count", 0))
     columns = sorted({key for row in rows for key in row})
-    with lock_for(f"artifact:{artifact.id}"):
-        service = artifact_service
-        old_uri = artifact.storage_uri
-        with service.storage.materialize(artifact.storage_uri) as path:
+    # A-11：进程内 threading.Lock 在 worker prefork 多进程下不互斥（先写者
+    # 行丢失、旧对象变孤儿）。改为 DB 级乐观锁：以读取时的 storage_uri 为
+    # 前置条件做 UPDATE，冲突方重读重试（≤3 次），仍冲突则抛稳定错误。
+    from sqlalchemy import update as sa_update
+    from sqlalchemy.exc import SQLAlchemyError
+
+    for attempt in range(3):
+        expected_uri = artifact.storage_uri
+        with artifact_service.storage.materialize(expected_uri) as path:
             frame = pd.read_csv(path)
         # Schema evolution: new row keys (e.g. the auto-label target column)
         # extend the CSV; old rows stay empty for those columns.
@@ -133,7 +138,7 @@ def append_rows_to_dataset_artifact(
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "rows.csv"
             frame.to_csv(out, index=False)
-            stored = service.storage.put(
+            stored = artifact_service.storage.put(
                 out,
                 project_id=str(artifact.project_id),
                 artifact_id=str(artifact.id),
@@ -144,6 +149,40 @@ def append_rows_to_dataset_artifact(
              "null_count": int(frame[column].isna().sum())}
             for column in frame.columns
         ]
+        claimed = db.execute(
+            sa_update(Artifact)
+            .where(
+                Artifact.id == artifact.id,
+                Artifact.storage_uri == expected_uri,
+            )
+            .values(
+                storage_uri=stored.uri,
+                file_size=stored.size,
+                metadata_={
+                    **(artifact.metadata_ or {}),
+                    "sha256": stored.sha256,
+                    "row_count": int(len(frame)),
+                    "column_count": int(len(frame.columns)),
+                    "schema": schema,
+                },
+            )
+        ).rowcount
+        db.commit()
+        if not claimed:
+            db.rollback()
+            # 并发写者已推进：重读最新行后重试（保住"读-改-写"完整追加语义）
+            db.refresh(artifact)
+            if attempt == 2:
+                raise ClosedLoopError(
+                    "APPEND_CONFLICT",
+                    "并发追加冲突，重试后仍不一致",
+                )
+            continue
+        if expected_uri and expected_uri != stored.uri:
+            try:
+                artifact_service.storage.delete(expected_uri)
+            except Exception:
+                logger.debug("stale dataset artifact cleanup failed: %s", expected_uri, exc_info=True)
         artifact.storage_uri = stored.uri
         artifact.file_size = stored.size
         artifact.metadata_ = {
@@ -153,13 +192,8 @@ def append_rows_to_dataset_artifact(
             "column_count": int(len(frame.columns)),
             "schema": schema,
         }
-        db.commit()
-        if old_uri and old_uri != stored.uri:
-            try:
-                service.storage.delete(old_uri)
-            except Exception:
-                logger.debug("stale dataset artifact cleanup failed: %s", old_uri, exc_info=True)
-    return int(len(frame))
+        return int(len(frame))
+    raise ClosedLoopError("APPEND_CONFLICT", "并发追加冲突")
 
 
 # ---------------------------------------------------------------- notifications

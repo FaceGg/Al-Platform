@@ -68,7 +68,7 @@ def _assemble_messages(system_prompt: str, message: str, context: str | None):
 
 
 @router.post("")
-async def chat(
+def chat(
     message: str = Body(...),
     system_prompt: str = Body(default="You are a helpful AI assistant for welding manufacturing."),
     temperature: float = Body(default=0.7, ge=0, le=1),
@@ -159,7 +159,7 @@ def chat_status(db: Session = Depends(get_db)):
 
 
 @router.post("/stream")
-async def chat_stream(
+def chat_stream(
     message: str = Body(...),
     system_prompt: str = Body(default="You are a helpful AI assistant."),
     kb_id: str | None = Body(default=None, max_length=64),
@@ -168,6 +168,9 @@ async def chat_stream(
     db: Session = Depends(get_db),
 ):
     """Stream a chat response from the LLM (SSE).
+
+    A-03：同步 def——检索段（全语料 TF-IDF）在端点体执行，async 下会冻结
+    事件循环；Starlette StreamingResponse 原生支持同步生成器（线程池迭代）。
 
     With a bound knowledge base the first event carries the retrieved sources,
     so the UI can render citations before tokens arrive.
@@ -183,7 +186,7 @@ async def chat_stream(
 
     config = resolve_profile(db, purpose="chat_stream")
 
-    async def event_stream():
+    def event_stream():
         if sources:
             import json as _json
             yield f"data: {_json.dumps({'type': 'sources', 'sources': sources}, ensure_ascii=False)}\n\n"
@@ -193,25 +196,28 @@ async def chat_stream(
         import httpx
         try:
             messages = _assemble_messages(system_prompt, message, context)
-            async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
-                async with client.stream(
-                    "POST", config.api_url,
-                    headers={
-                        "Authorization": f"Bearer {config.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": config.model_id,
-                        "messages": messages,
-                        "temperature": 0.7,
-                        "max_tokens": 2000,
-                        "stream": True,
-                    },
-                ) as resp:
-                    async for line in resp.aiter_lines():
-                        if line.startswith("data: "):
-                            yield f"{line}\n\n"
-                    yield "data: [DONE]\n\n"
+            # A-03/A-15：同步流式走网关共享客户端（keepalive 复用），生成器整体
+            # 由 Starlette 线程池迭代，不再占用事件循环
+            from app.services.llm_gateway import _HTTP_CLIENT
+            with _HTTP_CLIENT.stream(
+                "POST", config.api_url,
+                headers={
+                    "Authorization": f"Bearer {config.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": config.model_id,
+                    "messages": messages,
+                    "temperature": 0.7,
+                    "max_tokens": 2000,
+                    "stream": True,
+                },
+                timeout=config.timeout_seconds,
+            ) as resp:
+                for line in resp.iter_lines():
+                    if line.startswith("data: "):
+                        yield f"{line}\n\n"
+                yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: {{\"error\": \"{str(e)}\"}}\n\n"
 

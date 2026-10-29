@@ -196,16 +196,21 @@ def _execute_loaded_workflow(db, workflow_run, publisher, session_factory) -> No
         if current_run is not None:
             cause = error.__cause__ or error
             current_run.status = "failed"
-            current_run.error_message = str(error)
             current_run.error_code = (
                 "NODE_TIMED_OUT"
                 if isinstance(error.__cause__, TimeoutError)
                 else "NODE_EXECUTION_FAILED"
             )
+            # A-19：原始异常含 SQL 原文/约束名/参数，不得回吐前端；完整信息只进日志
+            logger.warning(
+                "run %s failed: %s: %s",
+                workflow_run.id, type(cause).__name__, str(cause),
+            )
+            current_run.error_message = current_run.error_code
             current_run.error_details = {"exception_type": type(cause).__name__}
             current_run.logs = [*(current_run.logs or []), {
                 "level": "error",
-                "message": str(error),
+                "message": current_run.error_code,
                 "code": current_run.error_code,
             }]
             current_run.finished_at = datetime.now(timezone.utc)
@@ -213,5 +218,5 @@ def _execute_loaded_workflow(db, workflow_run, publisher, session_factory) -> No
         publisher.publish(run_id, {
             "type": "run_completed",
             "status": "failed",
-            "error": str(error),
+            "error": current_run.error_code if current_run is not None else "NODE_EXECUTION_FAILED",
         })

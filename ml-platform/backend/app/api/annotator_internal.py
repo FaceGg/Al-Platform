@@ -74,7 +74,26 @@ def portal_register(data: AnnotatorRegisterRequest, db: Session = Depends(get_db
     return {"id": str(account.id), "subject_id": str(account.subject_id), "username": account.username, "status": account.status}
 
 @router.post("/portal/auth/login")
-def portal_login(response: Response, form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def portal_login(request: Request, response: Response, form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    # A-07：门户登录同时接受平台管理员口令，历史上无限流可在线爆破；
+    # 接入与主站同口径的 IP/账号双维度限流（client_ip 还原真实来源）
+    from app.config import settings as _settings
+    from app.services.security import (
+        LOGIN_ACCOUNT_LIMIT,
+        LOGIN_IP_LIMIT,
+        RateLimitPolicy,
+        client_ip,
+        enforce_rate_limit,
+    )
+
+    enforce_rate_limit(
+        f"portal:login:ip:{client_ip(request)}",
+        RateLimitPolicy(_settings.login_ip_rate_limit_capacity, LOGIN_IP_LIMIT.window_seconds),
+    )
+    enforce_rate_limit(
+        f"portal:login:account:{form.username.strip().casefold()}",
+        RateLimitPolicy(_settings.login_account_rate_limit_capacity, LOGIN_ACCOUNT_LIMIT.window_seconds),
+    )
     account = db.query(AnnotatorAccount).filter(AnnotatorAccount.username == form.username).first()
     if account is not None:
         # An existing annotator account owns this username: a wrong password

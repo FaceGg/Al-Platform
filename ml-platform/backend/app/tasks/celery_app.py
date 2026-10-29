@@ -47,6 +47,11 @@ celery_app.conf.update(
             "task": "ml_platform.recover_pipeline_schedules",
             "schedule": 60.0,
         },
+        # A-10：僵尸 running run 对账（历史上 reconcile_stale_runs 无调用者）
+        "workflow-run-recovery": {
+            "task": "ml_platform.recover_stale_workflow_runs",
+            "schedule": 60.0,
+        },
         "training-job-recovery": {
             "task": "ml_platform.recover_training_jobs",
             "schedule": 60.0,

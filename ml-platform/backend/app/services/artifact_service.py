@@ -121,24 +121,37 @@ class ArtifactService:
             for column in frame.columns
         ]
         schema_hash = hashlib.sha256(json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        latest = self.db.query(DatasetVersion.version).filter(
-            DatasetVersion.project_id == artifact.project_id
-        ).order_by(DatasetVersion.version.desc()).first()
-        version = DatasetVersion(
-            project_id=artifact.project_id,
-            operator_id=operator_id,
-            version=(latest[0] if latest else 0) + 1,
-            status="ready",
-            row_count=len(frame),
-            column_count=len(frame.columns),
-            content_hash=content_hash,
-            schema_hash=schema_hash,
-            parse_contract={"source_format": artifact.format, "source": "workflow_export"},
-            original_artifact_id=artifact.id,
-            normalized_artifact_id=artifact.id,
-        )
-        self.db.add(version)
-        self.db.flush()
+        # A-18：裸 max+1 撞唯一索引并发必炸——捕获 IntegrityError 后重读重试
+        from sqlalchemy.exc import IntegrityError
+
+        version = None
+        for _attempt in range(3):
+            latest = self.db.query(DatasetVersion.version).filter(
+                DatasetVersion.project_id == artifact.project_id
+            ).order_by(DatasetVersion.version.desc()).first()
+            version = DatasetVersion(
+                project_id=artifact.project_id,
+                operator_id=operator_id,
+                version=(latest[0] if latest else 0) + 1,
+                status="ready",
+                row_count=len(frame),
+                column_count=len(frame.columns),
+                content_hash=content_hash,
+                schema_hash=schema_hash,
+                parse_contract={"source_format": artifact.format, "source": "workflow_export"},
+                original_artifact_id=artifact.id,
+                normalized_artifact_id=artifact.id,
+            )
+            self.db.add(version)
+            try:
+                self.db.flush()
+                break
+            except IntegrityError:
+                self.db.rollback()
+                # 重读最新版本号后整体重试（版本行及其子行尚未写入）
+                version = None
+        if version is None:
+            raise ValueError("DATASET_VERSION_CONFLICT")
         for position, column in enumerate(frame.columns):
             self.db.add(DatasetSchemaColumn(
                 dataset_version_id=version.id,

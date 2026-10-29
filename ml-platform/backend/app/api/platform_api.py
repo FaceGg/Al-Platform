@@ -934,9 +934,12 @@ def invoke_chat_api(
     system_content = f"{system_prompt}\n\n{RAG_SYSTEM_APPENDIX}" if context else system_prompt
     user_content = f"参考资料：\n\n{context}\n\n问题：{message}" if context else message
 
-    import requests
+    # A-15：出站调用走网关共享客户端（连接复用）；外呼前归还 DB 连接
+    db.rollback()
     try:
-        resp = requests.post(
+        from app.services.llm_gateway import _HTTP_CLIENT
+
+        resp = _HTTP_CLIENT.post(
             settings.llm_api_url,
             headers={"Authorization": f"Bearer {settings.llm_api_key}", "Content-Type": "application/json"},
             json={

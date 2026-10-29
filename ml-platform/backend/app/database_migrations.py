@@ -154,12 +154,15 @@ _SQLITE_INDEXES = {
     },
     "dataset_versions": {
         "ix_dataset_versions_project_id": "project_id",
+        "ix_dataset_versions_original_artifact_id": "original_artifact_id",
+        "ix_dataset_versions_normalized_artifact_id": "normalized_artifact_id",
     },
     "dataset_schema_columns": {
         "ix_dataset_schema_columns_dataset_version_id": "dataset_version_id",
     },
     "dataset_samples": {
         "ix_dataset_samples_dataset_version_id": "dataset_version_id",
+        "ix_dataset_samples_sample_id": "sample_id",
     },
     "dataset_imports": {
         "ix_dataset_imports_dataset_version_id": "dataset_version_id",
@@ -178,6 +181,45 @@ _SQLITE_INDEXES = {
     },
     "generic_annotation_tasks": {
         "ix_generic_annotation_tasks_archived_at": "archived_at",
+    },
+    # A 批次十三（2026-10-29）：12 张只有主键的表 + 过滤列（活库审计口径）；
+    # dataset_versions/dataset_samples 已并入上方既有块，勿在此重复
+    "projects": {
+        "ix_projects_owner_id": "owner_id",
+    },
+    "workflows": {
+        "ix_workflows_project_id": "project_id",
+        "ix_workflows_created_by": "created_by",
+    },
+    "nodes": {
+        "ix_nodes_workflow_id": "workflow_id",
+    },
+    "node_runs": {
+        "ix_node_runs_run_id": "run_id",
+    },
+    "edges": {
+        "ix_edges_workflow_id": "workflow_id",
+    },
+    "workflow_versions": {
+        "ix_workflow_versions_workflow_id": "workflow_id",
+    },
+    "kb_chunks": {
+        "ix_kb_chunks_doc_id": "doc_id",
+    },
+    "kb_documents": {
+        "ix_kb_documents_kb_id": "kb_id",
+    },
+    "chat_messages": {
+        "ix_chat_messages_session_id": "session_id",
+    },
+    "chat_sessions": {
+        "ix_chat_sessions_kb_id": "kb_id",
+    },
+    "datasets": {
+        "ix_datasets_project_id": "project_id",
+    },
+    "model_library": {
+        "ix_model_library_project_id": "project_id",
     },
 }
 

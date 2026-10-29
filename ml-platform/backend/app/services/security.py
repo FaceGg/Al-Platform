@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import ipaddress
 import secrets
 import threading
 import time
@@ -205,6 +206,53 @@ class SlidingWindowRateLimiter:
             self._events.clear()
 
 
+def client_ip(request) -> str:
+    """A-06：还原真实客户端 IP。
+
+    历史取 ``request.client.host``——经 nginx 反代时恒为 nginx 容器 IP，
+    任意匿名者 5 次失败登录即锁全站 15 分钟。受信代理（Docker 内网段）
+    转发的请求取 X-Forwarded-For 最左一跳（经 ipaddress 校验），否则回落
+    peer 地址。
+    """
+    peer = ""
+    client = getattr(request, "client", None)
+    if client is not None and client.host:
+        peer = str(client.host).strip()
+    forwarded = request.headers.get("x-forwarded-for", "") if hasattr(request, "headers") else ""
+    if peer and forwarded:
+        try:
+            peer_address = ipaddress.ip_address(peer)
+            trusted_proxy = (
+                peer_address.is_private
+                or peer_address.is_loopback
+                or peer_address.is_link_local
+            )
+        except ValueError:
+            trusted_proxy = False
+        if trusted_proxy:
+            for hop in forwarded.split(","):
+                hop = hop.strip()
+                if not hop:
+                    continue
+                candidate = hop.split("%", 1)[0]
+                try:
+                    ipaddress.ip_address(candidate)
+                    return candidate
+                except ValueError:
+                    continue
+    real_ip = request.headers.get("x-real-ip", "") if hasattr(request, "headers") else ""
+    if peer and real_ip:
+        try:
+            peer_address = ipaddress.ip_address(peer)
+            candidate = real_ip.strip().split("%", 1)[0]
+            if (peer_address.is_private or peer_address.is_loopback or peer_address.is_link_local) and candidate:
+                ipaddress.ip_address(candidate)
+                return candidate
+        except ValueError:
+            pass
+    return peer or "unknown"
+
+
 LOGIN_IP_LIMIT = RateLimitPolicy(5, 15 * 60)
 LOGIN_ACCOUNT_LIMIT = RateLimitPolicy(10, 15 * 60)
 REGISTRATION_LIMIT = RateLimitPolicy(10, 60 * 60)
@@ -286,8 +334,38 @@ __all__ = [
     "SlidingWindowRateLimiter",
     "csrf_token",
     "enforce_rate_limit",
+    "client_ip",
     "enforce_request_security",
     "rate_limiter",
     "validate_upload_filename",
     "validate_upload_magic",
+    "websocket_user_id",
 ]
+
+
+def websocket_user_id(token: str):
+    """A-08：校验 WS query token（与主站同一 JWT），返回 user_id 或 None。
+
+    WS 握手拿不到 Authorization 头，token 经 query 传递；此函数只做签名
+    与 sub 解析，项目访问权由调用方经 resolve_run_access 复核。
+    """
+    if not isinstance(token, str) or not token.strip():
+        return None
+    import uuid as _uuid
+
+    import jwt as _jwt
+
+    from app.config import settings as _settings
+
+    try:
+        payload = _jwt.decode(
+            token.strip(),
+            _settings.resolved_secret_key.get_secret_value(),
+            algorithms=[_settings.algorithm],
+        )
+        subject = payload.get("sub")
+        if not isinstance(subject, str):
+            return None
+        return _uuid.UUID(subject)
+    except Exception:  # noqa: BLE001 - 鉴权失败统一拒绝，不区分原因
+        return None

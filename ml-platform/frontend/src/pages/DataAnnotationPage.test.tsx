@@ -442,7 +442,9 @@ describe("DataAnnotationPage", () => {
     render(<MemoryRouter initialEntries={["/data-annotation?view=tasks&projectId=project-1"]}><AntApp><DataAnnotationPage /></AntApp></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: /^预览$/ }));
     expect(await screen.findByRole("dialog", { name: "任务预览" })).toHaveTextContent("Inspect quality");
-    await waitFor(() => expect(get).toHaveBeenCalledWith("/annotation-tasks/task-1/previews/preview-1"));
+    // A 批次十四：预览轮询迁 useAdaptivePolling 后与列表加载并发，断言
+    // 放宽为"预览接口至少被调用一次"（顺序不再确定）
+    await waitFor(() => expect(get.mock.calls.some(([url]) => url === "/annotation-tasks/task-1/previews/preview-1")).toBe(true));
     expect(post.mock.calls.filter(([url]) => url.endsWith("/preview"))).toHaveLength(0);
     expect(within(screen.getByRole("region", { name: "通用任务列表" })).queryByRole("button", { name: /^执行$/ })).not.toBeInTheDocument();
   });

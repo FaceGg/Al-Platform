@@ -192,6 +192,10 @@ def resume_agent_run(
     current_user: User = Depends(get_current_user),
 ):
     """逐步确认模式的放行：从 waiting_guidance 继续执行到下一暂停位或终态。"""
+    from sqlalchemy import update as sa_update
+
+    from app.tasks.time_utils import utcnow as _agent_utcnow
+
     run = db.get(AgentRun, uuid.UUID(run_id))
     if run is None:
         raise HTTPException(404, detail={"code": "AGENT_RUN_NOT_FOUND"})
@@ -199,6 +203,18 @@ def resume_agent_run(
         raise HTTPException(
             409,
             detail={"code": "AGENT_RUN_NOT_PAUSED", "status": run.status},
+        )
+    # A-12：放行改 DB 级 CAS——历史上检查与派发之间无锁，并发 resume 双跑
+    # （LLM 花费翻倍、memory_json 档案互相覆盖）；UPDATE 抢占成功才派发
+    claimed = db.execute(
+        sa_update(AgentRun)
+        .where(AgentRun.id == run.id, AgentRun.status == "waiting_guidance")
+        .values(status="running", heartbeat_at=_agent_utcnow())
+    ).rowcount
+    db.commit()
+    if not claimed:
+        raise HTTPException(
+            409, detail={"code": "AGENT_RUN_NOT_PAUSED", "status": "running"},
         )
     from app.services.agent.executor import AgentRunNotExecutable, launch_agent_run
 
