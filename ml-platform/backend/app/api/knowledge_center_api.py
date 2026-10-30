@@ -7,7 +7,7 @@ human-review gate's formal UI backend).
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.api.users import get_current_admin
@@ -197,6 +197,47 @@ def annotate_experience(
     except LookupError as error:
         raise HTTPException(404, detail={"code": "EXPERIENCE_NOT_FOUND"}) from error
     return {"id": str(entry.id), "human_note": entry.human_note}
+
+
+@router.delete("/experience/{entry_id}")
+def delete_experience(
+    entry_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """物理删除单条经验（管理员；真源不可逆操作，界面入口均带确认）。"""
+    entry = db.get(ExperienceEntry, _uuid(entry_id))
+    if entry is None:
+        raise HTTPException(404, detail={"code": "EXPERIENCE_NOT_FOUND"})
+    db.delete(entry)
+    db.commit()
+    return {"id": str(entry_id)}
+
+
+class ExperienceBatchDeleteRequest(BaseModel):
+    ids: list[str] = Field(min_length=1)
+
+
+@router.post("/experience/batch-delete")
+def batch_delete_experience(
+    payload: ExperienceBatchDeleteRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    ids = []
+    for raw in payload.ids[:200]:
+        try:
+            ids.append(_uuid(raw))
+        except HTTPException:
+            continue
+    deleted = 0
+    for entry_id in ids:
+        entry = db.get(ExperienceEntry, entry_id)
+        if entry is not None:
+            db.delete(entry)
+            deleted += 1
+    db.commit()
+    return {"deleted": deleted}
 
 
 def _uuid(value: str) -> UUID:

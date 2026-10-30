@@ -145,6 +145,29 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
     }
   }
 
+  const batchDelete = async () => {
+    try {
+      const res = await apiClient.post('/knowledge-center/experience/batch-delete', {
+        ids: selectedEntryIds,
+      })
+      message.success(`已删除 ${res.data?.deleted ?? selectedEntryIds.length} 条`)
+      setSelectedEntryIds([])
+      load()
+    } catch (error) {
+      message.error(formatApiError(error, text.updateFailed))
+    }
+  }
+
+  const deleteEntry = async (entry: ExperienceEntry) => {
+    try {
+      await apiClient.delete(`/knowledge-center/experience/${entry.id}`)
+      message.success('已删除')
+      load()
+    } catch (error) {
+      message.error(formatApiError(error, text.updateFailed))
+    }
+  }
+
   const deleteKb = async (kb: Record<string, unknown>) => {
     try {
       await apiClient.delete(`/knowledge/bases/${kb.id}`)
@@ -245,7 +268,7 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
     { title: text.colNote, dataIndex: 'human_note', ellipsis: true, render: (value: string | null) => value || '—' },
     {
       title: text.colActions,
-      width: 200,
+      width: 280,
       render: (_: unknown, record: ExperienceEntry) => (
         <Space>
           <Button size="small" icon={<EyeOutlined />} onClick={() => setPreviewEntry(record)}>
@@ -258,6 +281,11 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
               </Button>
             </Popconfirm>
           )}
+          <Popconfirm title="物理删除该条目？不可恢复。" onConfirm={() => deleteEntry(record)}>
+            <Button size="small" danger icon={<DeleteOutlined />}>
+              删除
+            </Button>
+          </Popconfirm>
           <Button
             size="small"
             onClick={() => {
@@ -367,9 +395,19 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
         extra={
           <Space>
             {selectedEntryIds.length > 0 && (
-              <Button danger size="small" icon={<StopOutlined />} onClick={batchRetire}>
-                {text.batchRetire}（{selectedEntryIds.length}）
-              </Button>
+              <>
+                <Button danger size="small" icon={<StopOutlined />} onClick={batchRetire}>
+                  {text.batchRetire}（{selectedEntryIds.length}）
+                </Button>
+                <Popconfirm
+                  title={`物理删除所选 ${selectedEntryIds.length} 条？不可恢复。`}
+                  onConfirm={batchDelete}
+                >
+                  <Button danger size="small" icon={<DeleteOutlined />}>
+                    批量删除（{selectedEntryIds.length}）
+                  </Button>
+                </Popconfirm>
+              </>
             )}
             <Button icon={<ReloadOutlined />} onClick={load}>
               {text.refresh}
@@ -386,7 +424,7 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
           rowSelection={{
             selectedRowKeys: selectedEntryIds,
             onChange: (keys) => setSelectedEntryIds(keys as string[]),
-            getCheckboxProps: (record: ExperienceEntry) => ({ disabled: record.status !== 'active' }),
+            getCheckboxProps: () => ({ disabled: false }),
           }}
         />
       </Card>
@@ -450,6 +488,48 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
           <div style={{ color: 'var(--v2-dim)', fontSize: 12 }}>
             绑定后该知识库即参与统一检索（可在此后用开关与范围列细调）。
           </div>
+        </Form>
+      </Modal>
+      <Modal
+        title="编辑绑定"
+        open={!!editingBinding}
+        onCancel={() => setEditingBinding(null)}
+        onOk={() => editForm.submit()}
+        okText="保存"
+        cancelText="取消"
+        destroyOnHidden
+      >
+        <Form form={editForm} layout="vertical" onFinish={saveBindingEdit} autoComplete="off">
+          <Form.Item name="enabled" label="总开关" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <Form.Item name="scope_projects" label="项目范围（留空 = 全部项目）">
+            <Select
+              mode="multiple"
+              placeholder="选择可见项目"
+              options={projects.map((p) => ({ value: p.id, label: p.name ?? p.id }))}
+              optionFilterProp="label"
+              showSearch
+            />
+          </Form.Item>
+          <Form.Item name="scope_chat" label="参与 AI 对话检索" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <Form.Item name="scope_agent_s1" label="参与 S1 建模分析" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <Form.Item name="retrieval_top_k" label="检索条数 top_k">
+            <InputNumber min={1} max={20} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="retrieval_trigger" label="触发方式">
+            <Select options={[{ value: 'auto', label: 'auto（自动检索）' }, { value: 'explicit', label: 'explicit（显式请求）' }]} />
+          </Form.Item>
+          <Form.Item name="sync_receive_experience" label="接收经验同步" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <Form.Item name="sync_experience_min_confidence" label="经验同步置信度门槛">
+            <InputNumber min={0} max={1} step={0.05} style={{ width: '100%' }} />
+          </Form.Item>
         </Form>
       </Modal>
       <Drawer

@@ -157,6 +157,6 @@ describe("KnowledgeCenterPage", () => {
     expect(await screen.findByText("知识库管理")).toBeInTheDocument();
     expect(await screen.findByText("拧紧工艺标准")).toBeInTheDocument();
     expect(screen.getByText("管理文档")).toBeInTheDocument();
-    expect(screen.getByText("删除")).toBeInTheDocument();
+    expect(screen.getAllByText("删除").length).toBeGreaterThanOrEqual(1);
   });
 });
