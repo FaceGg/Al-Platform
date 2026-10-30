@@ -112,8 +112,8 @@ class UserGuidance(BaseModel):
     modeling: GuidanceModeling = Field(default_factory=GuidanceModeling)
     evaluation: GuidanceEvaluation = Field(default_factory=GuidanceEvaluation)
     pause_at_stages: list[str] = Field(default_factory=list)
-    # 搜索轮数上限（1-5，默认 3）：双门禁迭代的安全阀，用户可收紧/放宽。
-    max_rounds: int = Field(default=3, ge=1, le=5)
+    # 搜索轮数上限（1-10，默认 3）：双门禁迭代的安全阀，用户可收紧/放宽。
+    max_rounds: int = Field(default=3, ge=1, le=10)
     # 启动并服务化：验收通过（accepted）后自动起草 S5 三资产（发布仍需人工批准）。
     auto_servitize: bool = Field(default=False)
 

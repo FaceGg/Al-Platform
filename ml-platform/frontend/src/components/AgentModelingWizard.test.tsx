@@ -89,7 +89,7 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     fireEvent.click(await screen.findByText("LightGBM"));
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
 
-    // Step 4: gates default recall 0.90; keep and launch.
+    // Step 4: gates default blank (不设门禁)；keep and launch.
     expect(await screen.findByText(/验收指标阈值/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
 
@@ -109,7 +109,7 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     expect(payload.guidance.analysis.prompts).toEqual(["关注工装漂移"]);
     expect(payload.guidance.feature.data_shape).toBe("tabular");
     expect(payload.guidance.modeling.algorithm_whitelist).toEqual(["lightgbm"]);
-    expect(payload.guidance.evaluation.metric_gates).toEqual({ recall_minority: 0.9 });
+    expect(payload.guidance.evaluation.metric_gates).toEqual({});
   });
 
   it("expands step-by-step mode into the pause plan on submit", async () => {

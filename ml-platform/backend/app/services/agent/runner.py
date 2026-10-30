@@ -435,7 +435,7 @@ class AgentRunner:
             rounds_cap = int(guidance_dict.get("max_rounds") or MAX_ROUNDS)
         except (TypeError, ValueError):
             rounds_cap = MAX_ROUNDS
-        rounds_cap = max(1, min(5, rounds_cap))
+        rounds_cap = max(1, min(10, rounds_cap))
         while round_number < rounds_cap:
             round_number += 1
             self.run.round_count = round_number

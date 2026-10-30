@@ -34,11 +34,11 @@ const MODELING_PROMPT_CHIPS = [
   { label: "限轻量模型", prompt: "限制轻量模型，避免大容量过拟合" },
 ];
 const METRIC_ROWS: { key: string; label: string }[] = [
-  { key: "recall_minority", label: "召回(少数类)" },
-  { key: "precision", label: "精度" },
-  { key: "f1", label: "F1" },
   { key: "accuracy", label: "Acc" },
   { key: "roc_auc", label: "AUC" },
+  { key: "f1", label: "F1" },
+  { key: "precision", label: "精度" },
+  { key: "recall_minority", label: "召回(少数类)" },
 ];
 
 interface ProjectOption { id: string; name?: string }
@@ -74,7 +74,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   const [modelingPrompt, setModelingPrompt] = useState("");
 
   // Step 4
-  const [metricGates, setMetricGates] = useState<Record<string, string>>({ recall_minority: "0.90" });
+  const [metricGates, setMetricGates] = useState<Record<string, string>>({});
   const [reviewFocus, setReviewFocus] = useState("");
   const [testDatasetId, setTestDatasetId] = useState("");
   const [maxRounds, setMaxRounds] = useState("3");
@@ -234,7 +234,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
             metric_gates: gates,
             review_focus: reviewFocus.trim() ? [reviewFocus.trim()] : [],
           },
-          max_rounds: Math.max(1, Math.min(5, Number(maxRounds) || 3)),
+          max_rounds: Math.max(1, Math.min(10, Number(maxRounds) || 3)),
           auto_servitize: servitize,
         },
       });
@@ -507,10 +507,10 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
             <h4><span className="bar" />{zh ? "搜索轮数上限" : "Iteration rounds"}</h4>
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
               {zh ? "双门禁迭代最多轮数" : "Max rounds"}
-              <input className="v2-select" style={{ width: 90 }} type="number" min={1} max={5}
+              <input className="v2-select" style={{ width: 90 }} type="number" min={1} max={10}
                 value={maxRounds} onChange={(e) => setMaxRounds(e.target.value)}
                 aria-label={zh ? "搜索轮数" : "Rounds"} />
-              <span style={{ color: "var(--v2-dim)", fontSize: 11.5 }}>{zh ? "（1-5，默认 3；轮数越多耗时与 Token 越多）" : "1-5, default 3"}</span>
+              <span style={{ color: "var(--v2-dim)", fontSize: 11.5 }}>{zh ? "（1-10，默认 3；轮数越多耗时与 Token 越多）" : "1-10, default 3"}</span>
             </label>
           </div>
           <div className="v2-panel">
@@ -598,11 +598,16 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
             onClick={() => setStep((step + 1) as StepId)}>{zh ? "下一步" : "Next"} →</button>
         ) : (
           <div style={{ display: "flex", gap: 10 }}>
-            <button type="button" className="v2-btn" disabled={submitting || !datasetId || !targetColumn} onClick={() => void submit(false)}>
+            <button type="button" className="v2-btn primary" disabled={submitting || !datasetId || !targetColumn} onClick={() => void submit(false)}>
               <RocketOutlined />{submitting ? (zh ? "提交中…" : "Submitting…") : (zh ? "启动智能体" : "Launch agent")}
             </button>
-            <button type="button" className="v2-btn primary" disabled={submitting || !datasetId || !targetColumn} onClick={() => void submit(true)}>
-              <RocketOutlined />{zh ? "启动智能体并服务化（验收通过后自动起草发布资产）" : "Launch & servitize"}
+            <button
+              type="button"
+              className="v2-btn primary"
+              style={{ background: "linear-gradient(135deg, #52c41a, #389e0d)", borderColor: "#52c41a" }}
+              disabled={submitting || !datasetId || !targetColumn} onClick={() => void submit(true)}
+            >
+              <RocketOutlined />{zh ? "启动并服务化" : "Launch & servitize"}
             </button>
           </div>
         )}
