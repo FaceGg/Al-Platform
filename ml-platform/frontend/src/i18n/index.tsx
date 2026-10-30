@@ -90,7 +90,7 @@ const ZH = {
     setDefault: "设为默认档案",
   },
   kbcenter: {
-    title: "知识中心", refresh: "刷新", loadFailed: "加载失败", updateFailed: "更新失败",
+    title: "知识中心", refresh: "刷新", loadFailed: "加载失败", updateFailed: "更新失败", addBinding: "添加绑定",
     retireOk: "已否决", noteOk: "附注已保存",
     noteTitle: "附注（意见随条目存储，不改正文）", notePlaceholder: "人工附注",
     noteSave: "保存", noteCancel: "取消", retire: "否决", retireConfirm: "确认否决该经验？",
@@ -808,7 +808,7 @@ infraGroup: "Infrastructure", adminGroup: "Administration", prompt_templates: "P
     namePlaceholder: "Template name", contentPlaceholder: "Prompt content",
   },
   kbcenter: {
-    title: "Knowledge Center", refresh: "Refresh", loadFailed: "Load failed", updateFailed: "Update failed",
+    title: "Knowledge Center", refresh: "Refresh", loadFailed: "Load failed", updateFailed: "Update failed", addBinding: "Add binding",
     retireOk: "Retired", noteOk: "Note saved",
     noteTitle: "Note (stored with the entry, body is read-only)", notePlaceholder: "Human note",
     noteSave: "Save", noteCancel: "Cancel", retire: "Retire", retireConfirm: "Retire this lesson?",

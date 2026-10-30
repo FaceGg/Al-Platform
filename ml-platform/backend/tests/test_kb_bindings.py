@@ -240,3 +240,34 @@ class TestKnowledgeCenterAPI(unittest.TestCase):
             "/api/knowledge-center/experience/%s/retire" % entry_id, headers=self.h
         )
         self.assertEqual(retired.json()["status"], "retired")
+
+    def test_create_binding_is_idempotent_per_kb(self):
+        from app.models.knowledge import KnowledgeBase
+
+        with SessionLocal() as db:
+            kb = KnowledgeBase(name="绑定测试库-" + uuid4().hex[:6], owner_id=None)
+            db.add(kb)
+            db.commit()
+            kb_id = str(kb.id)
+        first = client.post(
+            "/api/knowledge-center/bindings", json={"kb_id": kb_id}, headers=self.h
+        )
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(first.json()["kb_id"], kb_id)
+        second = client.post(
+            "/api/knowledge-center/bindings", json={"kb_id": kb_id}, headers=self.h
+        )
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(second.json()["id"], first.json()["id"])
+        bindings = client.get("/api/knowledge-center/bindings", headers=self.h).json()
+        self.assertEqual(
+            len([b for b in bindings if b["kb_id"] == kb_id]), 1, "幂等：同库只一条绑定"
+        )
+
+    def test_create_binding_for_unknown_kb_returns_404(self):
+        response = client.post(
+            "/api/knowledge-center/bindings",
+            json={"kb_id": "00000000-0000-0000-0000-000000000000"},
+            headers=self.h,
+        )
+        self.assertEqual(response.status_code, 404)

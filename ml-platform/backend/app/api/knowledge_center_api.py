@@ -92,6 +92,28 @@ def list_bindings(
     return [_binding_out(db, binding) for binding in bindings]
 
 
+class CreateBindingRequest(BaseModel):
+    kb_id: str
+
+
+@router.post("/bindings", status_code=201)
+def create_binding(
+    payload: CreateBindingRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """为已有知识库创建检索绑定（幂等：同库重复创建返回既有绑定）。"""
+    try:
+        kb_uuid = UUID(str(payload.kb_id))
+    except (TypeError, ValueError) as error:
+        raise HTTPException(422, detail={"code": "IDENTIFIER_INVALID"}) from error
+    kb = db.get(KnowledgeBase, kb_uuid)
+    if kb is None:
+        raise HTTPException(404, detail={"code": "KNOWLEDGE_BASE_NOT_FOUND"})
+    binding = get_or_create_binding(db, kb.id)
+    return _binding_out(db, binding)
+
+
 @router.patch("/bindings/{binding_id}")
 def patch_binding(
     binding_id: str,

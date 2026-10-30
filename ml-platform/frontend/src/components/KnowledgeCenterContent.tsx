@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Button, Input, message, Popconfirm, Space, Card, Switch, Form, Modal } from 'antd'
+import { Table, Tag, Button, Input, message, Popconfirm, Space, Card, Switch, Form, Modal, Select } from 'antd'
 import { ReloadOutlined, PushpinOutlined, PlusOutlined, DeleteOutlined, FileTextOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import apiClient from '../api/client'
@@ -28,7 +28,9 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
   const [noteTarget, setNoteTarget] = useState<string | null>(null)
   const [noteText, setNoteText] = useState('')
   const [kbModalOpen, setKbModalOpen] = useState(false)
+  const [bindModalOpen, setBindModalOpen] = useState(false)
   const [kbForm] = Form.useForm()
+  const [bindForm] = Form.useForm()
 
   const load = () => {
     setLoading(true)
@@ -43,6 +45,10 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
   }
 
   useEffect(load, [])
+
+  const unboundKbs = kbs.filter(
+    (kb) => !bindings.some((b) => b.kb_id === kb.id)
+  )
 
   const toggleBinding = async (binding: KBBinding, enabled: boolean) => {
     try {
@@ -84,6 +90,16 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
       load()
     } catch (error) {
       message.error(formatApiError(error, '创建失败'))
+    }
+  }
+
+  const createBinding = async (kbId: string) => {
+    try {
+      await apiClient.post('/knowledge-center/bindings', { kb_id: kbId })
+      message.success('绑定已创建——该知识库现参与统一检索')
+      load()
+    } catch (error) {
+      message.error(formatApiError(error, '绑定失败'))
     }
   }
 
@@ -257,9 +273,16 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
       <Card
         title={text.title}
         extra={
-          <Button icon={<ReloadOutlined />} onClick={load}>
-            {text.refresh}
-          </Button>
+          <Space>
+            {unboundKbs.length > 0 && (
+              <Button icon={<PlusOutlined />} onClick={() => setBindModalOpen(true)}>
+                {text.addBinding}
+              </Button>
+            )}
+            <Button icon={<ReloadOutlined />} onClick={load}>
+              {text.refresh}
+            </Button>
+          </Space>
         }
         style={{ marginBottom: 16 }}
       >
@@ -301,6 +324,33 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={3} maxLength={500} placeholder="知识库用途说明（可选）" />
           </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        title={text.addBinding}
+        open={bindModalOpen}
+        onCancel={() => setBindModalOpen(false)}
+        onOk={() => {
+          const kbId = bindForm.getFieldValue('kb_id')
+          if (kbId) createBinding(kbId)
+          setBindModalOpen(false)
+        }}
+        okText={text.addBinding}
+        cancelText={t.common.cancel}
+        destroyOnHidden
+      >
+        <Form form={bindForm} layout="vertical" autoComplete="off">
+          <Form.Item name="kb_id" label="选择知识库" rules={[{ required: true, message: '请选择知识库' }]}>
+            <Select
+              placeholder="选择未绑定的知识库"
+              options={unboundKbs.map((kb) => ({ value: kb.id as string, label: String(kb.name ?? kb.id) }))}
+              optionFilterProp="label"
+              showSearch
+            />
+          </Form.Item>
+          <div style={{ color: 'var(--v2-dim)', fontSize: 12 }}>
+            绑定后该知识库即参与统一检索（可在此后用开关与范围列细调）。
+          </div>
         </Form>
       </Modal>
     </>
