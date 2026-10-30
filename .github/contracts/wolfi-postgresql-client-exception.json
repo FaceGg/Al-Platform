@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "id": "wolfi-postgresql-16-client-16-15-pending",
+  "owner": "ml-platform-maintainers",
+  "reviewed_at": "2026-10-29",
+  "expires_on": "2026-12-31",
+  "package": "postgresql-16-client",
+  "installed_version": "16.14-r1",
+  "pending_fixed_version": "16.15-r0",
+  "advisory_ids": [
+    "CVE-2026-14662",
+    "CVE-2026-14664",
+    "CVE-2026-14668",
+    "CVE-2026-14669",
+    "CVE-2026-14670",
+    "CVE-2026-14671",
+    "CVE-2026-14677",
+    "CVE-2026-14679",
+    "CVE-2026-14680",
+    "CVE-2026-15741",
+    "CVE-2026-15742",
+    "CVE-2026-16239",
+    "CVE-2026-18408",
+    "CVE-2026-19385",
+    "CVE-2026-6464",
+    "CVE-2026-6471"
+  ],
+  "mitigation": "The pinned wolfi apk repository publishes at most postgresql-16-client 16.14-r1; trivy-db already tracks the fixes as 16.15-r0, which wolfi has not released yet. The container exposes no PostgreSQL service (the client is used only for psql-based operational probes against an external database), and the pin is bumped as soon as wolfi publishes 16.15-r0."
+}

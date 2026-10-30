@@ -3016,8 +3016,76 @@ def _raw_scan_report_error(name: str, value: object) -> str | None:
                     not isinstance(result[finding_name], list) or result[finding_name]
                 ):
                     return "SECURITY_EVIDENCE_INVALID"
-        return None
+        return evaluate_trivy_image_exception(value, today=_trivy_today())
+
     return "SECURITY_EVIDENCE_INVALID"
+
+
+def _trivy_today() -> date:
+    """时间冻结点（测试注入用）；生产取当前 UTC 日期。"""
+    return date.today()
+
+
+def evaluate_trivy_image_exception(
+    report: Mapping[str, object],
+    *,
+    today: date | None = None,
+) -> str | None:
+    """Trivy 镜像扫描的时限豁免（仿 npm-audit exception 合同）。
+
+    场景：trivy-db 已跟踪修复但上游 wolfi 仓库尚未发布修复版——钉版无法
+    安装"已修复"版本。合同要求 reviewed_at/expires_on、钉定的当前版本、
+    待修复版本与完整 advisory 清单；过期或发现清单外 CVE 即拒绝。
+    """
+    exception_path = _repository_root() / ".github" / "contracts" / (
+        "wolfi-postgresql-client-exception.json"
+    )
+    try:
+        exception = json.loads(exception_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "SECURITY_EVIDENCE_INVALID"
+    required = (
+        "schema_version", "id", "owner", "reviewed_at", "expires_on",
+        "package", "installed_version", "pending_fixed_version",
+        "advisory_ids", "mitigation",
+    )
+    if not isinstance(exception, dict) or any(key not in exception for key in required):
+        return "SECURITY_EVIDENCE_INVALID"
+    if exception["schema_version"] != 1:
+        return "SECURITY_EVIDENCE_INVALID"
+    try:
+        expiry_date = date.fromisoformat(str(exception["expires_on"]))
+    except ValueError:
+        return "SECURITY_EVIDENCE_INVALID"
+    effective_today = today or date.today()
+    if effective_today >= expiry_date:
+        return "SECURITY_EVIDENCE_INVALID"
+
+    advisory_ids = exception["advisory_ids"]
+    if not isinstance(advisory_ids, list):
+        return "SECURITY_EVIDENCE_INVALID"
+    allowed = {str(item) for item in advisory_ids}
+    package = str(exception["package"])
+    installed = str(exception["installed_version"])
+
+    remaining = []
+    for result in report.get("Results") or []:
+        if not isinstance(result, dict):
+            continue
+        for finding in result.get("Vulnerabilities") or []:
+            if not isinstance(finding, dict):
+                continue
+            if finding.get("InstalledVersion") != installed:
+                continue
+            # postgresql-16-client-base 与 postgresql-16-client 共享源码包与
+            # 同一批 CVE（wolfi 拆两个 apk），合同按前缀同时覆盖
+            if not str(finding.get("PkgName", "")).startswith(package):
+                continue
+            if finding.get("VulnerabilityID") in allowed:
+                continue
+            remaining.append(finding)
+    return None if not remaining else "SECURITY_EVIDENCE_INVALID"
+
 
 
 def run_all(
