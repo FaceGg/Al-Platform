@@ -286,7 +286,10 @@ function buildStreamLines(archive: AgentRunDetail, zh: boolean): StreamLine[] {
       text: zh ? "暂无轮次记录——该任务运行早于阶段产物落档案功能上线（2026-10-27），新任务将逐阶段流式记录。" : "This run predates per-stage artifact persistence.",
     });
   }
-  lines.push({ key: "final", sectionId: "final", sectionLabel: zh ? "结果" : "Result", kind: "outcome" });
+  // 结果块只在终态渲染——running/pending 不是"未通过"（a1d8bd26 误报修复）。
+  if (!ACTIVE_STATUSES.has(archive.status)) {
+    lines.push({ key: "final", sectionId: "final", sectionLabel: zh ? "结果" : "Result", kind: "outcome" });
+  }
   return lines;
 }
 
