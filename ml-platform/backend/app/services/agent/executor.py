@@ -70,7 +70,13 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
     import pandas as pd
     from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
     from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import f1_score, recall_score
+    from sklearn.metrics import (
+        accuracy_score,
+        f1_score,
+        precision_score,
+        recall_score,
+        roc_auc_score,
+    )
     from sklearn.model_selection import train_test_split
     from sklearn.preprocessing import LabelEncoder
 
@@ -114,15 +120,24 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
             model.fit(X_train, y_train)
             proba = model.predict_proba(X_test)[:, list(model.classes_).index(minority)]
             preds = (proba >= 0.5).astype(int)
-            recall = float(recall_score(y_test == minority, preds, zero_division=0))
-            f1 = float(f1_score(y_test == minority, preds, zero_division=0))
+            truth = y_test == minority
+            recall = float(recall_score(truth, preds, zero_division=0))
+            f1 = float(f1_score(truth, preds, zero_division=0))
+            precision = float(precision_score(truth, preds, zero_division=0))
+            accuracy = float(accuracy_score(y_test, preds))
+            # roc_auc 需要测试集两类齐全；单类测试集下无定义 → 置 None 跳过门禁。
+            roc_auc = (
+                float(roc_auc_score(truth.astype(int), proba))
+                if len(set(y_test)) > 1
+                else None
+            )
         except Exception:  # noqa: BLE001 - 单家族失败不拖垮整个 S3
             continue
-        scored.append((name, model, recall, f1))
+        scored.append((name, model, recall, f1, precision, accuracy, roc_auc))
     if not scored:
         return {"metrics": {}, "topk_metrics": [], "importance": []}
     scored.sort(key=lambda item: item[2], reverse=True)
-    best_name, best, best_recall, best_f1 = scored[0]
+    best_name, best, best_recall, best_f1, best_precision, best_accuracy, best_roc_auc = scored[0]
     if hasattr(best, "feature_importances_"):
         weights = best.feature_importances_
     else:
@@ -134,10 +149,19 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
         ),
         key=lambda item: -item["importance"],
     )[:12]
+    metrics = {
+        "recall_minority": round(best_recall, 4),
+        "f1": round(best_f1, 4),
+        "precision": round(best_precision, 4),
+        "accuracy": round(best_accuracy, 4),
+    }
+    if best_roc_auc is not None:
+        metrics["roc_auc"] = round(best_roc_auc, 4)
     return {
-        "metrics": {"recall_minority": round(best_recall, 4), "f1": round(best_f1, 4)},
+        "metrics": metrics,
         "topk_metrics": [
-            {"recall_minority": round(recall, 4)} for _n, _m, recall, _f in scored
+            {"recall_minority": round(recall, 4)}
+            for _n, _m, recall, _f, _p, _a, _r in scored
         ],
         "importance": importance,
     }
