@@ -292,7 +292,7 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
           rowKey="id"
           size="small"
           loading={loading}
-          dataSource={kbs}
+          dataSource={kbs.filter((kb) => !systemKbIds.has(String(kb.id)))}
           pagination={kbs.length > 8 ? { pageSize: 8 } : false}
           locale={{ emptyText: '暂无知识库 —— 点击右上角「新建知识库」创建，或到旧版知识库页迁移' }}
           columns={[
