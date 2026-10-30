@@ -1,16 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App as AntApp } from "antd";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import KnowledgeGraphPage from "./KnowledgeGraphPage";
-
-// jsdom 无 canvas 实现；图谱绘制在测试中打桩跳过。
-beforeAll(() => {
-  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
-    return 0;
-  });
-  (HTMLCanvasElement.prototype as any).getContext = vi.fn(() => null);
-});
 
 const { get, post } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 
@@ -18,7 +10,6 @@ vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{c
 vi.mock("../api/client", () => ({ default: { get, post, delete: vi.fn() } }));
 vi.mock("../i18n", () => ({
   useI18n: () => ({
-    lang: "zh",
     t: {
       common: { error: "Error", success: "Success", loading: "No data" },
       nav: { data: "Data" },
@@ -48,34 +39,22 @@ describe("KnowledgeGraphPage", () => {
     post.mockResolvedValue({ data: { id: "entity-1" } });
   });
 
-  it("renders the display-only graph view: entity list left, canvas right, no edit forms", async () => {
-    get.mockImplementation((url: string) => {
-      if (url === "/knowledge/bases") {
-        return Promise.resolve({ data: [{ id: "kb-1", name: "Weld KB" }] });
-      }
-      if (url === "/knowledge/bases/kb-1/graph") {
-        return Promise.resolve({ data: {
-          nodes: [
-            { id: "n1", name: "点焊工艺", entity_type: "process", properties: { source: "auto" } },
-            { id: "n2", name: "GB 9448", entity_type: "standard", properties: { source: "auto" } },
-          ],
-          edges: [{ source_id: "n1", target_id: "n2", relation_type: "applies_to" }],
-        } });
-      }
-      return Promise.reject(new Error(`Unexpected URL: ${url}`));
-    });
+  it("creates graph entities through the canonical graph route", async () => {
     render(<AntApp><KnowledgeGraphPage /></AntApp>);
 
+    // KB 选择器在 DOM 序中最前（搜索框在其后）
     fireEvent.mouseDown((await screen.findAllByRole("combobox"))[0]);
     fireEvent.click(await screen.findByText("Weld KB"));
-    expect(await screen.findByText("实体列表")).toBeInTheDocument();
-    expect(await screen.findByText("点焊工艺")).toBeInTheDocument();
-    // 纯展示：无添加实体/关系表单与删除按钮
-    expect(screen.queryByText("Entity name")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Add entity/)).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Delete/ })).not.toBeInTheDocument();
-    // 自动抽取（数据生成）保留在工具栏
-    expect(screen.getByRole("button", { name: /自动抽取/ })).toBeInTheDocument();
+    fireEvent.change(await screen.findByLabelText("Entity name"), { target: { value: "Heat" } });
+    fireEvent.change(screen.getByLabelText("Entity type"), { target: { value: "process" } });
+    fireEvent.click(screen.getByRole("button", { name: /Add entity/ }));
+
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith(
+        "/knowledge/bases/kb-1/graph/entities",
+        { name: "Heat", entity_type: "process" },
+      );
+    });
   });
 
   it("auto-extracts the graph layer from knowledge base documents", async () => {
@@ -90,7 +69,7 @@ describe("KnowledgeGraphPage", () => {
     // KB 选择器在 DOM 序中最前（搜索框在其后）
     fireEvent.mouseDown((await screen.findAllByRole("combobox"))[0]);
     fireEvent.click(await screen.findByText("Weld KB"));
-    const extract = await screen.findByRole("button", { name: /自动抽取/ });
+    const extract = await screen.findByRole("button", { name: /Auto extract/ });
     fireEvent.click(extract);
 
     await waitFor(() => {

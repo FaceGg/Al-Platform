@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Tabs, Upload, Button, List, Typography, Input, message, Card, Space, Spin, Tag, Empty, Modal, Progress, Collapse, Statistic, Row, Col, Form, Select, Popconfirm } from "antd";
+import { Tabs, Upload, Button, List, Typography, Input, message, Card, Space, Spin, Tag, Empty, Modal, Progress, Collapse, Statistic, Row, Col, Popconfirm } from "antd";
 import { UploadOutlined, DeleteOutlined, SearchOutlined, SendOutlined, PlusOutlined, ArrowLeftOutlined, EyeOutlined, FileTextOutlined, ScissorOutlined, ApartmentOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient from "../api/client";
@@ -31,8 +31,6 @@ export default function KnowledgeDetailPage() {
   const [vectorizing, setVectorizing] = useState(false);
   const [entities, setEntities] = useState<any[]>([]);
   const [relations, setRelations] = useState<any[]>([]);
-  const [entityForm] = Form.useForm();
-  const [relationForm] = Form.useForm();
   const heatRef = useRef<HTMLDivElement>(null);
   const distRef = useRef<HTMLDivElement>(null);
   const heatChartRef = useRef<echarts.ECharts | null>(null);
@@ -220,37 +218,57 @@ export default function KnowledgeDetailPage() {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   };
 
-  const addEntity = async (values: { name: string; entity_type: string }) => {
-    try {
-      await apiClient.post(`/knowledge/bases/${kbId}/graph/entities`, values);
-      message.success(zh ? "实体已添加" : "Entity added");
-      entityForm.resetFields(); loadGraph();
-    } catch (e: any) { message.error(e.response?.data?.detail || t.common.error); }
-  };
+  // 知识图谱预览：点击实体聚焦其邻域（纯展示，编辑在独立图谱工具中）。
+  const [focusEntity, setFocusEntity] = useState<string | null>(null);
+  const graphCanvasRef = useRef<HTMLDivElement>(null);
 
-  const deleteEntity = async (entity: any) => {
-    try {
-      await apiClient.delete(`/knowledge/graph/entities/${entity.id}`);
-      message.success(zh ? "实体已删除" : "Entity deleted");
-      loadGraph();
-    } catch (e: any) { message.error(e.response?.data?.detail || t.common.error); }
-  };
-
-  const addRelation = async (values: { source_id: string; target_id: string; relation_type: string }) => {
-    try {
-      await apiClient.post(`/knowledge/bases/${kbId}/graph/relations`, values);
-      message.success(zh ? "关系已添加" : "Relation added");
-      relationForm.resetFields(); loadGraph();
-    } catch (e: any) { message.error(e.response?.data?.detail || t.common.error); }
-  };
-
-  const deleteRelation = async (relation: any) => {
-    try {
-      await apiClient.delete(`/knowledge/graph/relations/${relation.id}`);
-      message.success(zh ? "关系已删除" : "Relation deleted");
-      loadGraph();
-    } catch (e: any) { message.error(e.response?.data?.detail || t.common.error); }
-  };
+  useEffect(() => {
+    if (activeTab !== "graph" || !graphCanvasRef.current || entities.length === 0) return;
+    const chart = echarts.init(graphCanvasRef.current);
+    const degree = new Map<string, number>();
+    for (const rel of relations) {
+      degree.set(rel.source_id, (degree.get(rel.source_id) || 0) + 1);
+      degree.set(rel.target_id, (degree.get(rel.target_id) || 0) + 1);
+    }
+    let view = entities;
+    if (focusEntity) {
+      const keep = new Set([focusEntity]);
+      for (const rel of relations) {
+        if (rel.source_id === focusEntity) keep.add(rel.target_id);
+        if (rel.target_id === focusEntity) keep.add(rel.source_id);
+      }
+      view = entities.filter((e) => keep.has(e.id));
+    } else if (entities.length > 60) {
+      view = [...entities]
+        .sort((a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0))
+        .slice(0, 60);
+    }
+    const keepIds = new Set(view.map((e) => e.id));
+    chart.setOption({
+      tooltip: {},
+      series: [{
+        type: "graph",
+        layout: "force",
+        roam: true,
+        data: view.map((e) => ({
+          id: e.id, name: e.name, category: e.entity_type,
+          symbolSize: 18 + Math.min(26, (degree.get(e.id) || 0) * 5),
+        })),
+        links: relations
+          .filter((r) => keepIds.has(r.source_id) && keepIds.has(r.target_id))
+          .map((r) => ({ source: r.source_id, target: r.target_id, name: r.relation_type })),
+        categories: [...new Set(view.map((e) => e.entity_type))].map((name) => ({ name })),
+        label: { show: true, fontSize: 10 },
+        force: { repulsion: 140, edgeLength: 90 },
+        lineStyle: { color: "#aaa", curveness: 0.1 },
+      }],
+    });
+    const onClick = (params: any) => {
+      if (params.dataType === "node") setFocusEntity(focusEntity === params.name ? null : params.name);
+    };
+    chart.on("click", onClick);
+    return () => { chart.off("click", onClick); chart.dispose(); };
+  }, [activeTab, entities, relations, focusEntity]);
 
   const entityName = (id: string) => entities.find((e) => e.id === id)?.name ?? id.slice(0, 8);
   const totalChunks = docs.reduce((sum, d: any) => sum + (d.chunk_count || 0), 0);
@@ -398,81 +416,33 @@ export default function KnowledgeDetailPage() {
     {
       key: "graph", label: <><ApartmentOutlined /> {zh ? "知识图谱" : "Graph"}</>,
       children: (
-        <div>
-          <Row gutter={16}>
-            <Col span={10}>
-              <Card size="small" title={zh ? "实体" : "Entities"} extra={
-                <Form layout="inline" form={entityForm} onFinish={addEntity} initialValues={{ entity_type: "concept" }}>
-                  <Form.Item name="name" rules={[{ required: true, message: zh ? "请输入实体名" : "required" }]}>
-                    <Input placeholder={zh ? "实体名" : "Name"} style={{ width: 110 }} />
-                  </Form.Item>
-                  <Form.Item name="entity_type">
-                    <Select style={{ width: 90 }} options={[
-                      { value: "concept", label: zh ? "概念" : "Concept" },
-                      { value: "equipment", label: zh ? "设备" : "Equipment" },
-                      { value: "process", label: zh ? "工艺" : "Process" },
-                      { value: "standard", label: zh ? "标准" : "Standard" },
-                    ]} />
-                  </Form.Item>
-                  <Button htmlType="submit" size="small" icon={<PlusOutlined />} />
-                </Form>
-              }>
-                {entities.length === 0 ? <Empty description={zh ? "暂无实体" : "No entities"} /> : (
-                  <List size="small" dataSource={entities} pagination={{ pageSize: 10, size: "small", showSizeChanger: false }} renderItem={(e: any) => (
-                    <List.Item actions={[
-                      <Popconfirm key="d" title={zh ? "删除该实体？" : "Delete?"} onConfirm={() => deleteEntity(e)}>
-                        <Button size="small" danger icon={<DeleteOutlined />} />
-                      </Popconfirm>,
-                    ]}>
-                      <Space><Tag color="blue">{e.entity_type}</Tag><Text>{e.name}</Text></Space>
-                    </List.Item>
-                  )} />
-                )}
-              </Card>
-            </Col>
-            <Col span={14}>
-              <Card size="small" title={zh ? "关系" : "Relations"} extra={
-                <Form layout="inline" form={relationForm} onFinish={addRelation} initialValues={{ relation_type: "related_to" }}>
-                  <Form.Item name="source_id" rules={[{ required: true, message: zh ? "选源实体" : "required" }]}>
-                    <Select placeholder={zh ? "源实体" : "Source"} style={{ width: 120 }} showSearch optionFilterProp="children"
-                      options={entities.map((e) => ({ value: e.id, label: e.name }))} />
-                  </Form.Item>
-                  <Form.Item name="relation_type">
-                    <Select style={{ width: 100 }} options={[
-                      { value: "related_to", label: zh ? "关联" : "related" },
-                      { value: "depends_on", label: zh ? "依赖" : "depends" },
-                      { value: "applies_to", label: zh ? "适用" : "applies" },
-                    ]} />
-                  </Form.Item>
-                  <Form.Item name="target_id" rules={[{ required: true, message: zh ? "选目标实体" : "required" }]}>
-                    <Select placeholder={zh ? "目标实体" : "Target"} style={{ width: 120 }} showSearch optionFilterProp="children"
-                      options={entities.map((e) => ({ value: e.id, label: e.name }))} />
-                  </Form.Item>
-                  <Button htmlType="submit" size="small" icon={<PlusOutlined />} />
-                </Form>
-              }>
-                {relations.length === 0 ? <Empty description={zh ? "暂无关系 —— 先建两个实体，再连一条关系" : "No relations yet"} /> : (
-                  <List size="small" dataSource={relations} pagination={{ pageSize: 10, size: "small", showSizeChanger: false }} renderItem={(rel: any) => (
-                    <List.Item actions={[
-                      <Popconfirm key="d" title={zh ? "删除该关系？" : "Delete?"} onConfirm={() => deleteRelation(rel)}>
-                        <Button size="small" danger icon={<DeleteOutlined />} />
-                      </Popconfirm>,
-                    ]}>
-                      <Space>
-                        <Text>{entityName(rel.source_id)}</Text>
-                        <Tag color="purple">{rel.relation_type}</Tag>
-                        <Text>{entityName(rel.target_id)}</Text>
-                      </Space>
-                    </List.Item>
-                  )} />
-                )}
-              </Card>
-            </Col>
-          </Row>
-          <div style={{ color: "var(--v2-dim)", fontSize: 11.5, marginTop: 8 }}>
-            {zh ? "知识图谱用于沉淀文档中的关键概念与工艺关系（设备—工艺—标准），供检索与后续推理使用。" : "Capture key concepts and process relations from documents."}
-          </div>
+        <>
+        <div style={{ display: "flex", gap: 12 }}>
+          <Card size="small" title={zh ? "实体" : "Entities"} style={{ width: 300, flex: "0 0 300px" }}
+            styles={{ body: { maxHeight: 430, overflowY: "auto", padding: "0 0" } }}>
+            {entities.length === 0 ? <Empty description={zh ? "暂无实体（图谱数据由文档自动抽取生成）" : "No entities"} /> : (
+              <List size="small" dataSource={entities} pagination={{ pageSize: 10, size: "small", showSizeChanger: false }} renderItem={(e: any) => (
+                <List.Item
+                  style={{ cursor: "pointer", background: focusEntity === e.id ? "#fff7e6" : undefined, padding: "4px 12px" }}
+                  onClick={() => setFocusEntity(focusEntity === e.id ? null : e.id)}
+                >
+                  <Space><Tag color="blue">{e.entity_type}</Tag><Text>{e.name}</Text></Space>
+                </List.Item>
+              )} />
+            )}
+          </Card>
+          <Card size="small" title={zh ? "关系预览" : "Relation preview"} style={{ flex: 1 }}
+            styles={{ body: { padding: 0 } }}>
+            {relations.length === 0 ? <Empty description={zh ? "暂无关系" : "No relations"} style={{ padding: 40 }} /> : (
+              <div ref={graphCanvasRef} style={{ width: "100%", height: 430 }} />
+            )}
+          </Card>
         </div>
+        <div style={{ color: "var(--v2-dim)", fontSize: 11.5, marginTop: 8 }}>
+          {zh ? "知识图谱沉淀文档中的关键概念与工艺关系（设备—工艺—标准）；点击左侧实体可在右侧聚焦其邻域。由文档自动抽取生成。"
+            : "Auto-extracted from documents. Click an entity to focus its neighborhood."}
+        </div>
+        </>
       ),
     },
   ];

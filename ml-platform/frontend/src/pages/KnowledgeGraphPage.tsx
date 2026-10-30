@@ -1,9 +1,9 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
-  Select, Button, List, Typography, message, Card, Space, Tag, Empty,
+  Select, Button, Form, Input, List, Typography, message, Card, Space, Tag, Empty,
   AutoComplete, Statistic, InputNumber,
 } from "antd";
-import { ReloadOutlined, ThunderboltOutlined, AimOutlined } from "@ant-design/icons";
+import { PlusOutlined, DeleteOutlined, ReloadOutlined, ThunderboltOutlined, AimOutlined } from "@ant-design/icons";
 import apiClient from "../api/client";
 import AppLayout from "../components/AppLayout";
 import { useI18n } from "../i18n";
@@ -23,7 +23,6 @@ interface GraphData {
 
 export default function KnowledgeGraphPage() {
   const { t, lang } = useI18n();
-  const zh = lang === "zh";
   const graphText = lang === "zh" ? {
     extract: "自动抽取", extracting: "抽取中...",
     extractDone: (e: number, r: number) => `抽取完成：新增实体 ${e} 个、关系 ${r} 条`,
@@ -58,6 +57,8 @@ export default function KnowledgeGraphPage() {
   const [hover, setHover] = useState<{ x: number; y: number; node: GraphNode } | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [viewSize, setViewSize] = useState(100);
+  const [form] = Form.useForm();
+  const [edgeForm] = Form.useForm();
   const [simNodes, setSimNodes] = useState<Array<GraphNode & { vx: number; vy: number }>>([]);
   const animRef = useRef<number>(0);
 
@@ -268,6 +269,28 @@ export default function KnowledgeGraphPage() {
     setHover(best ? { x: mx, y: my, node: best.node } : null);
   };
 
+  const addRelation = async (values: any) => {
+    try {
+      await apiClient.post("/knowledge/bases/" + selectedKb + "/graph/relations", values);
+      message.success(t.common.success);
+      edgeForm.resetFields();
+      loadGraph();
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || t.common.error);
+    }
+  };
+
+  const addEntity = async (values: any) => {
+    try {
+      await apiClient.post("/knowledge/bases/" + selectedKb + "/graph/entities", values);
+      message.success(t.common.success);
+      form.resetFields();
+      loadGraph();
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || t.common.error);
+    }
+  };
+
   const extractGraph = async () => {
     if (!selectedKb || extracting) return;
     setExtracting(true);
@@ -284,6 +307,16 @@ export default function KnowledgeGraphPage() {
       message.error(e.response?.data?.detail || graphText.extractFailed);
     } finally {
       setExtracting(false);
+    }
+  };
+
+  const deleteEntity = async (id: string) => {
+    try {
+      await apiClient.delete("/knowledge/graph/entities/" + id);
+      message.success(t.common.success);
+      loadGraph();
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || t.common.error);
     }
   };
 
@@ -334,40 +367,13 @@ export default function KnowledgeGraphPage() {
         </Space>
       </div>
       <div style={{ display: "flex", gap: 16 }}>
-        <Card
-          size="small"
-          title={zh ? "实体列表" : "Entities"}
-          style={{ width: 320, flex: "0 0 320px", display: "flex", flexDirection: "column" }}
-          styles={{ body: { flex: 1, overflowY: "auto", maxHeight: 470, padding: "0 0" } }}
-        >
-          <List
-            size="small"
-            dataSource={view.nodes}
-            locale={{ emptyText: <Empty description={zh ? "暂无实体——选择知识库后点击「自动抽取」生成" : "No entities yet"} /> }}
-            renderItem={(node: GraphNode) => (
-              <List.Item
-                style={{ cursor: "pointer", background: node.id === focusId ? "#fff7e6" : undefined, padding: "6px 14px" }}
-                onClick={() => setFocusId(node.id === focusId ? null : node.id)}
-              >
-                <Space wrap size={4}>
-                  <Tag color={node.type === "entity" ? "blue" : "green"}>{node.type || "entity"}</Tag>
-                  <Text>{node.label}</Text>
-                  {node.source === "auto"
-                    ? <Tag color="orange">{graphText.auto}</Tag>
-                    : <Tag>{graphText.manual}</Tag>}
-                  {node.docCount ? <Text type="secondary" style={{ fontSize: 11 }}>{graphText.docCount(node.docCount)}</Text> : null}
-                </Space>
-              </List.Item>
-            )}
-          />
-        </Card>
         <div style={{ flex: 1 }}>
           <Card
             style={{ height: 500, padding: 0, overflow: "hidden" }}
             styles={{ body: { height: "100%", padding: 0 } }}
           >
             {view.nodes.length === 0 && !loading ? (
-              <Empty description={zh ? "暂无图谱数据 —— 选择知识库后点击「自动抽取」生成" : "No graph data"} style={{ marginTop: 200 }} />
+              <Empty description={t.common.loading} style={{ marginTop: 200 }} />
             ) : (
               <div style={{ position: "relative", width: "100%", height: "100%" }}>
                 <canvas
@@ -400,6 +406,64 @@ export default function KnowledgeGraphPage() {
                 )}
               </div>
             )}
+          </Card>
+        </div>
+        <div style={{ width: 320, display: "flex", flexDirection: "column", gap: 12 }}>
+          <Card size="small" title={t.knowledge.add_entity}>
+            <Form form={form} onFinish={addEntity} layout="vertical" size="small" autoComplete="off">
+              <Form.Item name="name" label={t.knowledge.entity_name} rules={[{ required: true }]}>
+                <Input />
+              </Form.Item>
+              <Form.Item name="entity_type" label={t.knowledge.entity_type}>
+                <Input />
+              </Form.Item>
+              <Button type="primary" htmlType="submit" icon={<PlusOutlined />} block>
+                {t.knowledge.add_entity}
+              </Button>
+            </Form>
+          </Card>
+          <Card size="small" title={t.knowledge.relation}>
+            <Form form={edgeForm} onFinish={addRelation} layout="vertical" size="small" autoComplete="off">
+              <Form.Item name="source_id" label="Source ID" rules={[{ required: true }]}>
+                <Input placeholder="source entity id" />
+              </Form.Item>
+              <Form.Item name="target_id" label="Target ID" rules={[{ required: true }]}>
+                <Input placeholder="target entity id" />
+              </Form.Item>
+              <Form.Item name="relation_type" label={t.knowledge.relation_type}>
+                <Input />
+              </Form.Item>
+              <Button type="primary" htmlType="submit" icon={<PlusOutlined />} block>
+                {t.knowledge.relation}
+              </Button>
+            </Form>
+          </Card>
+          <Card size="small" title={t.knowledge.entity + " " + t.nav.data}>
+            <List
+              size="small"
+              dataSource={view.nodes}
+              style={{ maxHeight: 260, overflowY: "auto" }}
+              locale={{ emptyText: <Empty description={t.common.loading} /> }}
+              renderItem={(node: GraphNode) => (
+                <List.Item
+                  style={{ cursor: "pointer", background: node.id === focusId ? "#fff7e6" : undefined }}
+                  onClick={() => setFocusId(node.id === focusId ? null : node.id)}
+                  actions={[
+                    <Button type="link" danger size="small" icon={<DeleteOutlined />}
+                      onClick={(e) => { e.stopPropagation(); deleteEntity(node.id); }} />,
+                  ]}
+                >
+                  <Space>
+                    <Tag color={node.type === "entity" ? "blue" : "green"}>{node.type || "entity"}</Tag>
+                    <Text>{node.label}</Text>
+                    {node.source === "auto"
+                      ? <Tag color="orange">{graphText.auto}</Tag>
+                      : <Tag>{graphText.manual}</Tag>}
+                    {node.docCount ? <Text type="secondary" style={{ fontSize: 11 }}>{graphText.docCount(node.docCount)}</Text> : null}
+                  </Space>
+                </List.Item>
+              )}
+            />
           </Card>
         </div>
       </div>
