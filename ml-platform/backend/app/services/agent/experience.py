@@ -52,6 +52,23 @@ def record_experience(
         status = "active"
         if confidence is None or confidence < HUMAN_DEFAULT_CONFIDENCE:
             confidence = HUMAN_DEFAULT_CONFIDENCE
+    # 自动合并（§10.1 去重）：同域且教训正文完全一致的条目不再重复入库，
+    # 合并为既有条目——置信度取高者、来源任务并集、命中计数继承。
+    normalized = lesson.strip()
+    duplicate = (
+        db.query(ExperienceEntry)
+        .filter(
+            ExperienceEntry.domain == (domain or "cross-domain"),
+            ExperienceEntry.lesson == normalized,
+        )
+        .first()
+    )
+    if duplicate is not None:
+        duplicate.confidence = max(float(duplicate.confidence), float(confidence))
+        merged_tasks = set(duplicate.source_tasks or []) | set(source_tasks or [])
+        duplicate.source_tasks = sorted(merged_tasks)
+        db.commit()
+        return duplicate
     entry = ExperienceEntry(
         domain=domain or "cross-domain",
         situation=situation,
