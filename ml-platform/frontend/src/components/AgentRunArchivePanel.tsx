@@ -218,74 +218,122 @@ export default function AgentRunArchivePanel({ runId, archive, archiveError, zh,
 /* 流式控制台：左侧章节大纲（点击跳转）+ 右侧滚动条 + 运行态菊花 spinner */
 /* ------------------------------------------------------------------ */
 
+interface StreamLine {
+  key: string;
+  sectionId: string;
+  sectionLabel?: string;
+  kind: "section" | "text" | "mono" | "outcome";
+  text?: string;
+  tone?: "ok" | "warn" | "err" | "dim";
+}
+
 interface StreamSection {
   id: string;
   label: string;
-  node: React.ReactNode;
+  startIndex: number;
+}
+
+/** 把运行档案展开为控制台行流（一行一条），供逐行流式揭示。 */
+function buildStreamLines(archive: AgentRunDetail, zh: boolean): StreamLine[] {
+  const lines: StreamLine[] = [];
+  const push = (sectionId: string, kind: StreamLine["kind"], text: string, tone?: StreamLine["tone"], sectionLabel?: string) => {
+    lines.push({ key: `${sectionId}-${lines.length}`, sectionId, sectionLabel, kind, text, tone });
+  };
+  const rounds = archive.memory_json?.rounds ?? [];
+  for (const round of rounds) {
+    const sid = `round-${round.round}`;
+    push(sid, "section", zh ? `第 ${round.round} 轮` : `Round ${round.round}`, undefined, zh ? `第 ${round.round} 轮` : `Round ${round.round}`);
+    const s1 = round.s1;
+    if (s1?.domain) push(sid, "text", `[S1] ${zh ? "域假设" : "Domain"}：${s1.domain}`, "ok");
+    if (s1?.reasoning) push(sid, "text", `[S1] ${s1.reasoning.length > 220 ? s1.reasoning.slice(0, 220) + "…" : s1.reasoning}`);
+    if (s1?.focus_channels?.length) push(sid, "text", `[S1] ${zh ? "关键通道" : "Channels"}：${s1.focus_channels.map((c) => c.channel).filter(Boolean).join("、")}`);
+    if (s1?.leakage?.length) push(sid, "text", `[S1] ${zh ? "泄漏嫌疑" : "Leakage"}：${s1.leakage.map((l) => l.column).filter(Boolean).join("、")}`, "warn");
+    if (s1?.quality_actions?.length) push(sid, "text", `[S1] ${zh ? "数据质量动作" : "Quality"}：${s1.quality_actions.map((q) => q.action).filter(Boolean).join("；")}`);
+    if (s1?.class_balance) push(sid, "text", `[S1] ${zh ? "类不平衡" : "Balance"}：${s1.class_balance}`);
+    for (const attempt of round.s2_attempts ?? []) {
+      push(sid, "mono", `$ S2 ${zh ? "尝试" : "attempt"} ${attempt.attempt}: ${attempt.ok ? (zh ? "通过沙箱" : "sandbox OK") : (attempt.error ?? "failed")}${Array.isArray(attempt.detail) && attempt.detail.length ? ` (${attempt.detail.slice(0, 3).join("; ")})` : ""}`, attempt.ok ? "ok" : "warn");
+    }
+    const s2 = round.s2;
+    if (s2) {
+      push(sid, "text", `[S2] ${zh ? "特征工程" : "Features"} · ${s2.attempts ?? 1} ${zh ? "次尝试" : "attempts"}${s2.data_shape ? ` · ${s2.data_shape}` : ""}`);
+      if (s2.description) push(sid, "text", s2.description.length > 240 ? s2.description.slice(0, 240) + "…" : s2.description);
+      if (s2.generated_columns?.length) push(sid, "text", `${zh ? "新增" : "Added"}：${s2.generated_columns.join("、")}`, "ok");
+      if (s2.dropped_columns?.length) push(sid, "text", `${zh ? "剔除" : "Dropped"}：${s2.dropped_columns.join("、")}`, "dim");
+    }
+    const s3 = round.s3;
+    if (s3) {
+      push(sid, "text", `[S3] ${zh ? "候选训练" : "Training"} · ${zh ? "指标" : "metrics"}：${Object.entries(s3.metrics ?? {}).map(([k, v]) => `${k}=${v}`).join("  ")}`);
+      if (s3.importance?.length) push(sid, "text", `${zh ? "特征重要性" : "Importance"}：${s3.importance.slice(0, 5).map((i) => `${i.feature}(${i.importance})`).join("、")}`);
+    }
+    const s4 = round.s4;
+    if (s4) {
+      push(sid, "text", `[S4] ${zh ? "硬门禁" : "Gates"}：${s4.gate_passed ? (zh ? "通过" : "passed") : (zh ? "未过" : "failed")}`, s4.gate_passed ? "ok" : "err");
+      for (const f of (s4.gate_failures ?? []).slice(0, 4)) push(sid, "text", `· ${f}`, "warn");
+    }
+    const review = round.review;
+    if (review) {
+      push(sid, "text", `[${zh ? "评审" : "Review"}] ${review.verdict ?? "-"}`, review.verdict === "pass" ? "ok" : "warn");
+      if (review.readiness) push(sid, "text", review.readiness.length > 220 ? review.readiness.slice(0, 220) + "…" : review.readiness);
+      if (review.surprises?.length) push(sid, "text", `${zh ? "意外发现" : "Surprises"}：${review.surprises.join("；")}`, "warn");
+    }
+    for (const hint of (round.hints ?? []).slice(0, 3)) {
+      push(sid, "text", `${zh ? "建议" : "Hint"}：${hint.length > 120 ? hint.slice(0, 120) + "…" : hint}`, "dim");
+    }
+  }
+  if (!rounds.length) {
+    lines.push({
+      key: "empty", sectionId: "rounds", sectionLabel: zh ? "轮次" : "Rounds", kind: "text",
+      text: zh ? "暂无轮次记录——该任务运行早于阶段产物落档案功能上线（2026-10-27），新任务将逐阶段流式记录。" : "This run predates per-stage artifact persistence.",
+    });
+  }
+  lines.push({ key: "final", sectionId: "final", sectionLabel: zh ? "结果" : "Result", kind: "outcome" });
+  return lines;
 }
 
 function AgentStream({ archive, zh, active }: { archive: AgentRunDetail; zh: boolean; active: boolean }) {
   const streamRef = useRef<HTMLDivElement | null>(null);
   const followRef = useRef(true);
-  const [activeId, setActiveId] = useState<string>("");
+  const [lines, setLines] = useState<StreamLine[]>([]);
+  const [revealed, setRevealed] = useState(0);
+  const [activeSection, setActiveSection] = useState("");
+  const prevRunRef = useRef<string | null>(null);
 
-  const sections: StreamSection[] = useMemo(() => {
-    const list: StreamSection[] = [];
-    const rounds = archive.memory_json?.rounds ?? [];
-    for (const round of rounds) {
-      const id = `round-${round.round}`;
-      list.push({ id, label: zh ? `第 ${round.round} 轮` : `Round ${round.round}`, node: <RoundBlock key={id} round={round} zh={zh} /> });
+  // 数据到达 → 重建行；切换任务时从头流式展开。
+  useEffect(() => {
+    if (prevRunRef.current !== archive.id) {
+      prevRunRef.current = archive.id;
+      setRevealed(0);
     }
-    if (!rounds.length) {
-      list.push({
-        id: "empty",
-        label: zh ? "暂无轮次" : "No rounds",
-        node: (
-          <div className="agent-msg" id="sec-empty">
-            <div className="meta"><b>{zh ? "暂无轮次记录" : "No recorded rounds"}</b></div>
-            <div className="body">{zh
-              ? "该任务运行早于阶段产物落档案功能上线（2026-10-27）；新任务将逐阶段流式记录。"
-              : "This run predates per-stage artifact persistence."}</div>
-          </div>
-        ),
-      });
-    }
-    // 结果块只在终态渲染——running/pending 不是"未通过"（a1d8bd26 误报修复）。
-    if (ACTIVE_STATUSES.has(archive.status)) {
-      list.push({
-        id: "final",
-        label: zh ? "进度" : "Progress",
-        node: (
-          <div className="agent-msg" id="sec-final">
-            <div className="meta"><b>{zh ? "当前进度" : "Progress"}</b></div>
-            <div className="body">{zh
-              ? `正在执行 ${STAGE_LABELS[archive.current_stage]?.zh ?? archive.current_stage}，新阶段产物将自动出现在此处。`
-              : `Running ${archive.current_stage}; new artifacts appear automatically.`}</div>
-          </div>
-        ),
-      });
-    } else {
-      list.push({
-        id: "final",
-        label: zh ? "结果" : "Result",
-        node: (
-          <div className="agent-msg" id="sec-final">
-            <TerminalOutcome archive={archive} zh={zh} />
-          </div>
-        ),
-      });
-    }
-    return list;
+    setLines(buildStreamLines(archive, zh));
   }, [archive, zh]);
 
-  // 新内容到达时若用户停留在底部附近则自动跟随到最新。
-  const signature = `${archive.round_count}:${archive.updated_at ?? ""}:${archive.token_used}`;
+  // 逐行揭示：每 24ms 放出一批直至追平数据；新轮询追加的行继续揭示。
+  useEffect(() => {
+    if (revealed >= lines.length) return;
+    const step = Math.max(1, Math.ceil(lines.length / 90));
+    const timer = window.setTimeout(() => {
+      setRevealed((cur) => Math.min(lines.length, cur + step));
+    }, 24);
+    return () => window.clearTimeout(timer);
+  }, [revealed, lines.length]);
+
+  // 跟随最新：揭示与轮询更新时自动滚到底部（用户上翻即暂停跟随）。
   useEffect(() => {
     const el = streamRef.current;
-    if (el && followRef.current) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [signature]);
+    if (el && followRef.current) el.scrollTop = el.scrollHeight;
+  }, [revealed, lines]);
+
+  const visible = lines.slice(0, revealed);
+
+  const sections = useMemo(() => {
+    const out: StreamSection[] = [];
+    lines.forEach((line, idx) => {
+      if (line.kind === "section") out.push({ id: line.sectionId, label: line.sectionLabel ?? line.text ?? "", startIndex: idx });
+    });
+    const finalIdx = lines.findIndex((l) => l.kind === "outcome");
+    if (finalIdx >= 0) out.push({ id: "final", label: zh ? "结果" : "Result", startIndex: finalIdx });
+    return out;
+  }, [lines, zh]);
 
   const onScroll = () => {
     const el = streamRef.current;
@@ -293,19 +341,24 @@ function AgentStream({ archive, zh, active }: { archive: AgentRunDetail; zh: boo
     followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     let current = sections[0]?.id ?? "";
     for (const section of sections) {
-      const node = el.querySelector(`#sec-${section.id}`);
-      if (node && (node as HTMLElement).offsetTop - el.scrollTop <= 60) current = section.id;
+      if (revealed > section.startIndex) current = section.id;
     }
-    setActiveId(current);
+    setActiveSection(current);
   };
 
-  const jump = (id: string) => {
-    const el = streamRef.current;
-    const node = el?.querySelector(`#sec-${id}`);
-    if (el && node) {
-      el.scrollTo({ top: Math.max(0, (node as HTMLElement).offsetTop - 8), behavior: "smooth" });
-      followRef.current = false;
-    }
+  // 大纲点击：展开至该章节并平滑滚动定位（getBoundingClientRect 相对滚动容器计算，
+  // 修复旧 offsetTop 相对错误定位父级导致的跳转失效）。
+  const jump = (section: StreamSection) => {
+    setRevealed(lines.length);
+    followRef.current = false;
+    window.setTimeout(() => {
+      const el = streamRef.current;
+      const node = el?.querySelector(`[data-line-idx="${section.startIndex}"]`);
+      if (el && node) {
+        const top = node.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+        el.scrollTo({ top: Math.max(0, top - 8), behavior: "smooth" });
+      }
+    }, 80);
   };
 
   const activeStageLabel = active ? STAGE_LABELS[archive.current_stage] : null;
@@ -318,20 +371,28 @@ function AgentStream({ archive, zh, active }: { archive: AgentRunDetail; zh: boo
             key={section.id}
             type="button"
             role="tab"
-            aria-selected={activeId === section.id}
-            className={activeId === section.id ? "on" : ""}
-            onClick={() => jump(`sec-${section.id}`)}
+            aria-selected={activeSection === section.id}
+            className={activeSection === section.id ? "on" : ""}
+            onClick={() => jump(section)}
           >
             <span className="tick" />{section.label}
           </button>
         ))}
       </div>
       <div className="agent-stream" ref={streamRef} onScroll={onScroll}>
-        {sections.map((section) => section.node)}
-        {activeStageLabel ? (
-          <div className="agent-spin-line">
+        {visible.map((line, idx) => (
+          <div
+            key={line.key}
+            data-line-idx={idx}
+            className={`agent-line${line.kind === "section" ? " agent-line-section" : line.kind === "mono" ? " agent-line-mono" : ""}${line.tone ? ` tone-${line.tone}` : ""}`}
+          >
+            {line.kind === "outcome" ? <TerminalOutcome archive={archive} zh={zh} /> : line.text}
+          </div>
+        ))}
+        {active ? (
+          <div className="agent-line agent-spin-line">
             <Spin size="small" />
-            {zh ? `正在 ${activeStageLabel.zh}…（10s 自动刷新）` : `${activeStageLabel.en}…`}
+            {zh ? `正在 ${STAGE_LABELS[archive.current_stage]?.zh ?? archive.current_stage}…（10s 自动刷新）` : `${STAGE_LABELS[archive.current_stage]?.en ?? archive.current_stage}…`}
           </div>
         ) : null}
       </div>
@@ -377,84 +438,3 @@ function TerminalOutcome({ archive, zh }: { archive: AgentRunDetail; zh: boolean
   );
 }
 
-function RoundBlock({ round, zh }: { round: NonNullable<AgentRunDetail["memory_json"]["rounds"]>[number]; zh: boolean }) {  return (
-    <div className="agent-msg" id={`sec-round-${round.round}`}>
-      <div className="meta">
-        <b>{zh ? `第 ${round.round} 轮` : `Round ${round.round}`}</b>
-        {round.verdict ? <span className={`v2-badge ${round.verdict === "gate_failed" ? "v2-br" : "v2-bgo"}`}>{round.verdict}</span> : null}
-      </div>
-
-      {round.s1 ? (
-        <div className="body" style={{ marginBottom: 8 }}>
-          <div className="meta"><b>S1 · {zh ? "数据分析" : "Analysis"}</b></div>
-          {round.s1.domain ? <div className="kv">{zh ? "域假设" : "Domain"}：<b style={{ color: "var(--v2-txt)" }}>{round.s1.domain}</b></div> : null}
-          {round.s1.reasoning ? <div>{round.s1.reasoning.length > 260 ? round.s1.reasoning.slice(0, 260) + "…" : round.s1.reasoning}</div> : null}
-          {(round.s1.focus_channels ?? []).length ? <div className="kv">{zh ? "关键通道" : "Channels"}：{(round.s1.focus_channels ?? []).map((c) => c.channel).filter(Boolean).join("、")}</div> : null}
-          {(round.s1.leakage ?? []).length ? <div className="kv" style={{ color: "var(--v2-gold)" }}>{zh ? "泄漏嫌疑" : "Leakage"}：{(round.s1.leakage ?? []).map((l) => l.column).filter(Boolean).join("、")}</div> : null}
-          {(round.s1.quality_actions ?? []).length ? <div className="kv">{zh ? "数据质量动作" : "Quality"}：{(round.s1.quality_actions ?? []).map((q) => q.action).filter(Boolean).join("；")}</div> : null}
-          {round.s1.class_balance ? <div className="kv">{zh ? "类不平衡" : "Balance"}：{round.s1.class_balance}</div> : null}
-        </div>
-      ) : null}
-
-      {(round.s2_attempts ?? []).map((attempt) => (
-        <div key={attempt.attempt} className="mono" style={{ color: attempt.ok ? "var(--v2-green)" : "var(--v2-gold)", marginBottom: 2 }}>
-          $ S2 {zh ? "尝试" : "attempt"} {attempt.attempt}: {attempt.ok ? (zh ? "通过沙箱" : "sandbox OK") : (attempt.error ?? "failed")}
-          {Array.isArray(attempt.detail) && attempt.detail.length ? ` (${attempt.detail.slice(0, 3).join("; ")})` : ""}
-        </div>
-      ))}
-
-      {round.s2 ? (
-        <div className="body" style={{ marginBottom: 8 }}>
-          <div className="meta">
-            <b>S2 · {zh ? "特征工程" : "Features"}</b>
-            <span>{zh ? `${round.s2.attempts ?? 1} 次尝试` : `${round.s2.attempts ?? 1} attempts`}{round.s2.data_shape ? ` · ${round.s2.data_shape}` : ""}</span>
-          </div>
-          {round.s2.description ? <div>{round.s2.description.length > 240 ? round.s2.description.slice(0, 240) + "…" : round.s2.description}</div> : null}
-          {(round.s2.generated_columns ?? []).length ? <div className="kv" style={{ color: "var(--v2-green)" }}>{zh ? "新增" : "Added"}：{(round.s2.generated_columns ?? []).join("、")}</div> : null}
-          {(round.s2.dropped_columns ?? []).length ? <div className="kv" style={{ color: "var(--v2-dim)" }}>{zh ? "剔除" : "Dropped"}：{(round.s2.dropped_columns ?? []).join("、")}</div> : null}
-        </div>
-      ) : null}
-
-      {round.s3 ? (
-        <div className="body" style={{ marginBottom: 8 }}>
-          <div className="meta"><b>S3 · {zh ? "候选训练" : "Training"}</b></div>
-          {Object.keys(round.s3.metrics ?? {}).length ? (
-            <div className="mono">{Object.entries(round.s3.metrics ?? {}).slice(0, 8).map(([k, v]) => `${k}=${v}`).join("  ")}</div>
-          ) : null}
-          {(round.s3.importance ?? []).length ? <div className="kv">{zh ? "特征重要性" : "Importance"}：{(round.s3.importance ?? []).slice(0, 5).map((i) => `${i.feature}(${i.importance})`).join("、")}</div> : null}
-        </div>
-      ) : null}
-
-      {round.s4 ? (
-        <div className="body" style={{ marginBottom: 8 }}>
-          <div className="meta">
-            <b>S4 · {zh ? "硬门禁" : "Gates"}</b>
-            <span className={`v2-badge ${round.s4.gate_passed ? "v2-bg" : "v2-br"}`}>{round.s4.gate_passed ? (zh ? "通过" : "passed") : (zh ? "未过" : "failed")}</span>
-          </div>
-          {(round.s4.gate_failures ?? []).length ? (
-            <div className="mono" style={{ color: "var(--v2-gold)" }}>{(round.s4.gate_failures ?? []).slice(0, 4).map((f, i) => <div key={i}>· {f}</div>)}</div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {round.review ? (
-        <div className="body" style={{ marginBottom: 8 }}>
-          <div className="meta">
-            <b>{zh ? "评审" : "Review"}</b>
-            <span className={`v2-badge ${round.review.verdict === "pass" ? "v2-bg" : "v2-bgo"}`}>{round.review.verdict ?? "-"}</span>
-          </div>
-          {round.review.readiness ? <div>{round.review.readiness.length > 240 ? round.review.readiness.slice(0, 240) + "…" : round.review.readiness}</div> : null}
-          {(round.review.surprises ?? []).length ? <div className="kv" style={{ color: "var(--v2-gold)" }}>{zh ? "意外发现" : "Surprises"}：{(round.review.surprises ?? []).join("；")}</div> : null}
-        </div>
-      ) : null}
-
-      {(round.hints ?? []).length ? (
-        <div className="body">
-          {(round.hints ?? []).slice(0, 3).map((hint, i) => (
-            <div key={i} className="kv">· {hint.length > 120 ? hint.slice(0, 120) + "…" : hint}</div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
