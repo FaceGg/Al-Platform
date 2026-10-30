@@ -149,6 +149,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     // 落入下面的前缀兜底（兜底对同路由多 query 项会退化成 query 最长者
     // 胜，曾导致详情页光标停在「知识中心」）。
     if (p.startsWith("/agent/task/")) return "/agent?tab=tasks";
+    // 知识库详情/知识中心页归属「知识中心」菜单项（入口在知识库管理卡）。
+    if (p === "/knowledge" || p === "/knowledge-center" || p.startsWith("/knowledge/")) {
+      return "/agent?tab=knowledge";
+    }
     const entries = (sideGroups[activeView] || []).flatMap((group) => group.items);
     const here = p + location.search;
     // Prefer the entry whose full target (path + query) matches exactly, so

@@ -271,7 +271,7 @@ export default function KnowledgeDetailPage() {
   return (
     <AppLayout>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/knowledge")}>{t.ai_chat.back}</Button>
+        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/knowledge-center")}>{t.ai_chat.back}</Button>
         <Title level={4} style={{ margin: 0 }}>{t.ai_chat.knowledge_base}</Title>
       </div>
       <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
