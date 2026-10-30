@@ -109,6 +109,21 @@
 }
 .agent-stream::-webkit-scrollbar-thumb:hover { background: var(--v2-dim); }
 .agent-msg { margin-bottom: 12px; line-height: 1.75; scroll-margin-top: 8px; }
+/* 流式控制台行（Agent 运行档案逐行输出） */
+.agent-line { font-size: 12.5px; line-height: 1.75; color: var(--v2-sub); padding: 1px 0; scroll-margin-top: 8px; }
+.agent-line-section {
+  color: var(--v2-txt); font-weight: 500; font-size: 13px; margin-top: 10px;
+}
+.agent-line-section::before { content: "▸ "; color: var(--v2-blue); }
+.agent-line-mono {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px; color: var(--v2-sub);
+}
+.agent-line.tone-ok { color: var(--v2-green); }
+.agent-line.tone-warn { color: var(--v2-gold); }
+.agent-line.tone-err { color: var(--v2-red); }
+.agent-line.tone-dim { color: var(--v2-dim); }
+.agent-stream { scroll-behavior: auto; }
 .agent-msg .meta {
   display: flex; align-items: center; gap: 7px; font-size: 11.5px;
   color: var(--v2-dim); margin-bottom: 2px;
