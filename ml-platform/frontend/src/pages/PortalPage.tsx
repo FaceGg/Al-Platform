@@ -1,5 +1,17 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Button, Tag } from "antd";
+import {
+  AppstoreOutlined,
+  ClusterOutlined,
+  CloudUploadOutlined,
+  DeploymentUnitOutlined,
+  ApiOutlined,
+  ExperimentOutlined,
+  PushpinOutlined,
+  RobotOutlined,
+  SettingOutlined,
+} from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
@@ -94,23 +106,23 @@ export default function PortalPage() {
   const go = (path: string) => navigate(path);
 
   const quickButtons = [
-    { icon: "🤖", cls: "v2-c-purple", title: zh ? "新建智能体建模任务" : "New agent modeling job", desc: zh ? "四步向导 · 全自动迭代" : "4-step wizard · auto iteration", path: "/automl" },
-    { icon: "📤", cls: "v2-c-blue", title: zh ? "上传数据集" : "Upload dataset", desc: zh ? "CSV / Excel，自动画像" : "CSV / Excel, auto profile", path: "/data" },
-    { icon: "🔄", cls: "v2-c-blue", title: zh ? "新建闭环任务" : "New closed-loop job", desc: zh ? "推理-回流-重训-换模" : "infer - retrain - rollout", path: "/demo-loop" },
-    { icon: "🛒", cls: "v2-c-blue", title: zh ? "API 市场" : "API market", desc: zh ? "模型 / 编排服务调用" : "model / orchestration APIs", path: "/api-marketplace" },
-    { icon: "☸", cls: "v2-c-green", title: zh ? "集群状态" : "Cluster status", desc: zh ? "K8s 节点与作业" : "K8s nodes and jobs", path: "/kubernetes" },
+    { icon: <RobotOutlined />, cls: "v2-c-purple", title: zh ? "新建智能体建模任务" : "New agent modeling job", desc: zh ? "四步向导 · 全自动迭代" : "4-step wizard · auto iteration", path: "/automl" },
+    { icon: <CloudUploadOutlined />, cls: "v2-c-blue", title: zh ? "上传数据集" : "Upload dataset", desc: zh ? "CSV / Excel，自动画像" : "CSV / Excel, auto profile", path: "/data" },
+    { icon: <DeploymentUnitOutlined />, cls: "v2-c-blue", title: zh ? "新建闭环任务" : "New closed-loop job", desc: zh ? "推理-回流-重训-换模" : "infer - retrain - rollout", path: "/demo-loop" },
+    { icon: <ApiOutlined />, cls: "v2-c-blue", title: zh ? "API 市场" : "API market", desc: zh ? "模型 / 编排服务调用" : "model / orchestration APIs", path: "/api-marketplace" },
+    { icon: <ClusterOutlined />, cls: "v2-c-green", title: zh ? "集群状态" : "Cluster status", desc: zh ? "K8s 节点与作业" : "K8s nodes and jobs", path: "/kubernetes" },
   ];
 
   const cards = [
     {
-      icon: "AI", cls: "v2-c-blue", title: zh ? "算法平台（建模中心）" : "Algorithm Platform",
+      icon: <ExperimentOutlined />, cls: "v2-c-blue", title: zh ? "算法平台（建模中心）" : "Algorithm Platform",
       desc: zh ? "数据到模型的主链路：数据、标注、建模、编排与闭环服务化。" : "Data-to-model pipeline: datasets, labeling, modeling, orchestration and closed loops.",
       chips: zh ? ["数据管理", "数据标注", "自动建模", "模型训练", "模型库", "应用编排", "闭环自动化", "API 市场"] : ["Datasets", "Labeling", "AutoML", "Training", "Models", "Orchestration", "Closed loop", "API market"],
       stat: projectCount != null ? (zh ? `${projectCount} 项目` : `${projectCount} projects`) : "",
       path: "/automl",
     },
     {
-      icon: "🤖", cls: "v2-c-purple", title: zh ? "智能体中心" : "Agent Center",
+      icon: <RobotOutlined />, cls: "v2-c-purple", title: zh ? "智能体中心" : "Agent Center",
       desc: zh ? "大模型驱动的自动建模 Agent 与知识体系：四步向导引导、配方固化复用、经验越用越强。" : "LLM-driven modeling agent with recipes, experience and knowledge.",
       chips: zh ? ["建模智能体向导", "任务列表", "配方库", "知识中心", "AI 对话", "知识图谱"] : ["Wizard", "Jobs", "Recipes", "Knowledge", "Chat", "Graph"],
       hot: [0, 1, 2, 3],
@@ -118,13 +130,13 @@ export default function PortalPage() {
       path: "/agent",
     },
     {
-      icon: "☸", cls: "v2-c-green", title: zh ? "基础设施（运行时）" : "Infrastructure",
+      icon: <ClusterOutlined />, cls: "v2-c-green", title: zh ? "基础设施（运行时）" : "Infrastructure",
       desc: zh ? "算力与运行环境：K8s 集群、作业、Notebook、镜像与资源治理。" : "Compute and runtime: K8s, jobs, notebooks, images and governance.",
       chips: zh ? ["K8s 集群", "作业运行", "Notebook 会话", "镜像目录", "集群治理", "资源监控", "计算资源"] : ["K8s", "Jobs", "Notebooks", "Images", "Governance", "Monitor", "Compute"],
       path: "/kubernetes",
     },
     {
-      icon: "SYS", cls: "v2-c-gold", title: zh ? "系统管理" : "Administration",
+      icon: <SettingOutlined />, cls: "v2-c-gold", title: zh ? "系统管理" : "Administration",
       desc: zh ? "平台级管理：用户、权限、大模型管理与审计。" : "Platform administration: users, roles, LLM management and audit.",
       chips: zh ? ["大模型管理", "用户管理"] : ["LLM management", "Users"],
       path: "/llm-gateway",
@@ -206,7 +218,7 @@ export default function PortalPage() {
                 <div style={{ color: "var(--v2-dim)" }}>{zh ? "暂无公告" : "No notices"}</div>
               ) : announcements.map((item) => (
                 <div key={item.id}>
-                  {item.pinned ? "📌 " : ""}<b style={{ color: "var(--v2-txt)" }}>{item.title}</b>
+                  {item.pinned ? <PushpinOutlined style={{ color: "var(--v2-gold)", fontSize: 12, marginRight: 6 }} /> : null}<b style={{ color: "var(--v2-txt)" }}>{item.title}</b>
                   {item.content ? <span style={{ color: "var(--v2-dim)" }}> —— {item.content}</span> : null}
                   <span style={{ color: "var(--v2-dim)", fontSize: 11, marginLeft: 6 }}>
                     {(() => { const d = parseBackendTime(item.created_at); return d ? d.toLocaleDateString(zh ? "zh-CN" : "en-US") : ""; })()}
