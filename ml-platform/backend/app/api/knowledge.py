@@ -651,7 +651,16 @@ def chat(
     sources_data = []
     if search_results:
         context = "\n\n".join([r["content"] for r in search_results])
-        sources_data = [{"content": r["content"], "score": r["score"]} for r in search_results]
+        # 来源带具体文档名（引用展示需要），无文件名时退回检索通道标识。
+        sources_data = [
+            {
+                "content": r["content"],
+                "score": r["score"],
+                "filename": r.get("filename") or "",
+                "source": r.get("source") or "",
+            }
+            for r in search_results
+        ]
 
     # Step 3: Build LLM messages with context + conversation history
     system_msg = {
@@ -669,6 +678,9 @@ def chat(
         sources=[],
     )
     db.add(user_msg)
+    # 立即持久化会话与用户消息——后续 LLM 网关/审计路径可能回滚当前事务，
+    # 不先提交会在保存助手消息时外键失败（chat_messages.session_id 悬空）。
+    db.commit()
 
     # Step 5: Call LLM API through the gateway
     config = resolve_llm_profile(db, purpose="knowledge_chat")

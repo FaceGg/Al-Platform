@@ -35,6 +35,22 @@ export default function KnowledgeDetailPage() {
   const [relationForm] = Form.useForm();
   const heatRef = useRef<HTMLDivElement>(null);
   const distRef = useRef<HTMLDivElement>(null);
+  const heatChartRef = useRef<echarts.ECharts | null>(null);
+  const distChartRef = useRef<echarts.ECharts | null>(null);
+
+  // 图表在隐藏页签里初始化会得到 0 尺寸容器；页签切换回可见后必须 resize。
+  useEffect(() => {
+    const resize = () => {
+      heatChartRef.current?.resize();
+      distChartRef.current?.resize();
+    };
+    window.addEventListener("resize", resize);
+    const timer = window.setInterval(resize, 300);
+    return () => {
+      window.removeEventListener("resize", resize);
+      window.clearInterval(timer);
+    };
+  }, []);
 
   const loadDocs = () => {
     apiClient.get("/knowledge/bases/" + kbId + "/documents").then((res) => setDocs(res.data.items || res.data || [])).catch(() => {});
@@ -59,6 +75,7 @@ export default function KnowledgeDetailPage() {
   useEffect(() => {
     if (activeTab !== "chunks" || !heatRef.current || docs.length < 2) return;
     const chart = echarts.init(heatRef.current);
+    heatChartRef.current = chart;
     const size = Math.min(docs.length, 10);
     const data: [number, number, number][] = [];
     for (let i = 0; i < size; i++) {
@@ -75,12 +92,17 @@ export default function KnowledgeDetailPage() {
       visualMap: { min: 0, max: 1, orient: "horizontal", left: "center", bottom: 0, inRange: { color: ["#f0f0f0", "#1890ff", "#52c41a"] } },
       series: [{ type: "heatmap", data, label: { show: true, fontSize: 9 }, emphasis: { itemStyle: { shadowBlur: 8 } } }],
     });
-    return () => chart.dispose();
+    requestAnimationFrame(() => chart.resize());
+    return () => {
+      chart.dispose();
+      heatChartRef.current = null;
+    };
   }, [activeTab, docs, zh]);
 
   useEffect(() => {
     if (activeTab !== "chunks" || !distRef.current || docs.length === 0) return;
     const chart = echarts.init(distRef.current);
+    distChartRef.current = chart;
     const names = docs.map((d: any) => (d.filename || "Doc").slice(0, 10));
     const chunks = docs.map((d: any) => d.chunk_count || 0);
     const tokens = docs.map((d: any) => Math.ceil((d.preview || d.content || "").length / 4));
@@ -98,7 +120,11 @@ export default function KnowledgeDetailPage() {
         { name: zh ? "预估 Token" : "Est. Tokens", type: "line", yAxisIndex: 1, data: tokens, itemStyle: { color: "#52c41a" } },
       ],
     });
-    return () => chart.dispose();
+    requestAnimationFrame(() => chart.resize());
+    return () => {
+      chart.dispose();
+      distChartRef.current = null;
+    };
   }, [activeTab, docs, zh]);
 
   const uploadDoc = async (file: File) => {
@@ -146,11 +172,48 @@ export default function KnowledgeDetailPage() {
     setChatMessages((prev) => [...prev, { role: "user", content: text }]);
     setMessageInput(""); setChatLoading(true);
     try {
-      const res = await apiClient.post(`/knowledge/bases/${kbId}/chat`, { chat_id: activeChatId, message: text });
-      setChatMessages((prev) => [...prev, { role: "assistant", content: res.data.answer ?? res.data.content ?? "", sources: res.data.sources ?? [] }]);
+      // 后端契约：messages 数组 + session_id（返回 answer/sources/session_id）
+      const history = chatMessages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .slice(-8)
+        .map((m) => ({ role: m.role, content: String(m.content) }));
+      const res = await apiClient.post(`/knowledge/bases/${kbId}/chat`, {
+        messages: [...history, { role: "user", content: text }],
+        session_id: activeChatId,
+      });
+      if (res.data.session_id && res.data.session_id !== activeChatId) {
+        setActiveChatId(res.data.session_id);
+      }
+      setChatMessages((prev) => [...prev, {
+        role: "assistant",
+        content: res.data.answer ?? res.data.content ?? "",
+        sources: res.data.sources ?? [],
+      }]);
     } catch (e: any) {
-      message.error(e.response?.data?.detail || t.common.error);
+      const detail = e?.response?.data?.detail;
+      message.error(
+        typeof detail === "object" ? `${detail?.code ?? "failed"}: ${detail?.message ?? ""}` : String(detail || e?.message || t.common.error)
+      );
     } finally { setChatLoading(false); }
+  };
+
+  const deleteChat = async (chatId: string) => {
+    try {
+      await apiClient.delete(`/knowledge/bases/${kbId}/chats/${chatId}`);
+      if (activeChatId === chatId) { setActiveChatId(null); setChatMessages([]); }
+      loadChats();
+    } catch (e: any) { message.error(e.response?.data?.detail || t.common.error); }
+  };
+
+  // 检索结果关键词高亮：命中片段加背景色（转义正则特殊字符）。
+  const highlight = (text: string, query: string) => {
+    if (!query.trim()) return text;
+    const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"));
+    return parts.map((part, i) =>
+      part.toLowerCase() === query.toLowerCase()
+        ? <mark key={i} style={{ background: "#ffe58f", color: "inherit", padding: "0 2px", borderRadius: 2 }}>{part}</mark>
+        : part
+    );
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -277,8 +340,15 @@ export default function KnowledgeDetailPage() {
             <List dataSource={searchResults} locale={{ emptyText: <Empty description={zh ? "暂无结果" : "No results"} /> }}
               renderItem={(item: any, idx: number) => (
                 <Card key={idx} size="small" style={{ marginBottom: 8 }}>
-                  <Paragraph>{item.content || item.text || item.chunk}</Paragraph>
-                  <Space>{item.score != null && <Tag color="blue">Score: {Number(item.score).toFixed(3)}</Tag>}{item.source && <Text type="secondary">{zh ? "来源" : "Source"}: {item.source}</Text>}</Space>
+                  <Paragraph style={{ lineHeight: 1.8 }}>
+                    {highlight(String(item.content || item.text || item.chunk), searchQuery)}
+                  </Paragraph>
+                  <Space wrap>
+                    {item.score != null && <Tag color="blue">{zh ? "相关度" : "Score"}: {Number(item.score).toFixed(3)}</Tag>}
+                    {item.filename
+                      ? <Tag color="green" icon={<FileTextOutlined />}>{zh ? "来源文档" : "Source doc"}: {item.filename}</Tag>
+                      : item.source && <Text type="secondary">{item.source}</Text>}
+                  </Space>
                 </Card>
               )} />
           </Spin>
@@ -293,7 +363,13 @@ export default function KnowledgeDetailPage() {
             <Button type="dashed" block icon={<PlusOutlined />} onClick={createChat} style={{ marginBottom: 8 }}>{t.ai_chat.new_chat}</Button>
             <List size="small" dataSource={chats} renderItem={(chat: any) => (
               <List.Item style={{ cursor: "pointer", background: activeChatId === chat.id ? "#e6f7ff" : undefined, padding: "4px 8px", borderRadius: 4 }}
-                onClick={() => { setActiveChatId(chat.id); setChatMessages([]); }}>
+                onClick={() => { setActiveChatId(chat.id); setChatMessages([]); }}
+                actions={[
+                  <Popconfirm key="d" title={zh ? "删除该会话？" : "Delete session?"} onConfirm={(e?: React.MouseEvent) => { e?.stopPropagation(); deleteChat(chat.id); }}>
+                    <Button size="small" type="text" danger icon={<DeleteOutlined />}
+                      onClick={(e) => e.stopPropagation()} />
+                  </Popconfirm>,
+                ]}>
                 <Text ellipsis>{chat.title || chat.name || "Chat " + chat.id}</Text>
               </List.Item>
             )} />
@@ -342,7 +418,7 @@ export default function KnowledgeDetailPage() {
                 </Form>
               }>
                 {entities.length === 0 ? <Empty description={zh ? "暂无实体" : "No entities"} /> : (
-                  <List size="small" dataSource={entities} renderItem={(e: any) => (
+                  <List size="small" dataSource={entities} pagination={{ pageSize: 10, size: "small", showSizeChanger: false }} renderItem={(e: any) => (
                     <List.Item actions={[
                       <Popconfirm key="d" title={zh ? "删除该实体？" : "Delete?"} onConfirm={() => deleteEntity(e)}>
                         <Button size="small" danger icon={<DeleteOutlined />} />
@@ -376,7 +452,7 @@ export default function KnowledgeDetailPage() {
                 </Form>
               }>
                 {relations.length === 0 ? <Empty description={zh ? "暂无关系 —— 先建两个实体，再连一条关系" : "No relations yet"} /> : (
-                  <List size="small" dataSource={relations} renderItem={(rel: any) => (
+                  <List size="small" dataSource={relations} pagination={{ pageSize: 10, size: "small", showSizeChanger: false }} renderItem={(rel: any) => (
                     <List.Item actions={[
                       <Popconfirm key="d" title={zh ? "删除该关系？" : "Delete?"} onConfirm={() => deleteRelation(rel)}>
                         <Button size="small" danger icon={<DeleteOutlined />} />
