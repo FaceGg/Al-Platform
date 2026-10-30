@@ -105,15 +105,41 @@ class TestExperienceStore(unittest.TestCase):
                     db, domain="tightening", profile_fingerprint={}, top_k=10
                 )
             db.expire_all()
+            # hit_count≥2 后检索内自动升级（RSI 接线），无需外部触发。
             refreshed = db.get(type(entry), entry_id)
             self.assertEqual(refreshed.hit_count, 2)
-            promoted = promote_shadow_entries(db)
-            self.assertIn(entry_id, promoted)
-            self.assertEqual(db.get(type(entry), entry_id).status, "active")
+            self.assertEqual(refreshed.status, "active")
             entries = retrieve_for_task(
                 db, domain="tightening", profile_fingerprint={}, top_k=10
             )
             self.assertIn(entry_id, [item.id for item in entries])
+
+    def test_promotion_projects_cross_domain_entry_into_system_partition(self):
+        """知识中心验收回归：升 active 的跨域条目自动投影系统分区文档。"""
+        from app.models.knowledge import Document
+        from app.services.knowledge_center import get_system_partition
+
+        with SessionLocal() as db:
+            partition, _binding = get_system_partition(db, None)
+            before = db.query(Document).filter(Document.kb_id == partition.id).count()
+            entry = self._record(db, confidence=0.9)  # cross-domain, ≥0.85 gate
+            entry_id = entry.id
+            for _ in range(2):
+                retrieve_for_task(
+                    db, domain="tightening", profile_fingerprint={}, top_k=10
+                )
+            db.expire_all()
+            promoted = db.get(type(entry), entry_id)
+            self.assertEqual(promoted.status, "active")
+            after = db.query(Document).filter(Document.kb_id == partition.id).count()
+            self.assertGreater(after, before)
+            doc = (
+                db.query(Document)
+                .filter(Document.kb_id == partition.id, Document.filename == f"经验 {entry_id}")
+                .first()
+            )
+            self.assertIsNotNone(doc)
+            self.assertIn("教训：", doc.content)
 
     def test_retire_filters_immediately(self):
         with SessionLocal() as db:

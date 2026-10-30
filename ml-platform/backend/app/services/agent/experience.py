@@ -123,11 +123,22 @@ def retrieve_for_task(
         entry.hit_count = (entry.hit_count or 0) + 1
     if shadow:
         db.commit()
+        # RSI 升级接线（§16.4）：命中达标即升 active，并投影跨域条目进
+        # 系统分区——此前该函数从未被调用，条目永远停在 shadow，
+        # 系统分区 0 文档（本次知识中心验收发现）。
+        try:
+            promote_shadow_entries(db)
+        except Exception:  # noqa: BLE001 - 升级失败不影响检索返回
+            db.rollback()
     return selected
 
 
 def promote_shadow_entries(db: Session) -> list[UUID]:
-    """Shadow → active once an entry has accumulated PROMOTE_HITS matches."""
+    """Shadow → active once an entry has accumulated PROMOTE_HITS matches.
+
+    升级后的跨域条目经 §16.4 正向同步投影为系统分区文档（幂等），
+    使 S1/对话的 KB 检索通道能看到；投影失败不影响升级本身。
+    """
     entries = (
         db.query(ExperienceEntry)
         .filter(
@@ -140,6 +151,15 @@ def promote_shadow_entries(db: Session) -> list[UUID]:
         entry.status = "active"
     if entries:
         db.commit()
+        from app.services.knowledge_center import project_experience_entry
+
+        for entry in entries:
+            if entry.generality != "cross-domain":
+                continue
+            try:
+                project_experience_entry(db, entry, None)
+            except Exception:  # noqa: BLE001 - 单条投影失败不影响其余
+                db.rollback()
     return [entry.id for entry in entries]
 
 
