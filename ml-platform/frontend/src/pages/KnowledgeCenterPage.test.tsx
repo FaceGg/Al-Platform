@@ -108,7 +108,7 @@ describe("KnowledgeCenterPage", () => {
       </MemoryRouter>
     );
     expect(await screen.findByText("平台经验（系统分区）")).toBeInTheDocument();
-    expect(screen.getByText("系统库")).toBeInTheDocument();
+    expect(screen.getAllByText("系统库").length).toBeGreaterThanOrEqual(1);
     expect(await screen.findByText("索引列默认剔除")).toBeInTheDocument();
   });
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Button, Input, message, Popconfirm, Space, Card, Switch, Form, Modal, Select } from 'antd'
-import { ReloadOutlined, PushpinOutlined, PlusOutlined, DeleteOutlined, FileTextOutlined } from '@ant-design/icons'
+import { Table, Tag, Button, Input, message, Popconfirm, Space, Card, Switch, Form, Modal, Select, Drawer, InputNumber } from 'antd'
+import { ReloadOutlined, StopOutlined, PlusOutlined, DeleteOutlined, FileTextOutlined, EyeOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import apiClient from '../api/client'
 import {
@@ -31,14 +31,25 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
   const [bindModalOpen, setBindModalOpen] = useState(false)
   const [kbForm] = Form.useForm()
   const [bindForm] = Form.useForm()
+  const [editForm] = Form.useForm()
+  const [editingBinding, setEditingBinding] = useState<KBBinding | null>(null)
+  const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([])
+  const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([])
+  const [previewEntry, setPreviewEntry] = useState<ExperienceEntry | null>(null)
 
   const load = () => {
     setLoading(true)
-    Promise.all([listBindings(), listExperience(), apiClient.get('/knowledge/bases')])
-      .then(([bindingList, entryList, kbRes]) => {
+    Promise.all([
+      listBindings(),
+      listExperience(),
+      apiClient.get('/knowledge/bases'),
+      apiClient.get('/projects').catch(() => ({ data: { items: [] } })),
+    ])
+      .then(([bindingList, entryList, kbRes, projRes]) => {
         setBindings(bindingList)
         setEntries(entryList)
         setKbs(kbRes.data?.items || kbRes.data || [])
+        setProjects(projRes.data?.items || projRes.data || [])
       })
       .catch((error) => message.error(formatApiError(error, text.loadFailed)))
       .finally(() => setLoading(false))
@@ -103,6 +114,37 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
     }
   }
 
+  const saveBindingEdit = async (values: Record<string, unknown>) => {
+    if (!editingBinding) return
+    try {
+      await patchBinding(editingBinding.id, values)
+      message.success('绑定配置已更新')
+      setEditingBinding(null)
+      load()
+    } catch (error) {
+      message.error(formatApiError(error, text.updateFailed))
+    }
+  }
+
+  const batchRetire = async () => {
+    const targets = selectedEntryIds.filter((id) => {
+      const entry = entries.find((e) => e.id === id)
+      return entry && entry.status === 'active'
+    })
+    if (targets.length === 0) {
+      message.info('所选条目中没有可否决的 active 条目')
+      return
+    }
+    try {
+      await Promise.all(targets.map((id) => retireExperience(id)))
+      message.success(`已否决 ${targets.length} 条`)
+      setSelectedEntryIds([])
+      load()
+    } catch (error) {
+      message.error(formatApiError(error, text.updateFailed))
+    }
+  }
+
   const deleteKb = async (kb: Record<string, unknown>) => {
     try {
       await apiClient.delete(`/knowledge/bases/${kb.id}`)
@@ -157,6 +199,34 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
       render: (v: boolean, record: KBBinding) =>
         record.is_system ? '—' : v ? '≥' + record.sync_experience_min_confidence : text.syncOff,
     },
+    {
+      title: text.colActions,
+      key: 'actions',
+      render: (_: unknown, record: KBBinding) =>
+        record.is_system ? (
+          <Tag color="purple">{text.systemTag}</Tag>
+        ) : (
+          <Button
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={() => {
+              setEditingBinding(record)
+              editForm.setFieldsValue({
+                enabled: record.enabled,
+                scope_projects: record.scope_projects || [],
+                scope_chat: record.scope_chat,
+                scope_agent_s1: record.scope_agent_s1,
+                retrieval_top_k: record.retrieval_top_k,
+                retrieval_trigger: record.retrieval_trigger,
+                sync_receive_experience: record.sync_receive_experience,
+                sync_experience_min_confidence: record.sync_experience_min_confidence,
+              })
+            }}
+          >
+            {t.kbcenter.editBinding}
+          </Button>
+        ),
+    },
   ]
 
   const entryColumns = [
@@ -175,11 +245,15 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
     { title: text.colNote, dataIndex: 'human_note', ellipsis: true, render: (value: string | null) => value || '—' },
     {
       title: text.colActions,
+      width: 200,
       render: (_: unknown, record: ExperienceEntry) => (
         <Space>
+          <Button size="small" icon={<EyeOutlined />} onClick={() => setPreviewEntry(record)}>
+            {text.preview}
+          </Button>
           {record.status === 'active' && (
             <Popconfirm title={text.retireConfirm} onConfirm={() => retire(record)}>
-              <Button size="small" danger icon={<PushpinOutlined />}>
+              <Button size="small" danger icon={<StopOutlined />}>
                 {text.retire}
               </Button>
             </Popconfirm>
@@ -288,8 +362,33 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
       >
         <Table rowKey="id" size="small" columns={bindingColumns as never} dataSource={bindings} loading={loading} pagination={false} />
       </Card>
-      <Card title={text.experienceTitle}>
-        <Table rowKey="id" size="small" columns={entryColumns as never} dataSource={entries} pagination={{ pageSize: 10 }} />
+      <Card
+        title={text.experienceTitle}
+        extra={
+          <Space>
+            {selectedEntryIds.length > 0 && (
+              <Button danger size="small" icon={<StopOutlined />} onClick={batchRetire}>
+                {text.batchRetire}（{selectedEntryIds.length}）
+              </Button>
+            )}
+            <Button icon={<ReloadOutlined />} onClick={load}>
+              {text.refresh}
+            </Button>
+          </Space>
+        }
+      >
+        <Table
+          rowKey="id"
+          size="small"
+          columns={entryColumns as never}
+          dataSource={entries}
+          pagination={{ pageSize: 10 }}
+          rowSelection={{
+            selectedRowKeys: selectedEntryIds,
+            onChange: (keys) => setSelectedEntryIds(keys as string[]),
+            getCheckboxProps: (record: ExperienceEntry) => ({ disabled: record.status !== 'active' }),
+          }}
+        />
       </Card>
       {noteTarget && (
         <Card title={text.noteTitle} style={{ marginTop: 16 }}>
@@ -353,6 +452,26 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
           </div>
         </Form>
       </Modal>
+      <Drawer
+        title={text.previewTitle}
+        open={!!previewEntry}
+        onClose={() => setPreviewEntry(null)}
+        width={520}
+      >
+        {previewEntry && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13, lineHeight: 1.8 }}>
+            <div><Tag color="blue">{previewEntry.domain}</Tag><Tag color={previewEntry.status === 'active' ? 'green' : previewEntry.status === 'shadow' ? 'blue' : 'default'}>{previewEntry.status}</Tag><Tag color="purple">{previewEntry.origin}</Tag></div>
+            <div><b>情况</b><div>{previewEntry.situation}</div></div>
+            <div><b>教训</b><div>{previewEntry.lesson}</div></div>
+            <div><b>动作</b><div>{previewEntry.action}</div></div>
+            <div><b>置信度</b><div>{previewEntry.confidence.toFixed(2)}{previewEntry.hit_count ? ` · 命中 ${previewEntry.hit_count} 次` : ''}</div></div>
+            {(previewEntry.source_tasks ?? []).length > 0 && (
+              <div><b>来源任务</b><div>{previewEntry.source_tasks.map((t) => String(t).slice(0, 8)).join('、')}</div></div>
+            )}
+            {previewEntry.human_note && <div><b>人工附注</b><div>{previewEntry.human_note}</div></div>}
+          </div>
+        )}
+      </Drawer>
     </>
   )
 }
