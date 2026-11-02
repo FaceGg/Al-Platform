@@ -288,6 +288,8 @@ export default function KnowledgeDetailPage() {
         if (rel.target_id === focusEntity) keep.add(rel.source_id);
       }
       view = entities.filter((e) => keep.has(e.id));
+      // 兜底：过滤结果为空（如键不一致或实体被清理）时不白屏，退回全量视图
+      if (view.length === 0) view = entities;
     } else if (entities.length > 60) {
       view = [...entities]
         .sort((a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0))
@@ -389,7 +391,9 @@ export default function KnowledgeDetailPage() {
       const ev = params.event?.event;
       const dragStart = dragStartRef.current;
       if (dragStart && ev && Math.hypot(ev.offsetX - dragStart.x, ev.offsetY - dragStart.y) > 5) return;
-      setFocusEntity(focusEntity === params.name ? null : params.name);
+      // 以实体 id 聚焦：params.name 是展示名，与邻域过滤的 id 键不一致会把视图过滤成空集（白屏）
+      const id = params.data?.id ?? params.name;
+      setFocusEntity(focusEntity === id ? null : id);
     };
     chart.on("click", chartAny.__clickHandler);
   }, [activeTab, entities, relations, focusEntity, kbId]);
