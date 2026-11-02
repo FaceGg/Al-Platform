@@ -88,6 +88,13 @@ def list_bindings(
 ):
     # 系统分区随列表惰性创建，保证任何部署下经验分区都存在且可检索。
     get_system_partition(db, current_user.id if _is_admin(db, current_user) else _first_admin(db))
+    # 惰性回收孤儿投影（历史版本删条目未清理投影）；失败不影响列表返回
+    from app.services.knowledge_center import reconcile_system_partition
+
+    try:
+        reconcile_system_partition(db)
+    except Exception:  # noqa: BLE001
+        db.rollback()
     bindings = db.query(KBBinding).order_by(KBBinding.is_system.desc()).all()
     return [_binding_out(db, binding) for binding in bindings]
 
@@ -209,8 +216,14 @@ def delete_experience(
     entry = db.get(ExperienceEntry, _uuid(entry_id))
     if entry is None:
         raise HTTPException(404, detail={"code": "EXPERIENCE_NOT_FOUND"})
+    from app.services.knowledge_center import remove_experience_projection
+
     db.delete(entry)
     db.commit()
+    try:
+        remove_experience_projection(db, _uuid(entry_id))
+    except Exception:  # noqa: BLE001 - 投影清理失败不影响删除主流程
+        db.rollback()
     return {"id": str(entry_id)}
 
 
@@ -230,12 +243,15 @@ def batch_delete_experience(
             ids.append(_uuid(raw))
         except HTTPException:
             continue
+    from app.services.knowledge_center import remove_experience_projection
+
     deleted = 0
     for entry_id in ids:
         entry = db.get(ExperienceEntry, entry_id)
         if entry is not None:
             db.delete(entry)
             deleted += 1
+            remove_experience_projection(db, entry_id)
     db.commit()
     return {"deleted": deleted}
 

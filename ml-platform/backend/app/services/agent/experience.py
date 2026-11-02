@@ -186,6 +186,13 @@ def retire_entry(db: Session, entry_id: UUID) -> ExperienceEntry:
         raise LookupError(f"experience entry not found: {entry_id}")
     entry.status = "retired"
     db.commit()
+    # 投影回写：条目退出可注入状态后，系统分区的投影文档同步移除
+    from app.services.knowledge_center import remove_experience_projection
+
+    try:
+        remove_experience_projection(db, entry_id)
+    except Exception:  # noqa: BLE001 - 投影清理失败不影响状态落库
+        db.rollback()
     return entry
 
 
@@ -195,6 +202,12 @@ def supersede_entry(db: Session, entry_id: UUID) -> ExperienceEntry:
         raise LookupError(f"experience entry not found: {entry_id}")
     entry.status = "superseded"
     db.commit()
+    from app.services.knowledge_center import remove_experience_projection
+
+    try:
+        remove_experience_projection(db, entry_id)
+    except Exception:  # noqa: BLE001 - 投影清理失败不影响状态落库
+        db.rollback()
     return entry
 
 

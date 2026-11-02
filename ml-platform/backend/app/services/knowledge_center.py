@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.models.experience_entry import ExperienceEntry
 from app.models.kb_binding import KBBinding
-from app.models.knowledge import Document, KnowledgeBase
+from app.models.knowledge import Chunk, Document, KnowledgeBase
 
 SYSTEM_PARTITION_NAME = "平台经验（系统分区）"
 
@@ -177,6 +177,62 @@ def unified_retrieve(
         if len(citations) >= total_top_k + 4:
             break
     return {"citations": citations[: total_top_k + 4], "context_chars": chars}
+
+
+def remove_experience_projection(db: Session, entry_id) -> int:
+    """删除条目在系统分区的投影文档（含分块）。retire/supersede/物理删除时调用。
+
+    真源条目消失或退出可注入状态后，投影若不随之清理，S1/对话检索会继续
+    命中已删除的教训（数据污染），绑定列表的文档数也会虚高。"""
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.name == SYSTEM_PARTITION_NAME).first()
+    if kb is None:
+        return 0
+    filename = "经验 %s" % entry_id
+    docs = (
+        db.query(Document)
+        .filter(
+            Document.kb_id == kb.id,
+            Document.filename == filename,
+            Document.doc_type == "experience",
+        )
+        .all()
+    )
+    removed = 0
+    for doc in docs:
+        db.query(Chunk).filter(Chunk.doc_id == doc.id).delete()
+        db.delete(doc)
+        removed += 1
+    if removed:
+        db.commit()
+    return removed
+
+
+def reconcile_system_partition(db: Session) -> int:
+    """回收孤儿投影：真源条目已不存在或已 retired/superseded 的投影文档。
+
+    历史版本删除条目时未清理投影，库中已积累孤儿（文档数虚高且检索可命中）；
+    本函数在绑定列表加载时惰性执行，一次清完此后增量清理由删除路径保证。"""
+    docs = (
+        db.query(Document)
+        .join(KnowledgeBase, Document.kb_id == KnowledgeBase.id)
+        .filter(KnowledgeBase.name == SYSTEM_PARTITION_NAME, Document.doc_type == "experience")
+        .all()
+    )
+    removed = 0
+    for doc in docs:
+        raw = (doc.filename or "").removeprefix("经验 ").strip()
+        try:
+            entry_id = uuid.UUID(raw)
+        except (TypeError, ValueError):
+            continue  # 非「经验 <uuid>」命名的历史文档不碰
+        entry = db.get(ExperienceEntry, entry_id)
+        if entry is None or entry.status in ("retired", "superseded"):
+            db.query(Chunk).filter(Chunk.doc_id == doc.id).delete()
+            db.delete(doc)
+            removed += 1
+    if removed:
+        db.commit()
+    return removed
 
 
 def project_experience_entry(db: Session, entry: ExperienceEntry, admin_id) -> str | None:

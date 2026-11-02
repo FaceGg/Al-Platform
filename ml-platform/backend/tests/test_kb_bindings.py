@@ -200,6 +200,79 @@ class TestKBCenter(unittest.TestCase):
             result = project_experience_entry(db, entry, self.admin_id)
         self.assertIsNone(result)
 
+    def test_retire_removes_projection(self):
+        from app.services.agent.experience import retire_entry
+        from app.services.knowledge_center import get_system_partition
+
+        with SessionLocal() as db:
+            entry = ExperienceEntry(
+                domain="cross-domain",
+                situation="s",
+                lesson="retire-projection-test",
+                action="a",
+                status="active",
+                confidence=0.9,
+                origin="distilled",
+                generality="cross-domain",
+                evidence_json={"source_tasks": ["t1"]},
+            )
+            db.add(entry)
+            db.commit()
+            entry_id = entry.id
+            project_experience_entry(db, entry, self.admin_id)
+            kb, _binding = get_system_partition(db, self.admin_id)
+            self.assertIsNotNone(
+                db.query(Document)
+                .filter(Document.kb_id == kb.id, Document.filename == "经验 %s" % entry_id)
+                .first()
+            )
+            retire_entry(db, entry_id)
+            self.assertIsNone(
+                db.query(Document)
+                .filter(Document.kb_id == kb.id, Document.filename == "经验 %s" % entry_id)
+                .first()
+            )
+
+    def test_reconcile_removes_orphan_projection(self):
+        # 模拟历史缺陷路径：条目被物理删除但投影文档遗留 → 列表加载时回收
+        from app.services.knowledge_center import (
+            get_system_partition,
+            reconcile_system_partition,
+        )
+
+        with SessionLocal() as db:
+            entry = ExperienceEntry(
+                domain="cross-domain",
+                situation="s",
+                lesson="orphan-projection-test",
+                action="a",
+                status="active",
+                confidence=0.9,
+                origin="distilled",
+                generality="cross-domain",
+                evidence_json={"source_tasks": ["t1"]},
+            )
+            db.add(entry)
+            db.commit()
+            entry_id = entry.id
+            project_experience_entry(db, entry, self.admin_id)
+            kb, _binding = get_system_partition(db, self.admin_id)
+            doc = (
+                db.query(Document)
+                .filter(Document.kb_id == kb.id, Document.filename == "经验 %s" % entry_id)
+                .first()
+            )
+            self.assertIsNotNone(doc)
+            db.delete(entry)  # 绕过 API 的旧缺陷删除路径
+            db.commit()
+            removed = reconcile_system_partition(db)
+            self.assertGreaterEqual(removed, 1)
+            self.assertIsNone(
+                db.query(Document)
+                .filter(Document.kb_id == kb.id, Document.filename == "经验 %s" % entry_id)
+                .first()
+            )
+
 
 class TestKnowledgeCenterAPI(unittest.TestCase):
     @classmethod
