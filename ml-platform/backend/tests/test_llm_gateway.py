@@ -8,6 +8,7 @@ consumer surfaces (chat / knowledge / orchestration).
 
 import os
 import unittest
+from contextlib import contextmanager
 from unittest import mock
 from uuid import uuid4
 
@@ -117,19 +118,22 @@ class TestLLMGateway(unittest.TestCase):
         config = _fake_config(profile_id=profile_id)
         captured = {}
 
-        def fake_post(url, **kwargs):
+        @contextmanager
+        def fake_stream(method, url, **kwargs):
             captured["url"] = url
             captured["json"] = kwargs["json"]
-            response = mock.Mock()
+            response = mock.MagicMock()
             response.status_code = 200
-            response.json.return_value = {
-                "choices": [{"message": {"content": "pong"}}],
-                "usage": {"prompt_tokens": 3, "completion_tokens": 1},
-            }
-            return response
+            response.iter_lines.return_value = iter([
+                'data: {"choices": [{"delta": {"content": "po"}}]}',
+                'data: {"choices": [{"delta": {"content": "ng"}}]}',
+                'data: {"choices": [{}], "usage": {"prompt_tokens": 3, "completion_tokens": 1}}',
+                "data: [DONE]",
+            ])
+            yield response
 
         with SessionLocal() as db, mock.patch.object(
-            _HTTP_CLIENT, "post", side_effect=fake_post
+            _HTTP_CLIENT, "stream", side_effect=fake_stream
         ):
             user = db.query(User).filter(User.username == _ADMIN_USER).first()
             reply, usage = chat_completion(
@@ -143,6 +147,7 @@ class TestLLMGateway(unittest.TestCase):
         self.assertEqual(reply, "pong")
         self.assertEqual(captured["url"], _GATEWAY_URL)
         self.assertEqual(captured["json"]["model"], "glm-4.6")
+        self.assertEqual(usage.get("completion_tokens"), 1)
         with SessionLocal() as db:
             events = (
                 db.query(PlatformAuditEvent)

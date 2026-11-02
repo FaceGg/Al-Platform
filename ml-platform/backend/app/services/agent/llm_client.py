@@ -32,7 +32,9 @@ S1_SYSTEM_PROMPT = (
     "expected_important_features[{name_hint,reason,priority:high|medium|low}] / "
     "data_quality_actions[{column,issue,action}] / leakage_suspects[{column,why}] / "
     "class_balance_concern / feature_engineering_brief。domain_hypothesis 用简短"
-    "标签（如 tightening / welding / smt，≤20 字）。不要输出 JSON 以外的任何文字。"
+    "标签（如 tightening / welding / smt，≤20 字）。输出条数上限：focus_channels ≤5、"
+    "expected_important_features ≤15、data_quality_actions ≤8、leakage_suspects ≤6——"
+    "宁精勿多，超出上限会被拒绝。不要输出 JSON 以外的任何文字。"
 )
 
 
@@ -74,6 +76,77 @@ def build_s1_messages(
     ]
 
 
+# 网络类瞬时错误名单（按异常类名匹配，兼容 httpx 传输层）：
+# ReadError/Errno 104 连接被重置是非流式长生成在中间设备上的典型死法。
+_TRANSIENT_NETWORK_ERRORS = {
+    "ReadTimeout",
+    "ReadError",
+    "ConnectError",
+    "ConnectTimeout",
+    "RemoteProtocolError",
+    "PoolTimeout",
+    "WriteError",
+}
+
+
+def chat_completion_with_retry(
+    db: Session,
+    *,
+    config,
+    messages: list[dict],
+    temperature: float,
+    max_tokens: int,
+    purpose: str,
+    actor=None,
+    timeout_floor: float | None = None,
+    attempts: int = 3,
+) -> tuple[str | None, dict, str | None]:
+    """带瞬时故障重试的网关调用，返回 (reply, usage, error)。
+
+    可重试：网络类瞬时错误（ReadError/Errno 104 连接被中间设备重置是
+    非流式长生成的典型死法——连接静默等待整个生成期，测试调用的短请求
+    活得下来而阶段调用的长请求被掐）与空回复（上游负载下的暂态现象）。
+    退避 5s/15s。契约类失败发生在调用成功之后，不属于此层。"""
+    import time as _time
+
+    reply: str | None = None
+    usage: dict = {}
+    last_error: Exception | None = None
+    last_empty = False
+    for attempt in range(attempts):
+        try:
+            reply, usage = chat_completion(
+                db,
+                config=config,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                purpose=purpose,
+                actor=actor,
+                timeout_floor=timeout_floor,
+            )
+            if reply and reply.strip():
+                return reply, usage, None
+            last_empty = True
+            last_error = None
+        except Exception as error:  # noqa: BLE001 - 网络类失败重试，其余立即返回
+            name = type(error).__name__
+            if name not in _TRANSIENT_NETWORK_ERRORS:
+                return None, {}, f"llm_call_failed: {name}: {error}"
+            last_empty = False
+            last_error = error
+        if attempt < attempts - 1:
+            _time.sleep(5 * (attempt + 1))
+    if last_error is not None:
+        return None, {}, (
+            f"llm_call_failed: {type(last_error).__name__}: {last_error}"
+            f" ({attempts} attempts incl. backoff)"
+        )
+    if last_empty:
+        return None, usage or {}, f"llm_empty_completion ({attempts} attempts incl. backoff)"
+    return None, usage or {}, "llm_empty_completion"
+
+
 def run_s1(
     db: Session,
     *,
@@ -98,42 +171,21 @@ def run_s1(
         experience_references=experience_references,
         guidance=guidance,
     )
-    # 瞬时网络故障自动重试（ReadTimeout/ConnectError）：本周三个任务死于
-    # S1 偶发超时（a1d8bd26/486ea7f9/a3673016），重试 2 次可救回绝大多数；
-    # 退避 5s/15s。契约类失败在调用成功后才发生，不进入此循环。
-    import time as _time
-
-    reply: str | None = None
-    usage: dict = {}
-    last_network_error: Exception | None = None
-    for attempt in range(3):
-        try:
-            reply, usage = chat_completion(
-                db,
-                config=config,
-                messages=messages,
-                temperature=0.2,
-                max_tokens=8000,
-                purpose="agent_s1",
-                actor=actor,
-                timeout_floor=AGENT_STAGE_TIMEOUT_FLOOR,
-            )
-            last_network_error = None
-            break
-        except Exception as error:  # noqa: BLE001 - 网络类失败重试，其余上抛
-            name = type(error).__name__
-            if name not in {"ReadTimeout", "ConnectError", "ConnectTimeout", "RemoteProtocolError"}:
-                return None, f"llm_call_failed: {name}: {error}", {}
-            last_network_error = error
-            if attempt < 2:
-                _time.sleep(5 * (attempt + 1))
-    if last_network_error is not None:
-        return None, (
-            f"llm_call_failed: {type(last_network_error).__name__}: {last_network_error}"
-            " (3 attempts incl. backoff)"
-        ), {}
-    if not reply:
-        return None, "llm_empty_completion", usage or {}
+    # 瞬时网络故障与空回复自动重试（含 Errno 104 连接重置）：本周任务死于
+    # S1 非流式长生成的连接被掐/空回复，重试 2 次可救回绝大多数；退避 5s/15s。
+    # 契约类失败在调用成功后才发生，不进入此循环。
+    reply, usage, error = chat_completion_with_retry(
+        db,
+        config=config,
+        messages=messages,
+        temperature=0.2,
+        max_tokens=8000,
+        purpose="agent_s1",
+        actor=actor,
+        timeout_floor=AGENT_STAGE_TIMEOUT_FLOOR,
+    )
+    if error:
+        return None, error, usage or {}
     try:
         data = parse_llm_json(reply)
         _sanitize_analysis_payload(data)
@@ -295,24 +347,21 @@ def run_s2(
         meta_hint=meta_hint,
         guidance=guidance,
     )
-    try:
-        reply, usage = chat_completion(
-            db,
-            config=config,
-            messages=messages,
-            temperature=0.3,
-            # Feature-script JSON (code + column lists) overflows the 2000-token
-            # gateway default and arrives truncated — observed on the real
-            # tightening P2 run as five consecutive unterminated-string attempts.
-            max_tokens=8000,
-            purpose="agent_s2",
-            actor=actor,
-            timeout_floor=AGENT_STAGE_TIMEOUT_FLOOR,
-        )
-    except Exception as error:  # noqa: BLE001
-        return None, f"llm_call_failed: {type(error).__name__}: {error}", {}
-    if not reply:
-        return None, "llm_empty_completion", usage or {}
+    reply, usage, error = chat_completion_with_retry(
+        db,
+        config=config,
+        messages=messages,
+        temperature=0.3,
+        # Feature-script JSON (code + column lists) overflows the 2000-token
+        # gateway default and arrives truncated — observed on the real
+        # tightening P2 run as five consecutive unterminated-string attempts.
+        max_tokens=8000,
+        purpose="agent_s2",
+        actor=actor,
+        timeout_floor=AGENT_STAGE_TIMEOUT_FLOOR,
+    )
+    if error:
+        return None, error, usage or {}
     try:
         data = parse_llm_json(reply)
         script = validate_contract(FeatureScript, data)
@@ -382,20 +431,17 @@ def run_s4(
         gate_failures=gate_failures,
         round_number=round_number,
     )
-    try:
-        reply, usage = chat_completion(
-            db,
-            config=config,
-            messages=messages,
-            temperature=0.2,
-            purpose="agent_s4",
-            actor=actor,
-            timeout_floor=AGENT_STAGE_TIMEOUT_FLOOR,
-        )
-    except Exception as error:  # noqa: BLE001
-        return None, f"llm_call_failed: {type(error).__name__}: {error}", {}
-    if not reply:
-        return None, "llm_empty_completion", usage or {}
+    reply, usage, error = chat_completion_with_retry(
+        db,
+        config=config,
+        messages=messages,
+        temperature=0.2,
+        purpose="agent_s4",
+        actor=actor,
+        timeout_floor=AGENT_STAGE_TIMEOUT_FLOOR,
+    )
+    if error:
+        return None, error, usage or {}
     try:
         data = parse_llm_json(reply)
         verdict = validate_contract(ReviewVerdict, data)

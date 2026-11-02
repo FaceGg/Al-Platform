@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 
 _ANNOTATION_RE = re.compile(r"^(.*?)([（(])+(.*?)([）)])+$", re.IGNORECASE)
+# 宽表画像瘦身阈值：超过该列数时逐列统计自动截断（见 profile_data 尾部）
+_WIDE_TABLE_COLUMN_THRESHOLD = 200
 _TIME_NAME_RE = re.compile(
     r"time|date|timestamp|datetime|时间|日期|时刻", re.IGNORECASE
 )
@@ -112,6 +114,28 @@ def profile_data(
     else:
         report["target"] = None
 
+    # 宽表画像瘦身（自动截断并告知用户）：列数超过阈值时逐列统计不再提供
+    # quantiles/top_values/cardinality 细节——3004 列全量曾把 S1 prompt 撑到
+    # 9.8MB 顶爆请求体、把模型输出撑爆 8k token 上限（JSON 被截断）。瘦身后
+    # 每列仅保留 name/dtype/missing_rate，S1 依据列名语义 + 互信息 top-k 仍
+    # 能生成有效的通道预期；压缩事实写入 wide_table_note 一并落档案告知用户。
+    if len(columns) > _WIDE_TABLE_COLUMN_THRESHOLD:
+        slim: list[dict] = []
+        for entry in columns:
+            slim.append(
+                {
+                    "name": entry["name"],
+                    "dtype": entry["dtype"],
+                    "missing_rate": entry["missing_rate"],
+                }
+            )
+        report["columns"] = slim
+        report["wide_table_note"] = (
+            f"数据集为宽表（{len(columns)} 列），画像已自动瘦身：每列仅保留"
+            "名称/类型/缺失率，分位数与高频值摘要已省略；关键特征线索见"
+            " mutual_info_top 与高相关对。"
+        )
+
     if row_samples and row_count:
         sample = frame.head(sample_limit).copy()
         for column in sensitive & set(sample.columns):
@@ -151,7 +175,10 @@ def _high_correlation_pairs(
                     {"a": left, "b": right, "corr": round(abs(float(value)), 6)}
                 )
     pairs.sort(key=lambda item: (-item["corr"], item["a"], item["b"]))
-    return pairs
+    # 宽表守卫：数千列时高相关对是 O(n²) 组合爆炸（3004 列实测 12.3 万对
+    # ≈7.6MB，曾把 S1 prompt 撑到 9.8MB 直接顶爆请求体上限）。已按 corr
+    # 降序排列，只保留最强的前 40 对供 S1 参考——冗余对不产生增量信息。
+    return pairs[:40]
 
 
 def _time_columns(frame: pd.DataFrame) -> list[str]:

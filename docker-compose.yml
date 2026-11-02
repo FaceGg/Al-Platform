@@ -394,3 +394,12 @@ volumes:
 secrets:
   notification_master_key:
     file: ${NOTIFICATION_CRYPTO_SECRET_FILE:-./secrets/notification_master_key}
+
+# 路径实测 MTU ≈1490（宿主走 TUN/VPN 隧道有封装开销），默认 1500 的
+# 大上行包（如 LLM 非流式长请求的数百 KB body）会被中间设备静默丢弃，
+# 表现为 S1 长生成 Connection reset by peer 而短请求正常。留余量取 1480。
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: "1480"

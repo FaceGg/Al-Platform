@@ -10,6 +10,7 @@ module — request-level endpoint overrides were removed (§14.1 收口).
 from __future__ import annotations
 
 import ipaddress
+import json
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -141,28 +142,99 @@ def chat_completion(
     )
     payload_chars = sum(len(message.get("content") or "") for message in messages)
     started = time.perf_counter()
-    response = _HTTP_CLIENT.post(
-        config.api_url,
-        headers={"Authorization": f"Bearer {config.api_key}"} if config.api_key else {},
-        json={
+    # 流式接收（SSE）：非流式长生成在静默等待整个响应期会被网络中间设备
+    # 按"空闲连接"掐断（实测 Errno 104 Connection reset，60-200s 静默窗口，
+    # 短请求测试调用则完全正常——极具迷惑性）。流式让字节持续回流规避
+    # 空闲超时；对调用方语义不变（仍是完整文本 + usage）。
+    reply_parts: list[str] = []
+    usage: dict = {}
+    status_code: int = 0
+    try:
+        with _HTTP_CLIENT.stream(
+            "POST",
+            config.api_url,
+            headers={"Authorization": f"Bearer {config.api_key}"} if config.api_key else {},
+            json={
+                "model": config.model_id,
+                "messages": messages,
+                "temperature": resolved_temperature,
+                "max_tokens": max_tokens,
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            },
+            timeout=effective_timeout,
+        ) as response:
+            status_code = response.status_code
+            if status_code != 200:
+                error_body = response.read().decode("utf-8", errors="replace")
+                try:
+                    data = json.loads(error_body)
+                except ValueError:
+                    data = {"raw": error_body[:500]}
+            else:
+                data = {}
+                for line in response.iter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    chunk_text = line[len("data:"):].strip()
+                    if not chunk_text or chunk_text == "[DONE]":
+                        continue
+                    try:
+                        event = json.loads(chunk_text)
+                    except ValueError:
+                        continue
+                    choices = event.get("choices") or []
+                    if choices:
+                        delta = (choices[0].get("delta") or {}).get("content")
+                        if delta:
+                            reply_parts.append(delta)
+                    if event.get("usage"):
+                        usage = event["usage"]
+    except httpx.HTTPError:
+        # 传输层异常统一归一为非 200 形态，走下方既有的失败审计路径
+        latency_ms = round((time.perf_counter() - started) * 1000, 1)
+        changes = {
+            "purpose": purpose,
             "model": config.model_id,
-            "messages": messages,
-            "temperature": resolved_temperature,
-            "max_tokens": max_tokens,
-        },
-        timeout=effective_timeout,
-    )
+            "chars": payload_chars,
+            "status_code": 0,
+            "latency_ms": latency_ms,
+        }
+        if config.profile_id:
+            changes["profile"] = config.profile_name
+            if request is None:
+                request = SimpleNamespace(state=SimpleNamespace(request_id=None), client=None)
+            try:
+                record_platform_event(
+                    db,
+                    actor=actor,
+                    request=request,
+                    intent=PlatformAuditIntent(
+                        action="llm_gateway.egress",
+                        resource_type="llm_profile",
+                        resource_id=config.profile_id,
+                        changes=changes,
+                    ),
+                    result="failed",
+                    error_code="LLM_TRANSPORT_ERROR",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+        raise
     latency_ms = round((time.perf_counter() - started) * 1000, 1)
-    data = response.json() if response.status_code == 200 else {}
+    if status_code == 200:
+        data = {
+            "choices": [{"message": {"content": "".join(reply_parts)}}],
+            "usage": usage,
+        }
     reply = (
         data.get("choices", [{}])[0].get("message", {}).get("content", "") or None
     )
-    usage = data.get("usage") or {}
     changes = {
         "purpose": purpose,
         "model": config.model_id,
         "chars": payload_chars,
-        "status_code": response.status_code,
+        "status_code": status_code,
         "latency_ms": latency_ms,
     }
     if config.profile_id:

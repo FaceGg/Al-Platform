@@ -48,6 +48,7 @@ export interface AgentRunDetail extends AgentRunItem {
         leakage?: { column?: string; reason?: string }[];
         quality_actions?: { action?: string; columns?: string[] }[];
         class_balance?: string | null; brief?: string;
+        wide_table_note?: string;
       };
       s2?: { description?: string; generated_columns?: string[]; dropped_columns?: string[]; data_shape?: string; attempts?: number };
       s3?: { metrics?: Record<string, number>; importance?: { feature?: string; importance?: number }[] };

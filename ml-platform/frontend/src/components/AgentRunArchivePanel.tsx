@@ -245,6 +245,7 @@ function buildStreamLines(archive: AgentRunDetail, zh: boolean): StreamLine[] {
     push(sid, "section", zh ? `第 ${round.round} 轮` : `Round ${round.round}`, undefined, zh ? `第 ${round.round} 轮` : `Round ${round.round}`);
     const s1 = round.s1;
     if (s1?.domain) push(sid, "text", `[S1] ${zh ? "域假设" : "Domain"}：${s1.domain}`, "ok");
+    if (s1?.wide_table_note) push(sid, "text", `[S1] ⚠ ${s1.wide_table_note}`, "warn");
     if (s1?.reasoning) push(sid, "text", `[S1] ${s1.reasoning.length > 220 ? s1.reasoning.slice(0, 220) + "…" : s1.reasoning}`);
     if (s1?.focus_channels?.length) push(sid, "text", `[S1] ${zh ? "关键通道" : "Channels"}：${s1.focus_channels.map((c) => c.channel).filter(Boolean).join("、")}`);
     if (s1?.leakage?.length) push(sid, "text", `[S1] ${zh ? "泄漏嫌疑" : "Leakage"}：${s1.leakage.map((l) => l.column).filter(Boolean).join("、")}`, "warn");

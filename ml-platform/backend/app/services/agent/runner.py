@@ -495,7 +495,13 @@ class AgentRunner:
                 self.run.memory_json = memory
             # 下一轮 L2 检索按本轮域假设聚焦（§10.4 domain 匹配）。
             self._last_domain = str(report.domain_hypothesis)[:32]
-            self._stage_digest(round_number, "s1", self._s1_digest(report))
+            s1_digest = self._s1_digest(report)
+            # 宽表画像自动瘦身的说明随档案落库——用户能在任务详情看到
+            # "数据太长已被自动截断"的事实，而不是只看到一个能跑的任务
+            wide_note = (self.profile_report or {}).get("wide_table_note")
+            if wide_note:
+                s1_digest["wide_table_note"] = wide_note
+            self._stage_digest(round_number, "s1", s1_digest)
             if self._pause_if_requested("s1", pause_at, resume_state, round_number):
                 return self.run
 
