@@ -299,7 +299,27 @@ function AgentStream({ archive, zh, active }: { archive: AgentRunDetail; zh: boo
   const [lines, setLines] = useState<StreamLine[]>([]);
   const [revealed, setRevealed] = useState(0);
   const [activeSection, setActiveSection] = useState("");
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const prevRunRef = useRef<string | null>(null);
+
+  // 活跃任务每秒刷新一次，驱动耗时计时器实时走动。
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+
+  const elapsedText = (() => {
+    const start = parseBackendTime(archive.created_at);
+    if (!start) return null;
+    let seconds = Math.max(0, Math.floor((nowTick - start.getTime()) / 1000));
+    const hours = Math.floor(seconds / 3600);
+    seconds %= 3600;
+    const minutes = Math.floor(seconds / 60);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds % 60)}` : `${pad(minutes)}:${pad(seconds % 60)}`;
+  })();
+
 
   // 数据到达 → 重建行；切换任务时从头流式展开。
   useEffect(() => {
