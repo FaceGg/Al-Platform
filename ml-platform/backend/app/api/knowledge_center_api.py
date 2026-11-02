@@ -165,6 +165,8 @@ def list_experience(
             "origin": entry.origin,
             "status": entry.status,
             "hit_count": entry.hit_count,
+            "success_count": entry.success_count or 0,
+            "fail_count": entry.fail_count or 0,
             "human_note": entry.human_note,
             "source_tasks": entry.source_tasks or [],
         }

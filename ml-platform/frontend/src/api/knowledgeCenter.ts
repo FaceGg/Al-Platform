@@ -28,6 +28,8 @@ export interface ExperienceEntry {
   origin: string;
   status: string;
   hit_count: number;
+  success_count?: number;
+  fail_count?: number;
   human_note: string | null;
   source_tasks: string[];
 }

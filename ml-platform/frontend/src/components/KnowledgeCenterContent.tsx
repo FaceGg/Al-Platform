@@ -264,6 +264,17 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
     { title: text.colAction, dataIndex: 'action', ellipsis: true },
     { title: text.colConfidence, dataIndex: 'confidence', render: (v: number) => v.toFixed(2) },
     {
+      title: '命中/成败',
+      key: 'outcome',
+      render: (_: unknown, record: ExperienceEntry) => (
+        <Space size={4} style={{ whiteSpace: 'nowrap' }}>
+          <span>命中{record.hit_count ?? 0}</span>
+          <Tag color="green" style={{ marginRight: 0 }}>✓{record.success_count ?? 0}</Tag>
+          <Tag color="red" style={{ marginRight: 0 }}>✗{record.fail_count ?? 0}</Tag>
+        </Space>
+      ),
+    },
+    {
       title: text.colStatus,
       dataIndex: 'status',
       render: (value: string) => (

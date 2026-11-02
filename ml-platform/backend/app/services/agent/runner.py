@@ -208,6 +208,13 @@ class AgentRunner:
             )
         except Exception:  # noqa: BLE001 - 经验库故障不应阻断建模
             return []
+        # 全量 id 落档案（跨轮取并集）：任务终态时据此回写经验成败（结果反馈调分）。
+        # 注入块里的 entry 只截断展示（13 位），不能作为回写键。
+        if entries:
+            prior = set((self.memory or {}).get("injected_experience_ids") or [])
+            self.memory["injected_experience_ids"] = sorted(
+                prior | {str(entry.id) for entry in entries}
+            )
         return [
             {
                 "entry": str(entry.id)[:13],
@@ -307,6 +314,23 @@ class AgentRunner:
             build_report(self.db, run=self.run, config=self.config, actor=self.actor)
         except Exception:  # noqa: BLE001
             logger.warning("agent run %s: optimization report finalize failed", self.run.id, exc_info=True)
+        # 结果反馈调分：本次任务注入过的教训按终态成败回写（通过 +0.02 /
+        # 失败 ×0.9，跌破门槛回 shadow）。失败不改运行终态。
+        try:
+            from app.services.agent.experience import apply_experience_task_outcome
+
+            ids: list = []
+            for raw in (self.memory or {}).get("injected_experience_ids") or []:
+                try:
+                    ids.append(uuid.UUID(str(raw)))
+                except (TypeError, ValueError):
+                    continue
+            if ids:
+                apply_experience_task_outcome(
+                    self.db, ids, passed=self.run.status == "accepted"
+                )
+        except Exception:  # noqa: BLE001
+            logger.warning("agent run %s: experience outcome feedback failed", self.run.id, exc_info=True)
         try:
             from app.services.agent.experience import distill_experience_entries
 

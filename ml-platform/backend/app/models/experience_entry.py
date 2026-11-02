@@ -64,6 +64,9 @@ class ExperienceEntry(Base):
     scope_project_ids = Column(JSON, nullable=False, default=list)
     source_tasks = Column(JSON, nullable=False, default=list)
     hit_count = Column(Integer, nullable=False, default=0)
+    # 结果反馈统计（§10.1 生命周期闭环）：注入过该教训的任务终态成败计数
+    success_count = Column(Integer, nullable=True, default=0)
+    fail_count = Column(Integer, nullable=True, default=0)
     human_note = Column(Text, nullable=True)
     created_by = Column(
         UUID(as_uuid=True),

@@ -19,6 +19,7 @@ from app.database import Base, SessionLocal, engine  # noqa: E402
 from app.models.experience_entry import ExperienceEntry  # noqa: E402
 from app.services.agent.experience import (  # noqa: E402
     ExperienceEvidenceRequired,
+    apply_experience_task_outcome,
     promote_shadow_entries,
     record_experience,
     retire_entry,
@@ -71,6 +72,64 @@ class TestExperienceStore(unittest.TestCase):
         with SessionLocal() as db:
             with self.assertRaises(ExperienceEvidenceRequired):
                 self._record(db, evidence={"source_tasks": []})
+
+    def test_outcome_pass_bumps_confidence_and_counts(self):
+        with SessionLocal() as db:
+            entry = self._record(db, confidence=0.8)
+            db.query(ExperienceEntry).filter(
+                ExperienceEntry.id == entry.id
+            ).update({"status": "active"})
+            db.commit()
+            entry_id = entry.id
+            apply_experience_task_outcome(db, [entry_id], passed=True)
+            refreshed = db.get(ExperienceEntry, entry_id)
+        self.assertAlmostEqual(float(refreshed.confidence), 0.82, places=4)
+        self.assertEqual(refreshed.success_count, 1)
+        self.assertEqual(refreshed.fail_count, 0)
+        self.assertEqual(refreshed.status, "active")
+
+    def test_outcome_fail_decays_and_demotes_below_gate(self):
+        # 0.72 × 0.9 = 0.648 < 0.70 注入门 → 回 shadow 并清零冷静期
+        with SessionLocal() as db:
+            entry = self._record(db, confidence=0.72)
+            db.query(ExperienceEntry).filter(
+                ExperienceEntry.id == entry.id
+            ).update({"status": "active", "hit_count": 5})
+            db.commit()
+            entry_id = entry.id
+            apply_experience_task_outcome(db, [entry_id], passed=False)
+            refreshed = db.get(ExperienceEntry, entry_id)
+        self.assertAlmostEqual(float(refreshed.confidence), 0.648, places=4)
+        self.assertEqual(refreshed.fail_count, 1)
+        self.assertEqual(refreshed.status, "shadow")
+        self.assertEqual(refreshed.hit_count, 0)
+
+    def test_outcome_fail_keeps_active_above_gate(self):
+        with SessionLocal() as db:
+            entry = self._record(db, confidence=0.9)
+            db.query(ExperienceEntry).filter(
+                ExperienceEntry.id == entry.id
+            ).update({"status": "active"})
+            db.commit()
+            entry_id = entry.id
+            apply_experience_task_outcome(db, [entry_id], passed=False)
+            refreshed = db.get(ExperienceEntry, entry_id)
+        self.assertAlmostEqual(float(refreshed.confidence), 0.81, places=4)
+        self.assertEqual(refreshed.status, "active")
+
+    def test_outcome_leaves_retired_untouched(self):
+        with SessionLocal() as db:
+            entry = self._record(db, confidence=0.9)
+            db.query(ExperienceEntry).filter(
+                ExperienceEntry.id == entry.id
+            ).update({"status": "retired"})
+            db.commit()
+            entry_id = entry.id
+            apply_experience_task_outcome(db, [entry_id], passed=False)
+            refreshed = db.get(ExperienceEntry, entry_id)
+        self.assertEqual(refreshed.status, "retired")
+        self.assertAlmostEqual(float(refreshed.confidence), 0.9, places=4)
+        self.assertEqual(refreshed.fail_count, 1)  # 计数仍如实累计
 
     def test_human_entry_directly_active(self):
         with SessionLocal() as db:
