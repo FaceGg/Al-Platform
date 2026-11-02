@@ -4,6 +4,7 @@ import { LoadingOutlined } from "@ant-design/icons";
 import OptReportPanel from "./OptReportPanel";
 import ServitizeActions from "./ServitizeActions";
 import { parseBackendTime } from "../utils/time";
+import { agentStatusLabel } from "../utils/agentStatus";
 import {
   resumeAgentRun,
   type AgentRunDetail,
@@ -55,7 +56,7 @@ const ACTIVE_STATUSES = new Set(["pending", "running"]);
 /** 终态人性化说明：失败给信号+归因+建议，而非裸错误码（ed95d930 类诉求）。 */
 const TERMINAL_EXPLAIN: Record<string, { signal: string; why: string; advice: string }> = {
   AGENT_MAX_ROUNDS: {
-    signal: "未达验收标准",
+    signal: "未达验收标准（自动迭代已达上限）",
     why: "多轮迭代均未通过硬门禁。常见原因是数据量不足、类别严重不平衡，或门禁阈值高于该数据集能达到的上限。",
     advice: "建议：放宽门禁阈值（如 recall ≥ 0.6）／换更大数据集／检查目标列语义是否正确。",
   },
@@ -92,7 +93,7 @@ const TERMINAL_EXPLAIN: Record<string, { signal: string; why: string; advice: st
   AGENT_EXECUTOR_CRASHED: {
     signal: "执行异常终止",
     why: "执行线程发生未预期异常，堆栈已在下方留档。",
-    advice: "建议：重新提交；若复现请把升级原因中的堆栈反馈给平台维护者。",
+    advice: "建议：重新提交；若复现请把「待人工决策原因」中的堆栈反馈给平台维护者。",
   },
   AGENT_RUN_INTERRUPTED: {
     signal: "执行被中断",
@@ -116,7 +117,9 @@ export default function AgentRunArchivePanel({ runId, archive, archiveError, zh,
         <span className="v2-badge v2-bgray">{runId.slice(0, 8)}</span>
         {archive ? (
           <>
-            <span className={`v2-badge ${statusBadge(archive.status)}`}>{archive.status}</span>
+            <span className={`v2-badge ${statusBadge(archive.status)}`} title={archive.status}>
+              {agentStatusLabel(archive.status, zh)}
+            </span>
             {activeStage ? (
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--v2-blue, #2f9bf5)" }}>
                 <LoadingOutlined spin />{zh ? activeStage.zh : activeStage.en}
@@ -149,7 +152,7 @@ export default function AgentRunArchivePanel({ runId, archive, archiveError, zh,
         <>
         {escalation?.detail ? (
           <div style={{ marginBottom: 10, padding: "8px 10px", border: "1px solid var(--v2-line)", borderRadius: 8, background: "rgba(230,111,117,.08)", fontSize: 12, lineHeight: 1.7 }}>
-            <b style={{ color: "var(--v2-red)" }}>{zh ? "升级原因" : "Escalation detail"}</b>
+            <b style={{ color: "var(--v2-red)" }}>{zh ? "待人工决策原因" : "Why this needs a decision"}</b>
             <div style={{ color: "var(--v2-sub)", wordBreak: "break-all" }}>{escalation.detail}</div>
           </div>
         ) : null}
@@ -428,15 +431,22 @@ function AgentStream({ archive, zh, active }: { archive: AgentRunDetail; zh: boo
 function TerminalOutcome({ archive, zh }: { archive: AgentRunDetail; zh: boolean }) {
   const explain = archive.error_code ? TERMINAL_EXPLAIN[archive.error_code] : undefined;
   const accepted = archive.status === "accepted";
+  // waiting_escalate 是"暂停待人工决策"而非致命失败：用琥珀色与 ⏸ 区分，
+  // 避免用户误读为系统错误。
+  const escalated = archive.status === "waiting_escalate";
   return (
     <div style={{
-      border: `1px solid ${accepted ? "rgba(71,195,160,.45)" : "rgba(230,111,117,.45)"}`,
-      background: accepted ? "rgba(71,195,160,.07)" : "rgba(230,111,117,.07)",
+      border: `1px solid ${accepted ? "rgba(71,195,160,.45)" : escalated ? "rgba(250,173,20,.45)" : "rgba(230,111,117,.45)"}`,
+      background: accepted ? "rgba(71,195,160,.07)" : escalated ? "rgba(250,173,20,.08)" : "rgba(230,111,117,.07)",
       borderRadius: 9, padding: "10px 12px", marginBottom: 6,
     }}>
       <div className="meta">
-        <b style={{ color: accepted ? "var(--v2-green)" : "var(--v2-red)", fontSize: 13 }}>
-          {accepted ? (zh ? "✓ 验收通过" : "✓ Accepted") : `✕ ${zh ? "任务未通过" : "Not accepted"}`}
+        <b style={{ color: accepted ? "var(--v2-green)" : escalated ? "var(--v2-gold)" : "var(--v2-red)", fontSize: 13 }}>
+          {accepted
+            ? (zh ? "✓ 验收通过" : "✓ Accepted")
+            : escalated
+              ? `⏸ ${zh ? "未达验收标准 · 待人工决策" : "Below gates · needs decision"}`
+              : `✕ ${zh ? "任务未通过" : "Not accepted"}`}
         </b>
         <span>{explain?.signal ?? archive.status}</span>
         <span style={{ marginLeft: "auto" }}>{relativeTime(archive.updated_at ?? archive.created_at, zh)}</span>
@@ -449,7 +459,7 @@ function TerminalOutcome({ archive, zh }: { archive: AgentRunDetail; zh: boolean
               <div style={{ color: "var(--v2-gold)" }}>{explain.advice}</div>
             </>
           ) : (
-            <div>{zh ? "原因：见升级原因与技术详情。" : "See escalation detail."}</div>
+            <div>{zh ? "原因与建议见上方「待人工决策原因」与技术详情。" : "See the decision note and technical details above."}</div>
           )}
           {archive.error_code ? <div className="mono" style={{ marginTop: 4 }}>code: {archive.error_code} · {archive.status}</div> : null}
         </div>

@@ -72,13 +72,13 @@ describe("AgentRunDetailPage", () => {
   it("surfaces the persisted escalation detail (486ea7f9 diagnosability)", async () => {
     renderAt(`/agent/task/${RUN_ID}`);
 
-    expect(await screen.findByText(/升级原因/)).toBeInTheDocument();
+    expect(await screen.findByText(/待人工决策原因/)).toBeInTheDocument();
     expect(screen.getByText(/ReadTimeout: timed out/)).toBeInTheDocument();
   });
 
   it("renders relative update time in the correct timezone", async () => {
     renderAt(`/agent/task/${RUN_ID}`);
-    const outcome = await screen.findByText(/任务未通过/);
+    const outcome = await screen.findByText(/⏸ 未达验收标准/);
     const finalBlock = outcome.closest(".agent-line");
     // 90 分钟前（UTC 正确解析）必须显示为小时级相对时间；时区 bug 会显示成
     // "负偏移被钳为刚刚"或"十几小时前"级别错位——用区间断言钉住正确区间。

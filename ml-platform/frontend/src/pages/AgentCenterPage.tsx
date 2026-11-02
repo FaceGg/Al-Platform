@@ -16,6 +16,7 @@ import {
 } from "../api/agentCenter";
 import AgentModelingWizard from "../components/AgentModelingWizard";
 import { parseBackendTime } from "../utils/time";
+import { agentStatusLabel } from "../utils/agentStatus";
 
 interface AgentJob {
   id: number | string;
@@ -211,7 +212,7 @@ export default function AgentCenterPage() {
                     <td>{run.project_name ?? "-"}</td>
                     <td className="tt">{run.target_column ?? "-"}</td>
                     <td>
-                      <span className={`v2-badge ${statusBadge(run.status)}`}>{run.status}</span>
+                      <span className={`v2-badge ${statusBadge(run.status)}`} title={run.status}>{agentStatusLabel(run.status, zh)}</span>
                       {run.error_code ? <span style={{ marginLeft: 6, fontSize: 11, color: "var(--v2-dim)" }}>{run.error_code}</span> : null}
                     </td>
                     <td>{run.current_stage.toUpperCase()} · {zh ? "轮" : "r"}{run.round_count}</td>
