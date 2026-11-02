@@ -243,13 +243,37 @@ export default function KnowledgeDetailPage() {
   const [focusEntity, setFocusEntity] = useState<string | null>(null);
   const graphCanvasRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+  // 节点位置缓存（按知识库隔离）：静态布局只算一次，聚焦切换时复用既有坐标
+  const graphPosRef = useRef<{ kbId: string; map: Map<string, [number, number]> }>({ kbId: "", map: new Map() });
 
-  // 确保图谱已初始化并应用当前数据/聚焦。setOption 幂等合并，重复调用安全。
+  // 确保图谱已初始化并应用当前数据/聚焦。
+  // 轮询兜底只负责「实例缺失时补挂」；数据/聚焦未变化时绝不能重复 setOption——
+  // 每次调用都会重启过渡动画，表现为图谱持续转动不停。
   const ensureGraphChart = useCallback(() => {
     if (activeTab !== "graph" || !graphCanvasRef.current || entities.length === 0) return;
     const dom = graphCanvasRef.current;
     const chart = echarts.getInstanceByDom(dom) ?? echarts.init(dom);
     graphChartRef.current = chart;
+    const chartAny = chart as any;
+    const signature = [
+      focusEntity,
+      entities.length,
+      relations.length,
+      entities[0]?.id ?? "",
+      relations[0]?.id ?? "",
+    ].join("|");
+    if (chartAny.__appliedSignature === signature) {
+      // 仅在容器尺寸变化时 resize（页签过渡期初始化可能测到窄宽度）
+      if (chartAny.__lastW !== dom.clientWidth || chartAny.__lastH !== dom.clientHeight) {
+        chartAny.__lastW = dom.clientWidth;
+        chartAny.__lastH = dom.clientHeight;
+        chart.resize();
+      }
+      return;
+    }
+    chartAny.__appliedSignature = signature;
+    chartAny.__lastW = dom.clientWidth;
+    chartAny.__lastH = dom.clientHeight;
     requestAnimationFrame(() => chart.resize());
     const degree = new Map<string, number>();
     for (const rel of relations) {
@@ -270,18 +294,73 @@ export default function KnowledgeDetailPage() {
         .slice(0, 60);
     }
     const keepIds = new Set(view.map((e) => e.id));
+
+    // —— 一次性静态力导向布局 ——
+    // 不用 echarts 的 force（其模拟会持续步进、图永远在动），改为自行计算
+    // 最终坐标后以 layout:"none" 渲染：静止、确定，节点仍可拖拽（data[].draggable）。
+    if (graphPosRef.current.kbId !== kbId) graphPosRef.current = { kbId: kbId ?? "", map: new Map() };
+    const posCache = graphPosRef.current.map;
+    const W = Math.max(dom.clientWidth, 320);
+    const H = Math.max(dom.clientHeight, 240);
+    const fresh = view.filter((e) => !posCache.has(e.id));
+    const R0 = Math.min(W, H) * 0.4;
+    fresh.forEach((e, i) => {
+      const a = (i / Math.max(1, fresh.length)) * Math.PI * 2 - Math.PI / 2;
+      posCache.set(e.id, [W / 2 + R0 * Math.cos(a), H / 2 + R0 * Math.sin(a)]);
+    });
+    const idx = new Map(view.map((e, i) => [e.id, i]));
+    const pts: [number, number][] = view.map((e) => posCache.get(e.id)!);
+    const simEdges: [number, number][] = [];
+    for (const r of relations) {
+      const s = idx.get(r.source_id);
+      const t = idx.get(r.target_id);
+      if (s != null && t != null) simEdges.push([s, t]);
+    }
+    const LINK_LEN = 95, REPULSE = 4200, ITERATIONS = 220;
+    for (let it = 0; it < ITERATIONS; it++) {
+      for (let i = 0; i < pts.length; i++) {
+        for (let j = i + 1; j < pts.length; j++) {
+          let dx = pts[i][0] - pts[j][0];
+          let dy = pts[i][1] - pts[j][1];
+          let d2 = dx * dx + dy * dy;
+          if (d2 < 1) { dx = 0.05; dy = 0.05; d2 = 1; }
+          const d = Math.sqrt(d2);
+          const f = REPULSE / d2 / d;
+          pts[i][0] += dx * f; pts[i][1] += dy * f;
+          pts[j][0] -= dx * f; pts[j][1] -= dy * f;
+        }
+      }
+      for (const [s, t] of simEdges) {
+        const dx = pts[t][0] - pts[s][0];
+        const dy = pts[t][1] - pts[s][1];
+        const d = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
+        const f = ((d - LINK_LEN) / d) * 0.08;
+        pts[s][0] += dx * f; pts[s][1] += dy * f;
+        pts[t][0] -= dx * f; pts[t][1] -= dy * f;
+      }
+      for (const p of pts) {
+        p[0] += (W / 2 - p[0]) * 0.01;
+        p[1] += (H / 2 - p[1]) * 0.01;
+      }
+    }
+    for (let i = 0; i < view.length; i++) {
+      pts[i][0] = Math.min(Math.max(pts[i][0], 24), W - 24);
+      pts[i][1] = Math.min(Math.max(pts[i][1], 24), H - 24);
+      posCache.set(view[i].id, [pts[i][0], pts[i][1]]);
+    }
+
     chart.setOption({
       tooltip: {},
-      animationDuration: 800,
-      animationEasing: "quinticInOut",
       animationDurationUpdate: 500,
       animationEasingUpdate: "cubicInOut",
       series: [{
         type: "graph",
-        layout: "force",
+        layout: "none",
         roam: true, // 拖拽节点固定位置 / 滚轮缩放 / 空白处平移
-        data: view.map((e) => ({
+        data: view.map((e, i) => ({
           id: e.id, name: e.name, category: e.entity_type,
+          x: pts[i][0], y: pts[i][1],
+          draggable: true,
           symbolSize: 9 + Math.min(11, (degree.get(e.id) || 0) * 2.5),
         })),
         links: relations
@@ -289,7 +368,6 @@ export default function KnowledgeDetailPage() {
           .map((r) => ({ source: r.source_id, target: r.target_id, name: r.relation_type })),
         categories: [...new Set(view.map((e) => e.entity_type))].map((name) => ({ name })),
         label: { show: true, fontSize: 10 },
-        force: { repulsion: 160, edgeLength: [70, 120], gravity: 0.08, layoutAnimation: true },
         // 悬停高亮邻域（其余节点淡出），聚焦/恢复切换带缓动过渡
         emphasis: {
           focus: "adjacency",
@@ -302,7 +380,6 @@ export default function KnowledgeDetailPage() {
     });
     // 拖拽节点与点击聚焦区分：位移超过阈值视为拖拽，不切换聚焦。
     // ensureGraphChart 会被轮询重复调用，handler 按引用精确替换，避免叠加或误删 roam 内部监听。
-    const chartAny = chart as any;
     if (chartAny.__downHandler) chart.getZr().off("mousedown", chartAny.__downHandler);
     chartAny.__downHandler = (ev: any) => { dragStartRef.current = { x: ev.offsetX, y: ev.offsetY }; };
     chart.getZr().on("mousedown", chartAny.__downHandler);
@@ -315,15 +392,20 @@ export default function KnowledgeDetailPage() {
       setFocusEntity(focusEntity === params.name ? null : params.name);
     };
     chart.on("click", chartAny.__clickHandler);
-  }, [activeTab, entities, relations, focusEntity]);
+  }, [activeTab, entities, relations, focusEntity, kbId]);
 
   // 主 effect 之外再挂轮询兜底：页签首次激活的 effect 时序偶发不触发（实测复现），
-  // 轮询保证 400ms 内图谱必然初始化。
+  // 轮询保证 400ms 内图谱必然初始化。清理只停轮询，不销毁图表——聚焦切换等
+  // 输入变化由 ensureGraphChart 原地复用实例平滑过渡。
   useEffect(() => {
     ensureGraphChart();
     const timer = window.setInterval(ensureGraphChart, 400);
+    return () => window.clearInterval(timer);
+  }, [ensureGraphChart]);
+
+  // 仅在离开页面（组件卸载）时销毁实例。
+  useEffect(() => {
     return () => {
-      window.clearInterval(timer);
       const dom = graphCanvasRef.current;
       if (dom) {
         const inst = echarts.getInstanceByDom(dom);
@@ -331,7 +413,7 @@ export default function KnowledgeDetailPage() {
       }
       graphChartRef.current = null;
     };
-  }, [ensureGraphChart]);
+  }, []);
 
   const entityName = (id: string) => entities.find((e) => e.id === id)?.name ?? id.slice(0, 8);
   const totalChunks = docs.reduce((sum, d: any) => sum + (d.chunk_count || 0), 0);
