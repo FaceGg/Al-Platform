@@ -21,6 +21,7 @@ from tools.security_scans import (
     _remove_gitleaks_snapshot,
     _gitleaks_source_scope_digest,
     evaluate_npm_audit_exception,
+    evaluate_trivy_image_exception,
     is_required_scan_command,
     main as security_scans_main,
     redact_scan_output,
@@ -3225,6 +3226,344 @@ class SecurityGateTests(unittest.TestCase):
             container_gate["error_code"],
             "ACCEPTANCE_IMAGE_SET_INVALID",
         )
+
+    @staticmethod
+    def _write_wolfi_exception_contract(root: Path) -> None:
+        contract_dir = root / ".github" / "contracts"
+        contract_dir.mkdir(parents=True, exist_ok=True)
+        (contract_dir / "wolfi-postgresql-client-exception.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "id": "wolfi-image-cves-time-bound",
+                    "expires_on": "2099-12-31",
+                    "packages": [
+                        {
+                            "package": "postgresql-16-client",
+                            "installed_version": "16.14-r1",
+                            "pending_fixed_version": "16.15-r0",
+                            "advisory_ids": ["CVE-2026-6464", "CVE-2026-6471"],
+                        },
+                        {
+                            "package": "py3.11-pip",
+                            "installed_version": "26.2.1-r4",
+                            "pending_fixed_version": "26.2.2-r1",
+                            "advisory_ids": ["CVE-2026-111943"],
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _trivy_findings_report(reference: str, image_id: str, findings: list[dict[str, str]]):
+        return {
+            "SchemaVersion": 2,
+            "ArtifactName": reference,
+            "ArtifactType": "container_image",
+            "Metadata": {"ImageID": image_id},
+            "Results": [{"Vulnerabilities": findings}],
+        }
+
+    def test_evaluate_trivy_image_exception_passes_contract_covered_findings(self):
+        report = self._trivy_findings_report(
+            "ml-platform-backend:test",
+            "sha256:" + "1" * 64,
+            [
+                {
+                    "PkgName": "postgresql-16-client",
+                    "InstalledVersion": "16.14-r1",
+                    "VulnerabilityID": "CVE-2026-6464",
+                },
+                {
+                    "PkgName": "postgresql-16-client-base",
+                    "InstalledVersion": "16.14-r1",
+                    "VulnerabilityID": "CVE-2026-6471",
+                },
+                {
+                    "PkgName": "py3.11-pip",
+                    "InstalledVersion": "26.2.1-r4",
+                    "VulnerabilityID": "CVE-2026-111943",
+                },
+            ],
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_wolfi_exception_contract(root)
+            with patch(
+                "tools.security_scans._repository_root", return_value=root
+            ):
+                self.assertIsNone(
+                    evaluate_trivy_image_exception(report, today=date(2026, 11, 2))
+                )
+
+    def test_evaluate_trivy_image_exception_rejects_findings_outside_contract(self):
+        image_id = "sha256:" + "1" * 64
+        cases = [
+            # 合同外 CVE
+            [
+                {
+                    "PkgName": "postgresql-16-client",
+                    "InstalledVersion": "16.14-r1",
+                    "VulnerabilityID": "CVE-2026-9999",
+                }
+            ],
+            # 版本不匹配（已升级但合同未更新 → 必须重新过账）
+            [
+                {
+                    "PkgName": "postgresql-16-client",
+                    "InstalledVersion": "16.15-r0",
+                    "VulnerabilityID": "CVE-2026-6464",
+                }
+            ],
+            # 同前缀不同包
+            [
+                {
+                    "PkgName": "postgresql-16-docs",
+                    "InstalledVersion": "16.14-r1",
+                    "VulnerabilityID": "CVE-2026-6464",
+                }
+            ],
+        ]
+        for findings in cases:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_wolfi_exception_contract(root)
+                with patch(
+                    "tools.security_scans._repository_root", return_value=root
+                ):
+                    self.assertEqual(
+                        evaluate_trivy_image_exception(
+                            self._trivy_findings_report(
+                                "ml-platform-backend:test", image_id, findings
+                            ),
+                            today=date(2026, 11, 2),
+                        ),
+                        "SECURITY_EVIDENCE_INVALID",
+                    )
+
+    def test_evaluate_trivy_image_exception_rejects_expired_or_missing_contract(self):
+        findings = [
+            {
+                "PkgName": "postgresql-16-client",
+                "InstalledVersion": "16.14-r1",
+                "VulnerabilityID": "CVE-2026-6464",
+            }
+        ]
+        report = self._trivy_findings_report(
+            "ml-platform-backend:test", "sha256:" + "1" * 64, findings
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_wolfi_exception_contract(root)
+            # 有发现但合同已过期 → 拒绝
+            with patch(
+                "tools.security_scans._repository_root", return_value=root
+            ):
+                self.assertEqual(
+                    evaluate_trivy_image_exception(
+                        report, today=date(2100, 1, 1)
+                    ),
+                    "SECURITY_EVIDENCE_INVALID",
+                )
+        # 有发现但合同缺失 → 拒绝（fail-closed）
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch(
+                "tools.security_scans._repository_root", return_value=root
+            ):
+                self.assertEqual(
+                    evaluate_trivy_image_exception(
+                        report, today=date(2026, 11, 2)
+                    ),
+                    "SECURITY_EVIDENCE_INVALID",
+                )
+
+    def test_evaluate_trivy_image_exception_allows_clean_scan_without_contract(self):
+        # 无发现 → 直接通过，不要求豁免合同存在
+        report = {
+            "SchemaVersion": 2,
+            "ArtifactType": "container_image",
+            "Metadata": {"ImageID": "sha256:" + "1" * 64},
+            "Results": [],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch(
+                "tools.security_scans._repository_root", return_value=root
+            ):
+                self.assertIsNone(
+                    evaluate_trivy_image_exception(report, today=date(2026, 11, 2))
+                )
+
+    def test_run_all_container_image_gate_honors_time_bound_exemption(self):
+        clean_dependencies = [
+            {"name": "cryptography", "version": "50.0.0", "vulns": []},
+            {"name": "jaraco.context", "version": "6.1.0", "vulns": []},
+            {"name": "wheel", "version": "0.46.2", "vulns": []},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "security.json"
+            contract_root = Path(directory) / "repo-root"
+            self._write_wolfi_exception_contract(contract_root)
+
+            def scanner(command, **_kwargs):
+                if "pip_audit" in command:
+                    report_path = Path(command[command.index("--output") + 1])
+                    report_path.write_text(
+                        json.dumps({"dependencies": clean_dependencies}),
+                        encoding="utf-8",
+                    )
+                if command[:2] == ["trivy", "image"]:
+                    if command[-1] == "ml-platform-backend:test":
+                        # trivy --exit-code 1 的"有发现"形态：rc=1 + 报告
+                        report_path = Path(command[command.index("--output") + 1])
+                        report_path.write_text(
+                            json.dumps(
+                                self._trivy_findings_report(
+                                    command[-1],
+                                    self._image_provenance(command[-1])["image_id"],
+                                    [
+                                        {
+                                            "PkgName": "postgresql-16-client",
+                                            "InstalledVersion": "16.14-r1",
+                                            "VulnerabilityID": "CVE-2026-6464",
+                                        },
+                                        {
+                                            "PkgName": "postgresql-16-client-base",
+                                            "InstalledVersion": "16.14-r1",
+                                            "VulnerabilityID": "CVE-2026-6471",
+                                        },
+                                    ],
+                                )
+                            ),
+                            encoding="utf-8",
+                        )
+                        return {
+                            "status": "failed",
+                            "returncode": 1,
+                            "command": command,
+                            "stdout": "",
+                            "stderr": "",
+                        }
+                    self._write_clean_trivy_image_report(
+                        command,
+                        self._image_provenance(command[-1])["image_id"],
+                    )
+                    return self._passed_scan_result(command)
+                return self._passed_scan_result(command)
+
+            with (
+                patch.dict(
+                    "tools.security_scans.os.environ",
+                    self._production_scan_environment(),
+                    clear=False,
+                ),
+                patch("tools.security_scans.run_scan", side_effect=scanner),
+                patch(
+                    "tools.security_scans.inspect_image_provenance",
+                    side_effect=self._image_provenance,
+                ),
+                patch(
+                    "tools.security_scans._repository_root",
+                    return_value=contract_root,
+                ),
+            ):
+                result = run_all(output)
+
+        container_gate = result["gates"]["container_image"]
+        self.assertEqual(container_gate["status"], "passed")
+        backend = next(
+            image
+            for image in container_gate["images"]
+            if image["component"] == "backend"
+        )
+        self.assertTrue(backend["exempted"])
+        self.assertEqual(backend["status"], "passed")
+        self.assertEqual(backend["returncode"], 1)
+
+    def test_run_all_container_image_gate_fails_closed_on_crashed_scan_without_findings(
+        self,
+    ):
+        # rc=1 但报告无发现（扫描器崩溃残缺报告）→ 一律拒绝
+        clean_dependencies = [
+            {"name": "cryptography", "version": "50.0.0", "vulns": []},
+            {"name": "jaraco.context", "version": "6.1.0", "vulns": []},
+            {"name": "wheel", "version": "0.46.2", "vulns": []},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "security.json"
+            contract_root = Path(directory) / "repo-root"
+            self._write_wolfi_exception_contract(contract_root)
+
+            def scanner(command, **_kwargs):
+                if "pip_audit" in command:
+                    report_path = Path(command[command.index("--output") + 1])
+                    report_path.write_text(
+                        json.dumps({"dependencies": clean_dependencies}),
+                        encoding="utf-8",
+                    )
+                if command[:2] == ["trivy", "image"]:
+                    if command[-1] == "ml-platform-backend:test":
+                        report_path = Path(command[command.index("--output") + 1])
+                        report_path.write_text(
+                            json.dumps(
+                                {
+                                    "SchemaVersion": 2,
+                                    "ArtifactName": command[-1],
+                                    "ArtifactType": "container_image",
+                                    "Metadata": {
+                                        "ImageID": self._image_provenance(
+                                            command[-1]
+                                        )["image_id"]
+                                    },
+                                    "Results": [],
+                                }
+                            ),
+                            encoding="utf-8",
+                        )
+                        return {
+                            "status": "failed",
+                            "returncode": 1,
+                            "command": command,
+                            "stdout": "",
+                            "stderr": "",
+                        }
+                    self._write_clean_trivy_image_report(
+                        command,
+                        self._image_provenance(command[-1])["image_id"],
+                    )
+                    return self._passed_scan_result(command)
+                return self._passed_scan_result(command)
+
+            with (
+                patch.dict(
+                    "tools.security_scans.os.environ",
+                    self._production_scan_environment(),
+                    clear=False,
+                ),
+                patch("tools.security_scans.run_scan", side_effect=scanner),
+                patch(
+                    "tools.security_scans.inspect_image_provenance",
+                    side_effect=self._image_provenance,
+                ),
+                patch(
+                    "tools.security_scans._repository_root",
+                    return_value=contract_root,
+                ),
+            ):
+                result = run_all(output)
+
+        container_gate = result["gates"]["container_image"]
+        self.assertEqual(container_gate["status"], "failed")
+        backend = next(
+            image
+            for image in container_gate["images"]
+            if image["component"] == "backend"
+        )
+        self.assertFalse(backend["exempted"])
+        self.assertEqual(backend["status"], "failed")
 
     def test_run_all_treats_high_bandit_findings_as_the_blocking_source_gate(self):
         with tempfile.TemporaryDirectory() as directory:

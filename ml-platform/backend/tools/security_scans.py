@@ -3354,10 +3354,27 @@ def run_all(
                 and report_image_id == provenance_after["image_id"]
             )
             # A 批次：trivy 镜像发现经时限豁免合同判定——全部命中豁免清单则
-            # 该镜像 gate 视为通过（原始报告仍完整留证，便于审计追溯）
+            # 该镜像 gate 视为通过（原始报告仍完整留证，便于审计追溯）。
+            # 豁免路径必须接受 trivy --exit-code 1 的"有发现"退出码：clean
+            # 路径才要求 returncode==0；rc==1 但报告无发现（扫描器崩溃后的
+            # 残缺报告）一律拒绝（fail-closed）。
             exempted = (
-                report_value is not None
-                and evaluate_trivy_image_exception(report_value, today=_trivy_today()) is None
+                provenance_valid
+                and image_result.get("returncode") == 1
+                and report_value is not None
+                and any(
+                    isinstance(result, dict) and result.get("Vulnerabilities")
+                    for result in (report_value.get("Results") or [])
+                )
+                and evaluate_trivy_image_exception(
+                    report_value, today=_trivy_today()
+                )
+                is None
+            )
+            scan_clean = (
+                provenance_valid
+                and image_result.get("returncode") == 0
+                and image_result.get("status") == "passed"
             )
             image_reports.append(
                 {
@@ -3376,17 +3393,9 @@ def run_all(
                     ),
                     "command": image_result.get("command"),
                     "returncode": image_result.get("returncode"),
+                    "exempted": exempted,
                     "status": (
-                        image_result["status"]
-                        if (
-                            provenance_valid
-                            and (
-                                image_result.get("status") == "passed"
-                                or exempted
-                            )
-                            and image_result.get("returncode") == 0
-                        )
-                        else "failed"
+                        "passed" if (scan_clean or exempted) else "failed"
                     ),
                 }
             )
