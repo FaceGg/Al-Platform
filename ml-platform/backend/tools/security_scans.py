@@ -3494,6 +3494,7 @@ def summarize_scans(
                     "revision",
                     "command",
                     "returncode",
+                    "exempted",
                     "status",
                 }
                 or image.get("component") != component
@@ -3514,7 +3515,8 @@ def summarize_scans(
                     image_reference=image["reference"],
                 )
                 or type(image.get("returncode")) is not int
-                or image["returncode"] != 0
+                or not isinstance(image.get("exempted"), bool)
+                or image["returncode"] != (1 if image["exempted"] else 0)
                 or image.get("status") != "passed"
             ):
                 return False
@@ -3602,6 +3604,7 @@ def summarize_scans(
                     "revision",
                     "command",
                     "returncode",
+                    "exempted",
                     "status",
                 }
                 or image.get("component") != component
@@ -3615,7 +3618,8 @@ def summarize_scans(
                     image["command"],
                     image_reference=image["reference"],
                 )
-                or image.get("returncode") != 0
+                or not isinstance(image.get("exempted"), bool)
+                or image.get("returncode") != (1 if image["exempted"] else 0)
                 or not isinstance(image["status"], str)
                 or image["status"] != "passed"
             ):

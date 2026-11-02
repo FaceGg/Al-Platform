@@ -287,6 +287,7 @@ class EvidenceManifestTests(unittest.TestCase):
                     reference,
                 ],
                 "returncode": 0,
+                "exempted": False,
                 "status": "passed",
             }
             for index, (component, reference) in enumerate(

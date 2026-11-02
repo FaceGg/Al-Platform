@@ -642,6 +642,7 @@ def _validate_container_image_receipts(
         "revision",
         "command",
         "returncode",
+        "exempted",
         "status",
     }
     if any(not isinstance(image, dict) or set(image) != receipt_keys for image in images):
@@ -671,7 +672,8 @@ def _validate_container_image_receipts(
             or _IMAGE_ID.fullmatch(image["image_id"]) is None
             or image.get("revision") != commit
             or image.get("status") != "passed"
-            or image.get("returncode") != 0
+            or not isinstance(image.get("exempted"), bool)
+            or image.get("returncode") != (1 if image["exempted"] else 0)
             or not is_required_scan_command(
                 "container_image",
                 command,

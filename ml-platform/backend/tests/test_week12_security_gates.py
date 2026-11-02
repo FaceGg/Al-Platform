@@ -3565,6 +3565,106 @@ class SecurityGateTests(unittest.TestCase):
         self.assertFalse(backend["exempted"])
         self.assertEqual(backend["status"], "failed")
 
+    def test_summary_accepts_time_bound_exempt_container_image(self):
+        # 豁免凭据（exempted=True + rc=1）+ 合同内发现 → summarize 必须放行；
+        # 这是 41413446419 run 的 Summarize 步骤失败（凭据严格键集合缺
+        # exempted）的回归锚点
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            aggregate_path = root / "security.json"
+            aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+            backend = aggregate["gates"]["container_image"]["images"][0]
+            backend["returncode"] = 1
+            backend["exempted"] = True
+            aggregate_path.write_text(json.dumps(aggregate), encoding="utf-8")
+            (root / "trivy-image.json").write_text(
+                json.dumps(
+                    self._trivy_findings_report(
+                        "ml-platform-backend:test",
+                        "sha256:" + "0" * 63 + "1",
+                        [
+                            {
+                                "PkgName": "postgresql-16-client",
+                                "InstalledVersion": "16.14-r1",
+                                "VulnerabilityID": "CVE-2026-6464",
+                            },
+                            {
+                                "PkgName": "postgresql-16-client-base",
+                                "InstalledVersion": "16.14-r1",
+                                "VulnerabilityID": "CVE-2026-6471",
+                            },
+                        ],
+                    )
+                ),
+                encoding="utf-8",
+            )
+            contract_root = Path(directory) / "contract-root"
+            self._write_wolfi_exception_contract(contract_root)
+            real_root = self._repository_root()
+            first_call = {"used": False}
+
+            def fake_repository_root():
+                # 首次调用取真实根（gitleaks 绑定校验依赖真实仓库），
+                # 之后的 evaluate 调用改读临时合同根（远期过期时间）
+                if not first_call["used"]:
+                    first_call["used"] = True
+                    return real_root
+                return contract_root
+
+            output = root / "summary.json"
+            with patch(
+                "tools.security_scans._repository_root",
+                side_effect=fake_repository_root,
+            ):
+                exit_code = security_scans_main(
+                    [
+                        "summarize",
+                        "--input-dir",
+                        str(root),
+                        "--output",
+                        str(output),
+                        "--source-commit",
+                        "a" * 40,
+                    ],
+                )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["gates"]["container_image"]["status"], "passed")
+
+    def test_summary_rejects_exempt_image_with_clean_returncode(self):
+        # exempted=True 但 returncode=0 → 凭据自相矛盾，聚合整体拒绝
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_complete_security_evidence(root)
+            aggregate_path = root / "security.json"
+            aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+            backend = aggregate["gates"]["container_image"]["images"][0]
+            backend["exempted"] = True
+            aggregate_path.write_text(json.dumps(aggregate), encoding="utf-8")
+            output = root / "summary.json"
+            exit_code = security_scans_main(
+                [
+                    "summarize",
+                    "--input-dir",
+                    str(root),
+                    "--output",
+                    str(output),
+                    "--source-commit",
+                    "a" * 40,
+                ],
+            )
+            result = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(
+            result["gates"]["container_image"]["error_code"],
+            "SECURITY_EVIDENCE_INVALID",
+        )
+
     def test_run_all_treats_high_bandit_findings_as_the_blocking_source_gate(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "security.json"
@@ -3815,6 +3915,7 @@ class SecurityGateTests(unittest.TestCase):
                         reference,
                     ],
                     "returncode": 0,
+                    "exempted": False,
                     "status": "passed",
                 }
                 for index, (component, reference) in enumerate(
