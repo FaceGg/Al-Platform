@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Table, Tag, Button, Input, message, Popconfirm, Space, Card, Switch, Form, Modal, Select, Drawer, InputNumber } from 'antd'
+import { Table, Tag, Button, Input, message, Popconfirm, Space, Card, Switch, Form, Modal, Select, Drawer, InputNumber, Alert } from 'antd'
 import { ReloadOutlined, StopOutlined, PlusOutlined, DeleteOutlined, FileTextOutlined, EyeOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import apiClient from '../api/client'
@@ -116,8 +116,12 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
 
   const saveBindingEdit = async (values: Record<string, unknown>) => {
     if (!editingBinding) return
+    // 系统分区的锁定字段不进 payload（后端对这三项有锁语义，改值会被 409 拒绝）
+    const payload = editingBinding.is_system
+      ? { ...values, enabled: undefined, scope_projects: undefined, sync_receive_experience: undefined }
+      : values
     try {
-      await patchBinding(editingBinding.id, values)
+      await patchBinding(editingBinding.id, payload)
       message.success('绑定配置已更新')
       setEditingBinding(null)
       load()
@@ -220,35 +224,36 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
       title: text.colSync,
       dataIndex: 'sync_receive_experience',
       render: (v: boolean, record: KBBinding) =>
-        record.is_system ? '—' : v ? '≥' + record.sync_experience_min_confidence : text.syncOff,
+        record.is_system
+          ? '≥' + record.sync_experience_min_confidence + '（投影门槛）'
+          : v
+            ? '≥' + record.sync_experience_min_confidence
+            : text.syncOff,
     },
     {
       title: text.colActions,
       key: 'actions',
-      render: (_: unknown, record: KBBinding) =>
-        record.is_system ? (
-          <Tag color="purple">{text.systemTag}</Tag>
-        ) : (
-          <Button
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => {
-              setEditingBinding(record)
-              editForm.setFieldsValue({
-                enabled: record.enabled,
-                scope_projects: record.scope_projects || [],
-                scope_chat: record.scope_chat,
-                scope_agent_s1: record.scope_agent_s1,
-                retrieval_top_k: record.retrieval_top_k,
-                retrieval_trigger: record.retrieval_trigger,
-                sync_receive_experience: record.sync_receive_experience,
-                sync_experience_min_confidence: record.sync_experience_min_confidence,
-              })
-            }}
-          >
-            {t.kbcenter.editBinding}
-          </Button>
-        ),
+      render: (_: unknown, record: KBBinding) => (
+        <Button
+          size="small"
+          icon={<EyeOutlined />}
+          onClick={() => {
+            setEditingBinding(record)
+            editForm.setFieldsValue({
+              enabled: record.enabled,
+              scope_projects: record.scope_projects || [],
+              scope_chat: record.scope_chat,
+              scope_agent_s1: record.scope_agent_s1,
+              retrieval_top_k: record.retrieval_top_k,
+              retrieval_trigger: record.retrieval_trigger,
+              sync_receive_experience: record.sync_receive_experience,
+              sync_experience_min_confidence: record.sync_experience_min_confidence,
+            })
+          }}
+        >
+          {t.kbcenter.editBinding}
+        </Button>
+      ),
     },
   ]
 
@@ -491,7 +496,7 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
         </Form>
       </Modal>
       <Modal
-        title="编辑绑定"
+        title={editingBinding?.is_system ? '编辑绑定（系统分区）' : '编辑绑定'}
         open={!!editingBinding}
         onCancel={() => setEditingBinding(null)}
         onOk={() => editForm.submit()}
@@ -500,8 +505,17 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
         destroyOnHidden
       >
         <Form form={editForm} layout="vertical" onFinish={saveBindingEdit} autoComplete="off">
+          {editingBinding?.is_system && (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message="系统分区锁定项"
+              description="总开关、项目范围、接收经验同步由系统管理（保障经验闭环不被误关）；检索参数与投影置信度门槛可调，门槛调整影响后续投影。"
+            />
+          )}
           <Form.Item name="enabled" label="总开关" valuePropName="checked">
-            <Switch />
+            <Switch disabled={!!editingBinding?.is_system} />
           </Form.Item>
           <Form.Item name="scope_projects" label="项目范围（留空 = 全部项目）">
             <Select
@@ -510,6 +524,7 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
               options={projects.map((p) => ({ value: p.id, label: p.name ?? p.id }))}
               optionFilterProp="label"
               showSearch
+              disabled={!!editingBinding?.is_system}
             />
           </Form.Item>
           <Form.Item name="scope_chat" label="参与 AI 对话检索" valuePropName="checked">
@@ -525,9 +540,12 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
             <Select options={[{ value: 'auto', label: 'auto（自动检索）' }, { value: 'explicit', label: 'explicit（显式请求）' }]} />
           </Form.Item>
           <Form.Item name="sync_receive_experience" label="接收经验同步" valuePropName="checked">
-            <Switch />
+            <Switch disabled={!!editingBinding?.is_system} />
           </Form.Item>
-          <Form.Item name="sync_experience_min_confidence" label="经验同步置信度门槛">
+          <Form.Item
+            name="sync_experience_min_confidence"
+            label={editingBinding?.is_system ? '投影置信度门槛（跨域条目达标才投影入区）' : '经验同步置信度门槛'}
+          >
             <InputNumber min={0} max={1} step={0.05} style={{ width: '100%' }} />
           </Form.Item>
         </Form>
