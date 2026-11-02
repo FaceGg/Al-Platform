@@ -3011,11 +3011,16 @@ def _raw_scan_report_error(name: str, value: object) -> str | None:
         for result in results:
             if not isinstance(result, dict):
                 return "SECURITY_EVIDENCE_INVALID"
-            for finding_name in ("Vulnerabilities", "Misconfigurations", "Secrets"):
+            # Misconfigurations/Secrets 不可豁免；Vulnerabilities 交由
+            # evaluate_trivy_image_exception 统一判定（含时限豁免合同）
+            for finding_name in ("Misconfigurations", "Secrets"):
                 if finding_name in result and (
                     not isinstance(result[finding_name], list) or result[finding_name]
                 ):
                     return "SECURITY_EVIDENCE_INVALID"
+            vulnerabilities = result.get("Vulnerabilities")
+            if "Vulnerabilities" in result and not isinstance(vulnerabilities, list):
+                return "SECURITY_EVIDENCE_INVALID"
         return evaluate_trivy_image_exception(value, today=_trivy_today())
 
     return "SECURITY_EVIDENCE_INVALID"
@@ -3031,12 +3036,23 @@ def evaluate_trivy_image_exception(
     *,
     today: date | None = None,
 ) -> str | None:
-    """Trivy 镜像扫描的时限豁免（仿 npm-audit exception 合同）。
+    """Trivy 镜像扫描统一判定：Vulnerabilities 的放行/拒绝都经此处。
 
-    场景：trivy-db 已跟踪修复但上游 wolfi 仓库尚未发布修复版——钉版无法
-    安装"已修复"版本。合同要求 reviewed_at/expires_on、钉定的当前版本、
-    待修复版本与完整 advisory 清单；过期或发现清单外 CVE 即拒绝。
+    - 无发现 → 通过。
+    - 有发现且合同存在、未过期、发现全部落在合同清单内 → 通过（豁免）。
+    - 有发现但合同缺失（测试 patch __file__ 后临时根是常态）、过期、或
+      存在清单外 CVE → 拒绝（fail-closed）。
     """
+    findings = []
+    for result in report.get("Results") or []:
+        if not isinstance(result, dict):
+            continue
+        for finding in result.get("Vulnerabilities") or []:
+            if isinstance(finding, dict):
+                findings.append(finding)
+    if not findings:
+        return None
+
     exception_path = _repository_root() / ".github" / "contracts" / (
         "wolfi-postgresql-client-exception.json"
     )
@@ -3068,23 +3084,16 @@ def evaluate_trivy_image_exception(
     package = str(exception["package"])
     installed = str(exception["installed_version"])
 
-    remaining = []
-    for result in report.get("Results") or []:
-        if not isinstance(result, dict):
-            continue
-        for finding in result.get("Vulnerabilities") or []:
-            if not isinstance(finding, dict):
-                continue
-            if finding.get("InstalledVersion") != installed:
-                continue
-            # postgresql-16-client-base 与 postgresql-16-client 共享源码包与
-            # 同一批 CVE（wolfi 拆两个 apk），合同按前缀同时覆盖
-            if not str(finding.get("PkgName", "")).startswith(package):
-                continue
-            if finding.get("VulnerabilityID") in allowed:
-                continue
-            remaining.append(finding)
-    return None if not remaining else "SECURITY_EVIDENCE_INVALID"
+    for finding in findings:
+        if finding.get("InstalledVersion") != installed:
+            return "SECURITY_EVIDENCE_INVALID"
+        # postgresql-16-client-base 与 postgresql-16-client 共享源码包与
+        # 同一批 CVE（wolfi 拆两个 apk），合同按前缀同时覆盖
+        if not str(finding.get("PkgName", "")).startswith(package):
+            return "SECURITY_EVIDENCE_INVALID"
+        if finding.get("VulnerabilityID") not in allowed:
+            return "SECURITY_EVIDENCE_INVALID"
+    return None
 
 
 
