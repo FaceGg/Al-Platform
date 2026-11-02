@@ -306,7 +306,8 @@ class ParseOptions:
     max_file_bytes: int = 1_000_000_000
     max_decompressed_bytes: int = 4_000_000_000
     max_rows: int = 1_000_000
-    max_columns: int = 200
+    # 宽表时序数据集（如点焊电流/电压高频采样，数千列）是合法形态；上限只防病态文件
+    max_columns: int = 5000
     max_depth: int = 32
     max_field_bytes: int = 64 * 1024
     max_time_seconds: float = 300.0

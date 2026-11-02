@@ -490,6 +490,24 @@ class TestPreviewFastPath(unittest.TestCase):
             path.write_text("a,b\n", encoding="utf-8")
             self.assertIsNone(_preview_csv_rows(path, 3))
 
+    def test_preview_csv_rows_mixed_type_column_returns_none(self):
+        # pyarrow 流式按已读块推断列类型：整型块后出现小数会 mid-stream
+        # ArrowInvalid（点焊宽表真实踩坑），必须返回 None 回退 pandas 全量读。
+        from pathlib import Path
+        import tempfile
+
+        from app.api.datasets import _preview_csv_rows
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "mixed.csv"
+            with path.open("w", encoding="utf-8") as handle:
+                handle.write("a,b\n")
+                for i in range(300_000):
+                    handle.write(f"{i % 10},x{i}\n")
+                    if i == 160_000:
+                        handle.write("0.740613517,x-flt\n")
+            self.assertIsNone(_preview_csv_rows(path, 200_000))
+
     def test_preview_backfills_row_count_then_reuses_cache(self):
         import tempfile
         from pathlib import Path

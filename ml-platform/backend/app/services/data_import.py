@@ -186,15 +186,25 @@ def _decompressed_size(path: Path) -> int:
 
 def _check_frame(frame: pd.DataFrame, options: ParseOptions) -> None:
     if len(frame) > options.max_rows:
-        raise DataImportError("DATA_LIMIT_ROWS")
+        raise DataImportError(
+            "DATA_LIMIT_ROWS",
+            f"行数 {len(frame)} 超过导入上限 {options.max_rows}",
+        )
     if len(frame.columns) > options.max_columns:
-        raise DataImportError("DATA_LIMIT_COLUMNS")
+        raise DataImportError(
+            "DATA_LIMIT_COLUMNS",
+            f"列数 {len(frame.columns)} 超过导入上限 {options.max_columns}；如确需更宽请拆分数据集",
+        )
     if len(set(map(str, frame.columns))) != len(frame.columns):
         raise DataImportError("DATA_PARSE_DUPLICATE_COLUMN")
+    # 逐格字段长度检查只针对文本列：数值列的字符串化必远小于 64KB，
+    # 跳过它们让数千列的宽表导入从分钟级降回秒级。
     for column in frame.columns:
-        for value in frame[column]:
-            if value is not None and len(str(value).encode("utf-8")) > options.max_field_bytes:
-                raise DataImportError("DATA_LIMIT_FIELD_BYTES")
+        series = frame[column]
+        if series.dtype == object:
+            for value in series:
+                if value is not None and len(str(value).encode("utf-8")) > options.max_field_bytes:
+                    raise DataImportError("DATA_LIMIT_FIELD_BYTES")
 
 
 def _json_records(path: Path, options: ParseOptions) -> list[dict]:

@@ -9,7 +9,8 @@ class ParseOptions(BaseModel):
     max_file_bytes: int = Field(default=1_000_000_000, gt=0)
     max_decompressed_bytes: int = Field(default=4_000_000_000, gt=0)
     max_rows: int = Field(default=1_000_000, gt=0)
-    max_columns: int = Field(default=200, gt=0)
+    # 宽表时序数据集（点焊电流/电压高频采样数千列）是合法形态；上限只防病态文件
+    max_columns: int = Field(default=5000, gt=0)
     max_depth: int = Field(default=32, gt=0)
     max_field_bytes: int = Field(default=64 * 1024, gt=0)
     max_time_seconds: float = Field(default=300.0, gt=0)

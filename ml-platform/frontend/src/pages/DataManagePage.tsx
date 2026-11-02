@@ -46,7 +46,7 @@ export default function DataManagePage() {
   const [selectedProject, setSelectedProject] = useState<string | null>(searchParams.get("projectId"));
   const [datasets, setDatasets] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [previewData, setPreviewData] = useState<{ columns: string[]; rows: any[][] } | null>(null);
+  const [previewData, setPreviewData] = useState<{ columns: string[]; rows: any[][]; totalColumns?: number } | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
@@ -178,15 +178,19 @@ export default function DataManagePage() {
     }
   };
 
-  const handlePreview = async (dsId: string) => {
+  const handlePreview = async (dsId: string, columnCount?: number) => {
     try {
-      // 28 万行全量预览曾把后端进程内存打爆（OOM），预览只需前 200 行
-      const data = await getDatasetPreview(dsId, { limit: 200 });
-      const columns = data.columns || [];
+      // 28 万行全量预览曾把后端进程内存打爆（OOM），预览只需前 200 行；
+      // 数千列宽表再降行数（3004 列 × 200 行 ≈ 14MB JSON）
+      const wide = (columnCount ?? 0) > 100;
+      const data = await getDatasetPreview(dsId, { limit: wide ? 20 : 200 });
+      const allColumns = data.columns || [];
+      // 宽表（数千列）全量渲染会冻死页面：只展示前 50 列
+      const columns = allColumns.slice(0, 50);
       const rows = Array.isArray(data.preview)
         ? data.preview.map((row: Record<string, unknown>) => columns.map((column: string) => row[column]))
         : data.rows || [];
-      setPreviewData({ columns, rows });
+      setPreviewData({ columns, rows, totalColumns: allColumns.length });
       setPreviewOpen(true);
     } catch (e: any) {
       message.error(e.response?.data?.detail || t.common.error);
@@ -261,7 +265,7 @@ export default function DataManagePage() {
           {["csv", "xls", "xlsx"].includes(String(record.format || "").toLowerCase()) && record.project_id && (
             <TableRowAction label={`自动标注 ${record.name}`} icon={<TagsOutlined />} onClick={() => handleAutomaticLabeling(record)} />
           )}
-          <TableRowAction label={`${t.data.preview} ${record.name}`} icon={<EyeOutlined />} onClick={() => handlePreview(record.id)} />
+          <TableRowAction label={`${t.data.preview} ${record.name}`} icon={<EyeOutlined />} onClick={() => handlePreview(record.id, record.column_count)} />
           <TableRowAction label={`${t.data.download} ${record.name}`} icon={<DownloadOutlined />} onClick={() => handleDownload(record.id)} />
           <DeleteConfirmation label={`${t.common.delete} ${record.name}`} targetName={record.name} onConfirm={() => void handleDelete(record.id)} />
         </div>
@@ -331,6 +335,11 @@ export default function DataManagePage() {
           <div>
             <p style={{ margin: "0 0 8px", color: "rgba(0,0,0,0.45)", fontSize: 12 }}>
               共 {previewData.rows.length} 行{previewData.rows.length >= 500 ? "（数据量较大，请滚动查看）" : ""}
+              {(previewData.totalColumns ?? 0) > previewData.columns.length && (
+                <div style={{ color: "var(--v2-dim, #999)", fontSize: 12 }}>
+                  宽表共 {previewData.totalColumns} 列，预览仅展示前 {previewData.columns.length} 列
+                </div>
+              )}
             </p>
             <div style={{ overflowX: "auto", maxHeight: "60vh", overflowY: "auto" }}>
               <table className="dataset-preview-table" style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>

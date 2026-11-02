@@ -433,19 +433,25 @@ def _preview_csv_rows(path: Path, limit: int):
     import pyarrow.csv as pacsv
 
     rows = []
-    with path.open("rb") as handle:
-        reader = pacsv.open_csv(handle)
-        try:
-            while sum(batch.num_rows for batch in rows) < limit:
-                batch = reader.read_next_batch()
-                if batch is None or batch.num_rows == 0:
-                    break
-                rows.append(batch)
-        except StopIteration:
-            pass
-        finally:
-            # Windows: 必须 close 才释放句柄，否则 materialize 的临时文件删不掉。
-            reader.close()
+    try:
+        with path.open("rb") as handle:
+            reader = pacsv.open_csv(handle)
+            try:
+                while sum(batch.num_rows for batch in rows) < limit:
+                    batch = reader.read_next_batch()
+                    if batch is None or batch.num_rows == 0:
+                        break
+                    rows.append(batch)
+            except StopIteration:
+                pass
+            finally:
+                # Windows: 必须 close 才释放句柄，否则 materialize 的临时文件删不掉。
+                reader.close()
+    except pa.ArrowInvalid:
+        # pyarrow 流式按已读块推断列类型：混合类型列（整数块后出现小数）
+        # 会 mid-stream 转换失败。返回 None 让调用方回退 pandas 全量读，
+        # 整列推断不会犯这种块级错误。
+        return None
     if not rows:
         return None
     table = pa.Table.from_batches(rows)
