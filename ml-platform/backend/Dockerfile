@@ -6,7 +6,7 @@ RUN set -eu; \
     for attempt in 1 2 3; do \
         if apk add --no-cache \
             python-3.11=3.11.17-r3 \
-            py3.11-pip=26.2.1-r4 \
+            py3.11-pip=26.2.2-r2 \
             postgresql-16-client=16.14-r1 \
             glibc \
             libgomp; then \

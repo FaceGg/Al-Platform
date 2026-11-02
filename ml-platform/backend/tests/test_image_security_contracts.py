@@ -86,7 +86,7 @@ class ImageSecurityContractTests(unittest.TestCase):
         record = json.loads(BASE_RECORD.read_text(encoding="utf-8"))
         runtime = record["runtime"]
         self.assertEqual(runtime["python_package"], "python-3.11=3.11.17-r3")
-        self.assertEqual(runtime["pip_package"], "py3.11-pip=26.2.1-r4")
+        self.assertEqual(runtime["pip_package"], "py3.11-pip=26.2.2-r2")
 
     def test_wolfi_runtime_install_retries_transient_apk_download_failures(self):
         runtime = json.loads(BASE_RECORD.read_text(encoding="utf-8"))["runtime"]

@@ -5,7 +5,7 @@
   "architecture": "amd64",
   "runtime": {
     "python_package": "python-3.11=3.11.17-r3",
-    "pip_package": "py3.11-pip=26.2.1-r4",
+    "pip_package": "py3.11-pip=26.2.2-r2",
     "non_root_uid": 1000
   },
   "scanner": "trivy 0.73.0",

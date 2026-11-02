@@ -3039,9 +3039,13 @@ def evaluate_trivy_image_exception(
     """Trivy 镜像扫描统一判定：Vulnerabilities 的放行/拒绝都经此处。
 
     - 无发现 → 通过。
-    - 有发现且合同存在、未过期、发现全部落在合同清单内 → 通过（豁免）。
+    - 有发现且豁免合同存在、未过期、每条发现都落在合同登记的
+      包/版本/CVE 组合内 → 通过（豁免）。
     - 有发现但合同缺失（测试 patch __file__ 后临时根是常态）、过期、或
-      存在清单外 CVE → 拒绝（fail-closed）。
+      存在合同外 CVE/版本 → 拒绝（fail-closed）。
+
+    合同 schema v2：``packages`` 列表登记多条 包/版本/CVE 组合
+    （wolfi 镜像多 apk 共享源码包时会一次扫出多组）。
     """
     findings = []
     for result in report.get("Results") or []:
@@ -3060,38 +3064,56 @@ def evaluate_trivy_image_exception(
         exception = json.loads(exception_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return "SECURITY_EVIDENCE_INVALID"
-    required = (
-        "schema_version", "id", "owner", "reviewed_at", "expires_on",
-        "package", "installed_version", "pending_fixed_version",
-        "advisory_ids", "mitigation",
-    )
-    if not isinstance(exception, dict) or any(key not in exception for key in required):
+    if not isinstance(exception, dict):
         return "SECURITY_EVIDENCE_INVALID"
-    if exception["schema_version"] != 1:
+    rules = []
+    if exception.get("schema_version") == 1 and isinstance(
+        exception.get("package"), str
+    ):
+        # v1 单包兼容形态
+        rules.append(
+            (
+                exception["package"],
+                exception.get("installed_version"),
+                set(exception.get("advisory_ids") or []),
+            )
+        )
+    elif exception.get("schema_version") == 2 and isinstance(
+        exception.get("packages"), list
+    ):
+        for item in exception["packages"]:
+            if not isinstance(item, dict):
+                return "SECURITY_EVIDENCE_INVALID"
+            rules.append(
+                (
+                    str(item.get("package")),
+                    item.get("installed_version"),
+                    {str(cve) for cve in item.get("advisory_ids") or []},
+                )
+            )
+    else:
         return "SECURITY_EVIDENCE_INVALID"
     try:
         expiry_date = date.fromisoformat(str(exception["expires_on"]))
-    except ValueError:
+    except (KeyError, ValueError):
         return "SECURITY_EVIDENCE_INVALID"
     effective_today = today or date.today()
     if effective_today >= expiry_date:
         return "SECURITY_EVIDENCE_INVALID"
-
-    advisory_ids = exception["advisory_ids"]
-    if not isinstance(advisory_ids, list):
+    if not rules or any(not package for package, _, _ in rules):
         return "SECURITY_EVIDENCE_INVALID"
-    allowed = {str(item) for item in advisory_ids}
-    package = str(exception["package"])
-    installed = str(exception["installed_version"])
 
     for finding in findings:
-        if finding.get("InstalledVersion") != installed:
-            return "SECURITY_EVIDENCE_INVALID"
-        # postgresql-16-client-base 与 postgresql-16-client 共享源码包与
-        # 同一批 CVE（wolfi 拆两个 apk），合同按前缀同时覆盖
-        if not str(finding.get("PkgName", "")).startswith(package):
-            return "SECURITY_EVIDENCE_INVALID"
-        if finding.get("VulnerabilityID") not in allowed:
+        matched = False
+        for package, installed, allowed in rules:
+            if (
+                str(finding.get("PkgName", "")).startswith(package)
+                and finding.get("InstalledVersion") == installed
+                and str(finding.get("VulnerabilityID")) in allowed
+            ):
+                matched = True
+                break
+        if not matched:
             return "SECURITY_EVIDENCE_INVALID"
     return None
 
