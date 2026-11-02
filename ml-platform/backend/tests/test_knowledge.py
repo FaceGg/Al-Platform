@@ -106,6 +106,32 @@ class TestKnowledgeAPI(unittest.TestCase):
         self.assertEqual(item["document_count"], 1)
         client.delete(f"/api/knowledge/bases/{kb['id']}", headers=h)
 
+    def test_03e_export_document_and_list_preview(self):
+        h = login_headers()
+        kb = client.post(
+            "/api/knowledge/bases",
+            json={"name": "Export test"},
+            headers=h,
+        ).json()
+        client.post(
+            f"/api/knowledge/bases/{kb['id']}/documents",
+            data={"title": "Export document", "content": "Exportable text body."},
+            headers=h,
+        )
+        listed = client.get(f"/api/knowledge/bases/{kb['id']}/documents", headers=h)
+        self.assertEqual(listed.status_code, 200)
+        doc = listed.json()[0]
+        # 列表带截断预览字段，供前端预览弹窗使用
+        self.assertEqual(doc["preview"], "Exportable text body.")
+        self.assertEqual(doc["content_length"], len("Exportable text body."))
+        exported = client.get(
+            f"/api/knowledge/documents/{doc['id']}/export", headers=h
+        )
+        self.assertEqual(exported.status_code, 200)
+        self.assertEqual(exported.text, "Exportable text body.")
+        self.assertIn("attachment", exported.headers["content-disposition"])
+        client.delete(f"/api/knowledge/bases/{kb['id']}", headers=h)
+
     def test_03d_upload_pdf_docx_xlsx_documents(self):
         import io
 

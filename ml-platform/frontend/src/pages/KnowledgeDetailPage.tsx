@@ -1,7 +1,7 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Tabs, Upload, Button, List, Typography, Input, message, Card, Space, Spin, Tag, Empty, Modal, Progress, Collapse, Statistic, Row, Col, Popconfirm } from "antd";
-import { UploadOutlined, DeleteOutlined, SearchOutlined, SendOutlined, PlusOutlined, ArrowLeftOutlined, EyeOutlined, FileTextOutlined, ScissorOutlined, ApartmentOutlined } from "@ant-design/icons";
+import { UploadOutlined, DeleteOutlined, SearchOutlined, SendOutlined, PlusOutlined, ArrowLeftOutlined, EyeOutlined, FileTextOutlined, ScissorOutlined, ApartmentOutlined, DownloadOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient from "../api/client";
 import AppLayout from "../components/AppLayout";
@@ -36,12 +36,14 @@ export default function KnowledgeDetailPage() {
   const distRef = useRef<HTMLDivElement>(null);
   const heatChartRef = useRef<echarts.ECharts | null>(null);
   const distChartRef = useRef<echarts.ECharts | null>(null);
+  const graphChartRef = useRef<echarts.ECharts | null>(null);
 
   // 图表在隐藏页签里初始化会得到 0 尺寸容器；页签切换回可见后必须 resize。
   useEffect(() => {
     const resize = () => {
       heatChartRef.current?.resize();
       distChartRef.current?.resize();
+      graphChartRef.current?.resize();
     };
     window.addEventListener("resize", resize);
     const timer = window.setInterval(resize, 300);
@@ -145,6 +147,23 @@ export default function KnowledgeDetailPage() {
     });
   };
 
+  // 导出下载：PDF/Word/Excel 平台只存提取文本，后端统一导出为同名 .txt。
+  const exportDoc = async (doc: any) => {
+    try {
+      const res = await apiClient.get(`/knowledge/documents/${doc.id}/export`, { responseType: "blob" });
+      const name = doc.filename || `${doc.id}.txt`;
+      const ext = (name.match(/\.[^.]+$/)?.[0] || "").toLowerCase();
+      const downloadName = [".txt", ".md", ".csv"].includes(ext) ? name : name.replace(/\.[^.]*$/, "") + "（提取文本）.txt";
+      const url = URL.createObjectURL(res.data);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = downloadName;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      message.success(zh ? "已开始下载" : "Download started");
+    } catch (e: any) { message.error(e.response?.data?.detail || t.common.error); }
+  };
+
   const handleVectorize = async () => {
     setVectorizing(true);
     try {
@@ -223,10 +242,15 @@ export default function KnowledgeDetailPage() {
   // 知识图谱预览：点击实体聚焦其邻域（纯展示，编辑在独立图谱工具中）。
   const [focusEntity, setFocusEntity] = useState<string | null>(null);
   const graphCanvasRef = useRef<HTMLDivElement>(null);
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
 
-  useEffect(() => {
+  // 确保图谱已初始化并应用当前数据/聚焦。setOption 幂等合并，重复调用安全。
+  const ensureGraphChart = useCallback(() => {
     if (activeTab !== "graph" || !graphCanvasRef.current || entities.length === 0) return;
-    const chart = echarts.init(graphCanvasRef.current);
+    const dom = graphCanvasRef.current;
+    const chart = echarts.getInstanceByDom(dom) ?? echarts.init(dom);
+    graphChartRef.current = chart;
+    requestAnimationFrame(() => chart.resize());
     const degree = new Map<string, number>();
     for (const rel of relations) {
       degree.set(rel.source_id, (degree.get(rel.source_id) || 0) + 1);
@@ -248,10 +272,14 @@ export default function KnowledgeDetailPage() {
     const keepIds = new Set(view.map((e) => e.id));
     chart.setOption({
       tooltip: {},
+      animationDuration: 800,
+      animationEasing: "quinticInOut",
+      animationDurationUpdate: 500,
+      animationEasingUpdate: "cubicInOut",
       series: [{
         type: "graph",
         layout: "force",
-        roam: true,
+        roam: true, // 拖拽节点固定位置 / 滚轮缩放 / 空白处平移
         data: view.map((e) => ({
           id: e.id, name: e.name, category: e.entity_type,
           symbolSize: 9 + Math.min(11, (degree.get(e.id) || 0) * 2.5),
@@ -261,16 +289,49 @@ export default function KnowledgeDetailPage() {
           .map((r) => ({ source: r.source_id, target: r.target_id, name: r.relation_type })),
         categories: [...new Set(view.map((e) => e.entity_type))].map((name) => ({ name })),
         label: { show: true, fontSize: 10 },
-        force: { repulsion: 140, edgeLength: 90 },
-        lineStyle: { color: "#aaa", curveness: 0.1 },
+        force: { repulsion: 160, edgeLength: [70, 120], gravity: 0.08, layoutAnimation: true },
+        // 悬停高亮邻域（其余节点淡出），聚焦/恢复切换带缓动过渡
+        emphasis: {
+          focus: "adjacency",
+          itemStyle: { shadowBlur: 12, shadowColor: "rgba(56,132,255,0.45)" },
+          label: { fontWeight: "bold" },
+        },
+        blur: { itemStyle: { opacity: 0.15 }, lineStyle: { opacity: 0.04 } },
+        lineStyle: { color: "rgba(140,150,170,0.35)", width: 1, curveness: 0.12 },
       }],
     });
-    const onClick = (params: any) => {
-      if (params.dataType === "node") setFocusEntity(focusEntity === params.name ? null : params.name);
+    // 拖拽节点与点击聚焦区分：位移超过阈值视为拖拽，不切换聚焦。
+    // ensureGraphChart 会被轮询重复调用，handler 按引用精确替换，避免叠加或误删 roam 内部监听。
+    const chartAny = chart as any;
+    if (chartAny.__downHandler) chart.getZr().off("mousedown", chartAny.__downHandler);
+    chartAny.__downHandler = (ev: any) => { dragStartRef.current = { x: ev.offsetX, y: ev.offsetY }; };
+    chart.getZr().on("mousedown", chartAny.__downHandler);
+    if (chartAny.__clickHandler) chart.off("click", chartAny.__clickHandler);
+    chartAny.__clickHandler = (params: any) => {
+      if (params.dataType !== "node") return;
+      const ev = params.event?.event;
+      const dragStart = dragStartRef.current;
+      if (dragStart && ev && Math.hypot(ev.offsetX - dragStart.x, ev.offsetY - dragStart.y) > 5) return;
+      setFocusEntity(focusEntity === params.name ? null : params.name);
     };
-    chart.on("click", onClick);
-    return () => { chart.off("click", onClick); chart.dispose(); };
+    chart.on("click", chartAny.__clickHandler);
   }, [activeTab, entities, relations, focusEntity]);
+
+  // 主 effect 之外再挂轮询兜底：页签首次激活的 effect 时序偶发不触发（实测复现），
+  // 轮询保证 400ms 内图谱必然初始化。
+  useEffect(() => {
+    ensureGraphChart();
+    const timer = window.setInterval(ensureGraphChart, 400);
+    return () => {
+      window.clearInterval(timer);
+      const dom = graphCanvasRef.current;
+      if (dom) {
+        const inst = echarts.getInstanceByDom(dom);
+        if (inst) inst.dispose();
+      }
+      graphChartRef.current = null;
+    };
+  }, [ensureGraphChart]);
 
   const entityName = (id: string) => entities.find((e) => e.id === id)?.name ?? id.slice(0, 8);
   const totalChunks = docs.reduce((sum, d: any) => sum + (d.chunk_count || 0), 0);
@@ -297,6 +358,7 @@ export default function KnowledgeDetailPage() {
                   <Space><FileTextOutlined style={{ color: "#1890ff" }} /><Text strong>{doc.filename || doc.name}</Text><Tag color="blue">{doc.chunk_count || 0} {zh ? "分块" : "chunks"}</Tag><Text type="secondary">{formatLocalTime(doc.created_at)}</Text></Space>
                   <Space>
                     <Button size="small" icon={<EyeOutlined />} onClick={() => setPreviewDoc(doc)}>{zh ? "预览" : "Preview"}</Button>
+                    <Button size="small" icon={<DownloadOutlined />} onClick={() => exportDoc(doc)}>{zh ? "导出" : "Export"}</Button>
                     <Button danger size="small" icon={<DeleteOutlined />} onClick={() => deleteDoc(doc.id)}>{t.ai_chat.delete}</Button>
                   </Space>
                 </Space>
@@ -444,8 +506,8 @@ export default function KnowledgeDetailPage() {
           </Card>
         </div>
         <div style={{ color: "var(--v2-dim)", fontSize: 11.5, marginTop: 8 }}>
-          {zh ? "知识图谱沉淀文档中的关键概念与工艺关系（设备—工艺—标准）；点击左侧实体可在右侧聚焦其邻域。由文档自动抽取生成，预览仅展示权重最高的前 600 条关系。"
-            : "Auto-extracted from documents. Click an entity to focus its neighborhood. Preview shows the top 600 strongest relations."}
+          {zh ? "知识图谱沉淀文档中的关键概念与工艺关系（设备—工艺—标准）；可拖拽节点固定位置、滚轮缩放、空白处平移，悬停节点高亮其邻域，点击实体或左侧列表聚焦。由文档自动抽取生成，预览仅展示权重最高的前 600 条关系。"
+            : "Auto-extracted from documents. Drag nodes to reposition, scroll to zoom, pan on empty space; hover to highlight the neighborhood, click an entity (or the list) to focus. Preview shows the top 600 strongest relations."}
         </div>
         </>
       ),

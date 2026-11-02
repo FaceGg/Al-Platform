@@ -367,6 +367,51 @@ def list_documents(
     ]
 
 
+@router.get("/documents/{doc_id}/export")
+def export_document(
+    doc_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """导出文档内容为本地文件下载。
+
+    平台存储的是提取文本（PDF/Word/Excel 原始二进制不落盘），因此文本类
+    文档保持原格式导出，其余类型统一导出为同名 .txt（文件名注明）。
+    """
+    from urllib.parse import quote
+    from fastapi.responses import Response
+
+    try:
+        doc_uuid = uuid.UUID(doc_id)
+    except (TypeError, ValueError) as error:
+        raise HTTPException(404, "Document not found") from error
+    doc = db.get(Document, doc_uuid)
+    if doc is None:
+        raise HTTPException(404, "Document not found")
+    kb = db.get(KnowledgeBase, doc.kb_id)
+    if kb is None or kb.owner_id != current_user.id:
+        raise HTTPException(404, "Document not found")
+
+    stem = os.path.splitext(doc.filename or doc.id)[0] or str(doc.id)[:8]
+    ext = os.path.splitext(doc.filename or "")[1].lower()
+    if ext in (".txt", ".md", ".csv"):
+        export_name = f"{stem}{ext}"
+    else:
+        export_name = f"{stem}（提取文本）.txt"
+    content = doc.content or ""
+    quoted = quote(export_name)
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=\"export.txt\"; filename*=UTF-8''{quoted}"
+            ),
+            "Content-Length": str(len(content.encode("utf-8"))),
+        },
+    )
+
+
 @router.delete("/documents/{doc_id}")
 def delete_document(
     doc_id: str,
