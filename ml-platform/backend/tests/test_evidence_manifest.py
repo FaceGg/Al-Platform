@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.evidence_manifest import MIGRATION_HEAD, generate
+from tools.evidence_manifest import MIGRATION_HEAD, _evidence_entry, generate
 from tools.playwright_evidence import sanitize_report, summarize_report
 from tools.security_scans import (
     REQUIRED_SCAN_GATES,
@@ -1243,6 +1243,73 @@ class EvidenceManifestTests(unittest.TestCase):
                         remote_ci_run_url="https://github.example.invalid/actions/runs/1",
                         image_digest=self._IMAGE_DIGEST,
                     )
+
+    def test_evidence_entry_allows_json_escaped_tex_commands_from_cve_descriptions(self):
+        # CVE 描述里的 TeX 命令（\sf、\restrict）在 JSON 文本中编码为 \\ 形态，
+        # 原始文本扫描会把它误判成 UNC 路径（run 41447107344 根因）；
+        # 解析后扫描应放行（解码后是单反斜杠，不是路径）
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "security").mkdir(parents=True)
+            report = {
+                "SchemaVersion": 2,
+                "ArtifactName": "ml-platform-backend:test",
+                "Results": [
+                    {
+                        "Target": "apk-tools",
+                        "Vulnerabilities": [
+                            {
+                                "VulnerabilityID": "CVE-2026-6464",
+                                "PkgName": "postgresql-16-client",
+                                "InstalledVersion": "16.14-r1",
+                                "Description": (
+                                    "regression in macros \\sf and \\restrict "
+                                    "plus \\unrestrict handling"
+                                ),
+                            }
+                        ],
+                    }
+                ],
+            }
+            path = root / "security" / "trivy-image.json"
+            path.write_text(json.dumps(report), encoding="utf-8")
+            self.assertIn("\\\\sf", path.read_text(encoding="utf-8"))
+
+            entry = _evidence_entry(path, root)
+
+        self.assertEqual(entry["path"], "security/trivy-image.json")
+
+    def test_evidence_entry_still_rejects_real_paths_inside_json_strings(self):
+        for description in (
+            r"scan failed at \\server\share\repository",
+            "scan failed at /tmp/acceptance/repository",
+            r"scan failed at C:\acceptance\repository",
+        ):
+            with self.subTest(description=description), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "security").mkdir(parents=True)
+                report = {
+                    "SchemaVersion": 2,
+                    "ArtifactName": "ml-platform-backend:test",
+                    "Results": [
+                        {
+                            "Target": "apk-tools",
+                            "Vulnerabilities": [
+                                {
+                                    "VulnerabilityID": "CVE-2026-6464",
+                                    "PkgName": "postgresql-16-client",
+                                    "InstalledVersion": "16.14-r1",
+                                    "Description": description,
+                                }
+                            ],
+                        }
+                    ],
+                }
+                path = root / "security" / "trivy-image.json"
+                path.write_text(json.dumps(report), encoding="utf-8")
+
+                with self.assertRaisesRegex(ValueError, "absolute path"):
+                    _evidence_entry(path, root)
 
     def test_generate_rejects_absolute_paths_in_raw_security_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

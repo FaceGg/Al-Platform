@@ -779,14 +779,20 @@ def _evidence_entry(path: Path, root: Path) -> dict[str, object]:
     except UnicodeDecodeError:
         decoded = ""
     if decoded:
-        _assert_safe_text(decoded, location=path.relative_to(root).as_posix())
+        location = path.relative_to(root).as_posix()
         try:
-            _assert_safe_json(
-                json.loads(decoded),
-                location=path.relative_to(root).as_posix(),
-            )
+            parsed = json.loads(decoded)
         except json.JSONDecodeError:
-            pass
+            parsed = None
+        if parsed is None:
+            _assert_safe_text(decoded, location=location)
+        else:
+            # JSON 证据只扫解析后的数据：_assert_safe_json 已对每个字符串做
+            # 同样的敏感值/绝对路径检查。对原始 JSON 文本扫描会把转义序列
+            # 误判成 UNC 路径——CVE 描述里的 TeX 命令（\sf、\restrict）在
+            # JSON 里编码为 \\ 形态，曾误杀含发现详情的 trivy 报告
+            # （run 41447107344 "Generate final evidence manifest" 根因）
+            _assert_safe_json(parsed, location=location)
     return {
         "path": path.relative_to(root).as_posix(),
         "size": len(content),
