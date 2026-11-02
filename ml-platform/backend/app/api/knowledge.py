@@ -359,6 +359,9 @@ def list_documents(
             "doc_type": d.doc_type,
             "chunk_count": d.chunk_count,
             "created_at": d.created_at.isoformat() if d.created_at else None,
+            # 预览用截断文本（完整正文可能数 MB，列表接口不带全量）
+            "preview": (d.content or "")[:2000],
+            "content_length": len(d.content or ""),
         }
         for d in docs
     ]
@@ -871,6 +874,7 @@ def delete_chat(
 @router.get("/bases/{kb_id}/graph/entities")
 def list_entities(
     kb_id: str,
+    limit: int | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -881,6 +885,8 @@ def list_entities(
     if not kb:
         raise HTTPException(404, "Knowledge base not found")
     entities = db.query(GraphEntity).filter(GraphEntity.kb_id == kb.id).all()
+    if limit is not None and len(entities) > limit:
+        entities = entities[:limit]
     return [
         {
             "id": str(e.id),
@@ -945,6 +951,7 @@ def delete_entity(
 @router.get("/bases/{kb_id}/graph/relations")
 def list_relations(
     kb_id: str,
+    limit: int | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -955,6 +962,13 @@ def list_relations(
     if not kb:
         raise HTTPException(404, "Knowledge base not found")
     relations = db.query(GraphRelation).filter(GraphRelation.kb_id == kb.id).all()
+    if limit is not None and len(relations) > limit:
+        # 预览场景：按权重降序只返回最强的前 limit 条（方言无关的内存排序）
+        relations = sorted(
+            relations,
+            key=lambda r: ((r.properties or {}).get("weight") or 0),
+            reverse=True,
+        )[:limit]
     return [
         {
             "id": str(r.id),

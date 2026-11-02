@@ -31,6 +31,7 @@ export default function KnowledgeDetailPage() {
   const [vectorizing, setVectorizing] = useState(false);
   const [entities, setEntities] = useState<any[]>([]);
   const [relations, setRelations] = useState<any[]>([]);
+  const [previewDoc, setPreviewDoc] = useState<any>(null);
   const heatRef = useRef<HTMLDivElement>(null);
   const distRef = useRef<HTMLDivElement>(null);
   const heatChartRef = useRef<echarts.ECharts | null>(null);
@@ -60,8 +61,9 @@ export default function KnowledgeDetailPage() {
     apiClient.get("/knowledge/bases/" + kbId + "/vector-stats").then((res) => setVectorStats(res.data)).catch(() => {});
   };
   const loadGraph = () => {
-    apiClient.get(`/knowledge/bases/${kbId}/graph/entities`).then((res) => setEntities(Array.isArray(res.data) ? res.data : [])).catch(() => {});
-    apiClient.get(`/knowledge/bases/${kbId}/graph/relations`).then((res) => setRelations(Array.isArray(res.data) ? res.data : [])).catch(() => {});
+    // 大库可达数万实体/关系，全量拉取会卡死浏览器；预览只取最强子集
+    apiClient.get(`/knowledge/bases/${kbId}/graph/entities?limit=2000`).then((res) => setEntities(Array.isArray(res.data) ? res.data : [])).catch(() => {});
+    apiClient.get(`/knowledge/bases/${kbId}/graph/relations?limit=600`).then((res) => setRelations(Array.isArray(res.data) ? res.data : [])).catch(() => {});
   };
   useEffect(() => {
     loadDocs(); loadChats(); loadVectorStats(); loadGraph();
@@ -252,7 +254,7 @@ export default function KnowledgeDetailPage() {
         roam: true,
         data: view.map((e) => ({
           id: e.id, name: e.name, category: e.entity_type,
-          symbolSize: 18 + Math.min(26, (degree.get(e.id) || 0) * 5),
+          symbolSize: 9 + Math.min(11, (degree.get(e.id) || 0) * 2.5),
         })),
         links: relations
           .filter((r) => keepIds.has(r.source_id) && keepIds.has(r.target_id))
@@ -293,7 +295,10 @@ export default function KnowledgeDetailPage() {
               <Card key={doc.id} size="small" style={{ marginBottom: 8 }}>
                 <Space style={{ justifyContent: "space-between", width: "100%" }}>
                   <Space><FileTextOutlined style={{ color: "#1890ff" }} /><Text strong>{doc.filename || doc.name}</Text><Tag color="blue">{doc.chunk_count || 0} {zh ? "分块" : "chunks"}</Tag><Text type="secondary">{formatLocalTime(doc.created_at)}</Text></Space>
-                  <Button danger size="small" icon={<DeleteOutlined />} onClick={() => deleteDoc(doc.id)}>{t.ai_chat.delete}</Button>
+                  <Space>
+                    <Button size="small" icon={<EyeOutlined />} onClick={() => setPreviewDoc(doc)}>{zh ? "预览" : "Preview"}</Button>
+                    <Button danger size="small" icon={<DeleteOutlined />} onClick={() => deleteDoc(doc.id)}>{t.ai_chat.delete}</Button>
+                  </Space>
                 </Space>
               </Card>
             )}
@@ -439,8 +444,8 @@ export default function KnowledgeDetailPage() {
           </Card>
         </div>
         <div style={{ color: "var(--v2-dim)", fontSize: 11.5, marginTop: 8 }}>
-          {zh ? "知识图谱沉淀文档中的关键概念与工艺关系（设备—工艺—标准）；点击左侧实体可在右侧聚焦其邻域。由文档自动抽取生成。"
-            : "Auto-extracted from documents. Click an entity to focus its neighborhood."}
+          {zh ? "知识图谱沉淀文档中的关键概念与工艺关系（设备—工艺—标准）；点击左侧实体可在右侧聚焦其邻域。由文档自动抽取生成，预览仅展示权重最高的前 600 条关系。"
+            : "Auto-extracted from documents. Click an entity to focus its neighborhood. Preview shows the top 600 strongest relations."}
         </div>
         </>
       ),
@@ -457,6 +462,30 @@ export default function KnowledgeDetailPage() {
         </div>
       </div>
       <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
+      <Modal
+        open={!!previewDoc}
+        title={<Space><FileTextOutlined style={{ color: "#1890ff" }} />{previewDoc?.filename || previewDoc?.name}</Space>}
+        onCancel={() => setPreviewDoc(null)}
+        footer={null}
+        width={760}
+      >
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Tag color="blue">{previewDoc?.chunk_count || 0} {zh ? "分块" : "chunks"}</Tag>
+          <Tag>{previewDoc?.doc_type || "text"}</Tag>
+          {(previewDoc?.content_length || 0) > (previewDoc?.preview || "").length && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {zh ? `预览前 ${(previewDoc?.preview || "").length} 字 / 共 ${(previewDoc?.content_length || 0)} 字` : `Showing ${(previewDoc?.preview || "").length} of ${(previewDoc?.content_length || 0)} chars`}
+            </Text>
+          )}
+        </Space>
+        {(previewDoc?.preview || "").trim() ? (
+          <Paragraph style={{ background: "#fafafa", color: "rgba(0,0,0,0.85)", padding: 12, borderRadius: 8, whiteSpace: "pre-wrap", maxHeight: 480, overflow: "auto", fontSize: 12.5, marginBottom: 0 }}>
+            {previewDoc?.preview}
+          </Paragraph>
+        ) : (
+          <Empty description={zh ? "该文档暂无可预览的文本内容" : "No preview text"} />
+        )}
+      </Modal>
     </AppLayout>
   );
 }
