@@ -300,9 +300,16 @@ class TestL2InjectionAndDistill(ExecutorHarness, unittest.TestCase):
     def test_distill_creates_shadow_entries_with_evidence_chain(self):
         run_id = self._make_run()
         self._patch_llm()
+        # A 批次：教训文本带 run_id 后缀——同文自动合并（§10.1）会把跨测试
+        # 同文蒸馏折叠进既有条目（并可能被命中升级为 active），唯一文本
+        # 保证本用例断言的是"新蒸馏条目从 shadow 起步"这一原始语义
+        unique_reply = _DISTILL_REPLY.replace(
+            '"lesson": "优先轻量模型"',
+            f'"lesson": "优先轻量模型-{run_id[:8]}"',
+        )
         with mock.patch(
             "app.services.agent.experience._distill_chat_completion",
-            return_value=(_DISTILL_REPLY, {}),
+            return_value=(unique_reply, {}),
         ), mock.patch(
             "app.services.agent.optimization_report.chat_completion",
             return_value=(_REPORT_REPLY, {}),

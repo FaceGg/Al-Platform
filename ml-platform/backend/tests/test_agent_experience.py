@@ -54,6 +54,19 @@ class TestExperienceStore(unittest.TestCase):
             self.assertEqual(entry.status, "shadow")
             self.assertEqual(entry.origin, "distilled")
 
+    def test_same_lesson_merges_into_existing_entry(self):
+        # §10.1 去重合同：同域同文折叠为一条——置信度取高者、任务并集
+        with SessionLocal() as db:
+            first = self._record(db, confidence=0.6)
+            first_id = first.id
+            merged = self._record(db, confidence=0.9, source_tasks=["task-extra"])
+            self.assertEqual(merged.id, first_id)
+            self.assertEqual(float(merged.confidence), 0.9)
+            self.assertIn("task-extra", merged.source_tasks)
+            self.assertEqual(
+                db.query(ExperienceEntry).count(), 1,
+            )
+
     def test_distilled_entry_requires_evidence(self):
         with SessionLocal() as db:
             with self.assertRaises(ExperienceEvidenceRequired):
@@ -70,12 +83,13 @@ class TestExperienceStore(unittest.TestCase):
 
     def test_retrieval_filters_status_confidence_and_domain(self):
         with SessionLocal() as db:
-            self._record(db, confidence=0.86)  # shadow → counted, not returned
-            active = self._record(db, confidence=0.9)
+            # A 批次：互异 lesson 防同文合并折叠（§10.1），保持过滤语义可断言
+            self._record(db, confidence=0.86, lesson="教训-影子")  # shadow → counted, not returned
+            active = self._record(db, confidence=0.9, lesson="教训-主条目")
             active.status = "active"
-            low = self._record(db, confidence=0.69)
+            low = self._record(db, confidence=0.69, lesson="教训-低置信")
             low.status = "active"
-            other_domain = self._record(db, domain="welding", confidence=0.95)
+            other_domain = self._record(db, domain="welding", confidence=0.95, lesson="教训-异域")
             other_domain.status = "active"
             active_id, low_id, other_id = active.id, low.id, other_domain.id
             entries = retrieve_for_task(
@@ -155,8 +169,13 @@ class TestExperienceStore(unittest.TestCase):
 
     def test_top_k_ranking_by_confidence(self):
         with SessionLocal() as db:
+            # A 批次：同文自动合并（§10.1）上线后，排名/计数类用例必须用
+            # 互异 lesson 造独立条目，否则三条会折叠为一条
             for confidence in (0.8, 0.9, 0.85):
-                entry = self._record(db, confidence=confidence)
+                entry = self._record(
+                    db, confidence=confidence,
+                    lesson=f"索引类列默认剔除-{confidence}",
+                )
                 entry.status = "active"
             entries = retrieve_for_task(
                 db, domain="tightening", profile_fingerprint={}, top_k=2
