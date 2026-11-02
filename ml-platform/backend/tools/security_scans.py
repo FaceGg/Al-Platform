@@ -3353,6 +3353,12 @@ def run_all(
                 and provenance_after["revision"] == source_commit
                 and report_image_id == provenance_after["image_id"]
             )
+            # A 批次：trivy 镜像发现经时限豁免合同判定——全部命中豁免清单则
+            # 该镜像 gate 视为通过（原始报告仍完整留证，便于审计追溯）
+            exempted = (
+                report_value is not None
+                and evaluate_trivy_image_exception(report_value, today=_trivy_today()) is None
+            )
             image_reports.append(
                 {
                     "component": component,
@@ -3374,7 +3380,10 @@ def run_all(
                         image_result["status"]
                         if (
                             provenance_valid
-                            and image_result.get("status") == "passed"
+                            and (
+                                image_result.get("status") == "passed"
+                                or exempted
+                            )
                             and image_result.get("returncode") == 0
                         )
                         else "failed"
