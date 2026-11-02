@@ -250,7 +250,14 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 > - **批次十三**（索引）：迁移 20261029_85 建 16 个二级索引（12 张主键-only 表 + created_by + 过滤列），database_migrations._SQLITE_INDEXES 同步；alembic upgrade 验证落地。
 > - **批次十四**（前端/部署/CI）：MonitorPage 轮询签名剔除 timestamp（修批次五退避在监控页永久失效）；DataAnnotationPage 三处 1s 预览轮询迁 useAdaptivePolling（previewPollSettled 终态停轮 + 终态首次拉取保留）；AutoMLPage blob URL 三路径回收；compose 长驻服务日志轮转（x-logging 50m×5）；CI 安全扫描去 continue-on-error（扫描失败阻断合并）。
 > - 验证：前端全量 89 文件 504 passed + tsc；后端受影响套件全绿；demo_loop 共享库漂移确证与代码无关（新库 27 passed）。**遗留**：A-16/A-17 列表批量化（涉及 API 合同变更需前端同批）；chat 同步化后 DB 池校准待压测。
-1. **CI 状态**：main 全量六 job 全绿后本节收敛（进度区记录 run 号）。
+
+> **✅ 全量 CI 六 job 全绿收敛（2026-11-02~03，门禁分支 release/opt-20261030，run 41463990779 @ b282a54b attempt 1）**：r14 以来 Security job 首次带 trivy 发现通过全链（run_all → Summarize → 通用验收回执 → 最终证据 manifest）。四层递进修复（每层都被上一层的修复首次"活到"才暴露）：
+> - **L1 run_all 豁免死逻辑**（93b1fdf5）：trivy `--exit-code 1` 有发现必 rc=1，原 `returncode == 0` 条件使时限豁免永不生效；改豁免路径接受 rc=1+合同全覆盖+报告确有发现，rc=1 无发现（扫描器崩溃残缺报告）仍 fail-closed。
+> - **L2 豁免凭据合同**（442a5a3d）：Summarize/evidence_manifest 三处镜像凭据严格键集合校验补 `exempted` 键（必填 bool；豁免→rc=1，未豁免→rc=0），缺键时整个聚合被毒化、全部 gate 连带失败。
+> - **L3 前端 flake**（f208a11e）：JobRunsPage 日志增量用例在 Windows CI 高负载下点击被 antd Wave/重渲替换的旧节点引用（事件到不了 React 根监听），点击改实时重查 + 关键 waitFor 显式 5s 预算；真 cursor 回归仍会被抓住。
+> - **L4 证据误杀**（b282a54b）：manifest 对 JSON 证据的**原始文本**扫描把 CVE 描述里 JSON 转义的 TeX 命令（`\sf`/`\restrict`）误判 UNC 绝对路径；改扫解析后数据（`_assert_safe_json` 本就对每个解码字符串做同等检查），真 UNC/POSIX/Windows 路径仍拒。
+> - 教训：**修门禁链条要预期"洋葱层"**——下游检查从未被上游放行过的输入执行过，逐层放行会逐层暴露新根因；每层都以真实 CI 证据回放 + 回归测试锁死。
+1. **CI 状态**：~~main 全量六 job 全绿后本节收敛~~ **门禁分支已收敛（run 41463990779 六 job 全绿，b282a54b）**，修复合入 main 后本节收敛。
 2. **审计收尾**：① pickle/joblib 反序列化通道复核；② agent/sandbox.py:193 子进程 env= 缺失威胁模型确认；③ 生产连接池取值运维确认。
 3. **测试卫生批次**：demo_loop 套件密封化、model-inference e2e 按 v2 UI 重写、test_fake NO TESTS RAN 噪音。
 
