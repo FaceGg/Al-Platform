@@ -128,11 +128,20 @@ describe("JobRunsPage", () => {
 
     const more = screen.getByRole("button", { name: /加载更多/ });
     expect(more).not.toBeDisabled();
-    fireEvent.click(more);
-    await waitFor(() => expect(mocks.getJobRunLogs).toHaveBeenCalledWith(job.id, 8));
-    expect(await screen.findByText(/chunk-2/)).toBeInTheDocument();
+    expect(more).not.toHaveClass("ant-btn-loading");
+    // 点击时实时重查：CI 高负载下 antd Wave/重渲可能替换节点，持旧引用
+    // 派发的事件到不了 React 根监听（run 41428207476 Windows 两连挂根因）
+    fireEvent.click(screen.getByRole("button", { name: /加载更多/ }));
+    await waitFor(
+      () => expect(mocks.getJobRunLogs).toHaveBeenCalledWith(job.id, 8),
+      { timeout: 5000 },
+    );
+    expect(await screen.findByText(/chunk-2/, undefined, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByTestId("end-of-stream")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole("button", { name: /加载更多/ })).toBeDisabled());
+    await waitFor(
+      () => expect(screen.getByRole("button", { name: /加载更多/ })).toBeDisabled(),
+      { timeout: 5000 },
+    );
   });
 
   it("explains timed_out and orphaned terminal states", async () => {
