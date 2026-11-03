@@ -2,10 +2,10 @@
   "schema_version": 2,
   "id": "wolfi-image-cves-time-bound",
   "owner": "ml-platform-maintainers",
-  "reviewed_at": "2026-10-29",
-  "expires_on": "2026-12-31",
+  "reviewed_at": "2026-11-03",
+  "expires_on": "2027-03-31",
   "package": "postgresql-16-client",
-  "mitigation": "postgresql-16-client: wolfi has not published 16.15-r0 yet; pin bumped to 16.14-r1 (latest available) and re-pinned when wolfi publishes the fix. py3.11-pip: bumped to 26.2.2-r2 in the same build. The container exposes no PostgreSQL service (client only for psql operational probes against an external database).",
+  "mitigation": "postgresql-16-client: 2026-11-03 recheck against packages.wolfi.dev APKINDEX — 16.15-r0 still unpublished, 16.14-r1 remains the newest available build, so the pin already tracks upstream HEAD; exemption renewed to 2027-03-31 with a mandatory recheck at or before expiry. py3.11-pip rule retired this cycle: the pinned 26.2.2-r2 is the newest upstream build and already remediates CVE-2026-111943/114613 (recent CI image scans report findings only for postgresql-16-client/-base). The container exposes no PostgreSQL service (client only for psql operational probes against an external database).",
   "packages": [
     {
       "package": "postgresql-16-client",
@@ -28,15 +28,6 @@
         "CVE-2026-19385",
         "CVE-2026-6464",
         "CVE-2026-6471"
-      ]
-    },
-    {
-      "package": "py3.11-pip",
-      "installed_version": "26.2.1-r4",
-      "pending_fixed_version": "26.2.2-r1",
-      "advisory_ids": [
-        "CVE-2026-111943",
-        "CVE-2026-114613"
       ]
     }
   ]

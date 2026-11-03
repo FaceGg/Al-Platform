@@ -267,6 +267,8 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 > - **误报归档（16 项）**：python_script_runtime 代码注入×1+路径×3+pickle×2（用户脚本是产品功能，子进程隔离执行；tempfile 自建路径；pickle 为 df 传输同进程自产）；utility_operators:245/export 路径（批次九 export_paths 已收口）；database.py:62 SQL 注入（`PRAGMA busy_timeout={int 常量}`）；week11_performance SSRF×2（验收工具打配置的本地端点）；硬编码凭据×4（installer 占位部署时随机生成；性能脚本从 fixture 文件读取）；vector_store 路径×2（调用方固定模板 `vs_{uuid}.pkl`+DB 校验，不可达）。Medium 21 项反序列化分布（evaluation/visualization 等 joblib 加载）与 model 通道同域，已随密封防线覆盖其存储来源；直接加载路径（如 evaluation 算子内部）待下一批随"算子输出密封透传"统一收口。
 > - **方法论沉淀**：新测试文件如含 `tempfile/open(变量)` 会被 Mimosa hook 以"路径穿越"拦截（AST 模式误报）——对抗性反序列化测试应直调校验函数单元级验证 + save 自产文件做正路径往返。
 
+> **✅ trivy 豁免合同续期（2026-11-03）**：对 packages.wolfi.dev APKINDEX 复核——postgresql-16-client **16.15-r0 仍未发布，16.14-r1 已是上游最新**（钉版无需也无法上调）；py3.11-pip 26.2.2-r2 已修复其两项 CVE 且近期镜像扫描零 pip 发现，**退役该豁免条目**（原 pending 26.2.2-r1 < 实装钉，死条目）。合同 reviewed_at→2026-11-03、**expires_on 2026-12-31→2027-03-31**（季度复审节奏，到期前必须再查 APKINDEX）；真实 CI 证据回放（32 项 postgresql-only 发现）+ evaluate 单测 4 项验证通过。到期前若 16.15-r0 发布：升钉四处 Dockerfile → 删除本合同 → 全量 CI 验证。
+
 1. **CI 状态**：~~main 全量六 job 全绿后本节收敛~~ **门禁分支已收敛（run 41463990779 六 job 全绿，b282a54b）**，修复合入 main 后本节收敛。
 2. **审计收尾**：① ~~pickle/joblib 反序列化通道复核~~ **已收口（2026-11-03 密封防线，见上）**；② agent/sandbox.py:193 子进程 env= 缺失威胁模型确认；③ 生产连接池取值运维确认。
 3. **测试卫生批次**：~~demo_loop 套件密封化、test_fake NO TESTS RAN 噪音~~ **已落地（e222cf86：未显式设 DATABASE_URL 时进程专属临时库+退出 dispose 清理；夹具回显 redirect_stdout 吞掉）**；model-inference e2e 按 v2 UI 重写仍待办。
