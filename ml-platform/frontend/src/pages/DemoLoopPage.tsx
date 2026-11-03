@@ -152,7 +152,7 @@ export default function DemoLoopPage() {
         extra={(
           <Space>
             <Text type="secondary" style={{ fontSize: 12 }}>点击任务行进入任务详情</Text>
-            <Button size="small" type="primary" icon={<PlusOutlined />}
+            <Button type="primary" icon={<PlusOutlined />}
               onClick={() => setEditor({ mode: "create" })} data-testid="new-loop-btn">
               {tr.new_loop || "新建闭环"}
             </Button>

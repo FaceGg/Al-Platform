@@ -289,13 +289,12 @@ export default function DataManagePage() {
               allowClear
             />
             <Upload beforeUpload={(file) => { handleUpload(file); return false; }} accept=".csv,.xls,.xlsx,.json,.parquet" maxCount={1} showUploadList={false}>
-              <Button icon={<UploadOutlined />} loading={uploading}>
+              <Button type="primary" icon={<UploadOutlined />} loading={uploading}>
                 {uploading
                   ? (uploadPercent < 100 ? `上传中 ${uploadPercent}%` : "解析中…")
                   : t.data.upload_file}
               </Button>
             </Upload>
-            <Button icon={<ExportOutlined />} onClick={handleExport}>{t.data.export}</Button>
             <Upload beforeUpload={(file) => { handleUpload(file); return false; }} accept=".csv,.xls,.xlsx" maxCount={99} showUploadList={false} multiple>
               <Button icon={<ImportOutlined />} loading={uploading}>
                 {uploading
@@ -303,6 +302,7 @@ export default function DataManagePage() {
                   : t.data.batch}
               </Button>
             </Upload>
+            <Button icon={<ExportOutlined />} onClick={handleExport}>{t.data.export}</Button>
           </Space>
         </div>
         <Card className="table-surface" variant="borderless">

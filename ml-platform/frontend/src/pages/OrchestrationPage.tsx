@@ -180,16 +180,16 @@ export default function OrchestrationPage() {
               placeholder={tr.choose_project || "选择项目"}
             />
           </span>
-          <Button icon={<PlusOutlined />} type="primary" disabled={!projectId}
-            onClick={() => { form.resetFields(); setModalOpen(true); }}>
-            {tr.new_workflow || "新建服务图"}
-          </Button>
           <Button icon={<ReloadOutlined />} disabled={!projectId}
             onClick={() => loadWorkflows(projectId)}>
             {tr.refresh || "刷新"}
           </Button>
           <Button icon={<CloudUploadOutlined />} onClick={() => navigate("/api-marketplace")}>
             {tr.go_market || "前往 API 市场"}
+          </Button>
+          <Button icon={<PlusOutlined />} type="primary" disabled={!projectId}
+            onClick={() => { form.resetFields(); setModalOpen(true); }}>
+            {tr.new_workflow || "新建服务图"}
           </Button>
         </Space>
         <Alert

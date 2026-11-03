@@ -322,11 +322,11 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
         title="知识库管理"
         extra={
           <Space>
-            <Button icon={<PlusOutlined />} type="primary" onClick={() => setKbModalOpen(true)}>
-              新建知识库
-            </Button>
             <Button icon={<ReloadOutlined />} onClick={load}>
               刷新
+            </Button>
+            <Button icon={<PlusOutlined />} type="primary" onClick={() => setKbModalOpen(true)}>
+              新建知识库
             </Button>
           </Space>
         }

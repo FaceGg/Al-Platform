@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { App as AntApp, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch } from "antd";
-import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined, DownloadOutlined, EyeOutlined, PlusOutlined, StopOutlined } from "@ant-design/icons";
+import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined, DownloadOutlined, EyeOutlined, PlusOutlined, ReloadOutlined, StopOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient, { formatApiError } from "../api/client";
 import type { AutoMLRunPayload, AutoMLSearchMethod, AutoMLSearchStrength, AutoMLTaskType, AutoMLTimeBudget } from "../api/training";
@@ -732,10 +732,12 @@ export default function AutoMLPage() {
   return (
     <AppLayout>
       <V2PageFrame title={t.automl?.title || "AutoML"} testId="v2-automl">
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <Button icon={<PlusOutlined />} aria-label="新建" onClick={() => { setRecipeTab("general"); setResults(null); setConfigurationOpen(true); }}>新建</Button>
-      </div>
-      <Card title="建模任务" style={{ marginBottom: 16 }} extra={<Button type="link" onClick={() => void refreshModelingTasks()} loading={loadingModelingTasks}>刷新</Button>}>
+      <Card title="建模任务" style={{ marginBottom: 16 }} extra={(
+        <Space>
+          <Button icon={<ReloadOutlined />} onClick={() => void refreshModelingTasks()} loading={loadingModelingTasks}>刷新</Button>
+          <Button type="primary" icon={<PlusOutlined />} aria-label="新建" onClick={() => { setRecipeTab("general"); setResults(null); setConfigurationOpen(true); }}>新建</Button>
+        </Space>
+      )}>
         <div className="table-surface"><Table<ModelingTask> rowKey={(task) => `${task.kind}-${task.id}`} size="small" columns={modelingTaskColumns} dataSource={modelingTasks} loading={loadingModelingTasks} pagination={false} locale={{ emptyText: "暂无建模任务" }} /></div>
       </Card>
       {configurationOpen && <Modal title="新建通用自动建模" open={configurationOpen} onCancel={() => setConfigurationOpen(false)} footer={null} width={1100} destroyOnClose>
