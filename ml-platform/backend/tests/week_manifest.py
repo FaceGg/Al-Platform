@@ -172,6 +172,7 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
     12: [
         "test_week12_security_gates",
         "test_auth_jwt_migration",
+        "test_password_hashing",
         "test_evidence_manifest",
         "test_acceptance_environment",
         "test_image_security_contracts",

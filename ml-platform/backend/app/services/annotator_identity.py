@@ -8,7 +8,7 @@ import uuid
 
 import jwt
 from fastapi import Request
-from passlib.context import CryptContext
+from app.services.password_hashing import PasswordHasher
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -17,7 +17,7 @@ from app.models.labeling import AnnotationAssignment
 from app.models.platform_models import GenericAnnotationTask
 from app.models.user import User
 
-pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+pwd_context = PasswordHasher()
 PORTAL_COOKIE_NAME = "portal_session"
 # Admin portal sessions live in their own cookie so an annotator and an admin
 # can be logged into the same browser at the same time (cookies are not

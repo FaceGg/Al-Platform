@@ -147,8 +147,11 @@ class ImageSecurityContractTests(unittest.TestCase):
             if line.split("#", 1)[0].strip()
         }
         self.assertIn("cryptography==50.0.*", lines)
-        self.assertIn("jaraco.context==6.1.0", lines)
         self.assertIn("wheel==0.46.2", lines)
+        # P1 升级批次（2026-11-03）：passlib 停维护已移除（stdlib pbkdf2_sha256
+        # 兼容实现），其传递依赖 jaraco.context 一并退场
+        self.assertNotIn("passlib[bcrypt]==1.7.*", lines)
+        self.assertNotIn("jaraco.context==6.1.0", lines)
 
     def test_tensorboard_supports_the_patched_setuptools_release(self):
         lines = {
@@ -166,7 +169,6 @@ class ImageSecurityContractTests(unittest.TestCase):
     def test_generated_pip_audit_report_requires_all_clean_controlled_packages(self):
         dependencies = [
             {"name": "cryptography", "version": "50.0.0", "vulns": []},
-            {"name": "jaraco-context", "version": "6.1.0", "vulns": []},
             {"name": "wheel", "version": "0.46.2", "vulns": []},
         ]
         with tempfile.TemporaryDirectory() as directory:

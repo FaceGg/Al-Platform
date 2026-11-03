@@ -2798,7 +2798,7 @@ def _canonical_distribution_name(name: str) -> str:
 
 _REQUIRED_PIP_AUDIT_PACKAGES = frozenset(
     _canonical_distribution_name(name)
-    for name in ("cryptography", "jaraco.context", "wheel")
+    for name in ("cryptography", "wheel")
 )
 _PRODUCTION_IMAGE_COMPONENTS = (
     "backend",

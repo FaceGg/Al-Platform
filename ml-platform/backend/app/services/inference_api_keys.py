@@ -8,7 +8,7 @@ import threading
 import time
 import uuid
 
-from passlib.context import CryptContext
+from app.services.password_hashing import PasswordHasher
 
 from app.models.model_registry import InferenceApiKey
 
@@ -53,7 +53,7 @@ class ApiKeyView:
 
 
 class InferenceApiKeyService:
-    _context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+    _context = PasswordHasher()
     _verification_locks_guard = threading.Lock()
     _verification_locks: dict[bytes, threading.Lock] = {}
     _verification_cache_lock = threading.RLock()

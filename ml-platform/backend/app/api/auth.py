@@ -9,8 +9,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 import jwt
 from jwt import InvalidTokenError
 
-from passlib.context import CryptContext
-from passlib.exc import UnknownHashError
+from app.services.password_hashing import PasswordHasher, UnknownHashError
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -42,7 +41,7 @@ from app.services.security import (
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+pwd_context = PasswordHasher()
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 

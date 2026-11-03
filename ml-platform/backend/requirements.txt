@@ -5,14 +5,12 @@ psycopg[binary]==3.2.*
 alembic==1.16.*
 PyJWT[crypto]==2.15.*
 cryptography==50.0.*
-jaraco.context==6.1.0
 wheel==0.46.2
-passlib[bcrypt]==1.7.*
 python-multipart==0.0.31
 pydantic==2.12.*
 pydantic-settings==2.14.*
 networkx==3.6.*
-celery==5.4.*
+celery==5.5.*
 croniter==6.*
 redis==5.0.*
 minio==7.2.*

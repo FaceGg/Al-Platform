@@ -194,7 +194,7 @@ def ensure_default_admin(session_factory, app_settings=None) -> None:
     本地开发未配置则跳过引导并提示，避免弱口令默认值。lifespan 会传入
     注入式 settings，与其它运行时依赖的注入口径一致。
     """
-    from passlib.context import CryptContext
+    from app.services.password_hashing import pbkdf2_sha256_hash
 
     from app.models.user import User
 
@@ -217,10 +217,9 @@ def ensure_default_admin(session_factory, app_settings=None) -> None:
                 "the first user and promote it)"
             )
             return
-        pwd_ctx = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
         db.add(User(
             username="admin",
-            password_hash=pwd_ctx.hash(password),
+            password_hash=pbkdf2_sha256_hash(password),
             role="admin",
         ))
         try:

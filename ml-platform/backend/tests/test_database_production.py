@@ -308,10 +308,10 @@ class TestDatabaseLifespan(TestCase):
                     main_module.ensure_default_admin(factory)
                 with factory() as check:
                     admin = check.query(User).filter(User.username == "admin").one()
-                from passlib.context import CryptContext
+                # P1：与 passlib 兼容的 stdlib 实现校验引导哈希
+                from app.services.password_hashing import pbkdf2_sha256_verify
 
-                pwd_ctx = CryptContext(schemes=["pbkdf2_sha256"])
-                self.assertTrue(pwd_ctx.verify(marker, admin.password_hash))
+                self.assertTrue(pbkdf2_sha256_verify(marker, admin.password_hash))
             finally:
                 db_engine.dispose()
 
