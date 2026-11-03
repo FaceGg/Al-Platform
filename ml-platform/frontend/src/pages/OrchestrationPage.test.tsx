@@ -70,9 +70,14 @@ describe("OrchestrationPage (serving-graph workbench)", () => {
   it("creates a workflow with empty graph payload", async () => {
     api.post.mockResolvedValue({ data: { id: "wf-new" } });
     render(<OrchestrationPage />);
-    fireEvent.click(await screen.findByRole("button", { name: /新建服务图/ }));
+    const create = await screen.findByRole("button", { name: /新建服务图/ });
+    // 按钮在项目列表加载并选中默认项目前是 disabled（disabled={!projectId}）——
+    // 高负载 runner 上点击可能落在加载完成前，静默无效后 dialog 永不出现
+    // （run 41583772335 Windows 失败根因）。先等可点再点击。
+    await waitFor(() => expect(create).not.toBeDisabled(), { timeout: 5000 });
+    fireEvent.click(create);
     // 慢 runner（windows CI）上 antd Modal 挂载可能超过默认 1s，放宽等待
-    await screen.findByRole("dialog", {}, { timeout: 3000 });
+    await screen.findByRole("dialog", {}, { timeout: 5000 });
     // antd Modal onOk 的合成点击在 jsdom 下不稳定；直接派发 form submit 触发 onFinish。
     // 名称输入按 placeholder 定位（首个 input 现在是模板下拉的搜索框）。
     const dialog = screen.getByRole("dialog");
