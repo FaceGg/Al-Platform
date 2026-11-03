@@ -147,7 +147,8 @@ test("agent task list navigates to the run detail page", async ({ page }) => {
   // 详情页侧栏高亮「任务列表」而非按 query 长度误落「知识中心」。
   await expect(page.locator(".v2-side-item.on")).toContainText("任务列表");
   await expect(page.locator("#root")).toContainText("e2e-项目");
-  await expect(page.locator("#root")).toContainText("升级原因");
+  // 705794cf 文案改版：「升级原因」→「待人工决策原因」
+  await expect(page.locator("#root")).toContainText("待人工决策原因");
   await expect(page.locator("#root")).toContainText("ReadTimeout: timed out");
 
   // 返回任务列表
