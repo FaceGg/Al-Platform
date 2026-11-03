@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Spin } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
 import OptReportPanel from "./OptReportPanel";
 import ServitizeActions from "./ServitizeActions";
@@ -305,23 +304,25 @@ function AgentStream({ archive, zh, active }: { archive: AgentRunDetail; zh: boo
   const [activeSection, setActiveSection] = useState("");
   const [nowTick, setNowTick] = useState(() => Date.now());
   const prevRunRef = useRef<string | null>(null);
+  const prevLenRef = useRef(0);
 
-  // 活跃任务每秒刷新一次，驱动耗时计时器实时走动。
+  // 活跃任务 100ms 走表：工作时长 0.1s 精度持续更新。
   useEffect(() => {
     if (!active) return;
-    const timer = window.setInterval(() => setNowTick(Date.now()), 1000);
+    const timer = window.setInterval(() => setNowTick(Date.now()), 100);
     return () => window.clearInterval(timer);
   }, [active]);
 
   const elapsedText = (() => {
     const start = parseBackendTime(archive.created_at);
     if (!start) return null;
-    let seconds = Math.max(0, Math.floor((nowTick - start.getTime()) / 1000));
-    const hours = Math.floor(seconds / 3600);
-    seconds %= 3600;
-    const minutes = Math.floor(seconds / 60);
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds % 60)}` : `${pad(minutes)}:${pad(seconds % 60)}`;
+    const total = Math.max(0, (nowTick - start.getTime()) / 1000);
+    if (total < 60) return `${total.toFixed(1)} 秒`;
+    const minutes = Math.floor(total / 60);
+    const sec = total - minutes * 60;
+    if (minutes < 60) return `${minutes} 分 ${sec.toFixed(1)} 秒`;
+    const hours = Math.floor(minutes / 60);
+    return `${hours} 时 ${minutes % 60} 分 ${Math.floor(sec)} 秒`;
   })();
 
 
@@ -329,20 +330,30 @@ function AgentStream({ archive, zh, active }: { archive: AgentRunDetail; zh: boo
   useEffect(() => {
     if (prevRunRef.current !== archive.id) {
       prevRunRef.current = archive.id;
+      prevLenRef.current = 0;
       setRevealed(0);
     }
     setLines(buildStreamLines(archive, zh));
   }, [archive, zh]);
 
-  // 逐行揭示：每 24ms 放出一批直至追平数据；新轮询追加的行继续揭示。
+  // 逐行揭示：切换任务后的初始大段按较快步长扫屏；轮询新追加的行按
+  // 固定小步长（~30ms/行）流式放出——绝不整块闪现。
   useEffect(() => {
-    if (revealed >= lines.length) return;
-    const step = Math.max(1, Math.ceil(lines.length / 90));
+    if (revealed >= lines.length) {
+      prevLenRef.current = lines.length;
+      return;
+    }
+    const initialSweep = revealed === 0 && lines.length > 0;
+    const fresh = Math.max(1, lines.length - prevLenRef.current);
+    const step = initialSweep
+      ? Math.max(1, Math.ceil(lines.length / 90))
+      : Math.max(1, Math.ceil(fresh / 20));
+    const delay = initialSweep ? 24 : 30;
     const timer = window.setTimeout(() => {
       setRevealed((cur) => Math.min(lines.length, cur + step));
-    }, 24);
+    }, delay);
     return () => window.clearTimeout(timer);
-  }, [revealed, lines.length]);
+  }, [revealed, lines]);
 
   // 跟随最新：揭示与轮询更新时自动滚到底部（用户上翻即暂停跟随）。
   useEffect(() => {
@@ -418,8 +429,10 @@ function AgentStream({ archive, zh, active }: { archive: AgentRunDetail; zh: boo
         ))}
         {active ? (
           <div className="agent-line agent-spin-line">
-            <Spin size="small" />
-            {zh ? `正在 ${STAGE_LABELS[archive.current_stage]?.zh ?? archive.current_stage}…（10s 自动刷新）` : `${STAGE_LABELS[archive.current_stage]?.en ?? archive.current_stage}…`}
+            <span className="agent-workdot" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /><i /></span>
+            <span>{zh ? "工作中" : "Working"}</span>
+            <span>{zh ? `阶段：${STAGE_LABELS[archive.current_stage]?.zh ?? archive.current_stage}` : `Stage: ${STAGE_LABELS[archive.current_stage]?.en ?? archive.current_stage}`}</span>
+            <span className="agent-worktime">{elapsedText ?? "--"}</span>
           </div>
         ) : null}
       </div>
