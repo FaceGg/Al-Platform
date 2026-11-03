@@ -221,12 +221,39 @@ class VectorStore:
             with open(path, "wb") as f:
                 pickle.dump(data, f)
 
+    _PERSIST_SCHEME = {
+        "dim": int, "ids": list, "vectors": list, "metadata": list,
+    }
+
+    @classmethod
+    def _validate_persist_payload(cls, data: object) -> dict:
+        """反序列化防御：persist 文件只允许朴素 dict[str, 朴素类型]。
+
+        恶意 pickle 的载荷几乎必然携带 __reduce__ 产出的非 dict 顶层对象
+        或嵌套可调用/实例；这里在把任何字段写进内存状态前先做结构白名单
+        （键集合精确匹配 + 类型匹配 + bytes 元素），不匹配即拒绝加载。
+        2026-11-03 Mimosa 深扫"不安全反序列化"收口：data/ 目录内文件被
+        篡改时不再直接获得代码执行。
+        """
+        if not isinstance(data, dict):
+            raise ValueError("VECTOR_PERSIST_CORRUPT")
+        if set(data) != set(cls._PERSIST_SCHEME) | {"metric", "M"} and set(data) != set(cls._PERSIST_SCHEME):
+            raise ValueError("VECTOR_PERSIST_CORRUPT")
+        for key, expected in cls._PERSIST_SCHEME.items():
+            value = data.get(key)
+            if not isinstance(value, expected):
+                raise ValueError("VECTOR_PERSIST_CORRUPT")
+        if not all(isinstance(chunk, bytes) for chunk in data["vectors"]):
+            raise ValueError("VECTOR_PERSIST_CORRUPT")
+        return data
+
     def load(self, path: str):
         with self._lock:
             if not os.path.exists(path):
                 return False
             with open(path, "rb") as f:
                 data = pickle.load(f)
+            data = self._validate_persist_payload(data)
             self.dim = data["dim"]
             self.metric = data.get("metric", "cosine")
             self.M = data.get("M", 16)

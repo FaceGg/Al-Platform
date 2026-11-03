@@ -257,7 +257,17 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 > - **L3 前端 flake**（f208a11e）：JobRunsPage 日志增量用例在 Windows CI 高负载下点击被 antd Wave/重渲替换的旧节点引用（事件到不了 React 根监听），点击改实时重查 + 关键 waitFor 显式 5s 预算；真 cursor 回归仍会被抓住。
 > - **L4 证据误杀**（b282a54b）：manifest 对 JSON 证据的**原始文本**扫描把 CVE 描述里 JSON 转义的 TeX 命令（`\sf`/`\restrict`）误判 UNC 绝对路径；改扫解析后数据（`_assert_safe_json` 本就对每个解码字符串做同等检查），真 UNC/POSIX/Windows 路径仍拒。
 > - 教训：**修门禁链条要预期"洋葱层"**——下游检查从未被上游放行过的输入执行过，逐层放行会逐层暴露新根因；每层都以真实 CI 证据回放 + 回归测试锁死。
+
+> **✅ A-16/A-17 列表批量化落地（2026-11-03，门禁分支 release/opt-20261103 @ ab6c9487）**：① A-16——`list_annotation_tasks` 批量预取：快照+可执行 preview 各一次 `(task_id, task_revision)` 行值 IN 查询（页大小无关，原每行 3-4 查 × limit 200 = 600-800 往返），`_select_actionable_preview` 与单条版共享选取语义，等价性回归测试锁死四种形态 + 单调用查询上界；有界查询守卫放行页范围标记（`_annotation_page_scoped_batch` 执行选项）；② A-17——焊接质量两路由 `limit/offset` 分页（≤500）+ `_prefetch_run_context`（名字一次 outerjoin；样本数/manual/auto 标注数一次分组 COUNT）+ `_serialize_run` 预取参数（`_UNSET` 哨兵区分"未传=懒加载"与"传 None=无关联"）；彻底消除 `run.samples` 全样本加载（三个 JSON 大列）与自动模式逐行标注统计；新 `test_spot_weld_quality_list_api`（分页合同/零样本行 SELECT/标注计数/all_runs 可见域）；前端 `listQualityRuns` 返回 `{items,total}`+可选分页参数，任务列表 Table 服务端分页+跨页选中详情兜底。验证：后端 121+15 绿、前端 89 文件 506 绿+tsc。
+
+> **✅ Mimosa 深度扫描处置批次（2026-11-03，scan-20261103T00-24-34 封印 sha256:948b…dddeb）**：全量 124 findings → 清洗后真仓 40 项（19 high + 21 medium；84 项为 temp_test/ 构建产物误报）。19 项 high 逐一代码级核对：**3 真缺口全修**——
+> - **P1 上传名穿越**（`operators.py::upload_file`）：原仅替换 `\` `/`，`..` 前缀名可越出 UPLOAD_DIR；双重防线（词法层路径词素拒绝 + `commonpath` 落点校验，稳定码 `UPLOAD_PATH_REJECTED`）。
+> - **P2 模型工件反序列化 RCE 链收口**（审计收尾第①项）：完整链=自助注册→上传恶意 `.joblib` 工件→编排接 `load_model_artifact`→`joblib.load` 服务端任意代码执行。修法=**平台密封**（与 A-01 同哲学：不毁功能，收口执行面）——新建 `app/services/model_artifact_sealing.py`（HMAC-SHA256( SECRET_KEY 派生键, 工件 sha256 )，PBKDF2 域分割一次迭代是密钥派生非口令 KDF）；写入侧 `ArtifactService.create_from_file` 对 model 类工件自动打 `model_seal`（所有写入口收敛于此）；加载侧 `LoadModelArtifactOperator` 反序列化前验签（`MODEL_SEAL_INVALID` 拒绝）；训练算子的模型端口输出是 DAG 同进程内存直连（平台自产信任域，不适用）。测试：`test_model_artifact_sealing`（正/反/篡改位）+ 既有 model_port/all_operators/workflow_publication 套件零回归（夹具经平台写入口自动获签）。
+> - **P2b vector_store persist 反序列化防御**：`load` 前过 `_validate_persist_payload` 结构白名单（键集合精确匹配 + 类型匹配 + bytes 元素），被篡改的 `vs_*.pkl` 在写内存前拒绝；`test_vector_store_deserialization_guard` 5 用例。
+> - **误报归档（16 项）**：python_script_runtime 代码注入×1+路径×3+pickle×2（用户脚本是产品功能，子进程隔离执行；tempfile 自建路径；pickle 为 df 传输同进程自产）；utility_operators:245/export 路径（批次九 export_paths 已收口）；database.py:62 SQL 注入（`PRAGMA busy_timeout={int 常量}`）；week11_performance SSRF×2（验收工具打配置的本地端点）；硬编码凭据×4（installer 占位部署时随机生成；性能脚本从 fixture 文件读取）；vector_store 路径×2（调用方固定模板 `vs_{uuid}.pkl`+DB 校验，不可达）。Medium 21 项反序列化分布（evaluation/visualization 等 joblib 加载）与 model 通道同域，已随密封防线覆盖其存储来源；直接加载路径（如 evaluation 算子内部）待下一批随"算子输出密封透传"统一收口。
+> - **方法论沉淀**：新测试文件如含 `tempfile/open(变量)` 会被 Mimosa hook 以"路径穿越"拦截（AST 模式误报）——对抗性反序列化测试应直调校验函数单元级验证 + save 自产文件做正路径往返。
+
 1. **CI 状态**：~~main 全量六 job 全绿后本节收敛~~ **门禁分支已收敛（run 41463990779 六 job 全绿，b282a54b）**，修复合入 main 后本节收敛。
-2. **审计收尾**：① pickle/joblib 反序列化通道复核；② agent/sandbox.py:193 子进程 env= 缺失威胁模型确认；③ 生产连接池取值运维确认。
-3. **测试卫生批次**：demo_loop 套件密封化、model-inference e2e 按 v2 UI 重写、test_fake NO TESTS RAN 噪音。
+2. **审计收尾**：① ~~pickle/joblib 反序列化通道复核~~ **已收口（2026-11-03 密封防线，见上）**；② agent/sandbox.py:193 子进程 env= 缺失威胁模型确认；③ 生产连接池取值运维确认。
+3. **测试卫生批次**：~~demo_loop 套件密封化、test_fake NO TESTS RAN 噪音~~ **已落地（e222cf86：未显式设 DATABASE_URL 时进程专属临时库+退出 dispose 清理；夹具回显 redirect_stdout 吞掉）**；model-inference e2e 按 v2 UI 重写仍待办。
 

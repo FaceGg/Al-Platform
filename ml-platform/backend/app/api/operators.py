@@ -1,7 +1,7 @@
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import OperatorRegistry
 from app.schemas.operator import OperatorSchema, PortSpecSchema, ParamSpecSchema
-from fastapi import APIRouter, UploadFile, File, Depends
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from app.api.auth import get_current_user
 from app.models.user import User
 import os
@@ -55,8 +55,14 @@ def upload_file(
     current_user: User = Depends(get_current_user),
 ):
     """Upload a file for use in workflow operators."""
+    # 双重防线：词法层剔除路径词素（分隔符/父级引用），落点层校验
+    # commonpath 必须留在上传目录内（Mimosa 2026-11-03 路径穿越高危项）
     safe_name = file.filename.replace("\\", "_").replace("/", "_")
-    dest = os.path.join(UPLOAD_DIR, safe_name)
+    if any(part in ("", ".", "..") for part in safe_name.split("_")):
+        raise HTTPException(400, detail={"code": "UPLOAD_PATH_REJECTED", "filename": file.filename})
+    dest = os.path.abspath(os.path.join(UPLOAD_DIR, safe_name))
+    if os.path.commonpath([dest, UPLOAD_DIR]) != UPLOAD_DIR:
+        raise HTTPException(400, detail={"code": "UPLOAD_PATH_REJECTED", "filename": file.filename})
     with open(dest, "wb") as f:
         shutil.copyfileobj(file.file, f)
-    return {"file_path": os.path.abspath(dest), "filename": safe_name, "message": "Upload successful"}
+    return {"file_path": dest, "filename": safe_name, "message": "Upload successful"}

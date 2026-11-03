@@ -14,6 +14,7 @@ import numpy as np
 from app.engine.operator_contract import OperatorContext, OperatorResult
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
+from app.services.model_artifact_sealing import seal_is_valid
 
 
 def _inject_feature_names(model, names: list[str]) -> str | None:
@@ -115,6 +116,18 @@ class LoadModelArtifactOperator(BaseOperator):
             raise RuntimeError(
                 f"模型工件是 {artifact_format.upper()} 格式，本算子仅支持 joblib 格式的模型工件"
                 "（如 AutoML 任务注册的 .joblib 产物）；ONNX 模型请通过推理部署或模型 API 调用"
+            )
+        # 反序列化密封验签：工件必须由平台写入口创建（HMAC 标签绑定内容
+        # hash）。自助上传的裸 joblib/pickle 没有有效 seal，在此拒绝——
+        # 否则项目内任意成员可借编排节点触发服务端任意代码执行
+        # （Mimosa 2026-11-03 "不安全反序列化"收口）
+        if not seal_is_valid(
+            getattr(artifact, "metadata_", None),
+            str((getattr(artifact, "metadata_", None) or {}).get("sha256") or ""),
+        ):
+            raise RuntimeError(
+                "MODEL_SEAL_INVALID: 模型工件缺少平台密封标签或标签与内容不符"
+                "（仅平台训练产物可加载；请通过 AutoML/训练算子产出模型工件）"
             )
         try:
             loaded = joblib.load(io.BytesIO(payload))

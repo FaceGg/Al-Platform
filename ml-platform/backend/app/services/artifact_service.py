@@ -14,6 +14,7 @@ from app.models.data_version import DatasetImport, DatasetSample, DatasetSchemaC
 from app.storage.base import ArtifactStorage, StorageError
 from app.storage.factory import create_artifact_storage
 from app.services.security import validate_upload_filename, validate_upload_magic
+from app.services.model_artifact_sealing import model_seal_metadata
 
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,10 @@ class ArtifactService:
             "sha256": stored.sha256,
             "source": (metadata or {}).get("source", "generated"),
         }
+        if artifact_type == "model":
+            # 模型工件密封：加载侧（joblib/pickle 反序列化入口）验签，
+            # 自助上传的裸 pickle 无法获得平台签名（Mimosa 2026-11-03 收口）
+            artifact_metadata.update(model_seal_metadata(stored.sha256))
         artifact = Artifact(
             id=artifact_id,
             project_id=project_id,
