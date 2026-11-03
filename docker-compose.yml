@@ -75,6 +75,11 @@ services:
       # UMAP（numba JIT）在部分镜像/系统路径下无法定位缓存定位器，显式重定向
       NUMBA_CACHE_DIR: /tmp/numba-cache
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      # 升级批次：DB 连接池保守上调（默认 pool_size=5/overflow=10 对 uvicorn
+      # 2 worker + chat 同步化后的每请求占用偏紧）。精确值待压测校准，压测
+      # 前取 2x 默认；SQLAlchemy 池超限会等 pool_timeout 而非报错，方向安全
+      DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-10}
+      DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-20}
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
       # A-02：内部服务令牌/门户会话签名密钥——历史默认值可伪造令牌（实证），
       # production 校验拒绝默认值，compose 侧强制显式注入

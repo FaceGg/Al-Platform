@@ -17,15 +17,21 @@ import joblib
 import pandas as pd
 
 from app.engine.operator_contract import OperatorResult
+from app.services.model_artifact_sealing import verify_model_port_bytes
 
 
 def load_model_port(model_bytes: bytes):
-    """Return (model, pytorch_pkg). Exactly one of the two is non-None."""
+    """Return (model, pytorch_pkg). Exactly one of the two is non-None.
+
+    端口字节若带平台验证信封（Mimosa Medium 收口），先验签再解包；
+    信封验签失败拒绝反序列化。裸载荷（存量工作流）按旧格式放行。
+    """
+    inner_bytes, _sealed = verify_model_port_bytes(model_bytes)
     try:
-        return joblib.load(io.BytesIO(model_bytes)), None
+        return joblib.load(io.BytesIO(inner_bytes)), None
     except Exception as joblib_error:
         try:
-            pkg = pickle.load(io.BytesIO(model_bytes))
+            pkg = pickle.load(io.BytesIO(inner_bytes))
         except Exception as unpack_error:
             raise RuntimeError(
                 f"模型端口数据无法加载（joblib: {joblib_error}；pickle: {unpack_error}）；"

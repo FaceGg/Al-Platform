@@ -144,6 +144,7 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_demo_loop",
         "test_chat_api_publication",
         "test_model_port",
+        "test_model_port_envelope",
         "test_announcements_api",
         "test_spot_weld_quality_list_api",
     ],
@@ -242,6 +243,7 @@ PHASE_TEST_MODULES: dict[str, list[str]] = {
         "test_agent_center_api",
         "test_agent_extras",
         "test_agent_llm_retry",
+        "test_agent_accuracy_alignment",
     ],
 }
 

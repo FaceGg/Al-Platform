@@ -53,6 +53,34 @@ FORBIDDEN_CALLS = {
 }
 ENTRY_POINT = "transform"
 
+
+def _minimal_child_env() -> dict[str, str]:
+    """S2 子进程最小环境（审计收尾②，2026-11-03）。
+
+    此前 subprocess.run 未传 env=，子进程完整继承后端环境——SECRET_KEY/
+    数据库口令/LLM API 密钥对（AST 白名单内的）用户特征脚本可见。
+    白名单仅保留 pandas/sklearn 运行所需：解释器 PATH、临时 HOME、locale
+    与 Python 行为开关；证书类变量按 python_script_runtime._child_env
+    同口径透传（TLS 出站需要）。
+    """
+    import os as _os
+
+    env: dict[str, str] = {
+        "PATH": _os.pathsep.join([
+            _os.path.dirname(sys.executable),
+            "/usr/local/bin", "/usr/bin", "/bin",
+        ]),
+        "HOME": tempfile.gettempdir(),
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    env.setdefault("LANG", "C.UTF-8")
+    env.setdefault("LC_ALL", "C.UTF-8")
+    for name in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "SSL_CERT_DIR"):
+        if name in _os.environ:
+            env[name] = _os.environ[name]
+    return env
+
 # Driver executed by the sandbox subprocess. runpy loads the (already
 # AST-whitelisted) script as a module; all I/O stays inside the workdir that
 # the parent created for this single run.
@@ -196,6 +224,7 @@ def run_sandbox(
                 text=True,
                 timeout=timeout_seconds,
                 cwd=str(work),
+                env=_minimal_child_env(),
             )
         except subprocess.TimeoutExpired:
             return SandboxResult(

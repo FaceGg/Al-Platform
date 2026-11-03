@@ -52,6 +52,11 @@ celery_app.conf.update(
             "task": "ml_platform.recover_stale_workflow_runs",
             "schedule": 60.0,
         },
+        # 升级批次：AgentRun 陈旧清扫周期化（此前仅启动期执行一次）
+        "agent-run-recovery": {
+            "task": "ml_platform.recover_stale_agent_runs",
+            "schedule": 60.0,
+        },
         "training-job-recovery": {
             "task": "ml_platform.recover_training_jobs",
             "schedule": 60.0,
