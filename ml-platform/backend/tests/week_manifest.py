@@ -238,6 +238,7 @@ PHASE_TEST_MODULES: dict[str, list[str]] = {
         "test_agent_wiring_api",
         "test_agent_center_api",
         "test_agent_extras",
+        "test_agent_llm_retry",
     ],
 }
 
