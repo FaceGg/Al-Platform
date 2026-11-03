@@ -269,7 +269,7 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 
 > **✅ trivy 豁免合同续期（2026-11-03）**：对 packages.wolfi.dev APKINDEX 复核——postgresql-16-client **16.15-r0 仍未发布，16.14-r1 已是上游最新**（钉版无需也无法上调）；py3.11-pip 26.2.2-r2 已修复其两项 CVE 且近期镜像扫描零 pip 发现，**退役该豁免条目**（原 pending 26.2.2-r1 < 实装钉，死条目）。合同 reviewed_at→2026-11-03、**expires_on 2026-12-31→2027-03-31**（季度复审节奏，到期前必须再查 APKINDEX）；真实 CI 证据回放（32 项 postgresql-only 发现）+ evaluate 单测 4 项验证通过。到期前若 16.15-r0 发布：升钉四处 Dockerfile → 删除本合同 → 全量 CI 验证。
 
-1. **CI 状态**：~~main 全量六 job 全绿后本节收敛~~ **门禁分支已收敛（run 41463990779 六 job 全绿，b282a54b）**，修复合入 main 后本节收敛。
+1. **CI 状态**：~~main 全量六 job 全绿后本节收敛~~ **✅ 已收敛（2026-11-03，run 41572965735 六 job 全绿 @ 555528b6 attempt 1，门禁分支 release/opt-20261103 基于 main 705794cf）**——一次携带六批次：A-16/A-17 列表批量化、manifest 注册（test_agent_llm_retry→p6 + 新模块两组）、Mimosa 三缺口收口（上传穿越/模型工件密封/vector_store 白名单）、trivy 合同续期 2027-03-31、e2e 文案对齐（705794cf 改版）、测试卫生批次。期间三次失败均为逐层修复：①并行会话 light 直推 main 漏注册（门禁拦截证明有效）②Chromium 撞文案改版旧断言 ③我的新模块漏注册+evaluation 夹具绕过写入口被密封防线正确拒绝（夹具补 _sealed_artifact 模拟平台产物，防线合同不变）。**教训：并行会话共用工作树时，提交前必须核对 `git branch --show-current`（本轮一次提交意外落在 main）+ 新增测试文件三件事齐套（实现/测试/week owner 注册）。**
 2. **审计收尾**：① ~~pickle/joblib 反序列化通道复核~~ **已收口（2026-11-03 密封防线，见上）**；② agent/sandbox.py:193 子进程 env= 缺失威胁模型确认；③ 生产连接池取值运维确认。
-3. **测试卫生批次**：~~demo_loop 套件密封化、test_fake NO TESTS RAN 噪音~~ **已落地（e222cf86：未显式设 DATABASE_URL 时进程专属临时库+退出 dispose 清理；夹具回显 redirect_stdout 吞掉）**；model-inference e2e 按 v2 UI 重写仍待办。
+3. **测试卫生批次**：~~demo_loop 套件密封化、test_fake NO TESTS RAN 噪音~~ **已落地（e222cf86，随 555528b6 合入主线）**；model-inference e2e 按 v2 UI 重写仍待办。
 
