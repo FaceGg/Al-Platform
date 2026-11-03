@@ -251,7 +251,7 @@ export default function DataManagePage() {
     if (!metaTarget) return;
     try {
       await apiClient.patch(`/datasets/${metaTarget.id}/meta`, values);
-      message.success("数据说明已保存");
+      message.success("数据档案已保存");
       setMetaTarget(null);
       loadDatasets(selectedProject);
     } catch (e: any) {
@@ -282,7 +282,7 @@ export default function DataManagePage() {
           )}
           <TableRowAction label={`${t.data.preview} ${record.name}`} icon={<EyeOutlined />} onClick={() => handlePreview(record.id, record.column_count)} />
           <TableRowAction
-            label={`数据说明 ${record.name}`}
+            label={`数据档案 ${record.name}`}
             icon={<ProfileOutlined style={record.meta_card ? { color: "var(--v2-blue, #1677ff)" } : undefined} />}
             onClick={() => { setMetaTarget(record); metaForm.setFieldsValue({ source: "", purpose: "", applicable: "", note: "", ...(record.meta_card || {}) }); }}
           />
@@ -389,7 +389,7 @@ export default function DataManagePage() {
         )}
       </Modal>
       <Modal
-        title={metaTarget ? `数据说明 · ${metaTarget.name}` : "数据说明"}
+        title={metaTarget ? `数据档案 · ${metaTarget.name}` : "数据档案"}
         open={!!metaTarget}
         onCancel={() => setMetaTarget(null)}
         onOk={() => metaForm.submit()}
@@ -411,7 +411,7 @@ export default function DataManagePage() {
             <Input.TextArea rows={3} placeholder="标签依据、版本说明等补充信息" />
           </Form.Item>
           <div style={{ color: "var(--v2-dim, #999)", fontSize: 12 }}>
-            描述业务边界（来源/用途/适用条件），技术画像（行数/列/schema）由平台自动生成。全部留空保存即清除说明。
+            描述业务边界（来源/用途/适用条件），技术画像（行数/列/schema）由平台自动生成。全部留空保存即清除档案。
           </div>
         </Form>
       </Modal>
