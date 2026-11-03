@@ -49,11 +49,13 @@ const AgentRunDetailPage = lazy(() => import("./pages/AgentRunDetailPage"));
 const AIChatPage = lazy(() => import("./pages/AIChatPage"));
 
 const LIGHT_TOKENS = {
-  colorPrimary: "#2F9BF5",
+  // 主色对齐 v2-btn.primary（浅色主题 --v2-blue 渐变起点 #1a6fc4），
+  // 消除"工作台深蓝、算法平台浅蓝"的两套观感
+  colorPrimary: "#1A6FC4",
   colorSuccess: "#47C3A0",
   colorWarning: "#D9AC52",
   colorError: "#E66F75",
-  colorInfo: "#2F9BF5",
+  colorInfo: "#1A6FC4",
   borderRadius: 14,
   borderRadiusLG: 20,
   fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif",
@@ -66,11 +68,13 @@ const LIGHT_TOKENS = {
 };
 
 const DARK_TOKENS = {
-  colorPrimary: "#2F9BF5",
+  // 主色对齐 v2-btn.primary 深色渐变（#2f9bf5 → #1d6fd0）的深端，
+  // 与门户/智能体中心的深蓝观感一致
+  colorPrimary: "#1D6FD0",
   colorSuccess: "#47C3A0",
   colorWarning: "#D9AC52",
   colorError: "#E66F75",
-  colorInfo: "#2F9BF5",
+  colorInfo: "#1D6FD0",
   borderRadius: 10,
   borderRadiusLG: 14,
   fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif",

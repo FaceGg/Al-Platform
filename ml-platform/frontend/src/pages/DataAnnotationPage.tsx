@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { App as AntApp, Drawer, Dropdown, Empty, Modal, Segmented, Spin, Steps, Table, Tag, Tooltip } from "antd";
+import { App as AntApp, Button, Drawer, Dropdown, Empty, Modal, Segmented, Spin, Steps, Table, Tag, Tooltip } from "antd";
 import { DeleteOutlined, DownloadOutlined, EyeOutlined, LeftOutlined, ReloadOutlined, RightOutlined, UploadOutlined } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import * as echarts from "echarts";
@@ -2328,8 +2328,8 @@ export default function DataAnnotationPage() {
             <option value="">{lang === "zh" ? "全部项目" : "All projects"}</option>
             {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
           </select>
-          <button type="button" className="ant-btn" onClick={() => openSetup("manual")}>{copy.manualTask}</button>
-          <button type="button" className="ant-btn ant-btn-primary" onClick={() => openSetup("automatic")}>{copy.automaticTask}</button>
+          <Button onClick={() => openSetup("manual")}>{copy.manualTask}</Button>
+          <Button type="primary" onClick={() => openSetup("automatic")}>{copy.automaticTask}</Button>
         </div>
       </div>
       <div className="data-annotation__stats" role="region" aria-label={lang === "zh" ? "任务统计" : "Task statistics"}>
