@@ -14,7 +14,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func
+from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session, load_only
 
 from app.api.auth import get_current_user
@@ -31,6 +31,7 @@ from app.models.spot_weld_quality import (
     SpotWeldQualitySample,
 )
 from app.models.user import User
+from app.models.project import Project
 from app.services.artifact_service import ArtifactAccessError, build_artifact_service
 from app.services.audit import AuditIntent
 from app.services.project_access import ProjectAccessService
@@ -218,27 +219,48 @@ def _snapshot_or_404(
     return snapshot
 
 
+# A-17 列表路径预聚合值的哨兵：列表调用传具体值（None = 无关联），单条
+# 详情调用不传 → 回落原懒加载行为（单条一次懒加载可接受）
+_UNSET = object()
+
+
 def _serialize_run(
     run: SpotWeldQualityRun,
     *,
     include_results: bool = True,
     annotated_count_override: int | None = None,
+    annotated_count_fallback: int | None = None,
+    sample_count_fallback: int | None = None,
+    project_name: object = _UNSET,
+    created_by_name: object = _UNSET,
 ) -> dict:
     input_fingerprint = run.input_fingerprint or {}
     label_mode = input_fingerprint.get("label_mode", "automatic")
     statistics = run.statistics or {}
     stored_progress = statistics.get("annotation_progress") or {}
+    # A-17：列表路径传 sample_count_fallback（SQL COUNT 预聚合），避免
+    # len(run.samples) 把整页样本连同 waveforms/feature_values/table_values
+    # 三个 JSON 大列全部拉进内存；详情路径不传，保持原行为
+    row_count = (
+        len(run.samples)
+        if sample_count_fallback is None
+        else int(sample_count_fallback)
+    )
     total_count = int(
         stored_progress.get("total_count")
         or statistics.get("row_count")
         or input_fingerprint.get("row_count")
-        or len(run.samples)
+        or row_count
         or 0
     )
     if annotated_count_override is not None:
         annotated_count = int(annotated_count_override)
     elif stored_progress and total_count:
         annotated_count = int(stored_progress.get("annotated_count") or 0)
+    elif annotated_count_fallback is not None:
+        # A-17：列表路径用分组 COUNT 预聚合的标注数（按 label_mode 取列），
+        # 替代逐行 sum(... for sample in run.samples ...)
+        annotated_count = int(annotated_count_fallback)
     elif label_mode == "manual":
         annotated_count = sum(1 for sample in run.samples if sample.current_label)
     else:
@@ -247,17 +269,21 @@ def _serialize_run(
     display_status = run.status
     if label_mode == "manual" and display_status not in {"failed", "cancelled"}:
         display_status = "completed" if total_count and annotated_count >= total_count else "running"
+    if project_name is _UNSET:
+        project_name = run.project.name if run.project is not None else None
+    if created_by_name is _UNSET:
+        created_by_name = run.created_by.username if run.created_by is not None else None
     payload = {
         "id": str(run.id),
         "project_id": str(run.project_id),
-        "project_name": run.project.name if run.project is not None else None,
+        "project_name": project_name,
         "created_by_id": str(run.created_by_id) if run.created_by_id else None,
-        "created_by_name": run.created_by.username if run.created_by is not None else None,
+        "created_by_name": created_by_name,
         "dataset_artifact_id": str(run.dataset_artifact_id),
         "status": display_status,
         "task_id": run.task_id,
         "worker_id": run.worker_id,
-        "sample_count": total_count or len(run.samples),
+        "sample_count": total_count or row_count,
         "feature_version": (run.statistics or {}).get("feature_version", "report_v1"),
         "rule_set_version": run.rule_set_version,
         "selected_algorithm_ids": list(input_fingerprint.get("algorithm_ids") or []),
@@ -305,6 +331,64 @@ def _serialize_run(
             "output_artifacts": run.output_artifacts or {},
         })
     return payload
+
+
+def _prefetch_run_context(
+    db: Session,
+    runs: list[SpotWeldQualityRun],
+) -> tuple[dict[uuid.UUID, str | None], dict[uuid.UUID, str | None], dict[uuid.UUID, int], dict[uuid.UUID, int]]:
+    """A-17 列表路径预聚合：名字一次 outerjoin，样本数/标注数一次分组 COUNT。
+
+    页内 run_ids 界定结果集（页大小上限 500），消除逐行的 run.project /
+    run.created_by 懒加载、len(run.samples) 全样本加载（三个 JSON 大列）与
+    自动模式的逐行 sum(automatic_label) 标注数统计。标注 fallback 按 run 的
+    label_mode 取对应列的非空非空串计数，与旧 Python sum 语义一致。
+    """
+    run_ids = [run.id for run in runs]
+    if not run_ids:
+        return {}, {}, {}, {}
+    name_rows = (
+        db.query(SpotWeldQualityRun.id, Project.name, User.username)
+        .outerjoin(Project, SpotWeldQualityRun.project_id == Project.id)
+        .outerjoin(User, SpotWeldQualityRun.created_by_id == User.id)
+        .filter(SpotWeldQualityRun.id.in_(run_ids))
+        .all()
+    )
+    project_names = {row[0]: row[1] for row in name_rows}
+    creator_names = {row[0]: row[2] for row in name_rows}
+
+    _manual_labeled = and_(
+        SpotWeldQualitySample.current_label.isnot(None),
+        SpotWeldQualitySample.current_label != "",
+    )
+    _auto_labeled = and_(
+        SpotWeldQualitySample.automatic_label.isnot(None),
+        SpotWeldQualitySample.automatic_label != "",
+    )
+    count_rows = db.query(
+        SpotWeldQualitySample.run_id,
+        func.count(SpotWeldQualitySample.id),
+        func.sum(case((_manual_labeled, 1), else_=0)),
+        func.sum(case((_auto_labeled, 1), else_=0)),
+    ).filter(
+        SpotWeldQualitySample.run_id.in_(run_ids),
+    ).group_by(SpotWeldQualitySample.run_id).all()
+    sample_counts: dict[uuid.UUID, int] = {}
+    manual_labeled: dict[uuid.UUID, int] = {}
+    automatic_labeled: dict[uuid.UUID, int] = {}
+    for run_id, total, manual_count, automatic_count in count_rows:
+        sample_counts[run_id] = int(total)
+        manual_labeled[run_id] = int(manual_count or 0)
+        automatic_labeled[run_id] = int(automatic_count or 0)
+    annotated_fallbacks = {
+        run.id: (
+            manual_labeled.get(run.id, 0)
+            if (run.input_fingerprint or {}).get("label_mode", "automatic") == "manual"
+            else automatic_labeled.get(run.id, 0)
+        )
+        for run in runs
+    }
+    return project_names, creator_names, sample_counts, annotated_fallbacks
 
 
 def _manual_annotation_counts(db: Session, runs: list[SpotWeldQualityRun]) -> dict[uuid.UUID, int]:
@@ -709,13 +793,18 @@ def create_demo_dataset(
 @router.get("/runs")
 def list_runs(
     project_id: uuid.UUID,
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     require_project_access(db, project_id, current_user.id, "project.read")
-    runs = db.query(SpotWeldQualityRun).filter(
+    base_query = db.query(SpotWeldQualityRun).filter(
         SpotWeldQualityRun.project_id == project_id,
-    ).order_by(SpotWeldQualityRun.created_at.desc(), SpotWeldQualityRun.id.desc()).all()
+    ).order_by(SpotWeldQualityRun.created_at.desc(), SpotWeldQualityRun.id.desc())
+    total = base_query.count()
+    runs = base_query.offset(offset).limit(limit).all()
+    project_names, creator_names, sample_counts, annotated_fallbacks = _prefetch_run_context(db, runs)
     manual_counts = _manual_annotation_counts(db, runs)
     return {
         "items": [
@@ -723,16 +812,24 @@ def list_runs(
                 run,
                 include_results=False,
                 annotated_count_override=manual_counts.get(run.id),
+                annotated_count_fallback=annotated_fallbacks.get(run.id, 0),
+                sample_count_fallback=sample_counts.get(run.id, 0),
+                project_name=project_names.get(run.id),
+                created_by_name=creator_names.get(run.id),
             )
             for run in runs
         ],
-        "total": len(runs),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
     }
 
 
 @all_runs_router.get("/runs")
 def list_accessible_runs(
     project_id: uuid.UUID | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -744,9 +841,12 @@ def list_accessible_runs(
             project.id
             for project in ProjectAccessService().accessible_project_query(db, current_user.id).all()
         ]
-    runs = db.query(SpotWeldQualityRun).filter(
+    base_query = db.query(SpotWeldQualityRun).filter(
         SpotWeldQualityRun.project_id.in_(project_ids),
-    ).order_by(SpotWeldQualityRun.created_at.desc(), SpotWeldQualityRun.id.desc()).all()
+    ).order_by(SpotWeldQualityRun.created_at.desc(), SpotWeldQualityRun.id.desc())
+    total = base_query.count()
+    runs = base_query.offset(offset).limit(limit).all()
+    project_names, creator_names, sample_counts, annotated_fallbacks = _prefetch_run_context(db, runs)
     manual_counts = _manual_annotation_counts(db, runs)
     return {
         "items": [
@@ -754,10 +854,16 @@ def list_accessible_runs(
                 run,
                 include_results=False,
                 annotated_count_override=manual_counts.get(run.id),
+                annotated_count_fallback=annotated_fallbacks.get(run.id, 0),
+                sample_count_fallback=sample_counts.get(run.id, 0),
+                project_name=project_names.get(run.id),
+                created_by_name=creator_names.get(run.id),
             )
             for run in runs
         ],
-        "total": len(runs),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
     }
 
 

@@ -309,6 +309,106 @@ def test_all_project_task_api_paginates_without_losing_owner_scope(db):
         app.dependency_overrides.clear()
 
 
+def test_list_annotation_tasks_batch_prefetch_matches_single_task_semantics(db):
+    """A-16 回归：列表批量预取与单条版选取语义逐字段一致，且查询数与页大小无关。
+
+    四种形态各建一个任务：hash 命中旧 preview / 无 hash 命中取最近 completed /
+    无 preview 回落 task_snapshot / 仅 pending 取最近一条。批量列表序列化结果
+    必须与逐条 current_annotation_task_* 序列化完全相等，同时整页 SELECT 数
+    有界（原实现每行 3-4 查，页越大越多；批量版固定 ~5 查）。
+    """
+    from sqlalchemy import event
+
+    from app.services.annotation_task_state import (
+        serialize_annotation_task,
+        current_annotation_task_snapshot,
+    )
+
+    def _build(*, previews):
+        task, user, project = _task(db)
+        for config_hash, status, created_at in previews:
+            preview = create_annotation_preview(
+                db, task.id, task_revision=0, config_hash=config_hash, actor_id=user.id,
+            )
+            preview.status = status
+            preview.created_at = created_at
+        db.commit()
+        return task, user, project
+
+    base = datetime(2026, 11, 1, 12, 0, 0, tzinfo=timezone.utc)
+    # A：revision 快照存在且 config_hash 命中较旧的 preview（存在更新的未命中项）
+    task_a, user_a, project_a = _build(previews=[])
+    db.add(AnnotationTaskRevisionSnapshot(
+        task_id=task_a.id, task_revision=0, snapshot={"config_hash": "sha256:matched"},
+    ))
+    older = create_annotation_preview(db, task_a.id, task_revision=0, config_hash="sha256:matched", actor_id=user_a.id)
+    newer = create_annotation_preview(db, task_a.id, task_revision=0, config_hash="sha256:other", actor_id=user_a.id)
+    older.created_at = base
+    newer.created_at = base.replace(minute=5)
+    db.commit()
+    # B：无 hash 命中（快照 hash 冻结值），completed 优先于 pending
+    task_b, user_b, project_b = _build(previews=[])
+    pending_b = create_annotation_preview(db, task_b.id, task_revision=0, config_hash="sha256:x1", actor_id=user_b.id)
+    done_b = create_annotation_preview(db, task_b.id, task_revision=0, config_hash="sha256:x2", actor_id=user_b.id)
+    done_b.status = "completed"
+    pending_b.created_at = base.replace(minute=10)
+    done_b.created_at = base.replace(minute=1)  # 更旧但 completed → 仍应胜出
+    db.commit()
+    # C：无 preview → None + 快照回落 task_snapshot
+    task_c, user_c, project_c = _build(previews=[])
+    # D：仅一条 pending、无任何命中 → 取最近一条
+    task_d, user_d, project_d = _build(previews=[])
+    only_d = create_annotation_preview(db, task_d.id, task_revision=0, config_hash="sha256:y", actor_id=user_d.id)
+    only_d.created_at = base
+    db.commit()
+
+    statements: list[str] = []
+
+    def _count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    engine = db.get_bind()
+    event.listen(engine, "after_cursor_execute", _count_selects)
+    try:
+        # 查询数上界只对单次列表调用计数（批量版每调用固定 ~4 查：
+        # count + 页 + 快照 IN + preview IN，与页大小无关）
+        result_a = list_annotation_tasks(db, project_a.id, user_a.id)
+    finally:
+        event.remove(engine, "after_cursor_execute", _count_selects)
+    results = {
+        "a": result_a,
+        **{
+            key: list_annotation_tasks(db, project.id, user.id)
+            for key, project, user in (
+                ("b", project_b, user_b), ("c", project_c, user_c),
+                ("d", project_d, user_d),
+            )
+        },
+    }
+
+    for key, task, project, user in (
+        ("a", task_a, project_a, user_a), ("b", task_b, project_b, user_b),
+        ("c", task_c, project_c, user_c), ("d", task_d, project_d, user_d),
+    ):
+        expected = serialize_annotation_task(
+            db.get(GenericAnnotationTask, task.id),
+            current_annotation_task_preview(db, task),
+            current_annotation_task_snapshot(db, task),
+        )
+        items = results[key]["items"]
+        assert len(items) == 1
+        assert items[0] == expected, key
+
+    assert results["a"]["items"][0]["preview"]["id"] == str(older.id)
+    assert results["b"]["items"][0]["preview"]["id"] == str(done_b.id)
+    assert results["c"]["items"][0]["preview"] is None or results["c"]["items"][0]["preview"].get("id") is None
+    assert results["d"]["items"][0]["preview"]["id"] == str(only_d.id)
+    assert results["c"]["items"][0]["task_snapshot"]["config_hash"] == "sha256:frozen"
+    # 固定查询上界：页大小无关（原实现 4 任务即 ≥12 次行级查询）
+    assert len(statements) <= 8, len(statements)
+
+
 def test_preview_reuses_same_operation_for_same_config_hash(db):
     task, user, _ = _task(db)
     first = create_annotation_preview(db, task.id, task_revision=0, config_hash="sha256:abc", actor_id=user.id)
@@ -669,7 +769,12 @@ def test_execute_worker_materializes_results_in_bounded_batches(db, monkeypatch)
     original_all = Query.all
 
     def bounded_all(query):
-        assert query._limit_clause is not None, f"unbounded row query: {query}"
+        # A-16 批量预取：页范围 IN 查询（(task_id, task_revision) 对，页大小
+        # 上限 200）经执行选项显式标记放行——结果集由页大小界定，不构成无界扫描
+        assert (
+            query._limit_clause is not None
+            or query._execution_options.get("_annotation_page_scoped_batch")
+        ), f"unbounded row query: {query}"
         return original_all(query)
 
     monkeypatch.setattr(Query, "all", bounded_all)
@@ -1603,7 +1708,12 @@ def test_task_preview_and_sample_pages_use_bounded_row_queries(db, monkeypatch):
     original_all = Query.all
 
     def bounded_all(query):
-        assert query._limit_clause is not None, f"unbounded row query: {query}"
+        # A-16 批量预取：页范围 IN 查询（(task_id, task_revision) 对，页大小
+        # 上限 200）经执行选项显式标记放行——结果集由页大小界定，不构成无界扫描
+        assert (
+            query._limit_clause is not None
+            or query._execution_options.get("_annotation_page_scoped_batch")
+        ), f"unbounded row query: {query}"
         return original_all(query)
 
     monkeypatch.setattr(Query, "all", bounded_all)

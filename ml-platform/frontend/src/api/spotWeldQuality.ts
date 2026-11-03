@@ -249,11 +249,29 @@ function items<T>(data: { items?: T[] } | T[]): T[] {
   return Array.isArray(data) ? data : data.items || [];
 }
 
-export async function listQualityRuns(projectId?: string): Promise<QualityRun[]> {
+export interface QualityRunPage {
+  items: QualityRun[];
+  total: number;
+}
+
+export async function listQualityRuns(
+  projectId?: string,
+  options?: { limit?: number; offset?: number },
+): Promise<QualityRunPage> {
+  const params: Record<string, number> = {};
+  if (options?.limit !== undefined) params.limit = options.limit;
+  if (options?.offset !== undefined) params.offset = options.offset;
+  const hasParams = Object.keys(params).length > 0;
   const response = projectId
-    ? await apiClient.get(`/projects/${projectId}/spot-weld/runs`)
-    : await apiClient.get("/spot-weld/runs");
-  return items(response.data);
+    ? await apiClient.get(`/projects/${projectId}/spot-weld/runs`, ...(hasParams ? [{ params }] : []))
+    : await apiClient.get("/spot-weld/runs", ...(hasParams ? [{ params }] : []));
+  const data = response.data as { items?: QualityRun[]; total?: number } | QualityRun[];
+  const rows = items(data);
+  return {
+    items: rows,
+    // 后端两路由均返回 {items,total,limit,offset}；容错旧数组形态
+    total: !Array.isArray(data) && typeof data?.total === "number" ? data.total : rows.length,
+  };
 }
 
 export async function getQualityRun(projectId: string, runId: string): Promise<QualityRun> {

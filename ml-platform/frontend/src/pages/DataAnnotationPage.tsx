@@ -466,6 +466,10 @@ export default function DataAnnotationPage() {
   const [projectId, setProjectId] = useState(searchParams.get("projectId") || "");
   const [datasetArtifactId, setDatasetArtifactId] = useState(searchParams.get("datasetId") || "");
   const [runs, setRuns] = useState<QualityRun[]>([]);
+  // A-17 服务端分页：历史任务表 limit/offset 拉取，避免一次性载入全部 run
+  const [runsPage, setRunsPage] = useState(1);
+  const [runsPageSize, setRunsPageSize] = useState(20);
+  const [runsTotal, setRunsTotal] = useState(0);
   const [genericTasks, setGenericTasks] = useState<AnnotationTask[]>([]);
   const [taskListTab, setTaskListTab] = useState<"all" | "active" | "legacy">("all");
   const [annotationOperations, setAnnotationOperations] = useState<AnnotationOperation[]>([]);
@@ -735,14 +739,16 @@ export default function DataAnnotationPage() {
     setLoadingRuns(true);
     const taskListMode = isTaskList;
     const expectedProjectId = projectId;
+    const runPageParams = { limit: runsPageSize, offset: (runsPage - 1) * runsPageSize };
     const loadRuns = taskListMode
-      ? listQualityRuns(projectId || undefined)
+      ? listQualityRuns(projectId || undefined, runPageParams)
       : projectId && projects.some((project) => project.id === projectId)
-        ? listQualityRuns(projectId)
-        : Promise.resolve([] as QualityRun[]);
+        ? listQualityRuns(projectId, runPageParams)
+        : Promise.resolve({ items: [] as QualityRun[], total: 0 });
     loadRuns
-      .then((items) => {
+      .then(({ items, total }) => {
         if (!active || runsRequestId.current !== requestId || (!taskListMode && activeContextRef.current.projectId !== expectedProjectId)) return;
+        setRunsTotal(Number.isFinite(total) ? total : items.length);
         const uniqueItems = Array.from(new Map(items.map((item) => [item.id, item])).values())
           .sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")));
         setRuns(uniqueItems);
@@ -750,6 +756,16 @@ export default function DataAnnotationPage() {
           if (uniqueItems.some((run) => run.id === current)) return current;
           return requestedRunId && uniqueItems.some((run) => run.id === requestedRunId) ? requestedRunId : "";
         });
+        // 请求的 run 不在当前页：拉单条详情并入列表兜底选中（原全量加载下不存在此缺口）
+        if (projectId && requestedRunId && !uniqueItems.some((run) => run.id === requestedRunId)) {
+          getQualityRun(projectId, requestedRunId)
+            .then((run) => {
+              if (!active || runsRequestId.current !== requestId || !run?.id) return;
+              setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)]);
+              setRunId(requestedRunId);
+            })
+            .catch(() => { /* 兜底失败维持原行为 */ });
+        }
       })
       .catch((error) => {
         if (active && runsRequestId.current === requestId && (taskListMode || activeContextRef.current.projectId === expectedProjectId)) {
@@ -762,7 +778,7 @@ export default function DataAnnotationPage() {
         }
       });
     return () => { active = false; };
-  }, [isTaskList, loadingProjects, projects, projectId, message, requestedRunId]);
+  }, [isTaskList, loadingProjects, projects, projectId, message, requestedRunId, runsPage, runsPageSize]);
 
   useEffect(() => {
     if (!isTaskList) {
@@ -1572,6 +1588,9 @@ export default function DataAnnotationPage() {
     navigate(`/data-annotation?${taskListParams.toString()}`, { replace: true });
     navigate(`/data-annotation?${workspaceParams.toString()}`);
     setWorkspaceMode(true);
+    // 新 run 最新的排最前：回到第 1 页并扩容 total，等下一次列表拉取收敛
+    setRunsPage(1);
+    setRunsTotal((current) => current + 1);
     setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)]);
     setRunId(run.id);
     setDatasetArtifactId(nextDatasetArtifactId);
@@ -2072,8 +2091,12 @@ export default function DataAnnotationPage() {
     const requestId = ++runsRequestId.current;
     setLoadingRuns(true);
     try {
-      const items = await listQualityRuns(expectedProjectId || undefined);
+      const { items, total } = await listQualityRuns(expectedProjectId || undefined, {
+        limit: runsPageSize,
+        offset: (runsPage - 1) * runsPageSize,
+      });
       if (runsRequestId.current !== requestId || activeContextRef.current.projectId !== expectedProjectId) return;
+      setRunsTotal(total);
       setRuns(items);
     } catch (error) {
       if (runsRequestId.current === requestId && activeContextRef.current.projectId === expectedProjectId) {
@@ -2405,7 +2428,13 @@ export default function DataAnnotationPage() {
               loading={loadingRuns}
               dataSource={runs}
               columns={taskColumns}
-              pagination={false}
+              pagination={{
+                current: runsPage,
+                pageSize: runsPageSize,
+                total: runsTotal,
+                onChange: (page, pageSize) => { setRunsPage(page); setRunsPageSize(pageSize); },
+                showSizeChanger: true,
+              }}
               scroll={{ x: 820 }}
               locale={{ emptyText: <Empty description={copy.noTasks} /> }}
             />

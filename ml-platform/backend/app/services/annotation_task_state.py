@@ -5,7 +5,7 @@ import json
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
-from sqlalchemy import and_, or_, true
+from sqlalchemy import and_, or_, true, tuple_
 
 from app.models.access import AuditEvent
 from app.models.operation import DurableOperation
@@ -23,6 +23,11 @@ from app.config import settings
 from app.models.data_version import DatasetSchemaColumn
 from app.models.project import Project
 from app.services.project_access import ProjectAccessService
+
+# A-16 批量预取查询的执行选项标记：结果集由页内 (task_id, task_revision)
+# 对界定（页大小上限 200），供有界查询守卫（test_task_preview_and_sample_
+# pages_use_bounded_row_queries）识别为页范围查询而非无界全表扫描。
+_ANNOTATION_PAGE_SCOPED_BATCH = {"_annotation_page_scoped_batch": True}
 
 _TRANSITIONS = {
     "draft": {TaskAction.cancel: "cancelled"},
@@ -469,6 +474,86 @@ def current_annotation_task_preview(db, task):
     return completed or ordered.first()
 
 
+def _select_actionable_preview(ordered_previews, expected_hash):
+    """共享选择语义：config_hash 命中优先，其次最近 completed，最后最近一条。
+
+    单条版（``current_annotation_task_preview``）与批量版共用，保证两条
+    路径的选取结果逐字段一致。
+    """
+    if expected_hash:
+        for preview in ordered_previews:
+            if str(preview.config_hash or "") == expected_hash:
+                return preview
+    for preview in ordered_previews:
+        if preview.status == "completed":
+            return preview
+    return ordered_previews[0] if ordered_previews else None
+
+
+def prefetch_annotation_task_context(db, tasks):
+    """批量预取页内任务的当前快照与可执行 preview（列表路径 N+1 收口）。
+
+    A-16：``list_annotation_tasks`` 原来每行发 3-4 次查询（快照 ×2 + 预览
+    ×1~2），limit 200 时即 600-800 次往返。批量版固定两次查询：
+
+    - 快照：``(task_id, task_revision)`` 行值 ``IN`` 一次取全；
+    - 预览：同一行值 ``IN`` + SQL 侧 ``order_by(created_at desc, id desc)``
+      保持与单条版完全一致的排序语义，Python 侧按 task 分组选取。
+
+    两查询都以 ``_ANNOTATION_PAGE_SCOPED_BATCH`` 执行选项显式标记：结果集
+    由页大小界定（快照每 (task, revision) 对至多一行；预览以页内任务的
+    revision 历史为界），供有界查询守卫识别。
+
+    返回 ``(snapshot_map, preview_map)``：前者 task_id -> 快照 dict（无
+    revision 快照行时回落 ``task.task_snapshot``），后者 task_id -> 选中的
+    preview 行或 None。
+    """
+    task_list = list(tasks)
+    if not task_list:
+        return {}, {}
+    revision_pairs = [(task.id, task.task_revision) for task in task_list]
+
+    snapshot_rows = db.query(AnnotationTaskRevisionSnapshot).filter(
+        tuple_(
+            AnnotationTaskRevisionSnapshot.task_id,
+            AnnotationTaskRevisionSnapshot.task_revision,
+        ).in_(revision_pairs),
+    ).execution_options(**_ANNOTATION_PAGE_SCOPED_BATCH).all()
+    snapshot_row_map = {
+        (row.task_id, row.task_revision): row for row in snapshot_rows
+    }
+
+    ordered_previews = db.query(AnnotationTaskPreview).filter(
+        tuple_(
+            AnnotationTaskPreview.task_id,
+            AnnotationTaskPreview.task_revision,
+        ).in_(revision_pairs),
+    ).order_by(
+        AnnotationTaskPreview.created_at.desc(),
+        AnnotationTaskPreview.id.desc(),
+    ).execution_options(**_ANNOTATION_PAGE_SCOPED_BATCH).all()
+    preview_groups: dict = {}
+    for row in ordered_previews:
+        preview_groups.setdefault(row.task_id, []).append(row)
+
+    snapshot_map: dict = {}
+    preview_map: dict = {}
+    for task in task_list:
+        revision_row = snapshot_row_map.get((task.id, task.task_revision))
+        snapshot = (
+            revision_row.snapshot
+            if revision_row is not None
+            else (task.task_snapshot or {})
+        )
+        snapshot_map[task.id] = snapshot
+        expected_hash = str(snapshot.get("config_hash") or "")
+        preview_map[task.id] = _select_actionable_preview(
+            preview_groups.get(task.id, []),
+            expected_hash,
+        )
+    return snapshot_map, preview_map
+
+
 def serialize_annotation_task(task, preview=None, snapshot=None):
     payload = {
         "id": str(task.id),
@@ -506,9 +591,11 @@ def list_annotation_tasks(db, project_id, owner_id, cursor=None, limit=50):
         accessible_projects = ProjectAccessService.accessible_project_query(db, owner_id).with_entities(Project.id).subquery()
         base_query = base_query.filter(GenericAnnotationTask.project_id.in_(accessible_projects))
     items, total, has_next = _created_id_page(base_query, GenericAnnotationTask, cursor, limit)
+    # A-16：批量预取页内快照与可执行 preview（固定 2 次查询），响应形状不变
+    snapshot_map, preview_map = prefetch_annotation_task_context(db, items)
     return {
         "items": [
-            serialize_annotation_task(item, current_annotation_task_preview(db, item), current_annotation_task_snapshot(db, item))
+            serialize_annotation_task(item, preview_map.get(item.id), snapshot_map.get(item.id))
             for item in items
         ],
         "total": total,

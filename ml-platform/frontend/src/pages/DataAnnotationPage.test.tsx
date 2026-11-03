@@ -88,7 +88,7 @@ describe("DataAnnotationPage", () => {
           label_mode: "manual",
           annotation_progress: { annotated_count: 2, total_count: 4, percent: 50 },
         },
-      ] } });
+      ], total: 2, limit: 20, offset: 0 } });
       if (url.includes("/spot-weld/datasets/") && url.endsWith("/columns")) return Promise.resolve({ data: {
         columns: [{ name: "wld1c", dtype: "float64" }, { name: "Fault", dtype: "object" }],
         row_count: 12,
@@ -1664,7 +1664,8 @@ describe("DataAnnotationPage", () => {
     });
     render(<MemoryRouter initialEntries={["/data-annotation?view=tasks"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><AntApp><DataAnnotationPage /></AntApp></MemoryRouter>);
     const list = await screen.findByRole("region", { name: "数据标注任务列表" });
-    await waitFor(() => expect(get).toHaveBeenCalledWith("/spot-weld/runs"));
+    // A-17：任务列表请求带服务端分页参数（limit 默认 20、offset 0）
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/spot-weld/runs", { params: { limit: 20, offset: 0 } }));
     expect(within(list).getByText("焊装线")).toBeInTheDocument();
     expect(within(list).getByText("总装线")).toBeInTheDocument();
     expect(within(list).getByText("alice")).toBeInTheDocument();
@@ -1787,7 +1788,7 @@ describe("DataAnnotationPage", () => {
       </MemoryRouter>,
     );
 
-    await waitFor(() => expect(get).toHaveBeenCalledWith("/projects/project-1/spot-weld/runs"));
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/projects/project-1/spot-weld/runs", { params: { limit: 20, offset: 0 } }));
     expect(get).not.toHaveBeenCalledWith("/projects/missing-project/spot-weld/runs");
     expect(screen.getByLabelText("Project")).toHaveValue("project-1");
   });
@@ -2171,7 +2172,8 @@ describe("DataAnnotationPage", () => {
 
     fireEvent.change(await screen.findByLabelText("选择模型"), { target: { value: "model-1" } });
     fireEvent.click(await screen.findByRole("button", { name: /下一页/ }));
-    fireEvent.click(screen.getByRole("button", { name: "开始自动标注" }));
+    // A-17 后 runs 加载 effect 多一次 loading 往返：按钮渲染需异步等待
+    fireEvent.click(await screen.findByRole("button", { name: "开始自动标注" }));
     await waitFor(() => expect(screen.getByTestId("annotation-location")).toHaveTextContent("runId=run-created"));
 
     fireEvent.click(screen.getByRole("button", { name: "browser-back" }));
