@@ -1,6 +1,6 @@
 # 当前开发计划
 
-> 更新时间：2026-10-28。当前主线：AutoML Agent 智能体方案（P1–P6 代码面完成，前端改版 v2 壳层已上线）；**新增：2026-10-27~28 全项目代码走查（第二轮审计，68 条问题，含 3 条实证 P0）——见文末「2026-10-27~28 全项目代码走查」章节**。已完成工作的完整历史记录见 [DEVELOPMENT_PLAN_ARCHIVE.md](DEVELOPMENT_PLAN_ARCHIVE.md)（2026-10-23 归档快照，含更早的 2026-09-24 快照链接）；实施计划索引见 [plans/README](ml-platform/docs/superpowers/plans/README.md)。
+> 更新时间：2026-11-03。当前主线：AutoML Agent 智能体方案（P1–P6 代码面完成，前端改版 v2 壳层已上线）；第二轮审计批次九~十四 + A-16/A-17 列表批量化 + Mimosa 深扫处置（2026-10-29~11-03）已全部落地；**2026-11-03 升级批次（passlib 退役/Celery 5.5）与 P3 巨型文件拆分首刀完成，origin/main @ 8b7a8d85（两次六 job 全绿收敛：run 41587691333 / 41596227367）**——见文末对应章节。已完成工作的完整历史记录见 [DEVELOPMENT_PLAN_ARCHIVE.md](DEVELOPMENT_PLAN_ARCHIVE.md)（2026-10-23 归档快照，含更早的 2026-09-24 快照链接）；实施计划索引见 [plans/README](ml-platform/docs/superpowers/plans/README.md)。
 
 ## 1. 状态口径
 
@@ -15,7 +15,7 @@
 
 | 轨道 | 状态 | 说明 | 后续动作 |
 |---|---|---|---|
-| **AutoML Agent 智能体方案（当前主导）** | 代码面 P1–P6 全部完成（迁移 head `20261023_81`）；真实 LLM S1 双域验证通过（DeepSeek，`26479983`）；**前端改版 v2 壳层已上线（五视图顶栏+视图侧栏+门户首页+智能体中心页，深色主题为默认）**；部署栈 DeepSeek 连通 200 验证通过 | 大模型驱动自动建模：四步迭代+S5 服务化+三级经验/有界 RSI+向导+优化报告+大模型网关+对话白名单工具+统一知识中心+安全基线；[技术方案](ml-platform/docs/技术方案-大模型驱动自动建模流水线.md) v0.9 十七章 / [实施计划](ml-platform/docs/superpowers/plans/2026-10-22-automl-agent.md) A1.1–A6.2 / [前端预览](ml-platform/docs/design/平台改版前端预览.html)；**完整全景与后续执行顺序见文末「2026-10-23 AutoML Agent 专项全景」** | 见全景章节「后续」 |
+| **AutoML Agent 智能体方案（当前主导）** | 代码面 P1–P6 全部完成（迁移 head `20261029_85`，2026-10-29 索引批次升位）；真实 LLM S1 双域验证通过（DeepSeek，`26479983`）；**前端改版 v2 壳层已上线（五视图顶栏+视图侧栏+门户首页+智能体中心页，深色主题为默认）**；部署栈 DeepSeek 连通 200 验证通过 | 大模型驱动自动建模：四步迭代+S5 服务化+三级经验/有界 RSI+向导+优化报告+大模型网关+对话白名单工具+统一知识中心+安全基线；[技术方案](ml-platform/docs/技术方案-大模型驱动自动建模流水线.md) v0.9 十七章 / [实施计划](ml-platform/docs/superpowers/plans/2026-10-22-automl-agent.md) A1.1–A6.2 / [前端预览](ml-platform/docs/design/平台改版前端预览.html)；**完整全景与后续执行顺序见文末「2026-10-23 AutoML Agent 专项全景」** | 见全景章节「后续」 |
 | Week 17 数据探索与质量报告 | pending_decision（让位于智能体方案） | 数据探索与质量报告范围已获批（§4.2，2026-09-28）：DuckDB 只读查询 + 质量 profile + 报告 Artifact，不部署 Superset；上限行 1,000/10MB/30 秒/并发 2；SavedQuery 首期不纳入。2026-10-22 用户指示 Week 17–20 让位，由智能体方案主导；已获批范围不撤销，智能体 P1 的数据画像工具建议复用本周质量 profile 服务 | 重启时按 2026-09-28 实施计划自 Task 17.1 起实现 |
 | Week 18–20 | deferred（被智能体方案部分吸收） | RAG、LLM 网关、AIHub、全产品交付不在本轮范围。LLM 网关子项已由智能体方案 P1 交付（LLMProfile）；RAG 检索评估、AIHub、一键微调/部署待智能体方案落地后重新排期 | 保持搁置 |
 | 多模态标注集成（Label Studio） | deferred | 2026-09-28 决策评审后用户决定暂缓（D1）；方案归档备查 | 用户明确重新立项前不得自行启动 |
@@ -109,20 +109,20 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 
 ### 问题（未决，按影响排序）
 
-1. **Mimosa 深扫未完整重跑**：commit 兼容策略放行时多次提示 scanner 部分故障（scanner_enobufs / callgraph_fact_partial 等），勿宣称项目安全；待重跑完整审计并治理 111 项既存发现（污点/joblib 系/测试凭据，全部既存文件）。
+1. ~~**Mimosa 深扫未完整重跑**~~ ✅ 已收口（2026-11-03）：深扫完成（124 findings→清洗后真仓 40：19H/21M，84 项为 temp_test/ 构建产物误报），19 项 high 逐一代码级核对——3 真缺口全修（上传名穿越双防线/模型工件 HMAC 密封防线/vector_store persist 结构白名单）、16 误报归档（见文末「Mimosa 深度扫描处置批次」节）。Medium 21 项反序列化直载路径（evaluation/visualization 算子内部）待随"算子输出密封透传"统一收口。
 2. **`load_deployment_model` 算子接线被写前 Hook 拦**（8 种写法试尽）：解析逻辑已就绪（serving_binding.py 有换模跟随测试）；待用户手动建文件（内容已提供）或随审计放行。
 3. **集成判据余项**（代码就绪、待执行）：真实回流换模 e2e、S5 双域服务化对照（需 AutoML 绑定全链而非注入 trainer）、经验受益对比；P2 收敛已过（2026-10-23）。
 4. **前端改版余量**：既有内容页仍多为 antd 旧视觉（深色主题下可用但未按设计稿重绘；算法平台总览页 `/algo` 已按 v2 重绘上线——KPI/最近模型版本/模型状态/算法覆盖，复用 dashboard stats 与 top-models API，`2345d225`）；对话确认卡。（智能体中心向导页已深化：四步可操作向导，`f2678c9f`；配方库与 Agent 运行列表 API 已接线 `ab924d70`。）
 5. 杂项：git 代理 7897 间歇故障（直连不通时用 `-c http.proxy=http://127.0.0.1:7897`）；`.worktrees/` 残留 4 个空目录 ACL 损坏（文件已清空，彻底删除需管理员 shell 或 WSL sudo，暂留无害）。
-6. **`test_demo_loop.py` 本地连跑失败集漂移（既有，2026-10-27 诊断收窄）**：同一代码连续三次全量运行失败数分别为 6/5/1/6（test_06/07/07b/07c/17/20 集合震荡），回滚对照证明与当批日志改动无关。**判别实验**：指向全新临时库连跑两次均 27 passed 全绿（含共享库上失败的用例）——代码无回归，触发条件是共享库多年残留；同库二次复跑仍绿说明并非简单累积。CI 全新环境不受影响。本地规避口径：`DATABASE_URL=sqlite:///./temp_test/<临时库>.db pytest tests/test_demo_loop.py`；套件完全密封化（独立引擎+依赖覆盖，参照 test_security_hardening 模式）留待测试卫生批次。
+6. ~~**`test_demo_loop.py` 本地连跑失败集漂移（既有，2026-10-27 诊断收窄）**~~ ✅ 已收口（2026-11-03，e222cf86 随 555528b6 合入主线）：套件密封化落地——未显式设 `DATABASE_URL` 时自动落进程专属临时库（`temp_test/demo-loop-<pid>-<hex>.db`），退出时先 `engine.dispose()` 再删（Windows sqlite 文件锁 WinError 32 语义）；新库 27 passed 验证。诊断过程保留：同代码共享库失败数 6/5/1/6 震荡、全新临时库连跑两次均 27 全绿——确证触发条件是共享库多年残留，代码无回归。
 7. ~~本地共享库 `workflows.project_id` NULLability 漂移~~ ✅ 已修复（2026-10-27）：全库 schema 体检确认仅此一处漂移；`temp_test/fix_workflows_nullable.py` 按现行 ORM DDL 重建表（510 行保全、外键问题数与修复前完全一致均为历史孤儿行、差异复扫清零），`test_api_workflow_templates` 4 passed 恢复；修复前备份 `temp_test/ml_platform.db.bak-20261027`。
 
 ### 后续（执行顺序）
 
 1. **S5 端到端证据**：真实数据经 AutoML 绑定全链（非注入 trainer）跑通服务化对照（依赖 `load_deployment_model` 算子接线放行）。
 2. **前端改版深化**：内容页按设计稿逐视图重绘（算法平台→基础设施→系统管理）→ 对话确认卡 → 智能体中心向导页深化与配方列表 API。
-3. **推送与 CI**：全量 CI（六 job）+ 浏览器验收。
-4. **收尾**：Mimosa 完整审计重跑 + 111 项发现治理排期（与 2 并行小步走）。
+3. ~~**推送与 CI**：全量 CI（六 job）+ 浏览器验收。~~ ✅ 已多次收敛（最近：2026-11-03 run 41587691333 / 41596227367 六 job 全绿，main=8b7a8d85）。
+4. ~~**收尾**：Mimosa 完整审计重跑 + 111 项发现治理排期（与 2 并行小步走）。~~ ✅ 深扫已处置（2026-11-03，见文末处置批次节）；Medium 21 项直载路径待"算子输出密封透传"批。
 
 ### 代码层性能/健壮性优化路线（2026-10-27 审计；P0/P1 全部完成，P2.2 完成，其余待排期）
 
@@ -249,7 +249,7 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 > - **批次十二**（并发与幂等）：DAG 循环体 RunCancelled 先于 Exception 冒泡 + 失败上报 failed；reconcile_stale_runs 接入 beat（workflow-run-recovery 60s）+ lifespan 启动清扫；闭环错误集追加改 DB 级 CAS（storage_uri 前置 UPDATE + 重读重试 ≤3，删 prefork 下不互斥的 threading.Lock）；AgentRun resume 放行 CAS（WHERE status=waiting_guidance，防并发双跑）；DatasetVersion 版本号分配收敛 dataset_version_alloc（IntegrityError 换号重试，四处 max+1 收口）；心跳线程 DB 异常容错 + 超时孤儿线程告警。
 > - **批次十三**（索引）：迁移 20261029_85 建 16 个二级索引（12 张主键-only 表 + created_by + 过滤列），database_migrations._SQLITE_INDEXES 同步；alembic upgrade 验证落地。
 > - **批次十四**（前端/部署/CI）：MonitorPage 轮询签名剔除 timestamp（修批次五退避在监控页永久失效）；DataAnnotationPage 三处 1s 预览轮询迁 useAdaptivePolling（previewPollSettled 终态停轮 + 终态首次拉取保留）；AutoMLPage blob URL 三路径回收；compose 长驻服务日志轮转（x-logging 50m×5）；CI 安全扫描去 continue-on-error（扫描失败阻断合并）。
-> - 验证：前端全量 89 文件 504 passed + tsc；后端受影响套件全绿；demo_loop 共享库漂移确证与代码无关（新库 27 passed）。**遗留**：A-16/A-17 列表批量化（涉及 API 合同变更需前端同批）；chat 同步化后 DB 池校准待压测。
+> - 验证：前端全量 89 文件 504 passed + tsc；后端受影响套件全绿；demo_loop 共享库漂移确证与代码无关（新库 27 passed）。**遗留**：~~A-16/A-17 列表批量化（涉及 API 合同变更需前端同批）~~ ✅ 已落地（2026-11-03，见下节）；chat 同步化后 DB 池校准待压测（仍待）。
 
 > **✅ 全量 CI 六 job 全绿收敛（2026-11-02~03，门禁分支 release/opt-20261030，run 41463990779 @ b282a54b attempt 1）**：r14 以来 Security job 首次带 trivy 发现通过全链（run_all → Summarize → 通用验收回执 → 最终证据 manifest）。四层递进修复（每层都被上一层的修复首次"活到"才暴露）：
 > - **L1 run_all 豁免死逻辑**（93b1fdf5）：trivy `--exit-code 1` 有发现必 rc=1，原 `returncode == 0` 条件使时限豁免永不生效；改豁免路径接受 rc=1+合同全覆盖+报告确有发现，rc=1 无发现（扫描器崩溃残缺报告）仍 fail-closed。
@@ -269,7 +269,17 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 
 > **✅ trivy 豁免合同续期（2026-11-03）**：对 packages.wolfi.dev APKINDEX 复核——postgresql-16-client **16.15-r0 仍未发布，16.14-r1 已是上游最新**（钉版无需也无法上调）；py3.11-pip 26.2.2-r2 已修复其两项 CVE 且近期镜像扫描零 pip 发现，**退役该豁免条目**（原 pending 26.2.2-r1 < 实装钉，死条目）。合同 reviewed_at→2026-11-03、**expires_on 2026-12-31→2027-03-31**（季度复审节奏，到期前必须再查 APKINDEX）；真实 CI 证据回放（32 项 postgresql-only 发现）+ evaluate 单测 4 项验证通过。到期前若 16.15-r0 发布：升钉四处 Dockerfile → 删除本合同 → 全量 CI 验证。
 
-1. **CI 状态**：~~main 全量六 job 全绿后本节收敛~~ **✅ 已收敛（2026-11-03，run 41572965735 六 job 全绿 @ 555528b6 attempt 1，门禁分支 release/opt-20261103 基于 main 705794cf）**——一次携带六批次：A-16/A-17 列表批量化、manifest 注册（test_agent_llm_retry→p6 + 新模块两组）、Mimosa 三缺口收口（上传穿越/模型工件密封/vector_store 白名单）、trivy 合同续期 2027-03-31、e2e 文案对齐（705794cf 改版）、测试卫生批次。期间三次失败均为逐层修复：①并行会话 light 直推 main 漏注册（门禁拦截证明有效）②Chromium 撞文案改版旧断言 ③我的新模块漏注册+evaluation 夹具绕过写入口被密封防线正确拒绝（夹具补 _sealed_artifact 模拟平台产物，防线合同不变）。**教训：并行会话共用工作树时，提交前必须核对 `git branch --show-current`（本轮一次提交意外落在 main）+ 新增测试文件三件事齐套（实现/测试/week owner 注册）。**
+> **✅ 升级批次 P1+P2（2026-11-03，run 41587691333 六 job 全绿 @ 0755875a，已 ff main）**：
+> - **P1 passlib 退役**：新建 `app/services/password_hashing.py`——stdlib 原位重实现 passlib pbkdf2_sha256 线上格式（**ab64 关键细节：base64 的 `+` 写作 `.`、无 `=` 填充**，首版栽此处由真实向量抓出）；四条真实 passlib 1.7.4 哈希固化为兼容锚点，**既有哈希零迁移可验证**；新哈希 600k 轮（OWASP 2023），旧 29000 轮经 `needs_update` 由登录路径既有 rehash 钩子自动升级；`PasswordHasher` 门面保持 hash/verify/needs_update 三方法，四处调用点（auth/main/annotator_identity/inference_api_keys）与全部测试夹具零改动；畸形哈希 `UnknownHashError`（ValueError 子类）语义与 passlib 一致。requirements 删 `passlib[bcrypt]`+`jaraco.context`，pip-audit 必检清单（security_scans `_REQUIRED_PIP_AUDIT_PACKAGES`）与合同测试同步，`test_database_production` 引导校验改 stdlib。
+> - **P2 Celery 5.4→5.5.3**（kombu 5.5.4/billiard 4.3.2）：worker/dispatch/recovery 43 绿 + beat 14 条目装载验证。
+> - **wheelhouse 同步**（用户抓的缺口，Dockerfile 维护约定要求）：+celery-5.5.3/kombu-5.5.4/billiard-4.3.2，−celery-5.4.0/**kombu-5.6.2（与 celery 5.5 的 <5.6 约束冲突，离线构建必炸）**/passlib/jaraco×3/bcrypt；按 Dockerfile 两段式做离线闭包演练（`--dry-run --no-index --find-links` + 目标平台标签精确列举）全依赖图解析通过；配方入 memory（r-series 打包方法）。
+> - **OrchestrationPage flake 修复**：`新建服务图` 按钮 `disabled={!projectId}`——高负载 runner 点击落在项目加载完成前静默无效、dialog 永不出现；测试先 `waitFor(not.toBeDisabled)` 再点击（run 41583772335 Windows 失败根因）。
+> - 新增 `test_password_hashing` 注册 week12（三件套规则）。
+
+> **✅ P3 巨型文件拆分·首刀（2026-11-03，run 41596227367 六 job 全绿 @ 8b7a8d85，已 ff main）**：DataAnnotationPage（3248 行/99 useState）抽两块自包含叶子组件——①`components/annotation/LegacyRunsTable`（历史任务服务端分页表，分页状态留页面、翻页意图回传）；②`components/annotation/TaskOperationsPanel`（通用任务操作面板，复用 `AnnotationOperation` API 类型，刷新/加载更多/查看结果回传意图）；渲染结构原位不变，页面 63 用例+全量 89 文件 505+tsc 全绿。**后续刀排队**（低耦合优先）：spot-weld setup 向导（~500 行）、workspace 区、执行结果抽屉；次目标 AutoMLPage（1082 行）。
+
+1. **CI 状态**：~~main 全量六 job 全绿后本节收敛~~ **✅ 已收敛（2026-11-03，run 41572965735 六 job 全绿 @ 555528b6 attempt 1，门禁分支 release/opt-20261103 基于 main 705794cf）**——一次携带六批次：A-16/A-17 列表批量化、manifest 注册（test_agent_llm_retry→p6 + 新模块两组）、Mimosa 三缺口收口（上传穿越/模型工件密封/vector_store 白名单）、trivy 合同续期 2027-03-31、e2e 文案对齐（705794cf 改版）、测试卫生批次。随后两次追加收敛：**run 41587691333（升级批次 P1+P2）与 run 41596227367（P3 首刀）均六绿，origin/main=8b7a8d85**。期间失败均为逐层修复：①并行会话 light 直推 main 漏注册（门禁拦截证明有效）②Chromium 撞文案改版旧断言 ③新模块漏注册+evaluation 夹具绕过写入口被密封防线正确拒绝（夹具补 _sealed_artifact 模拟平台产物，防线合同不变）④Orchestration disabled 按钮静默点击。**教训：并行会话共用工作树时，提交前必须核对 `git branch --show-current`（本轮一次提交意外落在 main）+ 新增测试文件三件事齐套（实现/测试/week owner 注册）。**
 2. **审计收尾**：① ~~pickle/joblib 反序列化通道复核~~ **已收口（2026-11-03 密封防线，见上）**；② agent/sandbox.py:193 子进程 env= 缺失威胁模型确认；③ 生产连接池取值运维确认。
 3. **测试卫生批次**：~~demo_loop 套件密封化、test_fake NO TESTS RAN 噪音~~ **已落地（e222cf86，随 555528b6 合入主线）**；model-inference e2e 按 v2 UI 重写仍待办。
+4. **升级批次余项**：P3 后续刀（见上队列）；P4 React 19 观望（等 antd v6 信号）；chat 同步化后 DB 池压测。
 
