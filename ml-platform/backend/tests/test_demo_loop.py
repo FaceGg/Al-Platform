@@ -1,6 +1,8 @@
 """Closed-loop demo regression tests: config, per-row predict, error dataset,
 threshold alert, review skip path, retrain trigger with a stubbed dispatcher."""
 
+import atexit
+import os
 import sys
 import tempfile
 import unittest
@@ -10,22 +12,47 @@ from unittest.mock import patch
 
 sys.path.insert(0, ".")
 
-import joblib
-import pandas as pd
-from fastapi.testclient import TestClient
-from sklearn.linear_model import LogisticRegression
+# 本地直跑密封化：run_suite（CI 路径）已按模块注入独立临时库；此处兜底——
+# 未显式设置 DATABASE_URL 时指向进程专属临时库，避免用例直接落共享开发库
+# 后的残留行干扰计数/顺序断言（显式设置 DATABASE_URL 的调用方不受影响）
+if not os.environ.get("DATABASE_URL"):
+    _SEALED_DIR = Path("temp_test")
+    _SEALED_DIR.mkdir(exist_ok=True)
+    _SEALED_DB = _SEALED_DIR / f"demo-loop-{os.getpid()}-{uuid.uuid4().hex[:8]}.db"
+    os.environ["DATABASE_URL"] = "sqlite:///" + _SEALED_DB.as_posix()
 
-from app.database import Base, SessionLocal, engine
-from app.main import app
-from app.api.auth import pwd_context
-from app.models.artifact import Artifact
-from app.models.demo_loop import DemoLoopConfig, DemoLoopEvent
-from app.models.model_registry import InferenceDeployment, ModelVersion, RegisteredModel
-from app.models.notifications import InAppNotification
-from app.models.training import TrainingJob
-from app.models.user import User
-from app.services import demo_loop as demo_loop_module
-from app.services.artifact_service import build_artifact_service
+    def _cleanup_sealed_db():
+        # Windows 语义：sqlite 文件被 engine 连接持有时 unlink 报 WinError 32，
+        # 先 dispose 再删；仍失败则静默留下临时文件（temp_test 本就不入库）
+        try:
+            import app.database as _sealed_database
+
+            _sealed_database.engine.dispose()
+        except Exception:
+            pass
+        try:
+            _SEALED_DB.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    atexit.register(_cleanup_sealed_db)
+
+import joblib  # noqa: E402
+import pandas as pd  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from sklearn.linear_model import LogisticRegression  # noqa: E402
+
+from app.database import Base, SessionLocal, engine  # noqa: E402
+from app.main import app  # noqa: E402
+from app.api.auth import pwd_context  # noqa: E402
+from app.models.artifact import Artifact  # noqa: E402
+from app.models.demo_loop import DemoLoopConfig, DemoLoopEvent  # noqa: E402
+from app.models.model_registry import InferenceDeployment, ModelVersion, RegisteredModel  # noqa: E402
+from app.models.notifications import InAppNotification  # noqa: E402
+from app.models.training import TrainingJob  # noqa: E402
+from app.models.user import User  # noqa: E402
+from app.services import demo_loop as demo_loop_module  # noqa: E402
+from app.services.artifact_service import build_artifact_service  # noqa: E402
 
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)

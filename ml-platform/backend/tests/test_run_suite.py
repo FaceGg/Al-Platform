@@ -1,3 +1,5 @@
+import contextlib
+import io
 import unittest
 from unittest.mock import patch
 
@@ -44,7 +46,11 @@ class TestRunSuite(unittest.TestCase):
         with patch.object(run_suite, "detect_test_framework", return_value="unittest"), patch.object(
             run_suite.subprocess, "run", return_value=completed
         ) as run:
-            self.assertEqual(run_suite.run_modules(["test_fake"]), 1)
+            # 吞掉夹具回显：run_modules 会把模拟输出逐行打印，若不重定向，
+            # CI 日志会出现假的 ">>> test_fake: FAILED / NO TESTS RAN"，
+            # 曾被误读为真实套件失败（测试卫生批次，run 41428207476 等日志佐证）
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(run_suite.run_modules(["test_fake"]), 1)
         run.assert_called_once()
 
     def test_run_modules_uses_outer_unittest_summary_after_nested_zero_test_output(self):
@@ -63,7 +69,8 @@ class TestRunSuite(unittest.TestCase):
         with patch.object(run_suite, "detect_test_framework", return_value="unittest"), patch.object(
             run_suite.subprocess, "run", return_value=completed
         ):
-            self.assertEqual(run_suite.run_modules(["test_fake"]), 0)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(run_suite.run_modules(["test_fake"]), 0)
 
     def test_pytest_is_an_explicit_backend_test_dependency(self):
         requirements = (run_suite.Path(run_suite.BACKEND_DIR) / "requirements.txt").read_text(
