@@ -7,6 +7,8 @@ import * as echarts from "echarts";
 import AppLayout from "../components/AppLayout";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
+import LegacyRunsTable from "../components/annotation/LegacyRunsTable";
+import TaskOperationsPanel from "../components/annotation/TaskOperationsPanel";
 import LabelSchemaEditor, { createLabelColumn, type LabelColumnDraft } from "../components/LabelSchemaEditor";
 import AutomaticAnnotationStrategyEditor, {
   createAutomaticStrategyDraft,
@@ -2418,62 +2420,31 @@ export default function DataAnnotationPage() {
             {genericTasksCursor && <div className="table-row-actions"><button type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadMoreGenericTasks(); }} disabled={genericTaskLoading}>{copy.loadMoreTasks}</button></div>}
           </div>}
           {taskListTab !== "legacy" && (taskListTab === "all" ? genericTasks.length === 0 : activeGenericTasks.length === 0) && !genericTaskLoading && <Empty description={copy.noTasks} />}
-          {taskListTab !== "active" && runs.length > 0 && <div className="data-annotation__legacy-tasks">
-            <div className="data-annotation__section-head">
-              <h3>{copy.legacySection}</h3>
-            </div>
-            <Table<QualityRun>
-              rowKey="id"
-              size="small"
+          {taskListTab !== "active" && runs.length > 0 && (
+            <LegacyRunsTable
+              sectionTitle={copy.legacySection}
+              emptyText={copy.noTasks}
+              runs={runs}
               loading={loadingRuns}
-              dataSource={runs}
               columns={taskColumns}
-              pagination={{
-                current: runsPage,
-                pageSize: runsPageSize,
-                total: runsTotal,
-                onChange: (page, pageSize) => { setRunsPage(page); setRunsPageSize(pageSize); },
-                showSizeChanger: true,
-              }}
-              scroll={{ x: 820 }}
-              locale={{ emptyText: <Empty description={copy.noTasks} /> }}
+              page={runsPage}
+              pageSize={runsPageSize}
+              total={runsTotal}
+              onPageChange={(page, pageSize) => { setRunsPage(page); setRunsPageSize(pageSize); }}
             />
-          </div>}
+          )}
       </div>
-      <div className="table-surface data-annotation__operations-surface" role="region" aria-label="通用任务操作">
-            <div className="data-annotation__section-head">
-              <h3>{copy.operationsSection}</h3>
-              <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void refreshGenericTaskData(); }} disabled={operationsLoading}>{lang === "zh" ? "刷新操作" : "Refresh"}</button>
-            </div>
-            <div className="data-annotation__operations">
-              {operationsLoading && annotationOperations.length === 0 && <div className="data-annotation__operations-loading"><Spin /></div>}
-              {!operationsLoading && annotationOperations.length === 0 && <Empty description={lang === "zh" ? "暂无任务操作记录" : "No task operations"} />}
-              {annotationOperations.map((operation) => <div className="data-annotation__operation" key={operation.id}>
-                <div className="data-annotation__operation-head">
-                  <code title={operation.id}>{operation.id.slice(0, 8)}</code>
-                  <Tag color={taskStatusColor(operation.state)}>{taskStatusLabel(operation.state, lang)}</Tag>
-                </div>
-                <div className="data-annotation__operation-meta">
-                  <span>{operation.resource_type}</span>
-                  <span aria-hidden="true">·</span>
-                  <span>{operation.stage}</span>
-                </div>
-                {operation.task_id && <div className="data-annotation__operation-task">
-                  {lang === "zh" ? "任务" : "Task"} <code title={operation.task_id}>{operation.task_id.slice(0, 8)}</code>
-                </div>}
-                <div className="data-annotation__operation-progress">
-                  <span className="data-annotation__progress-track" aria-hidden="true"><i style={{ width: `${Math.min(100, Math.max(0, Number(operation.progress) || 0))}%` }} /></span>
-                  <span className="data-annotation__progress-text">{operation.progress}%</span>
-                </div>
-                {operation.created_at && <div className="data-annotation__operation-time">{formatBackendTimestamp(operation.created_at)}</div>}
-                {operation.error_code && <div className="data-annotation__operation-error" role="alert">{operation.error_code}</div>}
-                {operation.resource_type === "annotation_execution" && operation.state === "completed" && (
-                  <button type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadExecutionView(operation); }}>{lang === "zh" ? "查看结果" : "View results"}</button>
-                )}
-              </div>)}
-            </div>
-            {annotationOperationsCursor && <div className="table-row-actions data-annotation__operations-more"><button type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadMoreAnnotationOperations(); }} disabled={operationsLoading}>{lang === "zh" ? "加载更多操作" : "Load more"}</button></div>}
-          </div>
+      <TaskOperationsPanel
+        lang={lang}
+        title={copy.operationsSection}
+        operations={annotationOperations}
+        loading={operationsLoading}
+        cursor={annotationOperationsCursor}
+        formatTimestamp={formatBackendTimestamp}
+        onRefresh={() => { void refreshGenericTaskData(); }}
+        onLoadMore={() => { void loadMoreAnnotationOperations(); }}
+        onViewExecutionResult={(operation) => { void loadExecutionView(operation); }}
+      />
       {projectId && <ReturnAcceptancePanel projectId={projectId} />}
       <Drawer
         open={Boolean(executionView)}
