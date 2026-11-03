@@ -124,7 +124,10 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
             recall = float(recall_score(truth, preds, zero_division=0))
             f1 = float(f1_score(truth, preds, zero_division=0))
             precision = float(precision_score(truth, preds, zero_division=0))
-            accuracy = float(accuracy_score(y_test, preds))
+            # accuracy 与上三者同一布尔口径（truth/preds 均 1=少数类）：
+            # 若用 y_test 原编码，当少数类编码为 0、多数类为 1 时两者 0/1
+            # 语义相反，accuracy 会显示成 1−真实值（点焊/拧紧双域实测踩坑）。
+            accuracy = float(accuracy_score(truth, preds))
             # roc_auc 需要测试集两类齐全；单类测试集下无定义 → 置 None 跳过门禁。
             roc_auc = (
                 float(roc_auc_score(truth.astype(int), proba))
