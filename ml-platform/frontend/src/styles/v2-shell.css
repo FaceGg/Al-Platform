@@ -155,8 +155,9 @@
 .agent-workdot i:nth-child(7) { animation-delay: .9s; }
 .agent-workdot i:nth-child(8) { animation-delay: 1.05s; }
 .agent-workdot i:nth-child(9) { animation-delay: 1.2s; }
+.agent-workdot i:nth-child(5) { visibility: hidden; animation: none; } /* 中心留空 */
 @keyframes agent-dot-wave { 0%, 70%, 100% { opacity: .22; } 35% { opacity: 1; } }
-.agent-worktime { font-variant-numeric: tabular-nums; color: var(--v2-sub); min-width: 72px; }
+.agent-worktime { font-variant-numeric: tabular-nums; min-width: 72px; }
 .v2-navtabs { display: flex; gap: 4px; flex: 1; justify-content: center; flex-wrap: wrap; }
 /* 五视图主导航相对视口绝对居中（brand 与右侧用户区不等宽，剩余空间居中会整体偏移）；
    窄窗口（<900px）回退为流式避免与两侧重叠。 */
