@@ -288,9 +288,26 @@ class TestEvaluationFeatureColumnAlignment(unittest.TestCase):
 
 
 class _FakeArtifact:
-    def __init__(self, storage_uri, fmt):
+    def __init__(self, storage_uri, fmt, metadata=None):
         self.storage_uri = storage_uri
         self.format = fmt
+        # 平台写入口会给 model 工件盖密封标签；成功路径夹具须模拟该产物
+        self.metadata_ = metadata or {}
+
+
+def _sealed_metadata(payload: bytes) -> dict:
+    """模拟经 ArtifactService 写入的 model 工件 metadata（含有效 seal）。"""
+    import hashlib as _hashlib
+
+    from app.services.model_artifact_sealing import model_seal_metadata
+
+    digest = _hashlib.sha256(payload).hexdigest()
+    return {"sha256": digest, **model_seal_metadata(digest)}
+
+
+def _sealed_artifact(payload: bytes) -> _FakeArtifact:
+    """带有效平台密封的 joblib 工件（模拟 ArtifactService 写入口产物）。"""
+    return _FakeArtifact("mem://m.joblib", "joblib", metadata=_sealed_metadata(payload))
 
 
 class _FakeStorage:
@@ -336,7 +353,7 @@ class TestLoadModelArtifactFormatGuard(unittest.TestCase):
             pd.DataFrame({"feature": [0.0, 1.0, 2.0, 3.0]}), [0, 0, 1, 1]
         )
         outputs = self._execute_load(
-            _FakeArtifact("mem://m.joblib", "joblib"), _model_bytes(classifier)
+            _sealed_artifact(payload_bytes := _model_bytes(classifier)), payload_bytes
         )
         reloaded = joblib.load(io.BytesIO(outputs["model"]))
         self.assertTrue(hasattr(reloaded, "predict"))
@@ -354,7 +371,7 @@ class TestLoadModelArtifactFormatGuard(unittest.TestCase):
             "input_contract": {"input_columns": list(names)},
         }
         outputs = self._execute_load(
-            _FakeArtifact("mem://m.joblib", "joblib"), _model_bytes(package)
+            _sealed_artifact(payload_bytes := _model_bytes(package)), payload_bytes
         )
         reloaded = joblib.load(io.BytesIO(outputs["model"]))
         self.assertEqual([str(name) for name in reloaded.feature_names_in_], names)
@@ -380,7 +397,7 @@ class TestLoadModelArtifactFormatGuard(unittest.TestCase):
             "feature_schema": [{"name": name, "dtype": "float64"} for name in names],
         }
         outputs = self._execute_load(
-            _FakeArtifact("mem://m.joblib", "joblib"), _model_bytes(package)
+            _sealed_artifact(payload_bytes := _model_bytes(package)), payload_bytes
         )
         reloaded = joblib.load(io.BytesIO(outputs["model"]))
         # joblib 往返后 property 仍返回注入的列名
@@ -404,7 +421,7 @@ class TestLoadModelArtifactFormatGuard(unittest.TestCase):
             "feature_schema": [{"name": name, "dtype": "float64"} for name in names],
         }
         outputs = self._execute_load(
-            _FakeArtifact("mem://m.joblib", "joblib"), _model_bytes(package)
+            _sealed_artifact(payload_bytes := _model_bytes(package)), payload_bytes
         )
         reloaded = joblib.load(io.BytesIO(outputs["model"]))
         self.assertTrue(hasattr(reloaded, "predict"))
