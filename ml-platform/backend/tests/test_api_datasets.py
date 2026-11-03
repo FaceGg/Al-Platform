@@ -58,6 +58,37 @@ class TestLargeDatasetPreviewAndExport(unittest.TestCase):
         self.assertEqual(len(data["preview"]), 500)
         self.assertEqual(data["total_rows"], self.rows)
 
+    def test_meta_card_patch_persist_and_clear(self):
+        # 元数据卡：补录（PATCH）→ 列表带回 → 清空（全空提交即清除）
+        r = client.patch(
+            f"/api/datasets/{self.dataset_id}/meta",
+            json={
+                "source": "产线采集系统导出",
+                "purpose": "点焊故障检测建模训练",
+                "applicable": "2024 款 A 车型侧围工位",
+                "note": "",
+            },
+            headers=self.h,
+        )
+        self.assertEqual(r.status_code, 200)
+        card = r.json()["meta_card"]
+        self.assertEqual(card["source"], "产线采集系统导出")
+        self.assertNotIn("note", card)  # 空字段不入库
+
+        listed = client.get(
+            f"/api/projects/{self.project_id}/datasets", headers=self.h
+        ).json()["items"]
+        target = next(item for item in listed if item["id"] == self.dataset_id)
+        self.assertEqual(target["meta_card"]["purpose"], "点焊故障检测建模训练")
+
+        cleared = client.patch(
+            f"/api/datasets/{self.dataset_id}/meta",
+            json={"source": "", "purpose": "", "applicable": "", "note": ""},
+            headers=self.h,
+        )
+        self.assertEqual(cleared.status_code, 200)
+        self.assertIsNone(cleared.json()["meta_card"])
+
     def test_preview_explicit_limit_respected(self):
         r = client.get(f"/api/datasets/{self.dataset_id}/preview?limit=50", headers=self.h)
         self.assertEqual(r.status_code, 200)

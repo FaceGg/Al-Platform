@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import {
-  App as AntApp, Card, Table, Button, Upload, Select, Space, Modal, Typography, Row, Col, Tag
+  App as AntApp, Card, Table, Button, Upload, Select, Space, Modal, Typography, Row, Col, Tag, Form, Input
 } from "antd";
 import {
-  UploadOutlined, DownloadOutlined, EyeOutlined, ImportOutlined, ExportOutlined, TagsOutlined
+  UploadOutlined, DownloadOutlined, EyeOutlined, ImportOutlined, ExportOutlined, TagsOutlined, ProfileOutlined
 } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import apiClient from "../api/client";
@@ -48,6 +48,8 @@ export default function DataManagePage() {
   const [loading, setLoading] = useState(false);
   const [previewData, setPreviewData] = useState<{ columns: string[]; rows: any[][]; totalColumns?: number } | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [metaTarget, setMetaTarget] = useState<any | null>(null);
+  const [metaForm] = Form.useForm();
   const [uploading, setUploading] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
   const [returnBatches, setReturnBatches] = useState<ReturnBatch[]>([]);
@@ -244,6 +246,19 @@ export default function DataManagePage() {
     navigate(`/data-annotation?view=setup&mode=automatic&projectId=${encodeURIComponent(record.project_id)}&datasetId=${encodeURIComponent(record.id)}`);
   };
 
+  // 元数据卡保存：全空提交 = 清除卡片（后端删除即清空语义）
+  const handleMetaSave = async (values: Record<string, string>) => {
+    if (!metaTarget) return;
+    try {
+      await apiClient.patch(`/datasets/${metaTarget.id}/meta`, values);
+      message.success("元数据已保存");
+      setMetaTarget(null);
+      loadDatasets(selectedProject);
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || t.common.error);
+    }
+  };
+
   const columns = [
     { title: t.data.filename, dataIndex: "name", key: "name", ellipsis: true },
     { title: t.data.project, dataIndex: "project_name", key: "project_name", ellipsis: true,
@@ -266,6 +281,11 @@ export default function DataManagePage() {
             <TableRowAction label={`自动标注 ${record.name}`} icon={<TagsOutlined />} onClick={() => handleAutomaticLabeling(record)} />
           )}
           <TableRowAction label={`${t.data.preview} ${record.name}`} icon={<EyeOutlined />} onClick={() => handlePreview(record.id, record.column_count)} />
+          <TableRowAction
+            label={`元数据 ${record.name}`}
+            icon={<ProfileOutlined style={record.meta_card ? { color: "var(--v2-blue, #1677ff)" } : undefined} />}
+            onClick={() => { setMetaTarget(record); metaForm.setFieldsValue({ source: "", purpose: "", applicable: "", note: "", ...(record.meta_card || {}) }); }}
+          />
           <TableRowAction label={`${t.data.download} ${record.name}`} icon={<DownloadOutlined />} onClick={() => handleDownload(record.id)} />
           <DeleteConfirmation label={`${t.common.delete} ${record.name}`} targetName={record.name} onConfirm={() => void handleDelete(record.id)} />
         </div>
@@ -367,6 +387,33 @@ export default function DataManagePage() {
             </div>
           </div>
         )}
+      </Modal>
+      <Modal
+        title={metaTarget ? `元数据 · ${metaTarget.name}` : "元数据"}
+        open={!!metaTarget}
+        onCancel={() => setMetaTarget(null)}
+        onOk={() => metaForm.submit()}
+        okText="保存"
+        cancelText="取消"
+        destroyOnHidden
+      >
+        <Form form={metaForm} layout="vertical" onFinish={handleMetaSave} autoComplete="off">
+          <Form.Item name="source" label="数据来源" rules={[{ max: 500, message: "最长 500 字" }]}>
+            <Input placeholder="如：产线采集系统导出 / 试验台架 / 供应商提供" />
+          </Form.Item>
+          <Form.Item name="purpose" label="用途说明" rules={[{ max: 1000, message: "最长 1000 字" }]}>
+            <Input.TextArea rows={2} placeholder="这份数据用于什么任务，如：点焊故障检测建模训练" />
+          </Form.Item>
+          <Form.Item name="applicable" label="适用条件" rules={[{ max: 500, message: "最长 500 字" }]}>
+            <Input placeholder="适用车型 / 工位 / 工况 / 时间段等边界" />
+          </Form.Item>
+          <Form.Item name="note" label="备注" rules={[{ max: 2000, message: "最长 2000 字" }]}>
+            <Input.TextArea rows={3} placeholder="标签依据、版本说明等补充信息" />
+          </Form.Item>
+          <div style={{ color: "var(--v2-dim, #999)", fontSize: 12 }}>
+            描述业务边界（来源/用途/适用条件），技术画像（行数/列/schema）由平台自动生成。全部留空保存即清除卡片。
+          </div>
+        </Form>
       </Modal>
       <Modal
         title="回传差异"

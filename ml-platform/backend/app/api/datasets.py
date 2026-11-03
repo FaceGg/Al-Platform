@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, UploadFile, File, Query, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
@@ -569,7 +570,51 @@ def _serialize_dataset(
         "column_count": column_count,
         "schema": metadata.get("schema", []),
         "created_at": created_at,
+        # 元数据卡（业务侧描述：来源/用途/适用条件/备注）——治理字段，
+        # 技术画像在 schema/row_count，两不混淆
+        "meta_card": metadata.get("meta_card") or None,
     }
+
+
+class DatasetMetaCardRequest(BaseModel):
+    """数据集元数据卡（业务侧描述，轻量四字段）。"""
+
+    source: str = Field(default="", max_length=500)
+    purpose: str = Field(default="", max_length=1000)
+    applicable: str = Field(default="", max_length=500)
+    note: str = Field(default="", max_length=2000)
+
+
+@router.patch("/datasets/{dataset_id}/meta")
+def patch_dataset_meta_card(
+    dataset_id: str,
+    payload: DatasetMetaCardRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """补录/更新数据集元数据卡（来源/用途/适用条件/备注）。
+
+    数据治理字段：技术画像（schema/行数）由平台自动生成，业务边界
+    （这份数据从哪来、能干什么用、适用什么条件）只有数据主人知道，
+    事后补录模式。写 Artifact.metadata_ 的 meta_card 命名空间，其余
+    键不动。"""
+    artifact = db.query(Artifact).filter(
+        Artifact.id == UUID(dataset_id),
+        Artifact.type == "dataset",
+        Artifact.archived_at.is_(None),
+    ).first()
+    if not artifact:
+        raise HTTPException(404, "Dataset not found")
+    require_project_access(db, artifact.project_id, current_user.id, "project.update")
+    metadata = dict(artifact.metadata_ or {})
+    card = payload.model_dump()
+    # 全空 = 清除卡片（删除即清空语义）
+    metadata["meta_card"] = {k: v for k, v in card.items() if v.strip()} or None
+    if metadata["meta_card"] is None:
+        metadata.pop("meta_card")
+    artifact.metadata_ = metadata
+    db.commit()
+    return {"id": str(artifact.id), "meta_card": metadata.get("meta_card")}
 
 
 @router.get("/datasets")
