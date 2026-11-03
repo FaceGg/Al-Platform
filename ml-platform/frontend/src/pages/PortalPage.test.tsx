@@ -20,6 +20,11 @@ describe("PortalPage (v2 portal home)", () => {
         ] } });
       }
       if (url === "/projects") return Promise.resolve({ data: { items: [{ id: 1 }, { id: 2 }] } });
+      if (url === "/agent/runs") {
+        return Promise.resolve({ data: [
+          { id: "aa11bb33-0000-0000-0000-000000000001", project_name: "电阻点焊", target_column: "Fault", status: "running", created_at: "2026-11-02T10:00:00Z", updated_at: "2026-11-02T11:00:00Z" },
+        ] });
+      }
       if (url === "/health") return Promise.resolve({ data: { status: "ok" } });
       if (url === "/announcements") {
         return Promise.resolve({ data: [
@@ -61,7 +66,16 @@ describe("PortalPage (v2 portal home)", () => {
 
     render(<MemoryRouter><PortalPage /></MemoryRouter>);
 
-    await waitFor(() => expect(screen.getByText(/暂无自动建模任务/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/暂无近期任务/)).toBeInTheDocument());
+  });
+
+  it("merges agent runs into the recent list with a type badge", async () => {
+    render(<MemoryRouter><PortalPage /></MemoryRouter>);
+
+    expect(await screen.findByText("智能体任务", { selector: ".v2-badge" })).toBeInTheDocument();
+    expect(screen.getByText(/电阻点焊 · Fault/)).toBeInTheDocument();
+    // AutoML 条目仍保留类型标识（两条）
+    expect(screen.getAllByText("建模任务", { selector: ".v2-badge" }).length).toBeGreaterThanOrEqual(2);
   });
 
   it("lists real announcements and the LLM gateway state instead of static copy", async () => {
