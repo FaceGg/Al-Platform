@@ -19,7 +19,7 @@ vi.mock("../i18n", () => ({
 }));
 
 const KB = { id: "kb-1", name: "焊接工艺知识库", document_count: 2 };
-const PROFILE = { id: "p-1", name: "DeepSeek", model_id: "deepseek-chat" };
+const PROFILE = { id: "p-1", name: "DeepSeek", model_id: "deepseek-chat", is_default: true };
 
 function renderPage() {
   return render(
@@ -124,8 +124,8 @@ describe("AIChatPage", () => {
     // 工具条默认值落 localStorage（思考强度 off / 上下文窗口 8）
     await waitFor(() => expect(localStorage.getItem("chat.thinkingLevel")).toBe("off"));
     await waitFor(() => expect(localStorage.getItem("chat.contextWindow")).toBe("8"));
-    // 输入框内嵌控件：思考强度选择器（选中值"关闭"）与上下文容量圆圈
-    expect(await screen.findByText(/关闭/)).toBeInTheDocument();
+    // 输入框内嵌控件：模型按钮（含思考强度文案）与上下文容量圆圈
+    expect(await screen.findByText(/deepseek-chat/)).toBeInTheDocument();
     expect(await screen.findByTitle(/上下文/)).toBeInTheDocument();
   });
 });
