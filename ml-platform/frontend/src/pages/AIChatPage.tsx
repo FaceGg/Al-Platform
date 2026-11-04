@@ -230,22 +230,60 @@ export default function AIChatPage() {
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
                   {/* 上下文容量：点击展开窗口设置 */}
                   <Popover
-                    trigger="click"
+                    trigger={["click", "hover"]}
                     title={text.contextManager}
-                    content={(
-                      <div style={{ width: 250 }}>
-                        <div style={{ fontSize: 12, marginBottom: 8 }}>
-                          {lang === "zh"
-                            ? `对话 ${messages.filter(m => m.role !== "system").length} 条；发送携带最近 ${contextWindow} 条（≈${fmtK(usedTokens)} tokens / 预算 32K）。`
-                            : `${messages.length} msgs; last ${contextWindow} ride along (≈${fmtK(usedTokens)} / 32K tokens).`}
+                    content={(() => {
+                      const sysTokens = Math.ceil(systemPrompt.length / 4);
+                      const userTokens = Math.ceil(input.length / 4);
+                      const otherTokens = Math.max(0, usedTokens - carried.reduce((s, m) => s + Math.ceil(m.content.length / 4), 0));
+                      const rows: Array<[string, number]> = [
+                        [zh ? "消息" : "Messages", usedTokens - sysTokens - userTokens - otherTokens],
+                        [zh ? "系统提示词" : "System prompt", sysTokens],
+                        [zh ? "正在输入" : "Composing", userTokens],
+                        [zh ? "其他" : "Other", otherTokens],
+                      ];
+                      // 占比分母：分项求和（usedTokens 为 0 时避免除零与 >100%）
+                      const total = Math.max(1, rows.reduce((s, [, v]) => s + Math.max(0, v), 0));
+                      return (
+                        <div style={{ width: 280 }}>
+                          {/* 标题行：上下文容量 …… 78.9万/100万（78.9%） */}
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+                            <b style={{ fontSize: 13.5, color: "var(--v2-txt)" }}>{text.contextManager}</b>
+                            <span style={{ fontSize: 12, color: "var(--v2-sub)", fontVariantNumeric: "tabular-nums" }}>
+                              {fmtK(usedTokens)}/32K（{pct}%）
+                            </span>
+                          </div>
+                          {/* 粗进度条 */}
+                          <div style={{ height: 8, borderRadius: 4, background: "rgba(128,140,160,.25)", overflow: "hidden", marginBottom: 12 }}>
+                            <div style={{ width: `${pct}%`, height: "100%", background: pct > 80 ? "#e66f75" : "#2f9bf5", borderRadius: 4 }} />
+                          </div>
+                          {/* 分项明细（彩色圆点 + 名称 + 占比） */}
+                          {rows.filter(([, v]) => v > 0).map(([name, value], idx) => {
+                            const share = Math.round((value / total) * 1000) / 10;
+                            return (
+                              <div key={name} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 12.5 }}>
+                                <span style={{ width: 7, height: 7, borderRadius: "50%", background: ["#2f9bf5", "#1d6fd0", "#7fd0ff", "#9b7bff"][idx % 4] }} />
+                                <span style={{ flex: 1, color: "var(--v2-txt)" }}>{name}</span>
+                                <span style={{ color: "var(--v2-sub)", fontVariantNumeric: "tabular-nums" }}>{share.toFixed(1)}%</span>
+                              </div>
+                            );
+                          })}
+                          <div style={{ borderTop: "1px solid var(--v2-line, rgba(36,52,79,.6)", marginTop: 8, paddingTop: 8 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "var(--v2-sub)" }}>
+                              <span>{zh ? "上下文预算" : "Context budget"}</span>
+                              <span>32K</span>
+                            </div>
+                          </div>
+                          <div style={{ borderTop: "1px solid var(--v2-line, rgba(36,52,79,.6)", marginTop: 8, paddingTop: 10 }}>
+                            <div style={{ fontSize: 12, marginBottom: 4 }}>{lang === "zh" ? `携带窗口：${contextWindow} 条` : `Window: ${contextWindow}`}</div>
+                            <Slider min={0} max={20} step={2} value={contextWindow} onChange={setContextWindow} />
+                            <Button size="small" block icon={<ClearOutlined />} onClick={() => setMessages([])} disabled={messages.length === 0} style={{ marginTop: 8 }}>
+                              {text.clearContext}
+                            </Button>
+                          </div>
                         </div>
-                        <div style={{ fontSize: 12, marginBottom: 4 }}>{lang === "zh" ? `携带窗口：${contextWindow} 条` : `Window: ${contextWindow}`}</div>
-                        <Slider min={0} max={20} step={2} value={contextWindow} onChange={setContextWindow} />
-                        <Button size="small" block icon={<ClearOutlined />} onClick={() => setMessages([])} disabled={messages.length === 0} style={{ marginTop: 8 }}>
-                          {text.clearContext}
-                        </Button>
-                      </div>
-                    )}
+                      );
+                    })()}
                   >
                     <div
                       title={`${text.contextManager}：≈${fmtK(usedTokens)} / 32K tokens`}
