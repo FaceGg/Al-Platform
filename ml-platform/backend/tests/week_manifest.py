@@ -147,6 +147,7 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_model_port_envelope",
         "test_announcements_api",
         "test_spot_weld_quality_list_api",
+        "test_s5_integration_criteria",
     ],
     9: [
         "test_inference_production_models",

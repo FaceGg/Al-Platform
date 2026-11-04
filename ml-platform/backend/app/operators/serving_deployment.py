@@ -65,11 +65,15 @@ class LoadDeploymentModelOperator(BaseOperator):
                 f"deployment_id 不是合法 UUID: {deployment_id!r}"
             ) from error
         db = context.artifact_service.db
+        # DAG 运行时 project_id 是 str——UUID 列绑定前收敛（str.hex 崩）
+        project_uuid = context.project_id
+        if not isinstance(project_uuid, _uuid.UUID):
+            project_uuid = _uuid.UUID(str(project_uuid))
         deployment = (
             db.query(InferenceDeployment)
             .filter(
                 InferenceDeployment.id == deployment_uuid,
-                InferenceDeployment.project_id == context.project_id,
+                InferenceDeployment.project_id == project_uuid,
             )
             .first()
         )
@@ -141,6 +145,11 @@ class LoadDeploymentModelOperator(BaseOperator):
                 )
         if not hasattr(model, "predict"):
             raise RuntimeError("加载的对象没有 predict 方法，不能作为模型端口输出")
+        # 端口契约：apply_model 消费 joblib 字节（load_model_artifact 同口径，
+        # 尾部 re-serialize；2026-11-04 修正——对象直传会让 apply_model 的
+        # BytesIO 反序列化崩）
+        buffer = io.BytesIO()
+        joblib.dump(model, buffer)
         return OperatorResult(
-            outputs={"model": model, "model_artifact_id": artifact_id},
+            outputs={"model": buffer.getvalue()},
         )
