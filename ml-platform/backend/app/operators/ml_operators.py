@@ -1,6 +1,7 @@
 from app.engine.operator_contract import OperatorContext, OperatorResult
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
+from app.services.model_artifact_sealing import seal_model_port_bytes
 import io
 import pandas as pd
 import numpy as np
@@ -59,7 +60,7 @@ class XGBoostTrainer(BaseOperator):
                 learning_rate=learning_rate, random_state=random_seed,
             )
         model.fit(X, y)
-        buf = io.BytesIO(); joblib.dump(model, buf); return OperatorResult(outputs={"model": buf.getvalue()})
+        buf = io.BytesIO(); joblib.dump(model, buf); return OperatorResult(outputs={"model": seal_model_port_bytes(buf.getvalue())})
 
 
 @register_operator
@@ -110,7 +111,7 @@ class RandomForestTrainer(BaseOperator):
                 n_estimators=n_estimators, max_depth=max_depth, random_state=random_seed,
             )
         model.fit(X, y)
-        buf = io.BytesIO(); joblib.dump(model, buf); return OperatorResult(outputs={"model": buf.getvalue()})
+        buf = io.BytesIO(); joblib.dump(model, buf); return OperatorResult(outputs={"model": seal_model_port_bytes(buf.getvalue())})
 
 
 @register_operator
@@ -149,7 +150,7 @@ class LinearModelTrainer(BaseOperator):
         else:
             model = LinearRegression()
         model.fit(X, y)
-        buf = io.BytesIO(); joblib.dump(model, buf); return OperatorResult(outputs={"model": buf.getvalue()})
+        buf = io.BytesIO(); joblib.dump(model, buf); return OperatorResult(outputs={"model": seal_model_port_bytes(buf.getvalue())})
 
 import io
 # === Auto-generated ML operators ===
@@ -185,7 +186,7 @@ class DecisionTreeOp(BaseOperator):
         model = DecisionTreeClassifier(criterion=params.get("criterion","gini"), max_depth=int(params.get("max_depth",5)), min_samples_split=int(params.get("min_samples_split",2)), random_state=int(params.get("random_seed",42)))
         model.fit(X, y)
         buf = io.BytesIO(); joblib.dump(model, buf)
-        return OperatorResult(outputs={"model": buf.getvalue()})
+        return OperatorResult(outputs={"model": seal_model_port_bytes(buf.getvalue())})
 
 @register_operator
 class NaiveBayesOp(BaseOperator):
@@ -206,7 +207,7 @@ class NaiveBayesOp(BaseOperator):
             X[col] = X[col].astype("category").cat.codes
         model = GaussianNB(); model.fit(X, y)
         buf = io.BytesIO(); joblib.dump(model, buf)
-        return OperatorResult(outputs={"model": buf.getvalue()})
+        return OperatorResult(outputs={"model": seal_model_port_bytes(buf.getvalue())})
 
 @register_operator
 class KNNClassifierOp(BaseOperator):
@@ -227,7 +228,7 @@ class KNNClassifierOp(BaseOperator):
             X[col] = X[col].astype("category").cat.codes
         model = KNeighborsClassifier(n_neighbors=int(params.get("k",5))); model.fit(X, y)
         buf = io.BytesIO(); joblib.dump(model, buf)
-        return OperatorResult(outputs={"model": buf.getvalue()})
+        return OperatorResult(outputs={"model": seal_model_port_bytes(buf.getvalue())})
 
 @register_operator
 class SVMClassifierOp(BaseOperator):
@@ -248,7 +249,7 @@ class SVMClassifierOp(BaseOperator):
             X[col] = X[col].astype("category").cat.codes
         model = SVC(kernel=params.get("kernel","rbf"), C=float(params.get("C",1.0)), gamma=params.get("gamma","scale"), probability=True); model.fit(X, y)
         buf = io.BytesIO(); joblib.dump(model, buf)
-        return OperatorResult(outputs={"model": buf.getvalue()})
+        return OperatorResult(outputs={"model": seal_model_port_bytes(buf.getvalue())})
 
 @register_operator
 class LogisticRegressionOp(BaseOperator):
@@ -269,7 +270,7 @@ class LogisticRegressionOp(BaseOperator):
             X[col] = X[col].astype("category").cat.codes
         model = LogisticRegression(C=float(params.get("C",1.0)), max_iter=int(params.get("max_iter",100))); model.fit(X, y)
         buf = io.BytesIO(); joblib.dump(model, buf)
-        return OperatorResult(outputs={"model": buf.getvalue()})
+        return OperatorResult(outputs={"model": seal_model_port_bytes(buf.getvalue())})
 
 @register_operator
 class KMeansOp(BaseOperator):
@@ -359,7 +360,7 @@ class RandomForestRegressorOp(BaseOperator):
             X[col] = X[col].astype("category").cat.codes
         model = RandomForestRegressor(n_estimators=int(params.get("n_estimators",100)), max_depth=int(params.get("max_depth",10)), random_state=int(params.get("random_seed",42))); model.fit(X, y)
         buf = io.BytesIO(); joblib.dump(model, buf)
-        return OperatorResult(outputs={"model": buf.getvalue()})
+        return OperatorResult(outputs={"model": seal_model_port_bytes(buf.getvalue())})
 
 @register_operator
 class SVMRegressionOp(BaseOperator):
@@ -380,7 +381,7 @@ class SVMRegressionOp(BaseOperator):
             X[col] = X[col].astype("category").cat.codes
         model = SVR(kernel=params.get("kernel","rbf"), C=float(params.get("C",1.0)), epsilon=float(params.get("epsilon",0.1))); model.fit(X, y)
         buf = io.BytesIO(); joblib.dump(model, buf)
-        return OperatorResult(outputs={"model": buf.getvalue()})
+        return OperatorResult(outputs={"model": seal_model_port_bytes(buf.getvalue())})
 
 @register_operator
 class ApplyModelOp(BaseOperator):

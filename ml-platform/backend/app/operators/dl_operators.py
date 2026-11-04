@@ -1,6 +1,7 @@
 from app.engine.operator_contract import OperatorContext, OperatorResult
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
+from app.services.model_artifact_sealing import seal_model_port_bytes
 import pandas as pd
 import numpy as np
 import io
@@ -129,7 +130,7 @@ if TORCH_AVAILABLE:
             buf = io.BytesIO()
             _pickle.dump(model_pkg, buf)
             buf.seek(0)
-            return OperatorResult(outputs={"model": buf.getvalue()})
+            return OperatorResult(outputs={"model": seal_model_port_bytes(buf.getvalue())})
 
 
 if not TORCH_AVAILABLE:
@@ -254,7 +255,7 @@ if TORCH_AVAILABLE:
             }
             buffer = io.BytesIO()
             _pickle.dump(payload, buffer)
-            return OperatorResult(outputs={"model": buffer.getvalue()})
+            return OperatorResult(outputs={"model": seal_model_port_bytes(buffer.getvalue())})
 
 
     @register_operator
@@ -333,4 +334,4 @@ if TORCH_AVAILABLE:
             buf = io.BytesIO()
             _pickle.dump(model_pkg, buf)
             buf.seek(0)
-            return OperatorResult(outputs={"model": buf.getvalue()})
+            return OperatorResult(outputs={"model": seal_model_port_bytes(buf.getvalue())})
