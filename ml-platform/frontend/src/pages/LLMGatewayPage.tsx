@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Modal, Form, Input, InputNumber, message, Popconfirm, Space, Select, Switch } from 'antd'
+import { Button, Collapse, Modal, Form, Input, InputNumber, message, Popconfirm, Space, Select, Switch } from 'antd'
 import { PlusOutlined, ReloadOutlined, ApiOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useI18n } from '../i18n'
 import AppLayout from '../components/AppLayout'
@@ -277,6 +277,8 @@ export default function LLMGatewayPage() {
         onOk={submit}
         onCancel={() => setModalOpen(false)}
         confirmLoading={saving}
+        okText={zh ? '保存' : 'Save'}
+        cancelText={zh ? '取消' : 'Cancel'}
         width={640}
         destroyOnClose
       >
@@ -294,17 +296,17 @@ export default function LLMGatewayPage() {
           </Form.Item>
           <Form.Item
             name="api_url"
-            label="URL"
+            label="Base URL"
             rules={[{ required: true }, { pattern: /^https:\/\//, message: text.httpsOnly }]}
           >
-            <Input placeholder="https://..." />
+            <Input placeholder="https://api.example.com/v1/chat/completions" />
           </Form.Item>
           <Form.Item
             name="api_key"
             label={text.colKey}
             extra={editing ? text.keyKeepBlank : text.keyWriteOnly}
           >
-            <Input.Password autoComplete="new-password" />
+            <Input.Password autoComplete="new-password" placeholder={zh ? '输入 API Key' : 'API Key'} />
           </Form.Item>
           <Form.Item name="model_id" label={text.colModel} rules={[{ required: true }]}>
             <Input />
@@ -317,23 +319,35 @@ export default function LLMGatewayPage() {
               ]}
             />
           </Form.Item>
-          <Form.Item name="purpose_tags" label={text.colPurposes}>
-            <Select mode="multiple" options={PURPOSE_OPTIONS.map((value) => ({ value, label: value }))} />
-          </Form.Item>
-          <Space size="large">
-            <Form.Item name="timeout_seconds" label={text.colTimeout}>
-              <InputNumber min={1} max={600} />
-            </Form.Item>
-            <Form.Item name="temperature" label="temperature">
-              <InputNumber min={0} max={2} step={0.1} />
-            </Form.Item>
-            <Form.Item name="max_tokens" label="max_tokens">
-              <InputNumber min={1} />
-            </Form.Item>
-          </Space>
-          <Form.Item name="is_default" label={text.setDefault} valuePropName="checked">
-            <Switch />
-          </Form.Item>
+          {/* 高级配置默认收起：参数项低频，参考对话式模型配置的分层结构 */}
+          <Collapse
+            ghost
+            items={[{
+              key: 'advanced',
+              label: zh ? '高级配置' : 'Advanced',
+              children: (
+                <>
+                  <Form.Item name="purpose_tags" label={text.colPurposes}>
+                    <Select mode="multiple" options={PURPOSE_OPTIONS.map((value) => ({ value, label: value }))} />
+                  </Form.Item>
+                  <Space size="large" wrap>
+                    <Form.Item name="timeout_seconds" label={text.colTimeout}>
+                      <InputNumber min={1} max={600} />
+                    </Form.Item>
+                    <Form.Item name="temperature" label="temperature">
+                      <InputNumber min={0} max={2} step={0.1} />
+                    </Form.Item>
+                    <Form.Item name="max_tokens" label="max_tokens">
+                      <InputNumber min={1} />
+                    </Form.Item>
+                  </Space>
+                  <Form.Item name="is_default" label={text.setDefault} valuePropName="checked">
+                    <Switch />
+                  </Form.Item>
+                </>
+              ),
+            }]}
+          />
         </Form>
       </Modal>
     </AppLayout>

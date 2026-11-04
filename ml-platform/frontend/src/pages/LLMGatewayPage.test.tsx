@@ -111,16 +111,13 @@ describe("LLMGatewayPage", () => {
     fireEvent.click(screen.getByText("DeepSeek", { selector: "span" }));
     await waitFor(() => expect(screen.getByLabelText("名称")).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "glm-backup" } });
-    fireEvent.change(screen.getByLabelText("URL"), {
+    fireEvent.change(screen.getByLabelText("Base URL"), {
       target: { value: "https://api.backup.com/v1/chat/completions" },
     });
     fireEvent.change(screen.getByLabelText("model_id"), { target: { value: "glm-4.6" } });
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: fixtureKey } });
-    const okButton = screen
-      .getAllByRole("button")
-      .find((button) => /^(OK|确\s*定)$/.test(button.textContent || ""));
-    expect(okButton).toBeTruthy();
-    fireEvent.click(okButton!);
+    const okButton = await screen.findByRole("button", { name: /保\s*存|Save|OK|确\s*定/ });
+    fireEvent.click(okButton);
     await waitFor(() => expect(mocks.createLlmProfile).toHaveBeenCalled());
     expect(mocks.createLlmProfile.mock.calls[0][0]).toMatchObject({
       name: "glm-backup",
