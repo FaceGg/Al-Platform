@@ -66,6 +66,17 @@ class TestBuildRequestByFormat(unittest.TestCase):
         self.assertEqual(len(body["messages"]), 1)
         self.assertGreaterEqual(body["max_tokens"], 1)  # Anthropic 必填
 
+    def test_thinking_level_mapping(self):
+        # anthropic → thinking.budget_tokens；responses → reasoning.effort；
+        # chat completions 无标准参数不生效（不造假）
+        _u, _h, a_body = _build_llm_request(_config("anthropic"), MESSAGES, 0.7, 1000, "high")
+        self.assertEqual(a_body["thinking"], {"type": "enabled", "budget_tokens": 16384})
+        _u, _h, r_body = _build_llm_request(_config("responses"), MESSAGES, 0.7, 1000, "low")
+        self.assertEqual(r_body["reasoning"], {"effort": "low"})
+        _u, _h, c_body = _build_llm_request(_config("openai_compatible"), MESSAGES, 0.7, 1000, "high")
+        self.assertNotIn("thinking", c_body)
+        self.assertNotIn("reasoning", c_body)
+
 
 class TestStreamParsingByFormat(unittest.TestCase):
     def test_chat_completions_delta(self):

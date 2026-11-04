@@ -1,16 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
-import { ToolOutlined, SafetyOutlined } from "@ant-design/icons";
+import { Modal, Switch } from "antd";
+import { ToolOutlined, SafetyOutlined, SettingOutlined } from "@ant-design/icons";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
 
+interface WhitelistItem {
+  tool: string;
+  label: string;
+  kind: "read" | "write" | "insight";
+  enabled: boolean;
+}
+
 interface WhitelistResponse {
-  read_tools?: string[];
-  insight_tools?: string[];
-  write_tools?: string[];
+  read_tools?: WhitelistItem[];
+  insight_tools?: WhitelistItem[];
+  write_tools?: WhitelistItem[];
 }
 
 interface PendingInvocation {
   tool: string;
+  label: string;
   kind: "read" | "write" | "insight";
   needsConfirm: boolean;
   message?: string;
@@ -32,16 +41,18 @@ export default function ChatToolsPanel({ onResult }: { onResult: (text: string) 
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  const load = () => {
     apiClient.get("/chat-tools/whitelist").then((r) => setWhitelist(r.data || {})).catch(() => setWhitelist({}));
-  }, []);
+  };
+
+  useEffect(load, []);
 
   const entries = useMemo(() => {
-    const list: { tool: string; kind: PendingInvocation["kind"] }[] = [];
-    (whitelist.insight_tools || []).forEach((tool) => list.push({ tool, kind: "insight" }));
-    (whitelist.read_tools || []).forEach((tool) => list.push({ tool, kind: "read" }));
-    (whitelist.write_tools || []).forEach((tool) => list.push({ tool, kind: "write" }));
-    return list;
+    const list: WhitelistItem[] = [];
+    (whitelist.insight_tools || []).forEach((item) => list.push(item));
+    (whitelist.read_tools || []).forEach((item) => list.push(item));
+    (whitelist.write_tools || []).forEach((item) => list.push(item));
+    return list.filter((item) => item.enabled);
   }, [whitelist]);
 
   const kindLabel = (kind: PendingInvocation["kind"]) =>
@@ -49,8 +60,8 @@ export default function ChatToolsPanel({ onResult }: { onResult: (text: string) 
   const kindClass = (kind: PendingInvocation["kind"]) =>
     kind === "write" ? "v2-bgo" : kind === "insight" ? "v2-bp" : "v2-bb";
 
-  const pick = (tool: string, kind: PendingInvocation["kind"]) => {
-    setSelected({ tool, kind, needsConfirm: false });
+  const pick = (item: WhitelistItem) => {
+    setSelected({ tool: item.tool, label: item.label, kind: item.kind, needsConfirm: false });
     setParamsText("{}");
     setError("");
   };
@@ -102,20 +113,22 @@ export default function ChatToolsPanel({ onResult }: { onResult: (text: string) 
       </button>
 
       {open && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-          {entries.map(({ tool, kind }) => (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8, alignItems: "center" }}>
+          {entries.map((item) => (
             <button
-              key={tool}
+              key={item.tool}
               type="button"
-              onClick={() => pick(tool, kind)}
+              title={item.tool}
+              onClick={() => pick(item)}
               style={{
                 fontSize: 11.5, padding: "2px 9px", borderRadius: 9, cursor: "pointer",
                 border: "1px solid rgba(36,52,79,.9)", background: "rgba(22,34,58,.6)", color: "inherit",
               }}
             >
-              {tool} <span style={{ opacity: 0.75 }}>[{kindLabel(kind)}]</span>
+              {item.label} <span style={{ opacity: 0.75 }}>[{kindLabel(item.kind)}]</span>
             </button>
           ))}
+          <AdminToolsConfig onSaved={() => load()} />
         </div>
       )}
 
@@ -125,7 +138,7 @@ export default function ChatToolsPanel({ onResult }: { onResult: (text: string) 
           background: "rgba(47,155,245,.06)", padding: "10px 12px",
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <span className={`v2-badge ${kindClass(selected.kind)}`}>{selected.tool}</span>
+            <span className={`v2-badge ${kindClass(selected.kind)}`} title={selected.tool}>{selected.label}</span>
             <span style={{ fontSize: 12, color: "var(--v2-sub)" }}>
               {selected.kind === "write" ? (zh ? "写操作——需要确认后执行" : "write — requires confirmation") : zh ? "只读操作" : "read-only"}
             </span>
@@ -187,5 +200,76 @@ export default function ChatToolsPanel({ onResult }: { onResult: (text: string) 
         </div>
       )}
     </div>
+  );
+}
+
+/** 管理员工具启停配置（全局生效）：只有 admin 能看到入口。 */
+function AdminToolsConfig({ onSaved }: { onSaved: () => void }) {
+  const { lang } = useI18n();
+  const zh = lang === "zh";
+  const isAdmin = localStorage.getItem("role") === "admin";
+  const [open, setOpen] = useState(false);
+  const [tools, setTools] = useState<WhitelistItem[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  if (!isAdmin) return null;
+
+  const openPanel = () => {
+    apiClient.get("/chat-tools/config").then((r) => {
+      setTools(r.data?.tools ?? []);
+      setOpen(true);
+    }).catch(() => {});
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const disabled = tools.filter((t) => !t.enabled).map((t) => t.tool);
+      await apiClient.put("/chat-tools/config", { disabled });
+      setOpen(false);
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={openPanel}
+        title={zh ? "管理员配置工具启停（全局生效）" : "Admin: toggle tools globally"}
+        style={{
+          fontSize: 11.5, padding: "2px 9px", borderRadius: 9, cursor: "pointer",
+          border: "1px dashed rgba(36,52,79,.9)", background: "transparent", color: "inherit", opacity: 0.85,
+        }}
+      >
+        <SettingOutlined /> {zh ? "管理" : "Admin"}
+      </button>
+      <Modal
+        title={zh ? "白名单工具配置（对全部用户生效）" : "Chat tools (global)"}
+        open={open}
+        onCancel={() => setOpen(false)}
+        onOk={save}
+        confirmLoading={saving}
+        okText={zh ? "保存" : "Save"}
+        cancelText={zh ? "取消" : "Cancel"}
+      >
+        <div style={{ fontSize: 12, color: "var(--v2-dim, #999)", marginBottom: 10 }}>
+          {zh ? "停用的工具对所有用户隐藏且拒绝执行；写操作始终保留用户确认。" : "Disabled tools are hidden and rejected for all users."}
+        </div>
+        {tools.map((tool) => (
+          <div key={tool.tool} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0" }}>
+            <Switch
+              size="small"
+              checked={tool.enabled}
+              onChange={(checked) => setTools((prev) => prev.map((t) => (t.tool === tool.tool ? { ...t, enabled: checked } : t)))}
+            />
+            <span style={{ fontSize: 13 }}>{tool.label}</span>
+            <span style={{ fontSize: 11, color: "var(--v2-dim, #999)" }}>{tool.tool}</span>
+          </div>
+        ))}
+      </Modal>
+    </>
   );
 }

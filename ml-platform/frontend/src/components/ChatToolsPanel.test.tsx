@@ -15,9 +15,9 @@ describe("ChatToolsPanel (whitelist tools + write confirmation)", () => {
   beforeEach(() => {
     localStorage.clear();
     apiGet.mockReset().mockResolvedValue({ data: {
-      read_tools: ["list_projects"],
-      insight_tools: ["save_insight"],
-      write_tools: ["retrain_swap"],
+      read_tools: [{ tool: "list_projects", label: "查看项目列表", kind: "read", enabled: true }],
+      insight_tools: [{ tool: "save_insight", label: "沉淀对话洞察为经验", kind: "insight", enabled: true }],
+      write_tools: [{ tool: "retrain_swap", label: "闭环重训换模", kind: "write", enabled: true }],
     } });
     apiPost.mockReset();
     onResult.mockClear();
@@ -27,9 +27,9 @@ describe("ChatToolsPanel (whitelist tools + write confirmation)", () => {
     render(<ChatToolsPanel onResult={onResult} />);
 
     fireEvent.click(await screen.findByRole("button", { name: /白名单工具/ }));
-    expect(await screen.findByText(/list_projects/)).toBeInTheDocument();
-    expect(screen.getByText(/save_insight/)).toBeInTheDocument();
-    expect(screen.getByText(/retrain_swap/)).toBeInTheDocument();
+    expect(await screen.findByText(/查看项目列表/)).toBeInTheDocument();
+    expect(screen.getByText(/沉淀对话洞察为经验/)).toBeInTheDocument();
+    expect(screen.getByText(/闭环重训换模/)).toBeInTheDocument();
   });
 
   it("runs read tools directly and streams the result", async () => {
@@ -37,7 +37,7 @@ describe("ChatToolsPanel (whitelist tools + write confirmation)", () => {
     render(<ChatToolsPanel onResult={onResult} />);
 
     fireEvent.click(await screen.findByRole("button", { name: /白名单工具/ }));
-    fireEvent.click(await screen.findByText(/list_projects/));
+    fireEvent.click(await screen.findByText(/查看项目列表/));
     fireEvent.click(await screen.findByRole("button", { name: "执行" }));
 
     await waitFor(() => expect(onResult).toHaveBeenCalledWith(expect.stringContaining('"projects": 2')));
@@ -54,7 +54,7 @@ describe("ChatToolsPanel (whitelist tools + write confirmation)", () => {
     render(<ChatToolsPanel onResult={onResult} />);
 
     fireEvent.click(await screen.findByRole("button", { name: /白名单工具/ }));
-    fireEvent.click(await screen.findByText(/retrain_swap/));
+    fireEvent.click(await screen.findByText(/闭环重训换模/));
     fireEvent.click(await screen.findByRole("button", { name: "执行" }));
 
     // First attempt comes back as confirmation_required; the confirm card appears.
@@ -73,7 +73,7 @@ describe("ChatToolsPanel (whitelist tools + write confirmation)", () => {
   it("rejects invalid JSON params without calling the API", async () => {
     render(<ChatToolsPanel onResult={onResult} />);
     fireEvent.click(await screen.findByRole("button", { name: /白名单工具/ }));
-    fireEvent.click(await screen.findByText(/list_projects/));
+    fireEvent.click(await screen.findByText(/查看项目列表/));
     fireEvent.change(await screen.findByLabelText("工具参数 JSON"), { target: { value: "{bad" } });
     fireEvent.click(screen.getByRole("button", { name: "执行" }));
 

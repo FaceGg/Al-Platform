@@ -53,18 +53,26 @@ def _retrieve_for_chat(db: Session, kb, message: str, top_k: int):
         return []
 
 
-def _assemble_messages(system_prompt: str, message: str, context: str | None):
-    """Build provider messages; KB content is data, never instructions."""
+def _assemble_messages(system_prompt: str, message: str, context: str | None, history: list[dict] | None = None):
+    """Build provider messages; KB content is data, never instructions.
+
+    history 为客户端传来的多轮上下文（user/assistant 交替），作为数据
+    拼在 system 之后、本次问题之前——内容由客户端对话产生，不作为
+    指令解释（引述即数据原则同 KB）。"""
     if context:
         system_content = f"{system_prompt}\n\n{RAG_SYSTEM_APPENDIX}"
         user_content = f"参考资料：\n\n{context}\n\n问题：{message}"
     else:
         system_content = system_prompt
         user_content = message
-    return [
-        {"role": "system", "content": system_content},
-        {"role": "user", "content": user_content},
-    ]
+    messages = [{"role": "system", "content": system_content}]
+    for item in (history or []):
+        role = item.get("role")
+        content = str(item.get("content") or "")
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": content[:4000]})
+    messages.append({"role": "user", "content": user_content})
+    return messages
 
 
 @router.post("")
@@ -72,6 +80,11 @@ def chat(
     message: str = Body(...),
     system_prompt: str = Body(default="You are a helpful AI assistant for welding manufacturing."),
     temperature: float = Body(default=0.7, ge=0, le=1),
+    # 多轮上下文：[{role: user|assistant, content}]，拼在本次问题前
+    history: list[dict] = Body(default_factory=list, max_length=50),
+    # 思考强度（off/low/medium/high）：anthropic→thinking.budget、
+    # responses→reasoning.effort；chat completions 无标准参数不生效
+    thinking_level: str | None = Body(default=None, pattern="^(off|low|medium|high)$"),
     # Deprecated request-level overrides (spec v0.9 §14.1 收口): kept only to
     # reject old callers with an explicit 422, never honored.
     api_key: str | None = Body(default=None, max_length=512),
@@ -122,10 +135,11 @@ def chat(
         reply, usage = chat_completion(
             db,
             config=config,
-            messages=_assemble_messages(system_prompt, message, context),
+            messages=_assemble_messages(system_prompt, message, context, history),
             temperature=temperature,
             purpose="chat",
             actor=current_user,
+            thinking_level=None if thinking_level == "off" else thinking_level,
         )
         db.commit()  # persist the gateway egress audit event
         payload = {

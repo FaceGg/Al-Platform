@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
+from app.api.users import get_current_admin
 from app.database import get_db
 from app.models.user import User
 from app.services.chat_tools import (
@@ -33,6 +34,17 @@ def execute(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # 管理员禁用的工具在执行层拒绝（前端隐藏只是第一层）
+    from app.models.platform_option import get_option
+
+    disabled = set(get_option(db, "chat_tools_disabled", []) or [])
+    if payload.tool in disabled:
+        return {
+            "status": "rejected",
+            "code": "CHAT_TOOL_DISABLED_BY_ADMIN",
+            "tool": payload.tool,
+            "message": "该工具已被管理员停用",
+        }
     try:
         result = execute_tool(
             db,
@@ -65,12 +77,83 @@ def execute(
 
 
 @router.get("/whitelist")
-def whitelist(current_user: User = Depends(get_current_user)):
-    """LLM 系统提示据此声明能力边界——白名单即边界（§15.2 第一层）。"""
-    from app.services.chat_tools import READ_TOOLS, WRITE_TOOLS
+def whitelist(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """工具目录（中文展示名+分组+启停状态）——启停配置管理员全局生效。"""
+    from app.models.platform_option import get_option
+    from app.services.chat_tools import READ_TOOLS, WRITE_TOOLS, TOOL_CATALOG
 
+    disabled = set(get_option(db, "chat_tools_disabled", []) or [])
+
+    def _tools(kind: str, names) -> list[dict]:
+        return [
+            {"tool": name, "label": TOOL_CATALOG.get(name, {}).get("label", name), "kind": kind, "enabled": name not in disabled}
+            for name in names
+        ]
+
+    read = _tools("read", sorted(READ_TOOLS - {"save_insight"}))
+    insight = _tools("insight", ["save_insight"])
+    write = _tools("write", sorted(WRITE_TOOLS))
     return {
-        "read_tools": sorted(READ_TOOLS - {"save_insight"}),
-        "insight_tools": ["save_insight"],
-        "write_tools": sorted(WRITE_TOOLS),
+        "read_tools": read,
+        "insight_tools": insight,
+        "write_tools": write,
+        "all": read + insight + write,
     }
+
+
+class ChatToolsConfigRequest(BaseModel):
+    disabled: list[str] = Field(default_factory=list)
+
+
+@router.get("/config")
+def get_tools_config(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    from app.models.platform_option import get_option
+    from app.services.chat_tools import TOOL_CATALOG
+
+    disabled = set(get_option(db, "chat_tools_disabled", []) or [])
+    return {
+        "tools": [
+            {"tool": name, "label": meta["label"], "kind": meta["kind"], "enabled": name not in disabled}
+            for name, meta in TOOL_CATALOG.items()
+        ],
+    }
+
+
+@router.put("/config")
+def put_tools_config(
+    payload: ChatToolsConfigRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """管理员配置工具启停（全局生效，同步全部用户）。"""
+    from app.models.platform_option import set_option
+    from app.services.chat_tools import TOOL_CATALOG
+    from app.services.platform_audit import PlatformAuditIntent, record_platform_event
+
+    unknown = [name for name in payload.disabled if name not in TOOL_CATALOG]
+    if unknown:
+        from fastapi import HTTPException
+
+        raise HTTPException(422, detail={"code": "CHAT_TOOL_UNKNOWN", "tools": unknown})
+    set_option(db, "chat_tools_disabled", sorted(set(payload.disabled)))
+    record_platform_event(
+        db,
+        actor=admin,
+        request=request,
+        intent=PlatformAuditIntent(
+            action="chat_tools.config",
+            resource_type="platform_option",
+            resource_id="chat_tools_disabled",
+            changes={"disabled_count": len(set(payload.disabled))},
+        ),
+        result="success",
+    )
+    db.commit()
+    return {"disabled": sorted(set(payload.disabled))}

@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import AIChatPage from "./AIChatPage";const apiClient = vi.hoisted(() => ({
+import AIChatPage from "./AIChatPage";
+const apiClient = vi.hoisted(() => ({
   get: vi.fn(),
   post: vi.fn(),
 }));
@@ -18,6 +19,7 @@ vi.mock("../i18n", () => ({
 }));
 
 const KB = { id: "kb-1", name: "焊接工艺知识库", document_count: 2 };
+const PROFILE = { id: "p-1", name: "DeepSeek", model_id: "deepseek-chat" };
 
 function renderPage() {
   return render(
@@ -34,15 +36,15 @@ describe("AIChatPage", () => {
     sessionStorage.clear();
     localStorage.setItem("chat.kbId", KB.id);
     apiClient.get.mockImplementation((url: string) => {
-      if (url === "/chat/status") return Promise.resolve({ data: { configured: false, model: "not set" } });
       if (url === "/knowledge/bases") return Promise.resolve({ data: [KB] });
+      if (url === "/llm-profiles") return Promise.resolve({ data: [PROFILE] });
       return Promise.reject(new Error("unexpected get " + url));
     });
   });
 
   it("shows the bound knowledge base tag and enables publish", async () => {
     renderPage();
-    await waitFor(() => expect(apiClient.get).toHaveBeenCalledWith("/chat/status"));
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalledWith("/knowledge/bases"));
     expect(await screen.findByText(/知识库: 焊接工艺知识库/)).toBeInTheDocument();
     const publish = screen.getByRole("button", { name: /发布为 API/ });
     expect(publish).toBeEnabled();
@@ -58,7 +60,7 @@ describe("AIChatPage", () => {
     );
   });
 
-  it("sends chat messages with the bound kb_id and renders citations", async () => {
+  it("sends chat messages with kb_id, thinking level and history", async () => {
     apiClient.post.mockImplementation((url: string, body?: any) => {
       if (url === "/chat") {
         return Promise.resolve({
@@ -73,13 +75,15 @@ describe("AIChatPage", () => {
       return Promise.reject(new Error("unexpected post " + url));
     });
     renderPage();
-    const input = await screen.findByPlaceholderText("输入有关焊接制造的问题...");
+    const input = await screen.findByPlaceholderText("输入消息，Enter 发送…");
     fireEvent.change(input, { target: { value: "点焊质量取决于什么？" } });
     fireEvent.click(screen.getByRole("button", { name: /发送/ }));
     await waitFor(() =>
       expect(apiClient.post).toHaveBeenCalledWith("/chat", expect.objectContaining({
         message: "点焊质量取决于什么？",
         kb_id: KB.id,
+        thinking_level: "off",
+        history: [],
       })),
     );
     expect(await screen.findByText(/点焊质量取决于焊接电流/)).toBeInTheDocument();
@@ -98,14 +102,30 @@ describe("AIChatPage", () => {
   it("binds a knowledge base through the settings dialog and persists the choice", async () => {
     localStorage.removeItem("chat.kbId");
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /对话配置/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /对话设置/ }));
 
-    const combobox = await screen.findByRole("combobox");
-    fireEvent.mouseDown(combobox);
+    // 弹窗内的知识库下拉（页面工具条也有常驻 Select，需限定 Modal 范围）
+    const modalCombobox = await waitFor(() => {
+      const inModal = screen.getAllByRole("combobox")
+        .find((el) => el.closest(".ant-modal"));
+      if (!inModal) throw new Error("modal combobox not found");
+      return inModal;
+    });
+    fireEvent.mouseDown(modalCombobox);
     fireEvent.click(await screen.findByText("焊接工艺知识库"));
     fireEvent.click(screen.getByRole("button", { name: /保存配置/ }));
 
     await waitFor(() => expect(localStorage.getItem("chat.kbId")).toBe(KB.id));
     expect(await screen.findByText(/知识库: 焊接工艺知识库/)).toBeInTheDocument();
+  });
+
+  it("persists thinking level and context window choices", async () => {
+    renderPage();
+    // 工具条默认值落 localStorage（思考强度 off / 上下文窗口 8）
+    await waitFor(() => expect(localStorage.getItem("chat.thinkingLevel")).toBe("off"));
+    await waitFor(() => expect(localStorage.getItem("chat.contextWindow")).toBe("8"));
+    // 思考强度切换控件存在
+    expect(await screen.findByText(/思考：关闭/)).toBeInTheDocument();
+    expect(await screen.findByText(/上下文 · 8/)).toBeInTheDocument();
   });
 });

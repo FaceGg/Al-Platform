@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
-import { Card, Input, Button, Typography, Space, Spin, Tag, Empty, Divider, Modal, Slider, Select, Collapse, message as antdMessage } from "antd";
-import { SendOutlined, RobotOutlined, UserOutlined, ClearOutlined, SettingOutlined, ShareAltOutlined, FileTextOutlined } from "@ant-design/icons";
+import { Card, Input, Button, Typography, Space, Spin, Tag, Empty, Divider, Modal, Slider, Select, Collapse, Popover, message as antdMessage } from "antd";
+import { SendOutlined, RobotOutlined, UserOutlined, ClearOutlined, SettingOutlined, ShareAltOutlined, FileTextOutlined, BlockOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import ChatToolsPanel from "../components/ChatToolsPanel";
 import apiClient from "../api/client";
@@ -14,44 +14,56 @@ interface ChatMsg { role: "user" | "assistant" | "system"; content: string; time
 export default function AIChatPage() {
   const { t, lang } = useI18n();
   const text = lang === "zh" ? {
-    settings: "对话配置", apiKey: "API Key", apiKeyHint: "仅本次浏览器会话使用，不会保存到服务器",
-    model: "模型", systemPrompt: "系统提示词", temperature: "生成随机度",
-    configured: "已配置", start: "开始对话", thinking: "正在思考...",
-    placeholder: "输入有关焊接制造的问题...", save: "保存配置",
+    settings: "对话设置",
+    systemPrompt: "系统提示词",
+    start: "开始对话", thinking: "正在思考...",
+    placeholder: "输入消息，Enter 发送…", save: "保存配置",
     knowledgeBase: "知识库（RAG）", knowledgeBaseHint: "绑定后回答基于知识库检索内容并标注引用来源",
     noKnowledgeBase: "不使用知识库", citations: "引用来源", noCitations: "本次回答未引用知识库内容",
     publishAsApi: "发布为 API", publishSuccessPrefix: "已发布为对话 API，",
     publishSuccessLink: "去 API 市场查看", publishFailed: "发布为 API 失败", kbBound: "知识库",
     emptySources: "知识库中没有检索到相关内容，已按通用助手回答",
+    contextManager: "上下文", clearContext: "清空上下文（开始新对话）",
+    thinkingLevel: "思考强度", modelSelect: "模型",
   } : {
-    settings: "Chat Settings", apiKey: "API Key", apiKeyHint: "Used only for this browser session and never saved on the server",
-    model: "Model", systemPrompt: "System prompt", temperature: "Temperature",
-    configured: "Configured", start: "Start a conversation", thinking: "Thinking...",
-    placeholder: "Ask about welding manufacturing...", save: "Save settings",
+    settings: "Chat Settings",
+    systemPrompt: "System prompt",
+    start: "Start a conversation", thinking: "Thinking...",
+    placeholder: "Type a message, Enter to send…", save: "Save settings",
     knowledgeBase: "Knowledge base (RAG)", knowledgeBaseHint: "Answers are grounded in retrieved chunks with numbered citations",
     noKnowledgeBase: "No knowledge base", citations: "Citations", noCitations: "This answer used no knowledge base content",
     publishAsApi: "Publish as API", publishSuccessPrefix: "Published as a chat API - ",
     publishSuccessLink: "open the API marketplace", publishFailed: "Publish failed", kbBound: "KB",
     emptySources: "Nothing relevant was retrieved from the knowledge base; answered as a general assistant",
+    contextManager: "Context", clearContext: "Clear context (new conversation)",
+    thinkingLevel: "Thinking", modelSelect: "Model",
   };
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState<any>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState(() => localStorage.getItem("chat.systemPrompt") || "你是汽车焊接制造领域的智能助手。");
-  const [temperature, setTemperature] = useState(() => Number(localStorage.getItem("chat.temperature") || "0.7"));
-  const [apiKey, setApiKey] = useState(() => sessionStorage.getItem("chat.apiKey") || "");
-  const [model, setModel] = useState(() => sessionStorage.getItem("chat.model") || "");
+  const [temperature] = useState(() => Number(localStorage.getItem("chat.temperature") || "0.7"));
   const [kbId, setKbId] = useState(() => localStorage.getItem("chat.kbId") || "");
   const [kbs, setKbs] = useState<any[]>([]);
   const [publishing, setPublishing] = useState(false);
+  // ZCode 式工具条状态：模型选择 / 思考强度 / 上下文携带条数
+  const [profiles, setProfiles] = useState<any[]>([]);
+  const [profileId, setProfileId] = useState(() => localStorage.getItem("chat.profileId") || "");
+  const [thinkingLevel, setThinkingLevel] = useState<string>(() => localStorage.getItem("chat.thinkingLevel") || "off");
+  const [contextWindow, setContextWindow] = useState<number>(() => Number(localStorage.getItem("chat.contextWindow") || "8"));
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    apiClient.get("/chat/status").then(r => setStatus(r.data)).catch(() => {});
     apiClient.get("/knowledge/bases").then(r => setKbs(Array.isArray(r.data) ? r.data : [])).catch(() => {});
+    apiClient.get("/llm-profiles").then(r => setProfiles(Array.isArray(r.data) ? r.data : [])).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem("chat.profileId", profileId);
+    localStorage.setItem("chat.thinkingLevel", thinkingLevel);
+    localStorage.setItem("chat.contextWindow", String(contextWindow));
+  }, [profileId, thinkingLevel, contextWindow]);
 
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
@@ -68,13 +80,19 @@ export default function AIChatPage() {
     setMessages(prev => [...prev, userMsg]);
     setInput("");
     setLoading(true);
+    // 多轮上下文：携带最近 contextWindow 条对话（user/assistant）
+    const history = messages
+      .filter(m => m.role === "user" || m.role === "assistant")
+      .slice(-contextWindow)
+      .map(m => ({ role: m.role, content: m.content }));
     try {
       const res = await apiClient.post("/chat", {
         message: trimmed,
         system_prompt: systemPrompt,
         temperature,
-        api_key: apiKey || undefined,
-        model: model || undefined,
+        history,
+        thinking_level: thinkingLevel,
+        profile_id: profileId || undefined,
         kb_id: kbId || undefined,
       });
       const reply = res.data.reply || "No response.";
@@ -129,11 +147,9 @@ export default function AIChatPage() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}><RobotOutlined /> {t.ai_chat.title}</Title>
         <Space>
-          {apiKey || status?.configured ? <Tag color="green">{text.configured}: {model || status?.model}</Tag> : <Tag color="red">{t.ai_chat.not_configured}</Tag>}
           {boundKb && <Tag color="purple">{`${text.kbBound}: ${boundKb.name}`}</Tag>}
           <Button icon={<ShareAltOutlined />} onClick={publishApi} disabled={!kbId} loading={publishing}>{text.publishAsApi}</Button>
           <Button icon={<SettingOutlined />} onClick={() => { fetchKbs(); setSettingsOpen(true); }}>{text.settings}</Button>
-          <Button icon={<ClearOutlined />} onClick={() => setMessages([])} disabled={messages.length === 0}>{t.ai_chat.clear}</Button>
         </Space>
       </div>
       <Card styles={{ body: { height: "calc(100vh - 260px)", display: "flex", flexDirection: "column", padding: 0 } }}>
@@ -185,6 +201,52 @@ export default function AIChatPage() {
           <ChatToolsPanel onResult={(resultText) => {
             setMessages(prev => [...prev, { role: "assistant", content: resultText, time: new Date().toLocaleTimeString() }]);
           }} />
+          {/* ZCode 式输入工具条：模型 / 思考强度 / 上下文管理 */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+            <Select
+              size="small"
+              value={profileId || undefined}
+              onChange={(v) => setProfileId(v || "")}
+              placeholder={lang === "zh" ? "默认模型" : "Default model"}
+              style={{ minWidth: 180 }}
+              allowClear
+              options={profiles.map(p => ({ value: p.id, label: `${p.name} · ${p.model_id}` }))}
+            />
+            <Select
+              size="small"
+              value={thinkingLevel}
+              onChange={setThinkingLevel}
+              style={{ minWidth: 110 }}
+              options={[
+                { value: "off", label: lang === "zh" ? "思考：关闭" : "Think: off" },
+                { value: "low", label: lang === "zh" ? "思考：低" : "Think: low" },
+                { value: "medium", label: lang === "zh" ? "思考：中" : "Think: med" },
+                { value: "high", label: lang === "zh" ? "思考：高" : "Think: high" },
+              ]}
+            />
+            <Popover
+              title={text.contextManager}
+              trigger="click"
+              content={(
+                <div style={{ width: 240 }}>
+                  <div style={{ fontSize: 12, marginBottom: 8 }}>
+                    {lang === "zh"
+                      ? `当前对话 ${messages.filter(m => m.role !== "system").length} 条；发送时携带最近 ${contextWindow} 条作为上下文。`
+                      : `${messages.length} messages; the last ${contextWindow} ride along.`}
+                  </div>
+                  <div style={{ fontSize: 12, marginBottom: 6 }}>{lang === "zh" ? `携带条数：${contextWindow}` : `Context: ${contextWindow}`}</div>
+                  <Slider min={0} max={20} step={2} value={contextWindow} onChange={setContextWindow} />
+                  <Button size="small" block icon={<ClearOutlined />} onClick={() => setMessages([])} disabled={messages.length === 0} style={{ marginTop: 8 }}>
+                    {text.clearContext}
+                  </Button>
+                </div>
+              )}
+            >
+              <Button size="small" icon={<BlockOutlined />}>
+                {text.contextManager} · {contextWindow}
+              </Button>
+            </Popover>
+          </div>
           <Space.Compact style={{ width: "100%" }}>
             <Input.TextArea
               autoComplete="off" value={input}
@@ -200,10 +262,7 @@ export default function AIChatPage() {
       </Card>
       <Modal title={text.settings} open={settingsOpen} onCancel={() => setSettingsOpen(false)} okText={text.save} onOk={() => {
         localStorage.setItem("chat.systemPrompt", systemPrompt);
-        localStorage.setItem("chat.temperature", String(temperature));
         localStorage.setItem("chat.kbId", kbId);
-        sessionStorage.setItem("chat.apiKey", apiKey);
-        sessionStorage.setItem("chat.model", model);
         setSettingsOpen(false);
       }}>
         <Text strong>{text.knowledgeBase}</Text>
@@ -216,17 +275,8 @@ export default function AIChatPage() {
           options={kbs.map(kb => ({ value: kb.id, label: kb.name }))}
         />
         <Text type="secondary" style={{ display: "block", fontSize: 12, marginBottom: 16 }}>{text.knowledgeBaseHint}</Text>
-        <Text strong>{text.apiKey}</Text>
-        <Input.Password value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off"
-          placeholder="sk-..." style={{ marginTop: 8, marginBottom: 4 }} />
-        <Text type="secondary" style={{ display: "block", fontSize: 12, marginBottom: 16 }}>{text.apiKeyHint}</Text>
-        <Text strong>{text.model}</Text>
-              <Input autoComplete="off" value={model} onChange={(event) => setModel(event.target.value)} placeholder={status?.model || "gpt-4o-mini"}
-          style={{ marginTop: 8, marginBottom: 16 }} />
         <Text strong>{text.systemPrompt}</Text>
-              <Input.TextArea autoComplete="off" value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} rows={5} style={{ marginTop: 8, marginBottom: 16 }} />
-        <Text strong>{text.temperature}: {temperature.toFixed(1)}</Text>
-        <Slider min={0} max={1} step={0.1} value={temperature} onChange={setTemperature} />
+        <Input.TextArea autoComplete="off" value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} rows={5} style={{ marginTop: 8 }} />
       </Modal>
     </AppLayout>
   );

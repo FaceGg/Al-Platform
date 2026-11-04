@@ -110,13 +110,17 @@ def resolve_profile(
 
 
 def _build_llm_request(
-    config, messages: list[dict], temperature: float, max_tokens: int
+    config, messages: list[dict], temperature: float, max_tokens: int,
+    thinking_level: str | None = None,
 ) -> tuple[str, dict, dict]:
     """按 API 格式构造请求（url/headers/body）。三格式均走 SSE 流式。
 
     - openai_compatible：POST {url}/chat/completions（用户填完整端点）
     - responses：POST {url}/responses（OpenAI Responses 协议）
     - anthropic：POST {url}/v1/messages（x-api-key + anthropic-version）
+    thinking_level（off/low/medium/high）按格式映射：anthropic →
+    thinking.budget_tokens；responses → reasoning.effort；chat
+    completions 无标准参数则忽略（不造假）。
     """
     provider = config.provider or "openai_compatible"
     if provider == "anthropic":
@@ -143,6 +147,11 @@ def _build_llm_request(
             body["system"] = system_text
         if temperature is not None:
             body["temperature"] = temperature
+        if thinking_level in ("low", "medium", "high"):
+            body["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": {"low": 4096, "medium": 8192, "high": 16384}[thinking_level],
+            }
         return config.api_url, headers, body
     if provider == "responses":
         headers = (
@@ -160,6 +169,8 @@ def _build_llm_request(
             body["temperature"] = temperature
         if max_tokens:
             body["max_output_tokens"] = max_tokens
+        if thinking_level in ("low", "medium", "high"):
+            body["reasoning"] = {"effort": thinking_level}
         return config.api_url, headers, body
     # 默认：Chat Completions（存量路径行为不变）
     headers = (
@@ -261,6 +272,7 @@ def chat_completion(
     actor=None,
     request=None,
     timeout_floor: float | None = None,
+    thinking_level: str | None = None,
 ) -> tuple[str | None, dict]:
     """Synchronous completion through the resolved config, with egress audit.
 
@@ -294,7 +306,7 @@ def chat_completion(
     # 三种 API 格式共用同一流式框架：构造器/解析器按 provider 分派
     # （openai_compatible=Chat Completions / responses / anthropic）。
     url, headers, body = _build_llm_request(
-        config, messages, resolved_temperature, max_tokens
+        config, messages, resolved_temperature, max_tokens, thinking_level
     )
     reply_parts: list[str] = []
     usage: dict = {}

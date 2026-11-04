@@ -39,6 +39,23 @@ WRITE_TOOLS = {
 }
 WHITELIST = sorted(READ_TOOLS | WRITE_TOOLS)
 
+# 工具目录（中文展示名 + 分组）：对话面板据此渲染按钮，管理员配置页
+# 据此列出可启停项。函数名是调用契约不能改，展示层用业务语义名。
+TOOL_CATALOG: dict[str, dict] = {
+    "list_datasets": {"label": "查看数据集列表", "kind": "read"},
+    "preview_dataset": {"label": "预览数据集", "kind": "read"},
+    "query_training_status": {"label": "查询训练状态", "kind": "read"},
+    "query_loop_status": {"label": "查询闭环任务状态", "kind": "read"},
+    "get_api_call_example": {"label": "获取 API 调用示例", "kind": "read"},
+    "query_recipe_reports": {"label": "查询配方报告", "kind": "read"},
+    "save_insight": {"label": "沉淀对话洞察为经验", "kind": "insight"},
+    "create_automl_task": {"label": "创建自动建模任务", "kind": "write"},
+    "create_loop_task": {"label": "创建闭环任务", "kind": "write"},
+    "create_recipe_task": {"label": "按配方创建任务", "kind": "write"},
+    "publish_workflow_api": {"label": "发布工作流为 API", "kind": "write"},
+    "offline_api": {"label": "下线 API", "kind": "write"},
+}
+
 
 class ToolNotInWhitelist(LookupError):
     """Structural boundary: the tool does not exist for the LLM."""
