@@ -345,15 +345,21 @@ export default function AIChatPage() {
                 background: "var(--v2-panel2, rgba(22,34,58,.35))",
                 padding: "10px 12px 8px", transition: "border-color .15s",
               }}>
-                <Input.TextArea
-                  autoComplete="off" value={input}
-                  onChange={e => setInput(e.target.value)}
+                {/* 原生 textarea：彻底去掉 antd 白底圆角嵌套块，融入容器 */}
+                <textarea
+                  autoComplete="off"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder={text.placeholder}
-                  autoSize={{ minRows: 2, maxRows: 8 }}
                   disabled={loading}
-                  variant="borderless"
-                  style={{ padding: "2px 4px", fontSize: 13.5, background: "transparent" }}
+                  rows={2}
+                  style={{
+                    width: "100%", border: "none", outline: "none", resize: "none",
+                    background: "transparent", color: "var(--v2-txt, #142a33)",
+                    fontSize: 13.5, lineHeight: 1.6, padding: "2px 6px",
+                    fontFamily: "inherit",
+                  }}
                 />
                 {/* 底部工具行：左=+ … 右=容量圆圈 | 模型 | 思考强度 | 发送 */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
@@ -486,30 +492,73 @@ export default function AIChatPage() {
                       <div style={{ width: 16, height: 16, borderRadius: "50%", background: "var(--v2-panel2, rgb(22,34,58))" }} />
                     </div>
                   </Popover>
-                  <Select
-                    size="small" variant="borderless"
-                    value={profileId || "__default__"}
-                    onChange={(v) => setProfileId(v === "__default__" ? "" : v)}
-                    style={{ minWidth: 150, fontSize: 12.5 }}
-                    suffixIcon={<DownOutlined style={{ fontSize: 10 }} />}
-                    options={[
-                      { value: "__default__", label: `${zh ? "默认模型" : "Default"} · ${profiles.find(p => p.is_default)?.model_id || "default"}` },
-                      ...profiles.filter(p => !p.is_default).map(p => ({ value: p.id, label: `${p.name} · ${p.model_id}` })),
-                    ]}
-                  />
-                  <Select
-                    size="small" variant="borderless"
-                    value={thinkingLevel}
-                    onChange={setThinkingLevel}
-                    style={{ width: 84, fontSize: 12.5 }}
-                    suffixIcon={<DownOutlined style={{ fontSize: 10 }} />}
-                    options={[
-                      { value: "off", label: lang === "zh" ? "关闭" : "Off" },
-                      { value: "low", label: lang === "zh" ? "低" : "Low" },
-                      { value: "medium", label: lang === "zh" ? "中" : "Med" },
-                      { value: "high", label: lang === "zh" ? "最高" : "Max" },
-                    ]}
-                  />
+                  {/* 模型+思考强度合并面板（参考 ZCode 第二图）：供应商头+模型列表带勾+思考强度渐变滑条 */}
+                  <Popover
+                    trigger="click"
+                    placement="topRight"
+                    content={(() => {
+                      const current = profiles.find(p => p.id === profileId) ?? profiles.find(p => p.is_default);
+                      const levels = [
+                        { value: "off", label: zh ? "关闭" : "Off" },
+                        { value: "low", label: zh ? "低" : "Low" },
+                        { value: "medium", label: zh ? "中" : "Med" },
+                        { value: "high", label: zh ? "最高" : "Max" },
+                      ];
+                      const ti = Math.max(0, levels.findIndex(l => l.value === thinkingLevel));
+                      return (
+                        <div style={{ width: 260 }}>
+                          {/* 供应商/档案头 */}
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 4px 10px" }}>
+                            <span aria-hidden="true" style={{ background: "#3859FF", borderRadius: 7, width: 26, height: 26, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 12 }}>
+                              {(current?.name || "AI").slice(0, 1)}
+                            </span>
+                            <b style={{ fontSize: 13.5, color: "var(--v2-txt)" }}>{current?.name ?? (zh ? "默认档案" : "Default profile")}</b>
+                            <span style={{ marginLeft: "auto", color: "var(--v2-dim)" }}>›</span>
+                          </div>
+                          <div style={{ fontSize: 12, color: "var(--v2-dim)", margin: "4px 0 2px" }}>{zh ? "模型" : "Model"}</div>
+                          {/* 模型列表（一档案一模型），选中带勾 */}
+                          {profiles.map((p) => {
+                            const selected = p.id === (profileId || profiles.find(x => x.is_default)?.id);
+                            return (
+                              <div
+                                key={p.id}
+                                onClick={() => setProfileId(p.id)}
+                                style={{
+                                  display: "flex", alignItems: "center", gap: 8, padding: "8px 10px",
+                                  borderRadius: 8, cursor: "pointer", fontSize: 13,
+                                  background: selected ? "rgba(47,155,245,.10)" : "transparent",
+                                }}
+                              >
+                                <span style={{ flex: 1 }}>{p.model_id}</span>
+                                {p.is_default ? <Tag style={{ marginRight: 0 }}>{zh ? "默认" : "default"}</Tag> : null}
+                                {selected ? <span style={{ color: "var(--v2-blue)" }}>✓</span> : null}
+                              </div>
+                            );
+                          })}
+                          <div style={{ borderTop: "1px solid var(--v2-line, rgba(36,52,79,.4))", marginTop: 8, paddingTop: 10 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+                              <span style={{ fontSize: 12, color: "var(--v2-sub)" }}>{zh ? "思考强度" : "Thinking"}</span>
+                              <b style={{ fontSize: 12.5, color: "var(--v2-txt)" }}>{levels[ti]?.label}</b>
+                            </div>
+                            <Slider
+                              min={0} max={3} step={1} value={ti}
+                              onChange={(v) => setThinkingLevel(levels[v]?.value ?? "off")}
+                              tooltip={{ open: false }}
+                              trackStyle={{ background: "linear-gradient(90deg, #1f9d55, #2f9bf5)", height: 10, borderRadius: 5 }}
+                              handleStyle={{ width: 18, height: 18, background: "#fff", borderColor: "#fff", boxShadow: "0 1px 4px rgba(0,0,0,.25)" }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  >
+                    <Button type="text" size="small" style={{ fontSize: 12.5, fontWeight: 600, color: "inherit" }}>
+                      {(profiles.find(p => p.id === profileId) ?? profiles.find(p => p.is_default))?.model_id ?? (zh ? "默认模型" : "model")}
+                      {" "}
+                      {({ low: "低", medium: "中", high: "最高" } as Record<string, string>)[thinkingLevel] ?? ""}
+                      <DownOutlined style={{ fontSize: 10, marginLeft: 4 }} />
+                    </Button>
+                  </Popover>
                   {loading ? (
                     <Button danger shape="circle" onClick={() => { /* 生成不可硬中断，边界生效 */ }} title={zh ? "生成中（阶段边界生效）" : "Generating"} style={{ width: 34, height: 34 }} />
                   ) : (
