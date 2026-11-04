@@ -214,6 +214,7 @@ PHASE_TEST_MODULES: dict[str, list[str]] = {
         "test_suite_phase_manifest",
         "test_llm_profiles_api",
         "test_llm_gateway",
+        "test_llm_provider_formats",
         "test_agent_profile_data",
         "test_agent_contracts",
     ],
