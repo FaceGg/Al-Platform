@@ -89,8 +89,18 @@ class TestChatToolsAPI(WiringHarness, unittest.TestCase):
         response = client.get("/api/chat-tools/whitelist", headers=self.h)
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertNotIn("execute_command", body["write_tools"])
-        self.assertIn("save_insight", body["insight_tools"])
+        # 白名单条目现为 dict（tool/label/kind/enabled，启停配置批次改版）；
+        # 边界断言：危险工具不出现、save_insight 仍在洞察类
+        write_names = {
+            item["tool"] if isinstance(item, dict) else item
+            for item in body["write_tools"]
+        }
+        insight_names = {
+            item["tool"] if isinstance(item, dict) else item
+            for item in body["insight_tools"]
+        }
+        self.assertNotIn("execute_command", write_names)
+        self.assertIn("save_insight", insight_names)
 
     def test_unknown_tool_rejected_without_crash(self):
         response = client.post(
