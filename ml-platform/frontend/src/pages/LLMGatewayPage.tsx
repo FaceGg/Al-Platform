@@ -17,30 +17,37 @@ import apiClient from '../api/client'
 
 const PURPOSE_OPTIONS = ['chat', 'agent', 'embedding']
 
-// 供应商模板目录：选卡预填 Base URL/默认模型，用户只需补 API Key。
-// 均为 OpenAI Chat Completions 兼容端点（平台网关唯一协议）；custom 项
-// 走空白表单。品牌色卡纯 CSS，不引第三方图标资源。
+// 供应商模板目录：选卡预填 Base URL/默认模型/API 格式，用户补 API Key 即可。
+// URL 为「base + 协议后缀」的完整端点：anthropic → /v1/messages（base 已含
+// /v1 则拼 /messages）、chat completions → /chat/completions、responses →
+// /responses。默认配置对齐用户提供的官方文档（2026-11）；模型名以「获取」
+// 按钮拉上游目录为准，模板里的默认值仅供起步。
 interface ProviderTemplate {
   name: string
   short: string
   color: string
   api_url: string
   model_id: string
+  provider: 'openai_compatible' | 'responses' | 'anthropic'
   group: 'domestic' | 'international'
 }
 
 const PROVIDER_TEMPLATES: ProviderTemplate[] = [
-  { name: 'DeepSeek', short: 'DS', color: '#4D6BFE', api_url: 'https://api.deepseek.com/v1/chat/completions', model_id: 'deepseek-chat', group: 'domestic' },
-  { name: '智谱 GLM', short: '智', color: '#3859FF', api_url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model_id: 'glm-4.6', group: 'domestic' },
-  { name: 'Kimi（月之暗面）', short: 'K', color: '#171D26', api_url: 'https://api.moonshot.cn/v1/chat/completions', model_id: 'kimi-k2-0905-preview', group: 'domestic' },
-  { name: '阿里云百炼', short: '百', color: '#FF6A00', api_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model_id: 'qwen-plus', group: 'domestic' },
-  { name: '火山方舟（豆包）', short: '火', color: '#1664FF', api_url: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', model_id: 'doubao-seed-1-6-250615', group: 'domestic' },
-  { name: '硅基流动', short: '硅', color: '#7C3AED', api_url: 'https://api.siliconflow.cn/v1/chat/completions', model_id: 'deepseek-ai/DeepSeek-V3', group: 'domestic' },
-  { name: '腾讯混元', short: '腾', color: '#0052D9', api_url: 'https://api.hunyuan.cloud.tencent.com/v1/chat/completions', model_id: 'hunyuan-turbos-latest', group: 'domestic' },
-  { name: 'MiniMax', short: 'M', color: '#F23F5D', api_url: 'https://api.minimaxi.com/v1/chat/completions', model_id: 'MiniMax-M2', group: 'domestic' },
-  { name: 'OpenAI', short: 'AI', color: '#10A37F', api_url: 'https://api.openai.com/v1/chat/completions', model_id: 'gpt-4o', group: 'international' },
-  { name: 'OpenRouter', short: 'OR', color: '#8B5CF6', api_url: 'https://openrouter.ai/api/v1/chat/completions', model_id: 'openai/gpt-4o', group: 'international' },
-  { name: 'xAI（Grok）', short: '𝕏', color: '#111111', api_url: 'https://api.x.ai/v1/chat/completions', model_id: 'grok-4', group: 'international' },
+  // —— 国内（文档默认配置）——
+  { name: 'DeepSeek', short: 'DS', color: '#4D6BFE', api_url: 'https://api.deepseek.com/anthropic/v1/messages', model_id: 'deepseek-chat', provider: 'anthropic', group: 'domestic' },
+  { name: '智谱 GLM', short: '智', color: '#3859FF', api_url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model_id: 'glm-4.6', provider: 'openai_compatible', group: 'domestic' },
+  { name: 'Kimi（月之暗面）', short: 'K', color: '#171D26', api_url: 'https://api.moonshot.cn/anthropic/v1/messages', model_id: 'kimi-k2-0905-preview', provider: 'anthropic', group: 'domestic' },
+  { name: '阿里云百炼', short: '百', color: '#FF6A00', api_url: 'https://dashscope.aliyuncs.com/apps/anthropic/v1/messages', model_id: '', provider: 'anthropic', group: 'domestic' },
+  { name: '火山方舟（豆包）', short: '火', color: '#1664FF', api_url: 'https://ark.cn-beijing.volces.com/api/compatible/v1/messages', model_id: '', provider: 'anthropic', group: 'domestic' },
+  { name: '硅基流动', short: '硅', color: '#7C3AED', api_url: 'https://api.siliconflow.cn/v1/chat/completions', model_id: 'deepseek-ai/DeepSeek-V3', provider: 'openai_compatible', group: 'domestic' },
+  { name: '腾讯 TokenHub', short: '腾', color: '#0052D9', api_url: 'https://tokenhub.tencentmaas.com/v1/chat/completions', model_id: '', provider: 'openai_compatible', group: 'domestic' },
+  { name: 'MiniMax', short: 'M', color: '#F23F5D', api_url: 'https://api.minimaxi.com/anthropic/v1/messages', model_id: 'MiniMax-M2', provider: 'anthropic', group: 'domestic' },
+  { name: 'Xiaomi MiMo', short: 'Mi', color: '#FF6900', api_url: 'https://api.xiaomimimo.com/anthropic/v1/messages', model_id: '', provider: 'anthropic', group: 'domestic' },
+  // —— 国外（文档默认配置）——
+  { name: 'OpenAI', short: 'AI', color: '#10A37F', api_url: 'https://api.openai.com/v1/responses', model_id: 'gpt-4o', provider: 'responses', group: 'international' },
+  { name: 'OpenRouter', short: 'OR', color: '#8B5CF6', api_url: 'https://openrouter.ai/api/v1/messages', model_id: '', provider: 'anthropic', group: 'international' },
+  { name: 'xAI（Grok）', short: '𝕏', color: '#111111', api_url: 'https://api.x.ai/v1/responses', model_id: 'grok-4', provider: 'responses', group: 'international' },
+  { name: 'Anthropic', short: 'Cl', color: '#D97757', api_url: 'https://api.anthropic.com/v1/messages', model_id: 'claude-sonnet-4-5', provider: 'anthropic', group: 'international' },
 ]
 
 export default function LLMGatewayPage() {
@@ -79,7 +86,7 @@ export default function LLMGatewayPage() {
     setModelOptions([])
     form.setFieldsValue({
       name: tpl?.name ?? '',
-      provider: 'openai_compatible',
+      provider: tpl?.provider ?? 'openai_compatible',
       api_url: tpl?.api_url ?? '',
       model_id: tpl?.model_id ?? '',
       deployment: 'cloud',
@@ -274,7 +281,7 @@ export default function LLMGatewayPage() {
         destroyOnClose
       >
         <div style={{ color: 'var(--v2-dim, #999)', fontSize: 12.5, marginBottom: 12 }}>
-          {zh ? '选卡自动填入 Base URL 与默认模型，保存时补 API Key 即可；端点均为 OpenAI Chat Completions 兼容。' : 'Pick a card to prefill the base URL and model; add your API key on save. All endpoints are OpenAI Chat Completions compatible.'}
+          {zh ? '选卡自动填入 Base URL、默认模型与 API 格式，保存时补 API Key 即可；模型名可在表单里点「获取」从上游拉取。' : 'Pick a card to prefill the base URL, model and API format; add your API key on save. Use "Fetch" in the form to list upstream models.'}
         </div>
         {([
           [zh ? '国内服务商' : 'Domestic', 'domestic'],
