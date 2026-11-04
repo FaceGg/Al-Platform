@@ -474,12 +474,6 @@ export default function AIChatPage() {
                               </div>
                             );
                           })}
-                          <div style={{ borderTop: "1px solid var(--v2-line, rgba(128,140,160,.4))", marginTop: 8, paddingTop: 8 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "var(--v2-sub)" }}>
-                              <span>{zh ? "平均缓存命中率" : "Avg cache hit"}</span>
-                              <span>—</span>
-                            </div>
-                          </div>
                           <div style={{ borderTop: "1px solid var(--v2-line, rgba(128,140,160,.4))", marginTop: 8, paddingTop: 10 }}>
                             <Slider min={0} max={20} step={2} value={contextWindow} onChange={setContextWindow} />
                             <Button size="small" block icon={<ClearOutlined />} onClick={() => setMessages([])} disabled={messages.length === 0} style={{ marginTop: 8 }}>
@@ -490,11 +484,12 @@ export default function AIChatPage() {
                       );
                     })()}
                   >
-                    {/* 空心环形进度（用量以环带颜色表示，中心镂空） */}
+                    {/* 空心环形进度（用量以环带颜色表示，中心镂空）；marginLeft:auto 推到右侧 */}
                     <div
                       title={`${text.contextManager}：≈${fmtK(usedTokens)} / 32.0K tokens`}
                       style={{
-                        width: 18, height: 18, borderRadius: "50%", cursor: "pointer", flex: "0 0 auto",
+                        width: 14, height: 14, borderRadius: "50%", cursor: "pointer", flex: "0 0 auto",
+                        marginLeft: "auto",
                         background: `conic-gradient(var(--v2-blue) ${pct}%, rgba(128,140,160,.25) ${pct}% 100%)`,
                         display: "inline-flex", alignItems: "center", justifyContent: "center",
                       }}
