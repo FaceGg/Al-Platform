@@ -1,6 +1,7 @@
 from app.engine.operator_contract import OperatorContext, OperatorResult
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
+from app.services.model_artifact_sealing import verify_model_port_bytes
 import pandas as pd
 
 
@@ -90,6 +91,7 @@ class ROCCurve(BaseOperator):
         target = params.get("target_column", "target")
         positive_class = params.get("positive_class", "")
 
+        model_bytes, _sealed = verify_model_port_bytes(model_bytes)
         model = joblib.load(io.BytesIO(model_bytes))
         df = pd.DataFrame(test_data)
         X_test = df.drop(columns=[target])
@@ -162,6 +164,7 @@ class FeatureImportance(BaseOperator):
         target = params.get("target_column", "target")
         top_n = int(params.get("top_n", 10))
 
+        model_bytes, _sealed = verify_model_port_bytes(model_bytes)
         model = joblib.load(io.BytesIO(model_bytes))
         df = pd.DataFrame(train_data)
         X = df.drop(columns=[target])

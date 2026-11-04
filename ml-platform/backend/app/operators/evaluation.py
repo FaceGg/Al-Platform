@@ -1,6 +1,7 @@
 from app.engine.operator_contract import OperatorContext, OperatorResult
 from app.engine.base_operator import BaseOperator, PortSpec, ParamSpec
 from app.engine.registry import register_operator
+from app.services.model_artifact_sealing import verify_model_port_bytes
 import pandas as pd
 import numpy as np
 import io
@@ -102,6 +103,7 @@ class ClassificationEvalDetailed(BaseOperator):
         target = params.get("target_column", "target")
         threshold = params.get("threshold", 0.5)
 
+        model_bytes, _sealed = verify_model_port_bytes(model_bytes)
         model = joblib.load(io.BytesIO(model_bytes))
         df = pd.DataFrame(test_data)
         # helper 先校验目标列存在，再按模型特征列对齐
@@ -228,8 +230,10 @@ class ModelComparison(BaseOperator):
 
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         import joblib
-        models = {"A": joblib.load(io.BytesIO(inputs.get("model_a"))),
-                  "B": joblib.load(io.BytesIO(inputs.get("model_b")))}
+        bytes_a, _ = verify_model_port_bytes(inputs.get("model_a"))
+        bytes_b, _ = verify_model_port_bytes(inputs.get("model_b"))
+        models = {"A": joblib.load(io.BytesIO(bytes_a)),
+                  "B": joblib.load(io.BytesIO(bytes_b))}
         test_data = inputs.get("test", [])
         target = params.get("target_column", "target")
         metric_name = params.get("metric", "accuracy")
@@ -285,6 +289,7 @@ class ClassificationEval(BaseOperator):
         test_data = inputs.get("test", [])
         target = params.get("target_column", "target")
 
+        model_bytes, _sealed = verify_model_port_bytes(model_bytes)
         model = joblib.load(io.BytesIO(model_bytes))
         df = pd.DataFrame(test_data)
         X_test = _align_model_features(model, df, target)
@@ -349,6 +354,7 @@ class RegressionEval(BaseOperator):
         test_data = inputs.get("test", [])
         target = params.get("target_column", "target")
 
+        model_bytes, _sealed = verify_model_port_bytes(model_bytes)
         model = joblib.load(io.BytesIO(model_bytes))
         df = pd.DataFrame(test_data)
         X_test = _align_model_features(model, df, target)
