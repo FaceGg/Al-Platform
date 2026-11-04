@@ -268,7 +268,10 @@ def get_agent_run(
 
 # 活跃态不可删：执行线程仍在写 run 行，删除会产生孤儿写入与误导性报错。
 DELETABLE_RUN_STATUSES = frozenset(
-    {"waiting_escalate", "waiting_guidance", "accepted", "failed"}
+    # 终态可删；pending/running 在跑（删除需先终止，避免执行线程写回
+    # 已删除行）。cancelled/superseded 同为终态，遗漏会导致用户终止后
+    # 反而删不掉（7ae17d4d 实测踩坑）。
+    {"waiting_escalate", "waiting_guidance", "accepted", "failed", "cancelled", "superseded"}
 )
 
 

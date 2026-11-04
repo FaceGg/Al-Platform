@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Button, Popconfirm, Tooltip } from "antd";
+import { Button, Popconfirm, Tooltip, message } from "antd";
 import { DeleteOutlined, EyeOutlined, ReloadOutlined, RocketOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import RecipeRow from "../components/RecipeRow";
@@ -231,7 +231,20 @@ export default function AgentCenterPage() {
                       ) : (
                         <Popconfirm
                           title={zh ? "确认删除该任务及其档案？此操作不可恢复。" : "Delete this run and its archive?"}
-                          onConfirm={() => { deleteAgentRun(run.id).then(loadAgentData).catch(() => undefined); }}
+                          onConfirm={() => {
+                            // 失败必须提示（曾静默吞 409，用户点了没反应）
+                            deleteAgentRun(run.id)
+                              .then(loadAgentData)
+                              .catch((error: any) => {
+                                const detail = error?.response?.data?.detail;
+                                const code = typeof detail === "object" ? detail?.code : detail;
+                                message.error(
+                                  code === "AGENT_RUN_ACTIVE"
+                                    ? (zh ? "任务仍在运行，无法删除" : "Active run cannot be deleted")
+                                    : (zh ? "删除失败" : "Delete failed"),
+                                );
+                              });
+                          }}
                         >
                           <Button type="link" size="small" danger icon={<DeleteOutlined />}>
                             {zh ? "删除" : "Delete"}
