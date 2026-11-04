@@ -142,6 +142,8 @@ def main() -> int:
                 run_ids.append(str(run.id))
                 print(f"[{label} #{index + 1}] executing {run.id} ...")
                 execute_agent_run(str(run.id))
+                # 身份映射缓存会返回创建时的 pending 行——过期后再读终态
+                db.expire_all()
                 refreshed = db.get(AgentRun, run.id)
                 agent_metrics = (refreshed.result_json or {}).get("metrics") or {}
                 usage = (refreshed.result_json or {}).get("usage") or {}
