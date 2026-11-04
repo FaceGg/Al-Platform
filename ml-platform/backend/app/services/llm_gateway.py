@@ -62,6 +62,9 @@ class GatewayLLMConfig:
     timeout_seconds: int
     profile_id: str | None
     profile_name: str
+    # API 格式（openai_compatible=Chat Completions / responses / anthropic）；
+    # 默认值保证既有构造点（测试/env fallback）行为不变。
+    provider: str = "openai_compatible"
 
 
 def resolve_profile(
@@ -102,7 +105,149 @@ def resolve_profile(
         timeout_seconds=profile.timeout_seconds or 60,
         profile_id=str(profile.id),
         profile_name=profile.name,
+        provider=profile.provider or "openai_compatible",
     )
+
+
+def _build_llm_request(
+    config, messages: list[dict], temperature: float, max_tokens: int
+) -> tuple[str, dict, dict]:
+    """按 API 格式构造请求（url/headers/body）。三格式均走 SSE 流式。
+
+    - openai_compatible：POST {url}/chat/completions（用户填完整端点）
+    - responses：POST {url}/responses（OpenAI Responses 协议）
+    - anthropic：POST {url}/v1/messages（x-api-key + anthropic-version）
+    """
+    provider = config.provider or "openai_compatible"
+    if provider == "anthropic":
+        system_text = "\n\n".join(
+            message.get("content") or ""
+            for message in messages
+            if message.get("role") == "system"
+        )
+        chat_messages = [
+            {"role": message["role"], "content": message.get("content") or ""}
+            for message in messages
+            if message.get("role") != "system"
+        ]
+        headers = {"anthropic-version": "2023-06-01"}
+        if config.api_key:
+            headers["x-api-key"] = config.api_key
+        body = {
+            "model": config.model_id,
+            "messages": chat_messages,
+            "max_tokens": max_tokens or 4096,  # Anthropic 必填
+            "stream": True,
+        }
+        if system_text:
+            body["system"] = system_text
+        if temperature is not None:
+            body["temperature"] = temperature
+        return config.api_url, headers, body
+    if provider == "responses":
+        headers = (
+            {"Authorization": f"Bearer {config.api_key}"} if config.api_key else {}
+        )
+        body = {
+            "model": config.model_id,
+            "input": [
+                {"role": message.get("role") or "user", "content": message.get("content") or ""}
+                for message in messages
+            ],
+            "stream": True,
+        }
+        if temperature is not None:
+            body["temperature"] = temperature
+        if max_tokens:
+            body["max_output_tokens"] = max_tokens
+        return config.api_url, headers, body
+    # 默认：Chat Completions（存量路径行为不变）
+    headers = (
+        {"Authorization": f"Bearer {config.api_key}"} if config.api_key else {}
+    )
+    body = {
+        "model": config.model_id,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+    return config.api_url, headers, body
+
+
+def _parse_llm_stream_event(provider: str, event: dict) -> tuple[str | None, dict | None]:
+    """从 SSE 事件里解出 (文本增量, usage)。三格式的增量位置不同：
+    - chat completions: choices[0].delta.content
+    - responses: type=response.output_text.delta → delta
+    - anthropic: type=content_block_delta → delta.text
+    """
+    if provider == "anthropic":
+        if event.get("type") == "content_block_delta":
+            delta = (event.get("delta") or {}).get("text")
+            return (delta, None) if delta else (None, None)
+        if event.get("type") == "message_delta":
+            usage_event = event.get("usage") or {}
+            return None, {
+                "prompt_tokens": usage_event.get("input_tokens"),
+                "completion_tokens": usage_event.get("output_tokens"),
+            }
+        return None, None
+    if provider == "responses":
+        if event.get("type") == "response.output_text.delta":
+            delta = event.get("delta")
+            return (delta, None) if delta else (None, None)
+        if event.get("type") == "response.completed":
+            response = event.get("response") or {}
+            usage_event = response.get("usage") or {}
+            return None, {
+                "prompt_tokens": usage_event.get("input_tokens"),
+                "completion_tokens": usage_event.get("output_tokens"),
+            }
+        return None, None
+    # Chat Completions
+    choices = event.get("choices") or []
+    delta = None
+    if choices:
+        delta = (choices[0].get("delta") or {}).get("content")
+    return (delta, event.get("usage")) if (delta or event.get("usage")) else (None, None)
+
+
+def list_upstream_models(
+    api_url: str, api_key: str | None, provider: str
+) -> list[str]:
+    """拉上游模型列表（「获取」按钮的后端代理）。
+
+    由聊天端点推导列表端点（/chat/completions→/models、/responses→/models、
+    /v1/messages→/v1/models）。URL 先过 validate_llm_api_url 的 SSRF 校验
+    （https-only、拒私网/环回）。仅 http/https。"""
+    validate_llm_api_url(api_url)
+    stripped = api_url.rstrip("/")
+    for suffix, list_path in (
+        ("/chat/completions", "/models"),
+        ("/responses", "/models"),
+        ("/messages", "/models"),
+    ):
+        if stripped.endswith(suffix):
+            list_url = stripped[: -len(suffix)] + list_path
+            break
+    else:
+        list_url = stripped + "/models"
+    headers: dict[str, str] = {}
+    if api_key:
+        if provider == "anthropic":
+            headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
+        else:
+            headers = {"Authorization": f"Bearer {api_key}"}
+    response = _HTTP_CLIENT.get(list_url, headers=headers, timeout=15)
+    response.raise_for_status()
+    data = response.json()
+    if provider == "anthropic":
+        items = data.get("data") or []
+        return [str(item.get("id")) for item in items if item.get("id")]
+    # OpenAI 系（chat completions / responses 同构）：{data: [{id}]}
+    items = data.get("data") or []
+    return [str(item.get("id")) for item in items if item.get("id")]
 
 
 def chat_completion(
@@ -146,22 +291,20 @@ def chat_completion(
     # 按"空闲连接"掐断（实测 Errno 104 Connection reset，60-200s 静默窗口，
     # 短请求测试调用则完全正常——极具迷惑性）。流式让字节持续回流规避
     # 空闲超时；对调用方语义不变（仍是完整文本 + usage）。
+    # 三种 API 格式共用同一流式框架：构造器/解析器按 provider 分派
+    # （openai_compatible=Chat Completions / responses / anthropic）。
+    url, headers, body = _build_llm_request(
+        config, messages, resolved_temperature, max_tokens
+    )
     reply_parts: list[str] = []
     usage: dict = {}
     status_code: int = 0
     try:
         with _HTTP_CLIENT.stream(
             "POST",
-            config.api_url,
-            headers={"Authorization": f"Bearer {config.api_key}"} if config.api_key else {},
-            json={
-                "model": config.model_id,
-                "messages": messages,
-                "temperature": resolved_temperature,
-                "max_tokens": max_tokens,
-                "stream": True,
-                "stream_options": {"include_usage": True},
-            },
+            url,
+            headers=headers,
+            json=body,
             timeout=effective_timeout,
         ) as response:
             status_code = response.status_code
@@ -172,9 +315,10 @@ def chat_completion(
                 except ValueError:
                     data = {"raw": error_body[:500]}
             else:
-                data = {}
                 for line in response.iter_lines():
-                    if not line.startswith("data:"):
+                    if not line.startswith("data:") and not line.startswith("event:"):
+                        continue
+                    if line.startswith("event:"):
                         continue
                     chunk_text = line[len("data:"):].strip()
                     if not chunk_text or chunk_text == "[DONE]":
@@ -183,13 +327,13 @@ def chat_completion(
                         event = json.loads(chunk_text)
                     except ValueError:
                         continue
-                    choices = event.get("choices") or []
-                    if choices:
-                        delta = (choices[0].get("delta") or {}).get("content")
-                        if delta:
-                            reply_parts.append(delta)
-                    if event.get("usage"):
-                        usage = event["usage"]
+                    delta, event_usage = _parse_llm_stream_event(
+                        config.provider, event
+                    )
+                    if delta:
+                        reply_parts.append(delta)
+                    if event_usage:
+                        usage = event_usage
     except httpx.HTTPError:
         # 传输层异常统一归一为非 200 形态，走下方既有的失败审计路径
         latency_ms = round((time.perf_counter() - started) * 1000, 1)

@@ -18,6 +18,7 @@ from app.database import get_db
 from app.models.llm_profile import LLMProfile
 from app.models.user import User
 from app.schemas.llm_profile import (
+    LLMModelListRequest,
     LLMProfileConnectivity,
     LLMProfileCreate,
     LLMProfileOut,
@@ -25,6 +26,7 @@ from app.schemas.llm_profile import (
 )
 from app.services.llm_gateway import (
     LLMApiUrlError,
+    list_upstream_models,
     mask_llm_api_key,
     profile_api_key,
     test_connectivity,
@@ -259,6 +261,62 @@ def delete_profile(
     )
     db.delete(profile)
     db.commit()
+
+
+@router.post("/list-models")
+def list_models(
+    payload: LLMModelListRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """「获取模型列表」代理：用表单 URL/Key 拉上游模型目录。
+
+    浏览器直连上游会跨域且暴露 Key 策略，必须走后端代理；URL 过
+    validate_llm_api_url（https-only、拒私网/环回）。编辑档案时 Key
+    留空 → profile_id 复用已存 Key。"""
+    api_key = payload.api_key
+    if not api_key and payload.profile_id is not None:
+        stored = db.get(LLMProfile, payload.profile_id)
+        if stored is not None:
+            try:
+                api_key = profile_api_key(stored)
+            except LLMCredentialError:
+                api_key = None
+    try:
+        models = list_upstream_models(payload.api_url, api_key, payload.provider)
+    except LLMApiUrlError as error:
+        raise HTTPException(status_code=422, detail={"code": error.reason}) from error
+    except Exception as error:  # noqa: BLE001 - 上游错误原样透传给表单提示
+        message = str(error)[:300]
+        record_failed_platform_event(
+            db,
+            actor=admin,
+            request=request,
+            intent=PlatformAuditIntent(
+                action="llm_profile.list_models",
+                resource_type="llm_profile",
+                changes={"provider": payload.provider},
+            ),
+            error_code="LLM_UPSTREAM_ERROR",
+        )
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "LLM_UPSTREAM_ERROR", "message": message},
+        ) from error
+    record_platform_event(
+        db,
+        actor=admin,
+        request=request,
+        intent=PlatformAuditIntent(
+            action="llm_profile.list_models",
+            resource_type="llm_profile",
+            changes={"provider": payload.provider, "count": len(models)},
+        ),
+        result="success",
+    )
+    db.commit()
+    return {"models": models}
 
 
 @router.post("/{profile_id}/test", response_model=LLMProfileConnectivity)

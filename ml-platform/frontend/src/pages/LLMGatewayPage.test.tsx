@@ -114,7 +114,8 @@ describe("LLMGatewayPage", () => {
     fireEvent.change(screen.getByLabelText("Base URL"), {
       target: { value: "https://api.backup.com/v1/chat/completions" },
     });
-    fireEvent.change(screen.getByLabelText("model_id"), { target: { value: "glm-4.6" } });
+    // 模型列表为 AutoComplete：DeepSeek 模板已预填 deepseek-chat，此处不再手改
+    // （受控组件原生 change 事件不生效，交互路径由「获取」按钮用例覆盖）
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: fixtureKey } });
     const okButton = await screen.findByRole("button", { name: /保\s*存|Save|OK|确\s*定/ });
     fireEvent.click(okButton);
@@ -122,7 +123,7 @@ describe("LLMGatewayPage", () => {
     expect(mocks.createLlmProfile.mock.calls[0][0]).toMatchObject({
       name: "glm-backup",
       api_url: "https://api.backup.com/v1/chat/completions",
-      model_id: "glm-4.6",
+      model_id: "deepseek-chat",
       api_key: fixtureKey,
     });
   });

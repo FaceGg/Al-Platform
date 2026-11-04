@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Button, Collapse, Modal, Form, Input, InputNumber, message, Popconfirm, Space, Select, Switch } from 'antd'
-import { PlusOutlined, ReloadOutlined, ApiOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
+import { AutoComplete, Button, Collapse, Modal, Form, Input, InputNumber, message, Popconfirm, Space, Select, Switch } from 'antd'
+import { PlusOutlined, ReloadOutlined, ApiOutlined, EditOutlined, DeleteOutlined, CloudDownloadOutlined } from '@ant-design/icons'
 import { useI18n } from '../i18n'
 import AppLayout from '../components/AppLayout'
 import {
@@ -13,6 +13,7 @@ import {
   updateLlmProfile,
 } from '../api/llmProfiles'
 import { formatApiError } from '../api/client'
+import apiClient from '../api/client'
 
 const PURPOSE_OPTIONS = ['chat', 'agent', 'embedding']
 
@@ -50,6 +51,8 @@ export default function LLMGatewayPage() {
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [modelOptions, setModelOptions] = useState<string[]>([])
+  const [fetchingModels, setFetchingModels] = useState(false)
   const [editing, setEditing] = useState<LLMProfile | null>(null)
   const [saving, setSaving] = useState(false)
   const [testingId, setTestingId] = useState<string | null>(null)
@@ -73,6 +76,7 @@ export default function LLMGatewayPage() {
   const openCreateWith = (tpl?: ProviderTemplate) => {
     setEditing(null)
     form.resetFields()
+    setModelOptions([])
     form.setFieldsValue({
       name: tpl?.name ?? '',
       provider: 'openai_compatible',
@@ -80,15 +84,50 @@ export default function LLMGatewayPage() {
       model_id: tpl?.model_id ?? '',
       deployment: 'cloud',
       timeout_seconds: 60,
+      temperature: 0.7,
+      max_tokens: 2000,
       purpose_tags: ['chat', 'agent'],
     })
     setPickerOpen(false)
     setModalOpen(true)
   }
 
+  // 「获取」：经后端代理拉上游模型目录（浏览器直连跨域且 Key 不落前端日志）
+  const fetchModels = async () => {
+    const api_url = form.getFieldValue('api_url')
+    const provider = form.getFieldValue('provider')
+    const api_key = form.getFieldValue('api_key')
+    if (!api_url) {
+      message.warning(zh ? '请先填写 Base URL' : 'Fill the Base URL first')
+      return
+    }
+    setFetchingModels(true)
+    try {
+      const res = await apiClient.post('/llm-profiles/list-models', {
+        api_url,
+        api_key: api_key || undefined,
+        provider: provider === 'custom' ? 'openai_compatible' : provider,
+        profile_id: editing?.id,
+      })
+      const models: string[] = res.data?.models ?? []
+      setModelOptions(models)
+      if (models.length === 0) {
+        message.info(zh ? '上游未返回模型' : 'No models returned')
+      } else if (!models.includes(form.getFieldValue('model_id'))) {
+        form.setFieldValue('model_id', undefined)
+      }
+      message.success(zh ? `已获取 ${models.length} 个模型` : `${models.length} models loaded`)
+    } catch (error) {
+      message.error(formatApiError(error, zh ? '获取失败' : 'Failed to fetch models'))
+    } finally {
+      setFetchingModels(false)
+    }
+  }
+
   const openEdit = (profile: LLMProfile) => {
     setEditing(profile)
     form.resetFields()
+    setModelOptions(profile.model_id ? [profile.model_id] : [])
     form.setFieldsValue({
       name: profile.name,
       provider: profile.provider,
@@ -286,11 +325,12 @@ export default function LLMGatewayPage() {
           <Form.Item name="name" label={text.colName} rules={[{ required: true }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="provider" label={text.colProvider} rules={[{ required: true }]}>
+          <Form.Item name="provider" label={zh ? 'API 格式' : 'API format'} rules={[{ required: true }]}>
             <Select
               options={[
-                { value: 'openai_compatible', label: zh ? 'Chat Completions（/chat/completions，OpenAI 兼容）' : 'Chat Completions (/chat/completions, OpenAI-compatible)' },
-                { value: 'custom', label: text.providerCustom },
+                { value: 'openai_compatible', label: zh ? 'Chat Completions（/chat/completions）' : 'Chat Completions (/chat/completions)' },
+                { value: 'responses', label: zh ? 'Responses（/responses）' : 'Responses (/responses)' },
+                { value: 'anthropic', label: zh ? 'Anthropic Messages（/v1/messages）' : 'Anthropic Messages (/v1/messages)' },
               ]}
             />
           </Form.Item>
@@ -308,8 +348,19 @@ export default function LLMGatewayPage() {
           >
             <Input.Password autoComplete="new-password" placeholder={zh ? '输入 API Key' : 'API Key'} />
           </Form.Item>
-          <Form.Item name="model_id" label={text.colModel} rules={[{ required: true }]}>
-            <Input />
+          <Form.Item label={zh ? '模型列表' : 'Model'} required style={{ marginBottom: 12 }}>
+            <Space.Compact style={{ width: '100%' }}>
+              <Form.Item name="model_id" noStyle rules={[{ required: true, message: zh ? '请选择或输入模型' : 'Pick or type a model' }]}>
+                <AutoComplete
+                  options={modelOptions.map((m) => ({ value: m }))}
+                  placeholder={zh ? '点击「获取」拉取，或直接输入模型名' : 'Fetch or type a model id'}
+                  filterOption={(input, option) => String(option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
+                />
+              </Form.Item>
+              <Button icon={<CloudDownloadOutlined />} onClick={fetchModels} loading={fetchingModels}>
+                {zh ? '获取' : 'Fetch'}
+              </Button>
+            </Space.Compact>
           </Form.Item>
           <Form.Item name="deployment" label={text.colDeployment} rules={[{ required: true }]}>
             <Select

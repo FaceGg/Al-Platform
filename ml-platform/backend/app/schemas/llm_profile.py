@@ -10,7 +10,8 @@ from app.services.llm_gateway import validate_llm_api_url
 
 class LLMProfileCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
-    provider: str = Field(default="openai_compatible", pattern="^(openai_compatible|custom)$")
+    # API 格式：openai_compatible=Chat Completions（存量） / responses / anthropic
+    provider: str = Field(default="openai_compatible", pattern="^(openai_compatible|responses|anthropic|custom)$")
     api_url: str = Field(min_length=1, max_length=512)
     api_key: str | None = Field(default=None, max_length=4096)
     model_id: str = Field(min_length=1, max_length=128)
@@ -28,9 +29,24 @@ class LLMProfileCreate(BaseModel):
         return value
 
 
+class LLMModelListRequest(BaseModel):
+    """「获取模型列表」代理：用表单里的 URL/Key 拉上游模型目录。"""
+
+    api_url: str = Field(min_length=1, max_length=512)
+    api_key: str | None = Field(default=None, max_length=4096)
+    provider: str = Field(default="openai_compatible", pattern="^(openai_compatible|responses|anthropic)$")
+    profile_id: UUID | None = None  # 编辑档案时 Key 留空 → 复用已存 Key
+
+    @field_validator("api_url")
+    @classmethod
+    def _url_hardened(cls, value: str) -> str:
+        validate_llm_api_url(value)
+        return value
+
+
 class LLMProfileUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=64)
-    provider: str | None = Field(default=None, pattern="^(openai_compatible|custom)$")
+    provider: str | None = Field(default=None, pattern="^(openai_compatible|responses|anthropic|custom)$")
     api_url: str | None = Field(default=None, min_length=1, max_length=512)
     api_key: str | None = Field(default=None, max_length=4096)
     model_id: str | None = Field(default=None, min_length=1, max_length=128)
