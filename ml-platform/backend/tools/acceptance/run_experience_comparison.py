@@ -40,6 +40,8 @@ def _parse_args():
     parser.add_argument("--apply", action="store_true",
                         help="实际执行（默认 dry-run）")
     parser.add_argument("--keep-runs", action="store_true")
+    parser.add_argument("--max-rounds", type=int, default=6,
+                        help="AgentRun guidance max_rounds（默认 6，让两臂跑到门禁判定）")
     return parser.parse_args()
 
 
@@ -119,9 +121,10 @@ def main() -> int:
         run_ids: list[str] = []
         try:
             if label == "control":
-                # 对照臂：条目临时退役（不注入），跑完恢复
+                # 对照臂：退役当前全部 active（含处理臂蒸馏晋升的新条目——
+                # 否则 RSI 命中晋升会把处理臂新蒸馏条目注入对照臂，A/B 污染）
                 db.query(ExperienceEntry).filter(
-                    ExperienceEntry.id.in_(experience_ids or [uuid.uuid4()]),
+                    ExperienceEntry.status == "active",
                 ).update({"status": "retired"}, synchronize_session=False)
                 db.commit()
             metrics_rows = []
@@ -131,6 +134,7 @@ def main() -> int:
                     dataset_artifact_id=artifact_id,
                     target_column=args.target_col,
                     llm_profile_id=profile_id,
+                    guidance_json={"max_rounds": args.max_rounds},
                     created_by=admin_id,
                 )
                 db.add(run)
@@ -159,7 +163,8 @@ def main() -> int:
         results.append(run_arm("treatment"))
         results.append(run_arm("control"))
     finally:
-        # 无论成败恢复经验条目为 active
+        # 无论成败只恢复"原 active 集"（处理臂蒸馏的新条目保持其自然状态，
+        # 由 RSI 命中晋升/退役机制接管，不越权转正）
         if experience_ids:
             db = SessionLocal()
             try:
