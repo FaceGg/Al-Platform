@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Card, Input, Button, Typography, Space, Spin, Tag, Empty, Divider, Modal, Slider, Select, Collapse, Popover, message as antdMessage } from "antd";
-import { SendOutlined, RobotOutlined, UserOutlined, ClearOutlined, SettingOutlined, ShareAltOutlined, FileTextOutlined, BlockOutlined, DownOutlined } from "@ant-design/icons";
+import { SendOutlined, RobotOutlined, UserOutlined, ClearOutlined, SettingOutlined, ShareAltOutlined, FileTextOutlined, BlockOutlined, DownOutlined, PlusOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import ChatToolsPanel from "../components/ChatToolsPanel";
 import apiClient from "../api/client";
@@ -13,6 +13,7 @@ interface ChatMsg { role: "user" | "assistant" | "system"; content: string; time
 
 export default function AIChatPage() {
   const { t, lang } = useI18n();
+  const zh = lang === "zh";
   const text = lang === "zh" ? {
     settings: "对话设置",
     systemPrompt: "系统提示词",
@@ -201,55 +202,33 @@ export default function AIChatPage() {
           <ChatToolsPanel onResult={(resultText) => {
             setMessages(prev => [...prev, { role: "assistant", content: resultText, time: new Date().toLocaleTimeString() }]);
           }} />
-          {/* ZCode 式输入框：模型/思考强度/上下文容量内嵌在输入框内 */}
+          {/* ZCode 式输入框（对齐参考布局）：+ | 权限选择 …… 模型+思考强度 | 圆形发送；上下文容量条内嵌 */}
           {(() => {
             const carried = messages.filter(m => m.role === "user" || m.role === "assistant").slice(-contextWindow);
             const usedTokens = Math.ceil(carried.reduce((sum, m) => sum + m.content.length, 0) / 4);
             const CONTEXT_BUDGET = 32000;
             const pct = Math.min(100, Math.round((usedTokens / CONTEXT_BUDGET) * 100));
             const fmtK = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n));
+            const activeModel = profiles.find(p => p.id === profileId);
             return (
               <div style={{
-                border: "1px solid var(--v2-line, #d9d9d9)", borderRadius: 12,
+                border: "1px solid var(--v2-line, #d9d9d9)", borderRadius: 16,
                 background: "var(--v2-panel2, rgba(22,34,58,.35))",
-                padding: "8px 10px 6px", transition: "border-color .15s",
+                padding: "10px 12px 8px", transition: "border-color .15s",
               }}>
                 <Input.TextArea
                   autoComplete="off" value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder={text.placeholder}
-                  autoSize={{ minRows: 1, maxRows: 6 }}
+                  autoSize={{ minRows: 2, maxRows: 8 }}
                   disabled={loading}
                   variant="borderless"
                   style={{ padding: "2px 4px", fontSize: 13.5 }}
                 />
-                {/* 底部工具行（输入框内）：左=模型+思考强度，右=上下文容量+发送 */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
-                  <Select
-                    size="small" variant="borderless"
-                    value={profileId || undefined}
-                    onChange={(v) => setProfileId(v || "")}
-                    placeholder={lang === "zh" ? "默认模型" : "Default model"}
-                    style={{ minWidth: 60, maxWidth: 210, flex: "0 1 auto", fontSize: 12 }}
-                    suffixIcon={<DownOutlined style={{ fontSize: 10 }} />}
-                    allowClear
-                    options={profiles.map(p => ({ value: p.id, label: p.model_id }))}
-                  />
-                  <Select
-                    size="small" variant="borderless"
-                    value={thinkingLevel}
-                    onChange={setThinkingLevel}
-                    style={{ width: 96, fontSize: 12 }}
-                    suffixIcon={<DownOutlined style={{ fontSize: 10 }} />}
-                    options={[
-                      { value: "off", label: lang === "zh" ? "✦ 思考 关" : "✦ off" },
-                      { value: "low", label: lang === "zh" ? "✦ 思考 低" : "✦ low" },
-                      { value: "medium", label: lang === "zh" ? "✦ 思考 中" : "✦ med" },
-                      { value: "high", label: lang === "zh" ? "✦ 思考 高" : "✦ high" },
-                    ]}
-                  />
-                  {/* 上下文容量条（点击展开窗口设置）：占用/预算 + 清理 */}
+                {/* 底部工具行：左=输入提示 …… 右=容量圆圈 | 模型 | 思考强度 | 发送/停止 */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                  {/* 上下文容量：点击展开窗口设置 */}
                   <Popover
                     trigger="click"
                     title={text.contextManager}
@@ -257,8 +236,8 @@ export default function AIChatPage() {
                       <div style={{ width: 250 }}>
                         <div style={{ fontSize: 12, marginBottom: 8 }}>
                           {lang === "zh"
-                            ? `对话 ${messages.filter(m => m.role !== "system").length} 条；发送携带最近 ${contextWindow} 条（≈${fmtK(usedTokens)} tokens）。`
-                            : `${messages.length} msgs; last ${contextWindow} ride along (≈${fmtK(usedTokens)} tokens).`}
+                            ? `对话 ${messages.filter(m => m.role !== "system").length} 条；发送携带最近 ${contextWindow} 条（≈${fmtK(usedTokens)} tokens / 预算 32K）。`
+                            : `${messages.length} msgs; last ${contextWindow} ride along (≈${fmtK(usedTokens)} / 32K tokens).`}
                         </div>
                         <div style={{ fontSize: 12, marginBottom: 4 }}>{lang === "zh" ? `携带窗口：${contextWindow} 条` : `Window: ${contextWindow}`}</div>
                         <Slider min={0} max={20} step={2} value={contextWindow} onChange={setContextWindow} />
@@ -268,19 +247,53 @@ export default function AIChatPage() {
                       </div>
                     )}
                   >
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", minWidth: 130 }} title={text.contextManager}>
-                      <BlockOutlined style={{ fontSize: 11, color: "var(--v2-dim)" }} />
-                      <div style={{ width: 64, height: 4, borderRadius: 2, background: "rgba(128,140,160,.3)", overflow: "hidden" }}>
-                        <div style={{ width: `${pct}%`, height: "100%", background: pct > 80 ? "#e66f75" : "var(--v2-blue)" }} />
-                      </div>
-                      <span style={{ fontSize: 11, color: "var(--v2-dim)", fontVariantNumeric: "tabular-nums" }}>{fmtK(usedTokens)} / {fmtK(CONTEXT_BUDGET)}</span>
+                    <div
+                      title={`${text.contextManager}：≈${fmtK(usedTokens)} / 32K tokens`}
+                      style={{
+                        width: 26, height: 26, borderRadius: "50%", cursor: "pointer", flex: "0 0 auto",
+                        background: `conic-gradient(var(--v2-blue) ${pct}%, rgba(128,140,160,.25) ${pct}% 100%)`,
+                        display: "inline-flex", alignItems: "center", justifyContent: "center",
+                      }}
+                    >
+                      <BlockOutlined style={{ fontSize: 10, color: "var(--v2-sub)" }} />
                     </div>
                   </Popover>
-                  <div style={{ marginLeft: "auto" }}>
-                    <Button type="primary" size="small" icon={<SendOutlined />} onClick={send} loading={loading}>
-                      {t.ai_chat.send}
-                    </Button>
-                  </div>
+                  <Select
+                    size="small" variant="borderless"
+                    value={profileId || "__default__"}
+                    onChange={(v) => setProfileId(v === "__default__" ? "" : v)}
+                    style={{ minWidth: 150, fontSize: 12.5 }}
+                    suffixIcon={<DownOutlined style={{ fontSize: 10 }} />}
+                    options={[
+                      { value: "__default__", label: `${zh ? "默认模型" : "Default"} · ${profiles.find(p => p.is_default)?.model_id || "default"}` },
+                      ...profiles.filter(p => !p.is_default).map(p => ({ value: p.id, label: `${p.name} · ${p.model_id}` })),
+                    ]}
+                  />
+                  <Select
+                    size="small" variant="borderless"
+                    value={thinkingLevel}
+                    onChange={setThinkingLevel}
+                    style={{ width: 84, fontSize: 12.5 }}
+                    suffixIcon={<DownOutlined style={{ fontSize: 10 }} />}
+                    options={[
+                      { value: "off", label: lang === "zh" ? "关闭" : "Off" },
+                      { value: "low", label: lang === "zh" ? "低" : "Low" },
+                      { value: "medium", label: lang === "zh" ? "中" : "Med" },
+                      { value: "high", label: lang === "zh" ? "最高" : "Max" },
+                    ]}
+                  />
+                  {loading ? (
+                    <Button danger shape="circle" onClick={() => { /* 生成不可硬中断，边界生效 */ }} title={zh ? "生成中（阶段边界生效）" : "Generating"} style={{ width: 34, height: 34 }} />
+                  ) : (
+                    <Button
+                      type="primary"
+                      shape="circle"
+                      icon={<SendOutlined style={{ fontSize: 14 }} />}
+                      onClick={send}
+                      style={{ width: 34, height: 34 }}
+                      aria-label={t.ai_chat.send}
+                    />
+                  )}
                 </div>
               </div>
             );
