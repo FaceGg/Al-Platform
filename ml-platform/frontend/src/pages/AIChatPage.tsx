@@ -237,6 +237,17 @@ export default function AIChatPage() {
   const usedTokens = Math.ceil(carried.reduce((sum, m) => sum + m.content.length, 0) / 4);
   const CONTEXT_BUDGET = 32000;
   const pct = Math.min(100, Math.round((usedTokens / CONTEXT_BUDGET) * 100));
+  // 上下文容量 100% 自动压缩：携带窗口减半直至回落（提示一次）
+  const autoCompressNoted = useRef(false);
+  useEffect(() => {
+    if (usedTokens >= CONTEXT_BUDGET && contextWindow > 2) {
+      setContextWindow(w => Math.max(2, Math.floor(w / 2)));
+      if (!autoCompressNoted.current) {
+        autoCompressNoted.current = true;
+        antdMessage.info(zh ? "上下文容量已达 100%，已自动压缩（保留最近对话）" : "Context full — auto-compressed");
+      }
+    }
+  }, [usedTokens, contextWindow, zh]);
   const fmtK = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n));
 
   return (
@@ -470,7 +481,6 @@ export default function AIChatPage() {
                             </div>
                           </div>
                           <div style={{ borderTop: "1px solid var(--v2-line, rgba(128,140,160,.4))", marginTop: 8, paddingTop: 10 }}>
-                            <div style={{ fontSize: 12, marginBottom: 4 }}>{lang === "zh" ? `携带窗口：${contextWindow} 条` : `Window: ${contextWindow}`}</div>
                             <Slider min={0} max={20} step={2} value={contextWindow} onChange={setContextWindow} />
                             <Button size="small" block icon={<ClearOutlined />} onClick={() => setMessages([])} disabled={messages.length === 0} style={{ marginTop: 8 }}>
                               {text.clearContext}
@@ -480,16 +490,16 @@ export default function AIChatPage() {
                       );
                     })()}
                   >
-                    {/* 空心环形进度：用量以颜色表示占比 */}
+                    {/* 空心环形进度（用量以环带颜色表示，中心镂空） */}
                     <div
                       title={`${text.contextManager}：≈${fmtK(usedTokens)} / 32.0K tokens`}
                       style={{
-                        width: 24, height: 24, borderRadius: "50%", cursor: "pointer", flex: "0 0 auto",
+                        width: 18, height: 18, borderRadius: "50%", cursor: "pointer", flex: "0 0 auto",
                         background: `conic-gradient(var(--v2-blue) ${pct}%, rgba(128,140,160,.25) ${pct}% 100%)`,
                         display: "inline-flex", alignItems: "center", justifyContent: "center",
                       }}
                     >
-                      <div style={{ width: 16, height: 16, borderRadius: "50%", background: "var(--v2-panel2, rgb(22,34,58))" }} />
+                      <div style={{ width: 12, height: 12, borderRadius: "50%", background: "var(--v2-panel2, rgb(22,34,58))" }} />
                     </div>
                   </Popover>
                   {/* 模型+思考强度合并面板（参考 ZCode 第二图）：供应商头+模型列表带勾+思考强度渐变滑条 */}
