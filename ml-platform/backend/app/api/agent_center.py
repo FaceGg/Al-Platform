@@ -266,6 +266,47 @@ def get_agent_run(
     )
 
 
+@router.post("/runs/{run_id}/cancel", response_model=AgentRunDetail)
+def cancel_agent_run(
+    run_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """用户终止运行中的智能体任务。
+
+    DB 级 CAS 抢占（与 resume 同款防并发）：执行线程在轮次/验收落态
+    边界检查到 cancelled 即停止并保留终态；正在进行的单次 LLM 调用
+    （最长约 12 分钟含重试）无法中断，在其后边界生效。"""
+    from sqlalchemy import update as sa_update
+
+    from app.tasks.time_utils import utcnow as _agent_utcnow
+
+    run = db.get(AgentRun, uuid.UUID(run_id))
+    if run is None:
+        raise HTTPException(404, detail={"code": "AGENT_RUN_NOT_FOUND"})
+    if current_user.role != "admin" and run.created_by != current_user.id:
+        raise HTTPException(403, detail={"code": "AGENT_RUN_FORBIDDEN"})
+    if run.status not in ("pending", "running"):
+        raise HTTPException(
+            409, detail={"code": "AGENT_RUN_NOT_ACTIVE", "status": run.status},
+        )
+    claimed = db.execute(
+        sa_update(AgentRun)
+        .where(
+            AgentRun.id == run.id,
+            AgentRun.status.in_(("pending", "running")),
+        )
+        .values(status="cancelled", heartbeat_at=_agent_utcnow())
+    ).rowcount
+    db.commit()
+    if not claimed:
+        raise HTTPException(
+            409, detail={"code": "AGENT_RUN_NOT_ACTIVE", "status": "cancelled"},
+        )
+    db.refresh(run)
+    return get_agent_run(run.id, db=db, current_user=current_user)
+
+
 # 活跃态不可删：执行线程仍在写 run 行，删除会产生孤儿写入与误导性报错。
 DELETABLE_RUN_STATUSES = frozenset(
     # 终态可删；pending/running 在跑（删除需先终止，避免执行线程写回

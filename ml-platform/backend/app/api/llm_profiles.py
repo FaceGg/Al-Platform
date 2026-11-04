@@ -109,14 +109,30 @@ def usage_stats(
     注意：必须注册在 GET /{profile_id} 之前，否则 /usage-stats 被当作
     UUID 解析返回 422。聚合 llm_gateway.egress 审计事件：汇总（调用/
     失败/tokens/延迟）、按天趋势、按模型、按用途。tokens 字段自统计
-    功能上线起记录——此前事件无 tokens，仅计入调用/延迟。"""
+    功能上线起记录——此前事件无 tokens，仅计入调用/延迟。
+    重置基线（llm_usage_reset_at）之前的事件不计入——审计记录保留，
+    统计口径从基线重新开始。"""
     from datetime import timedelta
 
     from app.models.platform_audit import PlatformAuditEvent
+    from app.models.platform_option import get_option
     from app.tasks.time_utils import utcnow
 
     days = min(max(days, 1), 365)
     since = utcnow() - timedelta(days=days)
+    reset_at = get_option(db, "llm_usage_reset_at")
+    if reset_at:
+        # 基线晚于窗口起点时收窄窗口（重置后历史事件不再计入）
+        from datetime import datetime as _dt
+
+        try:
+            reset_dt = _dt.fromisoformat(str(reset_at))
+            if reset_dt.tzinfo is None:
+                reset_dt = reset_dt.replace(tzinfo=since.tzinfo)
+            if reset_dt > since:
+                since = reset_dt
+        except ValueError:
+            pass
     events = (
         db.query(PlatformAuditEvent)
         .filter(
@@ -355,6 +371,37 @@ def delete_profile(
     )
     db.delete(profile)
     db.commit()
+
+
+@router.post("/usage-stats/reset")
+def reset_usage_stats(
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """重置 Tokens 用量统计：设置统计基线为当前时刻。
+
+    审计事件是安全记录不删除；聚合从基线重新开始（历史不计入）。
+    从基线起重新统计 tokens 用量。"""
+    from app.models.platform_option import set_option
+    from app.tasks.time_utils import utcnow
+
+    reset_at = utcnow().isoformat()
+    set_option(db, "llm_usage_reset_at", reset_at)
+    record_platform_event(
+        db,
+        actor=admin,
+        request=request,
+        intent=PlatformAuditIntent(
+            action="llm_usage.reset",
+            resource_type="platform_option",
+            resource_id="llm_usage_reset_at",
+            changes={"reset": True},
+        ),
+        result="success",
+    )
+    db.commit()
+    return {"reset_at": reset_at}
 
 
 @router.post("/list-models")

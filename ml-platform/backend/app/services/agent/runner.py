@@ -177,6 +177,10 @@ class AgentRunner:
         return {"metrics": metrics, "importance": importance}
 
     def _escalate(self, error_code: str, detail: str | None = None) -> AgentRun:
+        # 用户已终止的 run 不再覆盖为升级态（cancelled 终态优先）
+        self.db.refresh(self.run)
+        if self.run.status == "cancelled":
+            return self.run
         self.run.status = "waiting_escalate"
         self.run.error_code = error_code
         # 升级原因持久化进档案——只存 error_code 会丢掉"网络超时还是契约违反"
@@ -439,6 +443,22 @@ class AgentRunner:
             return self._execute()
         except _BudgetExceeded:
             return self._escalate("AGENT_TOKEN_BUDGET_EXCEEDED")
+        except _RunCancelled:
+            # 用户终止（cancel 端点已置 cancelled）：落终态档案，不覆盖状态
+            self.run.status = "cancelled"
+            self.run.error_code = None
+            self.memory["cancelled_at_round"] = self.run.round_count
+            self.run.memory_json = self.memory
+            self.db.commit()
+            return self.run
+
+    def _check_cancelled(self) -> None:
+        """轮次/阶段边界检查用户终止（cancel 端点把 DB 状态置为 cancelled）。
+
+        本 session 的 run 对象可能带旧状态——refresh 后以 DB 为准。"""
+        self.db.refresh(self.run)
+        if self.run.status == "cancelled":
+            raise _RunCancelled()
 
     def _execute(self) -> AgentRun:
         self.run.status = "running"
@@ -465,6 +485,7 @@ class AgentRunner:
             self.run.round_count = round_number
             self.run.current_stage = "s1"
             self.db.commit()
+            self._check_cancelled()  # 每轮开始检查用户终止（LLM 调用最长 ~12 分钟，边界生效）
 
             # ---- S1 -------------------------------------------------
             l2_refs = self._l2_references()
@@ -662,6 +683,7 @@ class AgentRunner:
                 self._record_round(
                     round_number, s2_attempts=s2_attempts, verdict="pass", hints=[]
                 )
+                self._check_cancelled()  # 验收落态前最后检查：终止优先于 accepted
                 self.run.status = "accepted"
                 self.run.current_stage = "done"
                 self.run.memory_json = self.memory
@@ -720,4 +742,8 @@ class AgentRunner:
 
 
 class _BudgetExceeded(Exception):
-    """Internal: token fuse blown mid-stage."""
+    """Token 预算熔断（内部信号，由 run_to_completion 统一落终态）。"""
+
+
+class _RunCancelled(Exception):
+    """用户经 cancel 端点请求终止（内部信号；终态由 run_to_completion 落库）。"""

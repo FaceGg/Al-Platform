@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Segmented, Spin } from "antd";
+import { Button, Modal, Popconfirm, Segmented, Spin, message } from "antd";
+import { RestOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient from "../api/client";
 import AppLayout from "../components/AppLayout";
@@ -44,6 +45,16 @@ export default function LLMUsageStatsPage() {
       .finally(() => setLoading(false));
   }, [days]);
 
+  const resetStats = async () => {
+    try {
+      await apiClient.post("/llm-profiles/usage-stats/reset");
+      message.success(zh ? "已重置，将从现在重新统计" : "Statistics reset");
+      setDays(7);
+    } catch {
+      message.error(zh ? "重置失败" : "Reset failed");
+    }
+  };
+
   useEffect(() => {
     if (!chartRef.current || !stats) return;
     const chart = echarts.getInstanceByDom(chartRef.current) ?? echarts.init(chartRef.current);
@@ -82,15 +93,23 @@ export default function LLMUsageStatsPage() {
             ? "大模型网关调用的用量聚合：tokens、调用次数、延迟与趋势（数据来自平台审计）。"
             : "Aggregated LLM gateway usage from the platform audit trail."}</div>
         </div>
-        <Segmented
-          value={days}
-          onChange={(v) => setDays(v as number)}
-          options={[
-            { value: 1, label: zh ? "今天" : "Today" },
-            { value: 7, label: zh ? "近 7 天" : "7d" },
-            { value: 30, label: zh ? "近 30 天" : "30d" },
-          ]}
-        />
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <Segmented
+            value={days}
+            onChange={(v) => setDays(v as number)}
+            options={[
+              { value: 1, label: zh ? "今天" : "Today" },
+              { value: 7, label: zh ? "近 7 天" : "7d" },
+              { value: 30, label: zh ? "近 30 天" : "30d" },
+            ]}
+          />
+          <Popconfirm
+            title={zh ? "重置统计？历史数据将不再计入，从现在重新统计。" : "Reset statistics?"}
+            onConfirm={() => void resetStats()}
+          >
+            <Button icon={<RestOutlined />}>{zh ? "重置" : "Reset"}</Button>
+          </Popconfirm>
+        </div>
       </div>
 
       <Spin spinning={loading}>

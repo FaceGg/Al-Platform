@@ -3,6 +3,7 @@ import { LoadingOutlined } from "@ant-design/icons";
 import OptReportPanel from "./OptReportPanel";
 import ServitizeActions from "./ServitizeActions";
 import { parseBackendTime } from "../utils/time";
+import apiClient from "../api/client";
 import { agentStatusLabel } from "../utils/agentStatus";
 import {
   resumeAgentRun,
@@ -109,6 +110,7 @@ const TERMINAL_EXPLAIN: Record<string, { signal: string; why: string; advice: st
 export default function AgentRunArchivePanel({ runId, archive, archiveError, zh, active, onClose, onRefresh }: Props) {
   const escalation = archive?.memory_json?.escalation;
   const activeStage = active && archive ? STAGE_LABELS[archive.current_stage] : null;
+  const [cancelling, setCancelling] = useState(false);
   return (
     <div style={{ marginTop: 12, border: "1px solid var(--v2-line)", borderRadius: 10, background: "var(--v2-bg)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
@@ -138,6 +140,21 @@ export default function AgentRunArchivePanel({ runId, archive, archiveError, zh,
                     .catch(() => undefined);
                 }}
               >{zh ? "放行继续 →" : "Resume →"}</button>
+            ) : null}
+            {active ? (
+              <button
+                type="button"
+                className="v2-btn sm"
+                style={{ borderColor: "rgba(230,111,117,.55)", color: "var(--v2-red)" }}
+                disabled={cancelling}
+                onClick={() => {
+                  setCancelling(true);
+                  apiClient.post(`/agent/runs/${archive.id}/cancel`)
+                    .then(() => onRefresh())
+                    .catch(() => setCancelling(false));
+                }}
+                title={zh ? "终止任务：当前 LLM 调用（最长约 12 分钟）完成后在阶段边界停止" : "Cancel at the next stage boundary"}
+              >{cancelling ? (zh ? "终止中…" : "Cancelling…") : (zh ? "■ 终止" : "■ Cancel")}</button>
             ) : null}
           </>
         ) : null}
