@@ -106,6 +106,9 @@ describe("LLMGatewayPage", () => {
     );
     await screen.findByText("glm-default");
     fireEvent.click(screen.getByText("添加供应商"));
+    // 两段式：先选模板卡（预填 URL/模型），再进创建表单
+    await waitFor(() => expect(screen.getByText("DeepSeek", { selector: "span" })).toBeInTheDocument());
+    fireEvent.click(screen.getByText("DeepSeek", { selector: "span" }));
     await waitFor(() => expect(screen.getByLabelText("名称")).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "glm-backup" } });
     fireEvent.change(screen.getByLabelText("URL"), {

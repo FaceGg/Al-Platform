@@ -579,3 +579,13 @@ table.v2-table td.tt { color: var(--v2-txt); }
 }
 .v2-shell input[type="text"]:focus { border-color: var(--v2-blue); }
 .v2-shell input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--v2-blue); }
+
+/* 大模型管理·供应商模板选择卡（参考对话式模型设置的两列卡墙） */
+.llm-tpl-card {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 10px 12px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--v2-line); background: var(--v2-panel2);
+  color: var(--v2-txt); font-size: 13.5px; text-align: left;
+  transition: border-color .15s, box-shadow .15s;
+}
+.llm-tpl-card:hover { border-color: var(--v2-blue); box-shadow: 0 0 0 2px rgba(47, 155, 245, .15); }

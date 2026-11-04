@@ -16,12 +16,40 @@ import { formatApiError } from '../api/client'
 
 const PURPOSE_OPTIONS = ['chat', 'agent', 'embedding']
 
+// 供应商模板目录：选卡预填 Base URL/默认模型，用户只需补 API Key。
+// 均为 OpenAI Chat Completions 兼容端点（平台网关唯一协议）；custom 项
+// 走空白表单。品牌色卡纯 CSS，不引第三方图标资源。
+interface ProviderTemplate {
+  name: string
+  short: string
+  color: string
+  api_url: string
+  model_id: string
+  group: 'domestic' | 'international'
+}
+
+const PROVIDER_TEMPLATES: ProviderTemplate[] = [
+  { name: 'DeepSeek', short: 'DS', color: '#4D6BFE', api_url: 'https://api.deepseek.com/v1/chat/completions', model_id: 'deepseek-chat', group: 'domestic' },
+  { name: '智谱 GLM', short: '智', color: '#3859FF', api_url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model_id: 'glm-4.6', group: 'domestic' },
+  { name: 'Kimi（月之暗面）', short: 'K', color: '#171D26', api_url: 'https://api.moonshot.cn/v1/chat/completions', model_id: 'kimi-k2-0905-preview', group: 'domestic' },
+  { name: '阿里云百炼', short: '百', color: '#FF6A00', api_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model_id: 'qwen-plus', group: 'domestic' },
+  { name: '火山方舟（豆包）', short: '火', color: '#1664FF', api_url: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', model_id: 'doubao-seed-1-6-250615', group: 'domestic' },
+  { name: '硅基流动', short: '硅', color: '#7C3AED', api_url: 'https://api.siliconflow.cn/v1/chat/completions', model_id: 'deepseek-ai/DeepSeek-V3', group: 'domestic' },
+  { name: '腾讯混元', short: '腾', color: '#0052D9', api_url: 'https://api.hunyuan.cloud.tencent.com/v1/chat/completions', model_id: 'hunyuan-turbos-latest', group: 'domestic' },
+  { name: 'MiniMax', short: 'M', color: '#F23F5D', api_url: 'https://api.minimaxi.com/v1/chat/completions', model_id: 'MiniMax-M2', group: 'domestic' },
+  { name: 'OpenAI', short: 'AI', color: '#10A37F', api_url: 'https://api.openai.com/v1/chat/completions', model_id: 'gpt-4o', group: 'international' },
+  { name: 'OpenRouter', short: 'OR', color: '#8B5CF6', api_url: 'https://openrouter.ai/api/v1/chat/completions', model_id: 'openai/gpt-4o', group: 'international' },
+  { name: 'xAI（Grok）', short: '𝕏', color: '#111111', api_url: 'https://api.x.ai/v1/chat/completions', model_id: 'grok-4', group: 'international' },
+]
+
 export default function LLMGatewayPage() {
   const { t, lang } = useI18n()
   const text = t.llm
+  const zh = lang === 'zh'
   const [profiles, setProfiles] = useState<LLMProfile[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
   const [editing, setEditing] = useState<LLMProfile | null>(null)
   const [saving, setSaving] = useState(false)
   const [testingId, setTestingId] = useState<string | null>(null)
@@ -37,10 +65,24 @@ export default function LLMGatewayPage() {
 
   useEffect(load, [])
 
+  // 添加供应商两段式：先选模板卡片（预填 URL/模型），再进创建表单补 Key。
   const openCreate = () => {
+    setPickerOpen(true)
+  }
+
+  const openCreateWith = (tpl?: ProviderTemplate) => {
     setEditing(null)
     form.resetFields()
-    form.setFieldsValue({ provider: 'openai_compatible', deployment: 'cloud', timeout_seconds: 60, purpose_tags: ['chat', 'agent'] })
+    form.setFieldsValue({
+      name: tpl?.name ?? '',
+      provider: 'openai_compatible',
+      api_url: tpl?.api_url ?? '',
+      model_id: tpl?.model_id ?? '',
+      deployment: 'cloud',
+      timeout_seconds: 60,
+      purpose_tags: ['chat', 'agent'],
+    })
+    setPickerOpen(false)
     setModalOpen(true)
   }
 
@@ -185,6 +227,51 @@ export default function LLMGatewayPage() {
         </table>
       </div>
       <Modal
+        title={zh ? '选择供应商模板' : 'Choose provider'}
+        open={pickerOpen}
+        onCancel={() => setPickerOpen(false)}
+        footer={null}
+        width={720}
+        destroyOnClose
+      >
+        <div style={{ color: 'var(--v2-dim, #999)', fontSize: 12.5, marginBottom: 12 }}>
+          {zh ? '选卡自动填入 Base URL 与默认模型，保存时补 API Key 即可；端点均为 OpenAI Chat Completions 兼容。' : 'Pick a card to prefill the base URL and model; add your API key on save. All endpoints are OpenAI Chat Completions compatible.'}
+        </div>
+        {([
+          [zh ? '国内服务商' : 'Domestic', 'domestic'],
+          [zh ? '国际服务商' : 'International', 'international'],
+        ] as const).map(([groupLabel, groupKey]) => (
+          <div key={groupKey} style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, color: 'var(--v2-dim, #999)', margin: '4px 0 8px' }}>{groupLabel}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              {PROVIDER_TEMPLATES.filter((tpl) => tpl.group === groupKey).map((tpl) => (
+                <button
+                  key={tpl.name}
+                  type="button"
+                  onClick={() => openCreateWith(tpl)}
+                  className="llm-tpl-card"
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{ background: tpl.color, borderRadius: 8, width: 34, height: 34, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 14, flex: '0 0 auto' }}
+                  >
+                    {tpl.short}
+                  </span>
+                  <span style={{ flex: 1, textAlign: 'left' }}>{tpl.name}</span>
+                  <span style={{ color: 'var(--v2-dim, #999)' }}>›</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+        <div style={{ fontSize: 12, color: 'var(--v2-dim, #999)', margin: '4px 0 8px' }}>{zh ? '自定义' : 'Custom'}</div>
+        <button type="button" className="llm-tpl-card" onClick={() => openCreateWith()} style={{ width: '100%' }}>
+          <span aria-hidden="true" style={{ borderRadius: 8, width: 34, height: 34, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px dashed var(--v2-line, #ccc)', color: 'var(--v2-dim, #999)', fontSize: 18, flex: '0 0 auto' }}>+</span>
+          <span style={{ flex: 1, textAlign: 'left' }}>{zh ? '创建自定义供应商' : 'Create custom provider'}</span>
+          <span style={{ color: 'var(--v2-dim, #999)' }}>›</span>
+        </button>
+      </Modal>
+      <Modal
         title={editing ? text.editTitle : text.createTitle}
         open={modalOpen}
         onOk={submit}
@@ -200,7 +287,7 @@ export default function LLMGatewayPage() {
           <Form.Item name="provider" label={text.colProvider} rules={[{ required: true }]}>
             <Select
               options={[
-                { value: 'openai_compatible', label: 'OpenAI 兼容' },
+                { value: 'openai_compatible', label: zh ? 'Chat Completions（/chat/completions，OpenAI 兼容）' : 'Chat Completions (/chat/completions, OpenAI-compatible)' },
                 { value: 'custom', label: text.providerCustom },
               ]}
             />
