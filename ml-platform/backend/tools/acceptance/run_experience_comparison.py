@@ -29,6 +29,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 os.environ.setdefault("LLM_MASTER_KEY", os.environ.get("LLM_MASTER_KEY", ""))
 
+# 处理臂基线（--control-only 补数据时引用）：2026-11-04 实测 accepted 运行
+# （280 行平衡拧紧样本，9 条 cross-domain 经验注入，max_rounds=6）
+TREATMENT_BASELINE = [{
+    "run_id": "2be1053f-ca99-4ae5-b7f0-388d70989f82",
+    "status": "accepted",
+    "recall_minority": 1.0,
+    "f1": 0.9836,
+    "accuracy": 0.9857,
+    "total_tokens": None,
+}]
+
 
 def _parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -42,6 +53,8 @@ def _parse_args():
     parser.add_argument("--keep-runs", action="store_true")
     parser.add_argument("--max-rounds", type=int, default=6,
                         help="AgentRun guidance max_rounds（默认 6，让两臂跑到门禁判定）")
+    parser.add_argument("--control-only", action="store_true",
+                        help="只跑对照臂（处理臂已有 accepted 结果时补数据用）")
     return parser.parse_args()
 
 
@@ -84,7 +97,7 @@ def main() -> int:
             print(f"DB 内找不到 LLM 档案: {args.profile_name}")
             return 2
         admin = db.query(User).filter(User.username == "admin").one()
-        project = Project(name=f"exp-cmp-{uuid.uuid4().hex[:8]}", owner_id=admin.id)
+        project = Project(name=f"集成判据A-B实验-{uuid.uuid4().hex[:8]}", owner_id=admin.id)
         db.add(project)
         db.flush()
         service = build_artifact_service(db)
@@ -162,7 +175,11 @@ def main() -> int:
 
     results = []
     try:
-        results.append(run_arm("treatment"))
+        if not args.control_only:
+            results.append(run_arm("treatment"))
+        else:
+            # 补数据模式：处理臂沿用既有 accepted 运行（见台账）
+            results.append({"label": "treatment", "runs": TREATMENT_BASELINE})
         results.append(run_arm("control"))
     finally:
         # 无论成败只恢复"原 active 集"（处理臂蒸馏的新条目保持其自然状态，
