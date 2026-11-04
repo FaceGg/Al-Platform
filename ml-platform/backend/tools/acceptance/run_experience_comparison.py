@@ -91,9 +91,12 @@ def main() -> int:
             f"exp-cmp-{uuid.uuid4().hex[:6]}", "dataset",
         )
         db.commit()
-        print(f"project={project.id} artifact={artifact.id} rows={len(frame)}")
-        # 纯值捕获：profile ORM 对象随会话关闭过期，跨会话只带 id
+        # 纯值捕获：ORM 对象随会话关闭过期，跨会话只带标量 id
+        project_id = project.id
+        artifact_id = artifact.id
         profile_id = profile.id
+        admin_id = admin.id
+        print(f"project={project_id} artifact={artifact_id} rows={len(frame)}")
 
         experience_ids = [
             str(entry.id)
@@ -124,11 +127,11 @@ def main() -> int:
             metrics_rows = []
             for index in range(args.runs_per_arm):
                 run = AgentRun(
-                    project_id=project.id,
-                    dataset_artifact_id=artifact.id,
+                    project_id=project_id,
+                    dataset_artifact_id=artifact_id,
                     target_column=args.target_col,
                     llm_profile_id=profile_id,
-                    created_by=admin.id,
+                    created_by=admin_id,
                 )
                 db.add(run)
                 db.commit()
