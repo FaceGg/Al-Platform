@@ -92,6 +92,8 @@ def main() -> int:
         )
         db.commit()
         print(f"project={project.id} artifact={artifact.id} rows={len(frame)}")
+        # 纯值捕获：profile ORM 对象随会话关闭过期，跨会话只带 id
+        profile_id = profile.id
 
         experience_ids = [
             str(entry.id)
@@ -125,7 +127,7 @@ def main() -> int:
                     project_id=project.id,
                     dataset_artifact_id=artifact.id,
                     target_column=args.target_col,
-                    llm_profile_id=profile.id,
+                    llm_profile_id=profile_id,
                     created_by=admin.id,
                 )
                 db.add(run)
