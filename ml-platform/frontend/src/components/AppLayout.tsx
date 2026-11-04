@@ -8,7 +8,7 @@ import {
   MessageOutlined, MonitorOutlined, ClusterOutlined, DeploymentUnitOutlined,
   PlayCircleOutlined, BookOutlined, ControlOutlined, TagsOutlined, ApartmentOutlined,
   HomeOutlined, RocketOutlined, CopyOutlined, FileTextOutlined, SettingOutlined,
-  NotificationOutlined,
+  NotificationOutlined, BarChartOutlined,
 } from "@ant-design/icons";
 import { SunOutlined, MoonOutlined } from "@ant-design/icons";
 import { useI18n } from "../i18n";
@@ -28,7 +28,7 @@ const VIEW_ROUTES: Record<ViewId, string[]> = {
   algo: ["/algo", "/projects", "/workspace", "/template", "/models", "/data", "/data-annotation", "/automl", "/training", "/orchestration", "/demo-loop", "/annotations", "/algorithms", "/api-marketplace"],
   agent: ["/agent", "/knowledge-center", "/prompt-templates", "/knowledge", "/knowledge-graph", "/chat"],
   infra: ["/infra", "/kubernetes", "/notebooks", "/images", "/cluster-governance", "/monitor", "/compute"],
-  admin: ["/llm-gateway", "/admin/users", "/admin/announcements", "/admin/audit", "/admin/settings"],
+  admin: ["/llm-gateway", "/admin/llm-usage", "/admin/users", "/admin/announcements", "/admin/audit", "/admin/settings"],
 };
 
 /** Landing route for each top-level view tab (admin: first sidebar entry). */
@@ -130,6 +130,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       { label: zh ? "平台" : "Platform", items: [
         { key: "/admin/settings", icon: <SettingOutlined />, label: zh ? "平台状态" : "Platform Status" },
         { key: "/llm-gateway", icon: <ApiOutlined />, label: t.nav.llm_gateway },
+        { key: "/admin/llm-usage", icon: <BarChartOutlined />, label: zh ? "Tokens 用量" : "Token usage" },
       ] },
     ],
   };

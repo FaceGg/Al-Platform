@@ -47,6 +47,7 @@ const SystemSettingsPage = lazy(() => import("./pages/SystemSettingsPage"));
 const AgentCenterPage = lazy(() => import("./pages/AgentCenterPage"));
 const AgentRunDetailPage = lazy(() => import("./pages/AgentRunDetailPage"));
 const AIChatPage = lazy(() => import("./pages/AIChatPage"));
+const LLMUsageStatsPage = lazy(() => import("./pages/LLMUsageStatsPage"));
 
 const LIGHT_TOKENS = {
   // 主色对齐 v2-btn.primary（浅色主题 --v2-blue 渐变起点 #1a6fc4），
@@ -118,6 +119,7 @@ function AppContent() {
             <Route path="/admin/audit" element={<ProtectedRoute><AuditLogPage /></ProtectedRoute>} />
             <Route path="/admin/settings" element={<ProtectedRoute><SystemSettingsPage /></ProtectedRoute>} />
             <Route path="/llm-gateway" element={<ProtectedRoute><LLMGatewayPage /></ProtectedRoute>} />
+            <Route path="/admin/llm-usage" element={<ProtectedRoute><LLMUsageStatsPage /></ProtectedRoute>} />
             <Route path="/knowledge-center" element={<ProtectedRoute><KnowledgeCenterPage /></ProtectedRoute>} />
             <Route path="/prompt-templates" element={<ProtectedRoute><PromptTemplatesPage /></ProtectedRoute>} />
             <Route path="/agent" element={<ProtectedRoute><PageErrorBoundary pageName="智能体中心"><AgentCenterPage /></PageErrorBoundary></ProtectedRoute>} />

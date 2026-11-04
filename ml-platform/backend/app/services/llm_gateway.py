@@ -381,6 +381,17 @@ def chat_completion(
         "status_code": status_code,
         "latency_ms": latency_ms,
     }
+    # tokens 用量随审计落库（使用统计页的数据源）。三格式 usage 已归一为
+    # prompt_tokens/completion_tokens；上游未回 usage（部分兼容端点）则缺省。
+    if usage:
+        prompt_tokens = usage.get("prompt_tokens")
+        completion_tokens = usage.get("completion_tokens")
+        if prompt_tokens is not None or completion_tokens is not None:
+            changes["prompt_tokens"] = int(prompt_tokens or 0)
+            changes["completion_tokens"] = int(completion_tokens or 0)
+            changes["total_tokens"] = (
+                int(prompt_tokens or 0) + int(completion_tokens or 0)
+            )
     if config.profile_id:
         changes["profile"] = config.profile_name
         if request is None:

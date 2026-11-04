@@ -98,6 +98,100 @@ def list_profiles(
     return [_out(db, profile) for profile in db.query(LLMProfile).order_by(LLMProfile.name)]
 
 
+@router.get("/usage-stats")
+def usage_stats(
+    days: int = 30,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """Tokens 使用统计（系统管理页数据源）。
+
+    注意：必须注册在 GET /{profile_id} 之前，否则 /usage-stats 被当作
+    UUID 解析返回 422。聚合 llm_gateway.egress 审计事件：汇总（调用/
+    失败/tokens/延迟）、按天趋势、按模型、按用途。tokens 字段自统计
+    功能上线起记录——此前事件无 tokens，仅计入调用/延迟。"""
+    from datetime import timedelta
+
+    from app.models.platform_audit import PlatformAuditEvent
+    from app.tasks.time_utils import utcnow
+
+    days = min(max(days, 1), 365)
+    since = utcnow() - timedelta(days=days)
+    events = (
+        db.query(PlatformAuditEvent)
+        .filter(
+            PlatformAuditEvent.action == "llm_gateway.egress",
+            PlatformAuditEvent.created_at >= since,
+        )
+        .order_by(PlatformAuditEvent.created_at.asc())
+        .all()
+    )
+
+    total_calls = len(events)
+    failed_calls = sum(1 for event in events if event.result != "success")
+    prompt_total = completion_total = 0
+    latencies: list[float] = []
+    by_day: dict[str, dict] = {}
+    by_model: dict[str, dict] = {}
+    by_purpose: dict[str, dict] = {}
+    for event in events:
+        changes = event.changes if isinstance(event.changes, dict) else {}
+
+        def _tokens(key: str) -> int:
+            # 历史事件可能带非数字值（脱敏旧规则写入的 [REDACTED] 等），
+            # 按无用量计，不让统计页崩
+            try:
+                return int(changes.get(key) or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        prompt_tokens = _tokens("prompt_tokens")
+        completion_tokens = _tokens("completion_tokens")
+        prompt_total += prompt_tokens
+        completion_total += completion_tokens
+        if changes.get("latency_ms") is not None:
+            try:
+                latencies.append(float(changes["latency_ms"]))
+            except (TypeError, ValueError):
+                pass
+        day = (event.created_at or since).strftime("%Y-%m-%d")
+        model = str(changes.get("model") or "-")
+        purpose = str(changes.get("purpose") or "-")
+        failed = event.result != "success"
+        for bucket, key in ((by_day, day), (by_model, model), (by_purpose, purpose)):
+            entry = bucket.setdefault(
+                key, {"calls": 0, "failed": 0, "prompt_tokens": 0, "completion_tokens": 0}
+            )
+            entry["calls"] += 1
+            entry["failed"] += 1 if failed else 0
+            entry["prompt_tokens"] += prompt_tokens
+            entry["completion_tokens"] += completion_tokens
+
+    return {
+        "days": days,
+        "since": since.isoformat(),
+        "summary": {
+            "total_calls": total_calls,
+            "failed_calls": failed_calls,
+            "prompt_tokens": prompt_total,
+            "completion_tokens": completion_total,
+            "total_tokens": prompt_total + completion_total,
+            "avg_latency_ms": round(sum(latencies) / len(latencies), 1) if latencies else None,
+        },
+        "by_day": [
+            {"date": key, **value} for key, value in sorted(by_day.items())
+        ],
+        "by_model": sorted(
+            ({"model": key, **value} for key, value in by_model.items()),
+            key=lambda item: -(item["prompt_tokens"] + item["completion_tokens"]),
+        ),
+        "by_purpose": sorted(
+            ({"purpose": key, **value} for key, value in by_purpose.items()),
+            key=lambda item: -item["calls"],
+        ),
+    }
+
+
 @router.post("", response_model=LLMProfileOut, status_code=201)
 def create_profile(
     payload: LLMProfileCreate,

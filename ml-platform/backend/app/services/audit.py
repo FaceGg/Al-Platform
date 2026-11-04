@@ -23,9 +23,21 @@ SENSITIVE_KEY_PARTS = frozenset({
     "path",
 })
 
+# tokens 用量字段（llm_gateway.egress 审计）：是业务计数的整型数字，
+# 不是访问凭据——"token" 子串规则下会误脱敏成 [REDACTED]，使用统计
+# 页因此拿不到数据。明确豁免这三个键；凭据类键（access_token 等）
+# 仍按原规则脱敏。
+USAGE_TOKEN_KEYS = frozenset({
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+})
+
 
 def _is_sensitive(key: object) -> bool:
     normalized = str(key).lower()
+    if normalized in USAGE_TOKEN_KEYS:
+        return False
     return any(part in normalized for part in SENSITIVE_KEY_PARTS)
 
 

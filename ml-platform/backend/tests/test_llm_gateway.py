@@ -161,6 +161,60 @@ class TestLLMGateway(unittest.TestCase):
             serialized = repr(events[0].changes)
             self.assertNotIn("SECRET-CONTENT-XYZ", serialized)
             self.assertIn("test", serialized)
+            # tokens 随审计落库（使用统计页数据源）：fake stream 的 usage
+            # prompt=3 / completion=1
+            self.assertEqual(events[0].changes.get("prompt_tokens"), 3)
+            self.assertEqual(events[0].changes.get("completion_tokens"), 1)
+            self.assertEqual(events[0].changes.get("total_tokens"), 4)
+
+    def test_usage_stats_aggregates_egress_events(self):
+        # 管理端点聚合合同：汇总/按天/按模型/按用途，tokens 只计带用量的记录
+        import uuid as _uuid
+        from datetime import timedelta as _timedelta
+
+        from app.tasks.time_utils import utcnow as _utcnow
+
+        with SessionLocal() as db:
+            admin = db.query(User).filter(User.username == _ADMIN_USER).first()
+            # 共享测试库可能已有窗口内 egress 事件：记录基线，断言用增量
+            since = _utcnow() - _timedelta(days=1)
+            baseline = (
+                db.query(PlatformAuditEvent)
+                .filter(
+                    PlatformAuditEvent.action == "llm_gateway.egress",
+                    PlatformAuditEvent.created_at >= since,
+                )
+                .count()
+            )
+            base = {
+                "action": "llm_gateway.egress",
+                "resource_type": "llm_profile",
+                "actor_id": admin.id,
+                "actor_username": admin.username,
+                "request_id": _uuid.uuid4(),
+            }
+            for row in (
+                {"result": "success", "changes": {"purpose": "agent_s1", "model": "deepseek-chat", "prompt_tokens": 100, "completion_tokens": 50, "latency_ms": 800.0}},
+                {"result": "failed", "changes": {"purpose": "agent_s1", "model": "deepseek-chat", "latency_ms": 200.0}},
+                {"result": "success", "changes": {"purpose": "chat", "model": "glm-4.6", "prompt_tokens": 30, "completion_tokens": 20, "latency_ms": 400.0}},
+            ):
+                db.add(PlatformAuditEvent(created_at=_utcnow(), **{**base, **row}))
+            db.commit()
+        response = client.get("/api/llm-profiles/usage-stats?days=1", headers=self.h)
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        # 增量合同：本用例贡献 3 次调用 / 1 失败 / 130+70 tokens
+        self.assertEqual(data["summary"]["total_calls"] - baseline, 3)
+        self.assertGreaterEqual(data["summary"]["failed_calls"], 1)
+        self.assertGreaterEqual(data["summary"]["prompt_tokens"], 130)
+        self.assertGreaterEqual(data["summary"]["total_tokens"], 200)
+        self.assertIsNotNone(data["summary"]["avg_latency_ms"])
+        models = {row["model"]: row for row in data["by_model"]}
+        self.assertGreaterEqual(models["deepseek-chat"]["calls"], 2)
+        self.assertGreaterEqual(models["deepseek-chat"]["completion_tokens"], 50)
+        purposes = {row["purpose"]: row for row in data["by_purpose"]}
+        self.assertGreaterEqual(purposes["agent_s1"]["calls"], 2)
+        self.assertGreaterEqual(len(data["by_day"]), 1)
 
     def test_chat_rejects_request_level_overrides(self):
         response = client.post(
