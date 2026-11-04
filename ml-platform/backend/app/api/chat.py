@@ -172,6 +172,56 @@ def chat_status(db: Session = Depends(get_db)):
     }
 
 
+CHAT_COMPRESS_SYSTEM = (
+    "你是对话压缩器。把给定的对话历史压缩为一段简洁摘要（不超过 300 字），"
+    "保留关键事实、数字、结论与未决问题；不要添加评论与客套。只输出摘要文本。"
+)
+
+
+@router.post("/compress")
+def compress_chat_history(
+    messages: list[dict] = Body(..., description="待压缩的对话历史"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """上下文自动压缩：用 LLM 把旧对话历史摘要化。
+
+    前端在容量圆圈达 100% 时调用；返回的摘要将随后续请求注入，
+    旧消息原文即可安全移除（内容压缩而非窗口截断）。"""
+    import json as _json
+
+    clean = []
+    for item in messages[:200]:
+        role = item.get("role")
+        content = str(item.get("content") or "")[:4000]
+        if role in ("user", "assistant") and content:
+            clean.append({"role": role, "content": content})
+    if not clean:
+        raise HTTPException(422, detail={"code": "COMPRESS_EMPTY"})
+    config = resolve_profile(db, purpose="chat")
+    if not config.api_key:
+        raise HTTPException(503, detail={"code": "LLM_NOT_CONFIGURED"})
+    try:
+        reply, _usage = chat_completion(
+            db,
+            config=config,
+            messages=[
+                {"role": "system", "content": CHAT_COMPRESS_SYSTEM},
+                {"role": "user", "content": _json.dumps(clean, ensure_ascii=False)[:60000]},
+            ],
+            temperature=0.2,
+            max_tokens=600,
+            purpose="chat_compress",
+            actor=current_user,
+        )
+    except Exception as error:  # noqa: BLE001 - 上游失败原样透传给前端提示
+        raise HTTPException(
+            502,
+            detail={"code": "COMPRESS_FAILED", "message": str(error)[:200]},
+        ) from error
+    return {"summary": (reply or "").strip()}
+
+
 @router.post("/stream")
 def chat_stream(
     message: str = Body(...),

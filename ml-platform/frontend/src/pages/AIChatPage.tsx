@@ -185,10 +185,14 @@ export default function AIChatPage() {
     const trimmed = input.trim();
     if (!trimmed) return;
     const userMsg: ChatMsg = { role: "user", content: trimmed, time: new Date().toLocaleTimeString() };
-    const history = messages
-      .filter(m => m.role === "user" || m.role === "assistant")
-      .slice(-contextWindow)
-      .map(m => ({ role: m.role, content: m.content }));
+    const history = [
+      // 压缩摘要注入历史头部（LLM 由此知晓更早的对话内容）
+      ...(compressedSummary ? [{ role: "assistant", content: "【此前对话摘要】" + compressedSummary }] : []),
+      ...messages
+        .filter(m => m.role === "user" || m.role === "assistant")
+        .slice(-contextWindow)
+        .map(m => ({ role: m.role, content: m.content })),
+    ];
     const next = [...messages, userMsg];
     setMessages(next);
     setInput("");
@@ -234,20 +238,35 @@ export default function AIChatPage() {
   const activeModel = profiles.find(p => p.id === profileId) ?? profiles.find(p => p.is_default);
   const thinkingLabel = ({ off: zh ? "关闭" : "off", low: zh ? "低" : "low", medium: zh ? "中" : "med", high: zh ? "最高" : "max" } as Record<string, string>)[thinkingLevel] ?? "";
   const carried = messages.filter(m => m.role === "user" || m.role === "assistant").slice(-contextWindow);
-  const usedTokens = Math.ceil(carried.reduce((sum, m) => sum + m.content.length, 0) / 4);
+  // 上下文容量 = 压缩摘要 + 携带窗口内原文（估算 tokens）
+  const [compressedSummary, setCompressedSummary] = useState(() => localStorage.getItem("chat.summary") || "");
+  const usedTokens = Math.ceil((compressedSummary.length + carried.reduce((sum, m) => sum + m.content.length, 0)) / 4);
   const CONTEXT_BUDGET = 32000;
   const pct = Math.min(100, Math.round((usedTokens / CONTEXT_BUDGET) * 100));
-  // 上下文容量 100% 自动压缩：携带窗口减半直至回落（提示一次）
-  const autoCompressNoted = useRef(false);
+  // 容量 100% 自动压缩（LLM 摘要算法）：旧消息摘要化替换原文，压缩后容量回落。
+  const compressingRef = useRef(false);
+  const compressFailedRef = useRef(false);
   useEffect(() => {
-    if (usedTokens >= CONTEXT_BUDGET && contextWindow > 2) {
-      setContextWindow(w => Math.max(2, Math.floor(w / 2)));
-      if (!autoCompressNoted.current) {
-        autoCompressNoted.current = true;
-        antdMessage.info(zh ? "上下文容量已达 100%，已自动压缩（保留最近对话）" : "Context full — auto-compressed");
+    compressFailedRef.current = false; // 新消息到达 → 允许重试压缩
+    if (usedTokens < CONTEXT_BUDGET || compressingRef.current) return;
+    const old = messages.slice(0, Math.max(0, messages.length - contextWindow));
+    if (old.length === 0) return;
+    compressingRef.current = true;
+    apiClient.post("/chat/compress", {
+      messages: old.map(m => ({ role: m.role, content: m.content })),
+    }).then((res) => {
+      const s = res.data?.summary;
+      if (s) {
+        setCompressedSummary(prev => (prev ? prev + "\n" : "") + s);
+        const prevStore = localStorage.getItem("chat.summary") || "";
+        localStorage.setItem("chat.summary", prevStore ? prevStore + "\n" + s : s);
+        // 摘要已承接旧消息信息 → 移除原文，保留最近窗口
+        setMessages(msgs => msgs.slice(-contextWindow));
+        antdMessage.info(zh ? "上下文已自动压缩" : "Context auto-compressed");
       }
-    }
-  }, [usedTokens, contextWindow, zh]);
+      compressingRef.current = false;
+    }).catch(() => { compressFailedRef.current = true; compressingRef.current = false; });
+  }, [usedTokens, messages, contextWindow, zh]);
   const fmtK = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n));
 
   return (
@@ -474,11 +493,12 @@ export default function AIChatPage() {
                               </div>
                             );
                           })}
-                          <div style={{ borderTop: "1px solid var(--v2-line, rgba(128,140,160,.4))", marginTop: 8, paddingTop: 10 }}>
-                            <Slider min={0} max={20} step={2} value={contextWindow} onChange={setContextWindow} />
-                            <Button size="small" block icon={<ClearOutlined />} onClick={() => setMessages([])} disabled={messages.length === 0} style={{ marginTop: 8 }}>
-                              {text.clearContext}
-                            </Button>
+                          {/* 保留平均缓存命中率行；窗口滑条与清空按钮已按用户要求移除 */}
+                          <div style={{ borderTop: "1px solid var(--v2-line, rgba(128,140,160,.4))", marginTop: 8, paddingTop: 8 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "var(--v2-sub)" }}>
+                              <span>{zh ? "平均缓存命中率" : "Avg cache hit"}</span>
+                              <span>—</span>
+                            </div>
                           </div>
                         </div>
                       );
