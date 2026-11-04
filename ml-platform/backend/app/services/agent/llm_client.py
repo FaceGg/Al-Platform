@@ -444,6 +444,7 @@ def run_s4(
         config=config,
         messages=messages,
         temperature=0.2,
+        max_tokens=1024,
         purpose="agent_s4",
         actor=actor,
         timeout_floor=AGENT_STAGE_TIMEOUT_FLOOR,
