@@ -353,7 +353,7 @@ export default function AIChatPage() {
                   autoSize={{ minRows: 2, maxRows: 8 }}
                   disabled={loading}
                   variant="borderless"
-                  style={{ padding: "2px 4px", fontSize: 13.5 }}
+                  style={{ padding: "2px 4px", fontSize: 13.5, background: "transparent" }}
                 />
                 {/* 底部工具行：左=+ … 右=容量圆圈 | 模型 | 思考强度 | 发送 */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
