@@ -124,8 +124,10 @@ describe("AIChatPage", () => {
     // 工具条默认值落 localStorage（思考强度 off / 上下文窗口 8）
     await waitFor(() => expect(localStorage.getItem("chat.thinkingLevel")).toBe("off"));
     await waitFor(() => expect(localStorage.getItem("chat.contextWindow")).toBe("8"));
-    // 思考强度切换控件存在
-    expect(await screen.findByText(/思考：关闭/)).toBeInTheDocument();
-    expect(await screen.findByText(/上下文 · 8/)).toBeInTheDocument();
+    // 输入框内嵌控件：思考强度与上下文容量条（预算 32.0K 展示存在）
+    expect(await screen.findByText(/思考 关/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(document.body.textContent ?? "").toContain("32.0K");
+    });
   });
 });

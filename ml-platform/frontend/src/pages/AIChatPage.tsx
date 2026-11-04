@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Card, Input, Button, Typography, Space, Spin, Tag, Empty, Divider, Modal, Slider, Select, Collapse, Popover, message as antdMessage } from "antd";
-import { SendOutlined, RobotOutlined, UserOutlined, ClearOutlined, SettingOutlined, ShareAltOutlined, FileTextOutlined, BlockOutlined } from "@ant-design/icons";
+import { SendOutlined, RobotOutlined, UserOutlined, ClearOutlined, SettingOutlined, ShareAltOutlined, FileTextOutlined, BlockOutlined, DownOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import ChatToolsPanel from "../components/ChatToolsPanel";
 import apiClient from "../api/client";
@@ -201,63 +201,90 @@ export default function AIChatPage() {
           <ChatToolsPanel onResult={(resultText) => {
             setMessages(prev => [...prev, { role: "assistant", content: resultText, time: new Date().toLocaleTimeString() }]);
           }} />
-          {/* ZCode 式输入工具条：模型 / 思考强度 / 上下文管理 */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
-            <Select
-              size="small"
-              value={profileId || undefined}
-              onChange={(v) => setProfileId(v || "")}
-              placeholder={lang === "zh" ? "默认模型" : "Default model"}
-              style={{ minWidth: 180 }}
-              allowClear
-              options={profiles.map(p => ({ value: p.id, label: `${p.name} · ${p.model_id}` }))}
-            />
-            <Select
-              size="small"
-              value={thinkingLevel}
-              onChange={setThinkingLevel}
-              style={{ minWidth: 110 }}
-              options={[
-                { value: "off", label: lang === "zh" ? "思考：关闭" : "Think: off" },
-                { value: "low", label: lang === "zh" ? "思考：低" : "Think: low" },
-                { value: "medium", label: lang === "zh" ? "思考：中" : "Think: med" },
-                { value: "high", label: lang === "zh" ? "思考：高" : "Think: high" },
-              ]}
-            />
-            <Popover
-              title={text.contextManager}
-              trigger="click"
-              content={(
-                <div style={{ width: 240 }}>
-                  <div style={{ fontSize: 12, marginBottom: 8 }}>
-                    {lang === "zh"
-                      ? `当前对话 ${messages.filter(m => m.role !== "system").length} 条；发送时携带最近 ${contextWindow} 条作为上下文。`
-                      : `${messages.length} messages; the last ${contextWindow} ride along.`}
+          {/* ZCode 式输入框：模型/思考强度/上下文容量内嵌在输入框内 */}
+          {(() => {
+            const carried = messages.filter(m => m.role === "user" || m.role === "assistant").slice(-contextWindow);
+            const usedTokens = Math.ceil(carried.reduce((sum, m) => sum + m.content.length, 0) / 4);
+            const CONTEXT_BUDGET = 32000;
+            const pct = Math.min(100, Math.round((usedTokens / CONTEXT_BUDGET) * 100));
+            const fmtK = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n));
+            return (
+              <div style={{
+                border: "1px solid var(--v2-line, #d9d9d9)", borderRadius: 12,
+                background: "var(--v2-panel2, rgba(22,34,58,.35))",
+                padding: "8px 10px 6px", transition: "border-color .15s",
+              }}>
+                <Input.TextArea
+                  autoComplete="off" value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={text.placeholder}
+                  autoSize={{ minRows: 1, maxRows: 6 }}
+                  disabled={loading}
+                  variant="borderless"
+                  style={{ padding: "2px 4px", fontSize: 13.5 }}
+                />
+                {/* 底部工具行（输入框内）：左=模型+思考强度，右=上下文容量+发送 */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                  <Select
+                    size="small" variant="borderless"
+                    value={profileId || undefined}
+                    onChange={(v) => setProfileId(v || "")}
+                    placeholder={lang === "zh" ? "默认模型" : "Default model"}
+                    style={{ minWidth: 60, maxWidth: 210, flex: "0 1 auto", fontSize: 12 }}
+                    suffixIcon={<DownOutlined style={{ fontSize: 10 }} />}
+                    allowClear
+                    options={profiles.map(p => ({ value: p.id, label: p.model_id }))}
+                  />
+                  <Select
+                    size="small" variant="borderless"
+                    value={thinkingLevel}
+                    onChange={setThinkingLevel}
+                    style={{ width: 96, fontSize: 12 }}
+                    suffixIcon={<DownOutlined style={{ fontSize: 10 }} />}
+                    options={[
+                      { value: "off", label: lang === "zh" ? "✦ 思考 关" : "✦ off" },
+                      { value: "low", label: lang === "zh" ? "✦ 思考 低" : "✦ low" },
+                      { value: "medium", label: lang === "zh" ? "✦ 思考 中" : "✦ med" },
+                      { value: "high", label: lang === "zh" ? "✦ 思考 高" : "✦ high" },
+                    ]}
+                  />
+                  {/* 上下文容量条（点击展开窗口设置）：占用/预算 + 清理 */}
+                  <Popover
+                    trigger="click"
+                    title={text.contextManager}
+                    content={(
+                      <div style={{ width: 250 }}>
+                        <div style={{ fontSize: 12, marginBottom: 8 }}>
+                          {lang === "zh"
+                            ? `对话 ${messages.filter(m => m.role !== "system").length} 条；发送携带最近 ${contextWindow} 条（≈${fmtK(usedTokens)} tokens）。`
+                            : `${messages.length} msgs; last ${contextWindow} ride along (≈${fmtK(usedTokens)} tokens).`}
+                        </div>
+                        <div style={{ fontSize: 12, marginBottom: 4 }}>{lang === "zh" ? `携带窗口：${contextWindow} 条` : `Window: ${contextWindow}`}</div>
+                        <Slider min={0} max={20} step={2} value={contextWindow} onChange={setContextWindow} />
+                        <Button size="small" block icon={<ClearOutlined />} onClick={() => setMessages([])} disabled={messages.length === 0} style={{ marginTop: 8 }}>
+                          {text.clearContext}
+                        </Button>
+                      </div>
+                    )}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", minWidth: 130 }} title={text.contextManager}>
+                      <BlockOutlined style={{ fontSize: 11, color: "var(--v2-dim)" }} />
+                      <div style={{ width: 64, height: 4, borderRadius: 2, background: "rgba(128,140,160,.3)", overflow: "hidden" }}>
+                        <div style={{ width: `${pct}%`, height: "100%", background: pct > 80 ? "#e66f75" : "var(--v2-blue)" }} />
+                      </div>
+                      <span style={{ fontSize: 11, color: "var(--v2-dim)", fontVariantNumeric: "tabular-nums" }}>{fmtK(usedTokens)} / {fmtK(CONTEXT_BUDGET)}</span>
+                    </div>
+                  </Popover>
+                  <div style={{ marginLeft: "auto" }}>
+                    <Button type="primary" size="small" icon={<SendOutlined />} onClick={send} loading={loading}>
+                      {t.ai_chat.send}
+                    </Button>
                   </div>
-                  <div style={{ fontSize: 12, marginBottom: 6 }}>{lang === "zh" ? `携带条数：${contextWindow}` : `Context: ${contextWindow}`}</div>
-                  <Slider min={0} max={20} step={2} value={contextWindow} onChange={setContextWindow} />
-                  <Button size="small" block icon={<ClearOutlined />} onClick={() => setMessages([])} disabled={messages.length === 0} style={{ marginTop: 8 }}>
-                    {text.clearContext}
-                  </Button>
                 </div>
-              )}
-            >
-              <Button size="small" icon={<BlockOutlined />}>
-                {text.contextManager} · {contextWindow}
-              </Button>
-            </Popover>
-          </div>
-          <Space.Compact style={{ width: "100%" }}>
-            <Input.TextArea
-              autoComplete="off" value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={text.placeholder}
-              autoSize={{ minRows: 1, maxRows: 4 }}
-              disabled={loading}
-            />
-            <Button type="primary" icon={<SendOutlined />} onClick={send} loading={loading} style={{ height: "auto" }}>{t.ai_chat.send}</Button>
-          </Space.Compact>
+              </div>
+            );
+          })()}
         </div>
       </Card>
       <Modal title={text.settings} open={settingsOpen} onCancel={() => setSettingsOpen(false)} okText={text.save} onOk={() => {
