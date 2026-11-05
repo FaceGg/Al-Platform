@@ -92,10 +92,9 @@ export default function WorkspacePage() {
   const { workflowId } = useParams<{ workflowId: string }>();
   const navigate = useNavigate();
   const {
-    operators, setOperators, setNodes, setEdges, closeNodeResult,
+    setOperators, setNodes, setEdges, closeNodeResult,
     isRunning, setIsRunning, setNodeStatus, setNodeResult, setNodeError, setNodeProgress, resetExecution,
     currentRunId, setCurrentRunId, setWorkflowStatus,
-    reset,
   } = useWorkflowStore();
   const [wfName, setWfName] = useState("");
   const [workflowProjectId, setWorkflowProjectId] = useState<string | undefined>();

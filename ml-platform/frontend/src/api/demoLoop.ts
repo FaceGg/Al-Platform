@@ -85,20 +85,6 @@ export interface DemoLoopPredictResult {
   retrain_status: string;
 }
 
-export const fetchDemoLoopConfig = (projectId: string) =>
-  apiGet(`/projects/${projectId}/demo-loop/config`);
-
-export const saveDemoLoopConfig = (
-  projectId: string,
-  payload: Partial<DemoLoopConfig>,
-) => apiPut(`/projects/${projectId}/demo-loop/config`, payload);
-
-export const predictDemoLoopRow = (projectId: string, record: Record<string, unknown>) =>
-  apiPost(`/projects/${projectId}/demo-loop/predict`, { record });
-
-export const fetchDemoLoopStatus = (projectId: string) =>
-  apiGet(`/projects/${projectId}/demo-loop/status`);
-
 export const resetDemoLoop = (projectId: string) =>
   apiPost(`/projects/${projectId}/demo-loop/reset`, {});
 

@@ -86,10 +86,9 @@
   --shadow-lg: 0 20px 40px -12px rgba(15, 23, 42, 0.12);
   --shadow-focus: 0 0 0 3px rgba(37, 99, 235, 0.15);
 
-  /* Typography */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-  --font-mono: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+  /* Typography —— 自托管开源字体（SIL OFL 1.1），@font-face 见 public/fonts/fonts.css */
+  --font-sans: 'Inter', 'Noto Sans SC', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Noto Sans SC', monospace;
   --text-xs: 12px;
   --text-sm: 13px;
   --text-base: 14px;

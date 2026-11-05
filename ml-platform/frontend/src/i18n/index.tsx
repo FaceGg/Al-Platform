@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useMemo } from "react";
+import { createContext, useContext, useState } from "react";
 
 type Lang = "zh" | "en";
 
@@ -137,22 +137,6 @@ const ZH = {
     workflow_count: "\u5de5\u4f5c\u6d41\u6570\u91cf",
     last_modified: "\u6700\u540e\u4fee\u6539",
     delete_confirm: "\u786e\u5b9a\u5220\u9664\u6b64\u9879\u76ee\uff1f",
-  },
-  workflow: {
-    create: "\u65b0\u5efa\u5de5\u4f5c\u6d41",
-    name: "\u5de5\u4f5c\u6d41\u540d\u79f0",
-    run: "\u8fd0\u884c",
-    stop: "\u7ec8\u6b62",
-    save: "\u4fdd\u5b58",
-    delete: "\u5220\u9664\u5de5\u4f5c\u6d41",
-    save_success: "\u4fdd\u5b58\u6210\u529f",
-    save_failed: "\u4fdd\u5b58\u5931\u8d25",
-    run_failed: "\u8fd0\u884c\u5931\u8d25",
-    run_success: "\u8fd0\u884c\u6210\u529f",
-    running: "\u8fd0\u884c\u4e2d",
-    pending: "\u5f85\u8fd0\u884c",
-    completed: "\u5df2\u5b8c\u6210",
-    failed: "\u5931\u8d25",
   },
   workspace: {
     operator_panel: "\u7b97\u5b50\u9762\u677f",
@@ -878,7 +862,6 @@ infraGroup: "Infrastructure", adminGroup: "Administration", prompt_templates: "P
   },
   common: { success: "Success", error: "Error", confirm: "Confirm", cancel: "Cancel", delete: "Delete", save: "Save", back: "Back", run: "Run", stop: "Stop", create: "Create", edit: "Edit", search: "Search", export: "Export", import: "Import", refresh: "Refresh", close: "Close", more: "More", batch_delete: "Batch Delete", confirm_delete_title: "Confirm deletion?", delete_irreversible: "This action cannot be undone.", delete_target_prompt: "Delete \"{name}\"?", delete_selected_prompt: "Delete the selected {count} items?", select_all: "Select All", no_data: "No Data", loading: "Loading..." },
   project: { create: "New Project", name: "Project Name", desc: "Description", list: "Project List", workflow_count: "Workflows", last_modified: "Last Modified", delete_confirm: "Delete this project?" },
-  workflow: { create: "New Workflow", name: "Workflow Name", run: "Run", stop: "Stop", save: "Save", delete: "Delete Workflow", save_success: "Saved", save_failed: "Save Failed", run_failed: "Run Failed", run_success: "Run Success", running: "Running", pending: "Pending", completed: "Completed", failed: "Failed" },
   workspace: { operator_panel: "Operator Panel", run_progress: "Execution Progress", select_node_hint: "Select a node", node_properties: "Properties", params_config: "Parameters", no_params: "No parameters", execution_status: "Execution Status", status: "Status", result_preview: "Result Preview", search_operator: "Search operators...", status_pending: "Pending", status_running: "Running", status_completed: "Completed", status_failed: "Failed" },
   model: { title: "Model Library", name: "Name", type: "Type", status: "Status", created: "Created", actions: "Actions", download: "Download", compare: "Compare", delete: "Delete", detail: "Detail", framework: "Framework", accuracy: "Accuracy" },
   modelRegistry: {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Modal, Popconfirm, Segmented, Spin, message } from "antd";
+import { Button, Popconfirm, Segmented, Spin, message } from "antd";
 import { RestOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient from "../api/client";

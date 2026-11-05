@@ -2,13 +2,11 @@ import { useEffect, useState } from 'react'
 import { App as AntApp, Button, Table, Modal, Form, Input, Space } from 'antd'
 import { DeleteOutlined, EyeOutlined, PlusOutlined } from '@ant-design/icons'
 import { Link, useNavigate } from 'react-router-dom'
-import dayjs from 'dayjs'
 import apiClient from '../api/client'
 import AppLayout from '../components/AppLayout'
 import DeleteConfirmation from '../components/DeleteConfirmation'
 import TableRowAction from '../components/TableRowAction'
 import TypeToDeleteModal from '../components/TypeToDeleteModal'
-import { useI18n } from '../i18n'
 import { formatLocalTime } from '../utils/time'
 
 // 项目删除连带清理数据集/模型/工作流/训练/部署/API 等全部项目数据，
@@ -33,8 +31,6 @@ export default function ProjectListPage() {
   }
 
   useEffect(() => { load() }, [])
-
-  const { t } = useI18n()
 
   const deleteProject = async (id: string) => {
     setDeleting(true)

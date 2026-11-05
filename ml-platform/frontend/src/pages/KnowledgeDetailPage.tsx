@@ -419,7 +419,6 @@ export default function KnowledgeDetailPage() {
     };
   }, []);
 
-  const entityName = (id: string) => entities.find((e) => e.id === id)?.name ?? id.slice(0, 8);
   const totalChunks = docs.reduce((sum, d: any) => sum + (d.chunk_count || 0), 0);
   const totalTokens = docs.reduce((sum, d: any) => sum + Math.ceil((d.preview || d.content || "").length / 4), 0);
 

@@ -32,7 +32,6 @@ import {
   listClusters,
   listResourceGroups,
   NodeCapability,
-  NamespaceInfo,
   ResourceGroupInfo,
   runConnectivityCheck,
 } from "../api/kubernetes";

@@ -1767,11 +1767,11 @@ describe("DataAnnotationPage", () => {
 
   it("uses compact rule and sample-data panels in the annotation detail view", () => {
     const styles = readFileSync(resolve(process.cwd(), "src/styles/global.css"), "utf8").replace(/\r\n/g, "\n");
-    expect(styles).toContain(".spot-weld-annotation__rule-list {\n  display: grid;\n  grid-template-columns: repeat(2, minmax(0, 1fr));");
     expect(styles).toContain("max-block-size: min(48vh, 520px);");
     expect(styles).toContain("padding: 4px 6px;");
     expect(styles).not.toContain(".spot-weld-annotation__raw-data-row.is-matched");
     expect(styles).not.toContain(".spot-weld-annotation__raw-data-row.is-unmatched");
+    expect(styles).not.toContain(".spot-weld-annotation__rule-list");
   });
 
   it("keeps the annotation detail header compact", () => {

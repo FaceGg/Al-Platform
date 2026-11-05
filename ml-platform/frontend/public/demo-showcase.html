@@ -4,10 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>闭环自动化运行大屏 · 推理-回流-告警-重训-换模型</title>
+<link rel="stylesheet" href="/fonts/fonts.css">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #05080f; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; color: #d7e6f5; }
+  body { font-family: "Noto Sans SC", sans-serif; color: #d7e6f5; }
 
   #viewport { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
   #stage { position: relative; width: 1600px; height: 900px; transform-origin: center center; flex: none; }
@@ -60,7 +61,7 @@
   .term-bar i { width: 6px; height: 6px; border-radius: 50%; background: #2f9bf5; opacity: .8; }
   .term-bar i:nth-child(2) { background: #d9ac52; } .term-bar i:nth-child(3) { background: #e66f75; }
   .term-line { position: absolute; left: 14px; bottom: 7px;
-    font: 700 10.5px Consolas, monospace; color: #6fd3a5; letter-spacing: .5px; overflow: hidden;
+    font: 700 10.5px "JetBrains Mono", "Noto Sans SC", monospace; color: #6fd3a5; letter-spacing: .5px; overflow: hidden;
     white-space: nowrap; width: 0; border-right: 5px solid #47c3a0;
     animation: typing 2.8s steps(16) infinite; }
   @keyframes typing { 0% { width: 0 } 55% { width: 118px } 90% { width: 118px; border-color: transparent } 100% { width: 0 } }
@@ -70,7 +71,7 @@
   .node.active .gear { animation-duration: 1.4s; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .feat-chip { position: absolute; top: -10px; left: -8px; padding: 1px 7px; border-radius: 7px;
-    font: 800 10px Consolas, monospace; color: #9fd4ff; background: rgba(47,155,245,.18);
+    font: 800 10px "JetBrains Mono", "Noto Sans SC", monospace; color: #9fd4ff; background: rgba(47,155,245,.18);
     border: 1px solid rgba(47,155,245,.55); animation: blink 2.4s ease infinite; }
   @keyframes blink { 50% { opacity: .45; } }
 
@@ -101,7 +102,7 @@
 
   /* 7 报错数据集：数据库圆柱 + 数字计数 */
   .n-dataset { border-radius: 10px; }
-  .ds-count { font: 800 21px Consolas, monospace; color: #ff8f97; text-shadow: 0 0 12px rgba(230,111,117,.8);
+  .ds-count { font: 800 21px "JetBrains Mono", "Noto Sans SC", monospace; color: #ff8f97; text-shadow: 0 0 12px rgba(230,111,117,.8);
     line-height: 1; font-variant-numeric: tabular-nums; }
   .ds-unit { font-size: 10px; color: #b98; margin-left: 3px; }
   .stackbar { display: flex; gap: 2.5px; align-items: flex-end; height: 10px; margin-top: 3px; }
@@ -115,7 +116,7 @@
   .node.active .bell { animation: swing .5s ease-in-out 4; }
   @keyframes swing { 25% { transform: rotate(16deg); } 75% { transform: rotate(-16deg); } }
   .alert-count { position: absolute; top: -9px; left: -9px; min-width: 18px; height: 18px; padding: 0 4px;
-    border-radius: 9px; background: #e66f75; color: #fff; font: 800 10.5px/18px Consolas, monospace;
+    border-radius: 9px; background: #e66f75; color: #fff; font: 800 10.5px/18px "JetBrains Mono", "Noto Sans SC", monospace;
     text-align: center; box-shadow: 0 0 10px #e66f75; }
   .alert-count.zero { display: none; }
 
@@ -145,7 +146,7 @@
     flex-direction: column; gap: 0; }
   .n-gate .inner { flex-direction: column; gap: 1px; }
   .n-gate .title { font-size: 13px; letter-spacing: 1px; }
-  .n-gate .gate-count { font: 800 14px Consolas, monospace; color: #c9b2ff;
+  .n-gate .gate-count { font: 800 14px "JetBrains Mono", "Noto Sans SC", monospace; color: #c9b2ff;
     text-shadow: 0 0 10px rgba(155, 123, 255, .7); font-variant-numeric: tabular-nums; }
   .gate-ring { position: absolute; inset: -2px; pointer-events: none; }
   .gate-ring .fill { transition: stroke-dashoffset .5s ease; }

@@ -4,7 +4,7 @@ import {
 } from "antd";
 import {
   ArrowLeftOutlined, CaretRightOutlined, DeploymentUnitOutlined, EditOutlined,
-  MonitorOutlined, PauseOutlined, ReloadOutlined, RestOutlined, ThunderboltOutlined, UploadOutlined,
+  MonitorOutlined, PauseOutlined, ReloadOutlined, RestOutlined, UploadOutlined,
 } from "@ant-design/icons";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import AppLayout from "../components/AppLayout";

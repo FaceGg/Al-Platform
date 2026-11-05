@@ -59,7 +59,8 @@ const LIGHT_TOKENS = {
   colorInfo: "#1A6FC4",
   borderRadius: 14,
   borderRadiusLG: 20,
-  fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif",
+  // 自托管开源字体（SIL OFL 1.1）：见 public/fonts/fonts.css 与 styles/global.css
+  fontFamily: "'Noto Sans SC', sans-serif",
   colorBgContainer: "#FFFFFF",
   colorBgLayout: "#EDF5F7",
   colorBgElevated: "#F5FAFB",
@@ -78,7 +79,7 @@ const DARK_TOKENS = {
   colorInfo: "#1D6FD0",
   borderRadius: 10,
   borderRadiusLG: 14,
-  fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif",
+  fontFamily: "'Noto Sans SC', sans-serif",
   colorBgContainer: "#16223a",
   colorBgLayout: "#0d1420",
   colorBgElevated: "#1b2a47",

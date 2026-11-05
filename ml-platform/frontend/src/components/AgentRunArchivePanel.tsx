@@ -416,8 +416,6 @@ function AgentStream({ archive, zh, active }: { archive: AgentRunDetail; zh: boo
     }, 80);
   };
 
-  const activeStageLabel = active ? STAGE_LABELS[archive.current_stage] : null;
-
   return (
     <div className="agent-stream-wrap" style={{ marginTop: 4 }}>
       <div className="agent-outline" role="tablist" aria-label={zh ? "章节导航" : "Sections"}>

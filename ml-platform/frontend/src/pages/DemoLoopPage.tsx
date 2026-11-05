@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  Button, Card, message, Modal, Popconfirm, Select, Space, Table, Tag, Tooltip, Typography,
+  Button, Card, message, Modal, Popconfirm, Select, Space, Table, Tag, Typography,
 } from "antd";
 import {
   ArrowRightOutlined, BookOutlined, DeleteOutlined, DeploymentUnitOutlined, EditOutlined,
@@ -45,10 +45,6 @@ export default function DemoLoopPage() {
       if (items.length) setProjectId(items[0].id);
     }).catch((error) => message.error(formatApiError(error, "项目加载失败")));
   }, []);
-
-  const openManual = () => {
-    setManualOpen(true);
-  };
 
   const loadProjectData = useCallback(async (pid: string) => {
     if (!pid) return;

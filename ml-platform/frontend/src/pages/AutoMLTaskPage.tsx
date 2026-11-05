@@ -8,7 +8,7 @@ import AppLayout from "../components/AppLayout";
 import V2PageFrame from "../components/V2PageFrame";
 import { taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 function metric(row: Record<string, unknown>, names: string[]): number | null {
   for (const name of names) {

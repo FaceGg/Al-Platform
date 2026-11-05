@@ -99,7 +99,6 @@ export default function AnnotationCanvas({ sampleId, imageUrl, existingAnnotatio
 
     // Draw in-progress shape
     if (drawing && startPos && tool === "rect") {
-      const pos = getCanvasPos({ clientX: 0, clientY: 0 } as any);
       ctx.strokeStyle = "#ff4d4f";
       ctx.lineWidth = 1;
       ctx.setLineDash([5, 5]);

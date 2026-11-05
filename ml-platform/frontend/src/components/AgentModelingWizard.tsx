@@ -175,8 +175,6 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
     }).catch(() => setColumns([]));
   }, [datasetId]);
 
-  const dataset = datasets.find((d) => d.id === datasetId);
-  const datasetLabel = dataset ? (dataset.name ?? dataset.filename ?? dataset.id) : "";
   const chosenNotes = useMemo(
     () => Object.entries(columnNotes)
       .filter(([column, note]) => note.trim() && selectedColumns[column])

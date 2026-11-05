@@ -27,7 +27,6 @@ import {
   ReloadOutlined,
 } from "@ant-design/icons";
 import ReactECharts from "echarts-for-react";
-import dayjs from "dayjs";
 import { useAdaptivePolling } from "../hooks/useAdaptivePolling";
 import { formatLocalTime } from "../utils/time";
 import apiClient, { formatApiError } from "../api/client";
@@ -62,16 +61,6 @@ import { taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 
 const { Title, Text } = Typography;
 
-const statusColors: Record<string, string> = {
-  pending: "default",
-  running: "#fa8c16",
-  cancel_requested: "#1677ff",
-  completed: "#389e0d",
-  failed: "#cf1322",
-  FINISHED: "#389e0d",
-  FAILED: "#cf1322",
-  RUNNING: "#fa8c16",
-};
 const TERMINAL_TRAINING_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 interface ProjectOption {

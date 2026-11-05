@@ -96,18 +96,8 @@ export async function createAnnotationPreview(taskId: string, taskRevision: numb
   return response.data as { operation_id: string; preview_id: string; task_revision: number; status: string; dispatch_id?: string | null };
 }
 
-export async function getAnnotationTask(taskId: string): Promise<AnnotationTask> {
-  const response = await apiClient.get(`/annotation-tasks/${encodeURIComponent(taskId)}`);
-  return response.data as AnnotationTask;
-}
-
 export async function deleteAnnotationTask(taskId: string): Promise<void> {
   await apiClient.delete(`/annotation-tasks/${encodeURIComponent(taskId)}`);
-}
-
-export async function listAnnotationPreviews(taskId: string, limit = 20, cursor?: string): Promise<{ items: AnnotationPreview[]; total: number; next_cursor: string | null }> {
-  const response = await apiClient.get(`/annotation-tasks/${encodeURIComponent(taskId)}/previews`, { params: { limit, cursor } });
-  return response.data as { items: AnnotationPreview[]; total: number; next_cursor: string | null };
 }
 
 export async function getAnnotationPreview(taskId: string, previewId: string): Promise<AnnotationPreview> {

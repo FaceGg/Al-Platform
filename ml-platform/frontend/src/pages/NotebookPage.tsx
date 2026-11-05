@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, Typography } from "antd";
+import { Button, Form, Input, Modal, Select, Space, Table, Tag, Typography } from "antd";
 import { CaretRightOutlined, ReloadOutlined, StopOutlined } from "@ant-design/icons";
 import { App as AntApp } from "antd";
 import apiClient, { formatApiError } from "../api/client";
@@ -12,7 +12,6 @@ import {
   listNotebooks,
   NotebookSession,
   openNotebook,
-  reconcileNotebook,
   startNotebook,
   stopNotebook,
 } from "../api/notebooks";

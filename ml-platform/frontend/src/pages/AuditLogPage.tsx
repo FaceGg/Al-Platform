@@ -7,7 +7,7 @@ import { formatLocalTime } from "../utils/time";
 
 /** 系统管理→审计日志（预览稿 v-admin 侧栏项）：平台审计事件流。 */
 export default function AuditLogPage() {
-  const { t, lang } = useI18n();
+  const { lang } = useI18n();
   const zh = lang === "zh";
   const [events, setEvents] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(false);

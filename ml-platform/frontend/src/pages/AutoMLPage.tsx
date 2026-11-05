@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { App as AntApp, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch } from "antd";
-import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, RadarChartOutlined, DownloadOutlined, EyeOutlined, PlusOutlined, ReloadOutlined, StopOutlined } from "@ant-design/icons";
+import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, DownloadOutlined, EyeOutlined, PlusOutlined, ReloadOutlined, StopOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient, { formatApiError } from "../api/client";
 import type { AutoMLRunPayload, AutoMLSearchMethod, AutoMLSearchStrength, AutoMLTaskType, AutoMLTimeBudget } from "../api/training";

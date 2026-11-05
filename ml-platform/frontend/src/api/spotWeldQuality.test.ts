@@ -6,10 +6,8 @@ vi.mock("./client", () => ({ default: { get, post } }));
 
 import {
   createQualityRun,
-  createQualityDemoDataset,
   getQualityModel,
   getQualitySample,
-  getQualityWarningSummary,
   listQualityModels,
   listQualityRuns,
   listQualitySamples,
@@ -103,12 +101,10 @@ describe("spot weld quality API", () => {
   it("uploads, validates, and starts report-compatible quality data", async () => {
     post.mockResolvedValueOnce({ data: { artifact_id: "artifact-1" } });
     post.mockResolvedValueOnce({ data: { valid_rows: 12, errors: [] } });
-    post.mockResolvedValueOnce({ data: { artifact_id: "demo-artifact", row_count: 60 } });
     const file = new File(["wld1c"], "report.csv", { type: "text/csv" });
 
     await expect(uploadQualityDataset("project-1", file)).resolves.toMatchObject({ artifact_id: "artifact-1" });
     await expect(validateQualityDataset("project-1", "artifact-1")).resolves.toMatchObject({ valid_rows: 12 });
-    await expect(createQualityDemoDataset("project-1")).resolves.toMatchObject({ artifact_id: "demo-artifact" });
 
     expect(post.mock.calls[0][0]).toBe("/projects/project-1/datasets/upload");
     expect(post.mock.calls[0][1]).toBeInstanceOf(FormData);
@@ -116,11 +112,6 @@ describe("spot weld quality API", () => {
       2,
       "/projects/project-1/spot-weld/validate",
       { dataset_artifact_id: "artifact-1", field_mapping: {} },
-    );
-    expect(post).toHaveBeenNthCalledWith(
-      3,
-      "/projects/project-1/spot-weld/demo-dataset",
-      { row_count: 60 },
     );
   });
 
@@ -149,17 +140,14 @@ describe("spot weld quality API", () => {
     expect(post.mock.calls[0][1]).not.toHaveProperty("candidate_ids");
   });
 
-  it("loads generated models and warning summaries only through project-scoped routes", async () => {
+  it("loads generated models only through project-scoped routes", async () => {
     get.mockResolvedValueOnce({ data: { items: [{ id: "model-1", name: "quality", params: {} }] } });
     get.mockResolvedValueOnce({ data: { id: "model-1", name: "quality", params: {} } });
-    get.mockResolvedValueOnce({ data: { counts: { critical: 1, warning: 0, notice: 0, none: 4 }, items: [{ id: "sample-1", run_id: "run-1" }] } });
 
     await expect(listQualityModels("project-1")).resolves.toEqual([{ id: "model-1", name: "quality", params: {} }]);
     await expect(getQualityModel("project-1", "run-1")).resolves.toEqual({ id: "model-1", name: "quality", params: {} });
-    await expect(getQualityWarningSummary("project-1")).resolves.toMatchObject({ counts: { critical: 1 }, items: [{ id: "sample-1", run_id: "run-1" }] });
 
     expect(get).toHaveBeenNthCalledWith(1, "/projects/project-1/spot-weld/models");
     expect(get).toHaveBeenNthCalledWith(2, "/projects/project-1/spot-weld/runs/run-1/quality-model");
-    expect(get).toHaveBeenNthCalledWith(3, "/projects/project-1/spot-weld/warnings");
   });
 });

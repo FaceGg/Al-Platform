@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import {
-  App as AntApp, Card, Table, Button, Upload, Select, Space, Modal, Typography, Row, Col, Tag, Form, Input
+  App as AntApp, Card, Table, Button, Upload, Select, Space, Modal, Tag, Form, Input
 } from "antd";
 import {
   UploadOutlined, DownloadOutlined, EyeOutlined, ImportOutlined, ExportOutlined, TagsOutlined, ProfileOutlined
@@ -16,13 +16,6 @@ import TableRowAction from "../components/TableRowAction";
 import ReturnBatchList from "../components/ReturnBatchList";
 import { useI18n } from "../i18n";
 import { formatLocalTime } from "../utils/time";
-
-const { Text } = Typography;
-
-function formatDatasetCreatedAt(value: string | null): string {
-  if (!value) return "-";
-  return formatLocalTime(value, true);
-}
 
 function datasetErrorMessage(error: any, fallback: string): string {
   const detail = error?.response?.data?.detail;

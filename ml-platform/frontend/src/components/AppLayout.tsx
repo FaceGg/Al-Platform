@@ -7,7 +7,7 @@ import {
   ExperimentOutlined, ApiOutlined, CloudServerOutlined, RobotOutlined,
   MessageOutlined, MonitorOutlined, ClusterOutlined, DeploymentUnitOutlined,
   PlayCircleOutlined, BookOutlined, ControlOutlined, TagsOutlined, ApartmentOutlined,
-  HomeOutlined, RocketOutlined, CopyOutlined, FileTextOutlined, SettingOutlined,
+  RocketOutlined, CopyOutlined, FileTextOutlined, SettingOutlined,
   NotificationOutlined, BarChartOutlined,
 } from "@ant-design/icons";
 import { SunOutlined, MoonOutlined } from "@ant-design/icons";

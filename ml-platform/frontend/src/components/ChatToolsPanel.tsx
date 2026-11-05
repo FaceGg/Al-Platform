@@ -149,7 +149,7 @@ export default function ChatToolsPanel({ onResult }: { onResult: (text: string) 
             rows={3}
             aria-label={zh ? "工具参数 JSON" : "Tool params JSON"}
             style={{
-              width: "100%", fontFamily: "Consolas, monospace", fontSize: 12,
+              width: "100%", fontFamily: '"JetBrains Mono", "Noto Sans SC", monospace', fontSize: 12,
               background: "rgba(13,20,32,.7)", color: "inherit",
               border: "1px solid rgba(36,52,79,.9)", borderRadius: 8, padding: "6px 10px",
             }}

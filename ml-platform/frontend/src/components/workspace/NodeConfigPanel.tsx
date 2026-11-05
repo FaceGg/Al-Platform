@@ -725,7 +725,7 @@ export default function NodeConfigPanel({ projectId }: { projectId?: string }) {
               rows={22}
               maxLength={100_000}
               showCount
-              style={{ fontFamily: "Consolas, Menlo, monospace", fontSize: 12 }}
+              style={{ fontFamily: '"JetBrains Mono", "Noto Sans SC", monospace', fontSize: 12 }}
               value={scriptDraft}
               onChange={(e) => setScriptDraft(e.target.value)}
             />

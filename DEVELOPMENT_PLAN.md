@@ -283,3 +283,37 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 3. **测试卫生批次**：~~demo_loop 套件密封化、test_fake NO TESTS RAN 噪音~~ **已落地（e222cf86，随 555528b6 合入主线）**；model-inference e2e 按 v2 UI 重写仍待办。
 4. **升级批次余项**：P3 后续刀（见上队列）；P4 React 19 观望（等 antd v6 信号）；chat 同步化后 DB 池压测。
 
+## 2026-11-05 死代码清理批次 + 前端字体开源化整改
+
+> **基线**：main `8de5a053` 起步（本批未提交时并行会话共享工作树，提交前需核对分支与暂存范围）。**验证**：主前端全量 vitest 89 文件 506 passed（19 skipped）+ tsc + vite build 全绿；annotator 门户 130 passed + build 全绿；后端受影响 18 个测试模块 226 passed（test_demo_loop 6 失败经 stash 对照证实为**存量问题**，与本批无关，HEAD 原版同败）。
+
+### 一、前端死代码清理（全部经全库引用可达性核实）
+
+- **死文件**：`pages/DataBrowserPage.tsx`（从未挂路由）、`components/ErrorAnalysisViewer.tsx`、`e2e/python.ts`（已被 `pythonExecutable.ts` 取代且 weekAcceptance 守卫的正是新版）。
+- **零引用导出**：demoLoop 旧版四函数（已被 `*Scoped` 版取代）、annotationTasks `getAnnotationTask`/`listAnnotationPreviews`、models `listProjectModelArtifacts`（与 datasets 重复）、workflowVersions `unpublishWorkflowApi`、spotWeldQuality 六函数 + `createQualityDemoDataset`/`getQualityWarningSummary`（质量预警 UI 已下线，连带 4 个孤儿类型与 api 测试断言同步修剪）、workflowExport `triggerBrowserDownload`/`completedExportValue`/`isResultRecord`。
+- **i18n**：`workflow` 翻译段 zh/en 成对删除（parity 测试两侧齐平）。
+- **CSS 死样式**：global.css 3458→2960 行、v2-shell.css 592→509 行（spot-weld-annotation 废弃面板族/monitor-quality-warnings 整块/app-sider/auth-note/v2-* 等 40+ 选择器族；删除脚本用 token 精确匹配防误删 `__rules-head` 等近似活类；`DataAnnotationPage.test.tsx` 样式守卫中 `__rule-list` 幽灵断言改为负向）。
+- **未使用导入/局部量**：tsc `--noUnusedLocals` 从 59 处清零（含 AIChatPage 死 TOOL_LABELS 映射、死 rows/sysTokens 容量行、workflowExport 死函数链、多处死 dayjs/图标/测试导入）；**保留未动**（写死状态疑似未完成功能，仅报告）：AIChatPage `setContextWindow`、AutoMLPage `setViewingTaskKey`、DemoLoopDetail `loops`/`swapPulse`（write-only state）。
+- **脚本修复**：`sync:manual` 目标文件名与实际 import 的 `闭环操作手册.md` 不一致 → 修正目标名。
+
+### 二、后端死代码清理（18 符号全库零引用核实后删除）
+
+`recover_pending_runs`、`write_with_revision_guard`（save_labels 一行重复包装）、`supersede_entry`（retire_entry 逐行重复）、`bound_artifact_id`、`demo_loop_service` 工厂、`ExperimentTracking`/`KubernetesClientProtocol`/`JobClientProtocol`（无人继承/注解的 Protocol 壳）、`FakeBuildAdapter`（测试桩遗留生产包）、`new_build_id`、`extract_noun_phrases`、`make_fake_client`、`create_model_export`、`quota_bump_revision`、`is_quality_report_frame`、`DecodedReportRow`、`ModelExportResponse`/`OfflineInferenceResponse`；同步清理孤儿导入（dataclass/Protocol）与 wheelhouse 中 boto3/seaborn/botocore/s3transfer 轮子。
+- **失效 import 修复（潜伏 bug）**：`api/cluster_governance.py` `_project_of` 内 `from app.models.resource_group import ...` 指向不存在模块（实际在 `cloud_resources.py`）——创建/更新 resource_group 作用域 quota policy 必触发 ModuleNotFoundError，已改指向正确模块。
+- **依赖**：requirements.txt 移除零引用的 `boto3`/`seaborn`（Dockerfile.mlflow 自装自己的 boto3，不受影响）。
+- **死种子脚本**：`seed_algorithms.sql` 全仓零引用，删除。
+- **不动项（报告）**：genericization_gate 白名单的 12 个 legacy 桥文件（声明式保留）、`kubernetes_job_submit/watch` 两个无派发方 task 壳、`services/offline_inference.py`（疑为导出运行时契约参考）、后端根目录 17 个 `api_*.db`/日志为未跟踪本地产物（未删，涉及用户数据由用户自行清理）。
+
+### 三、前端字体开源化整改（用户要求：必须开源、免费、可商用）
+
+- **整改前问题**：主前端全部 font-family 栈依赖专有系统字体（Aptos/Segoe UI/PingFang SC/Microsoft YaHei/Consolas/SFMono/Helvetica Neue）；annotator 门户依赖 Google Fonts CDN（离线部署会断且违反自托管原则）。
+- **整改后**：两端全部切换为**自托管 SIL OFL 1.1 可变字体子集**——主前端 `Noto Sans SC (400..800)` + `JetBrains Mono (400..700)`；annotator 在其原有选型上补齐 `Inter (400..700)` 并为中文补 `Noto Sans SC`。字体文件落 `public/fonts/<family>/`（每族附 OFL.txt），@font-face+unicode-range 声明在 `public/fonts/fonts.css`（由 index.html `<link>` 引入），monospace 栈统一 `"JetBrains Mono", "Noto Sans SC", monospace`（CJK 等宽场景回落 Noto）。antd 明暗双 token `fontFamily` 同步覆盖，`demo-showcase.html` 与两处 TSX 内联 Consolas 一并替换。可变字体单套子集天然覆盖 CSS 中 650/720/750 等全部字重。
+- **遗留**：验收栈镜像需重建后才携带新字体（门户 COPY dist + nginx 静态 fonts）；`ui-previews/` 设计稿 html 未改（不参与构建）。
+
+### 四、风险与未验证项
+
+- test_demo_loop 6 个存量失败（retrain/swap 流，`stub.enqueued 0!=1`）为**本批之前已存在**，建议另立缺陷单排查（疑似环境/时序敏感）。
+- 字体观感（Noto Sans SC 替代系统字体后的字形/密度差异）未做人工视觉验收，建议部署预览时过一眼大屏与标注页。
+- 本批全部为本地验证；全量 CI 六 job 与镜像重建未跑（按需触发）。
+
+

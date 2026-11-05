@@ -106,15 +106,6 @@ export interface QualityRun {
   };
 }
 
-export interface QualityLabelSnapshot {
-  id: string;
-  name: string;
-  sample_count: number;
-  label_counts?: Record<string, number>;
-  created_at?: string | null;
-  label_source?: "approved" | "automatic";
-}
-
 export interface QualityModel {
   id: string;
   name: string;
@@ -172,28 +163,6 @@ export interface AnnotationProcessRule {
   kind?: AnnotationProcessRuleKind;
   label: string;
   tokens: AnnotationProcessRuleToken[];
-}
-
-export interface QualityTrainingResult {
-  snapshot_id: string;
-  run_id: string;
-  model: QualityModel;
-  output_artifacts: Record<string, string>;
-}
-
-export interface QualityWarning {
-  id: string;
-  run_id: string;
-  display_id: string;
-  warning_level: string;
-  defect_probability?: number | null;
-  current_label?: string | null;
-  automatic_label?: string | null;
-}
-
-export interface QualityWarningSummary {
-  counts: Record<"critical" | "warning" | "notice" | "none", number>;
-  items: QualityWarning[];
 }
 
 export interface QualitySample {
@@ -284,23 +253,6 @@ export async function deleteQualityRun(projectId: string, runId: string): Promis
   return response.data as { deleted: number; run_id: string };
 }
 
-export async function updateQualityRunRules(
-  projectId: string,
-  runId: string,
-  ruleConfig: QualityRuleConfig,
-): Promise<QualityRun> {
-  const response = await apiClient.put(
-    `/projects/${projectId}/spot-weld/runs/${runId}/rules`,
-    { rule_config: ruleConfig },
-  );
-  return response.data as QualityRun;
-}
-
-export async function submitQualityRunForReview(projectId: string, runId: string): Promise<{ run_id: string; submitted_count: number; labeled_count: number }> {
-  const response = await apiClient.post(`/projects/${projectId}/spot-weld/runs/${runId}/submit-review`);
-  return response.data as { run_id: string; submitted_count: number; labeled_count: number };
-}
-
 export async function listQualitySamples(
   projectId: string,
   runId: string,
@@ -337,17 +289,6 @@ export async function submitQualityLabel(
   return response.data;
 }
 
-export async function deleteQualityLabel(
-  projectId: string,
-  runId: string,
-  sampleId: string,
-): Promise<QualitySample> {
-  const response = await apiClient.delete(
-    `/projects/${projectId}/spot-weld/runs/${runId}/samples/${sampleId}/labels`,
-  );
-  return response.data as QualitySample;
-}
-
 export async function reviewQualityLabel(
   projectId: string,
   runId: string,
@@ -359,40 +300,6 @@ export async function reviewQualityLabel(
     payload,
   );
   return response.data;
-}
-
-export async function createQualityLabelSnapshot(
-  projectId: string,
-  runId: string,
-  name: string,
-  labelSource: "approved" | "automatic" = "approved",
-): Promise<QualityLabelSnapshot> {
-  const response = await apiClient.post(
-    `/projects/${projectId}/spot-weld/runs/${runId}/label-snapshots`,
-    { name, label_source: labelSource },
-  );
-  return response.data as QualityLabelSnapshot;
-}
-
-export async function listQualityLabelSnapshots(
-  projectId: string,
-  runId: string,
-): Promise<QualityLabelSnapshot[]> {
-  const response = await apiClient.get(
-    `/projects/${projectId}/spot-weld/runs/${runId}/label-snapshots`,
-  );
-  return items<QualityLabelSnapshot>(response.data);
-}
-
-export async function trainQualityLabelSnapshot(
-  projectId: string,
-  runId: string,
-  snapshotId: string,
-): Promise<QualityTrainingResult> {
-  const response = await apiClient.post(
-    `/projects/${projectId}/spot-weld/runs/${runId}/label-snapshots/${snapshotId}/train`,
-  );
-  return response.data as QualityTrainingResult;
 }
 
 export async function getQualityModel(
@@ -556,19 +463,4 @@ export async function validateQualityDataset(
     ...options,
   });
   return response.data;
-}
-
-export async function createQualityDemoDataset(
-  projectId: string,
-  rowCount: number = 60,
-): Promise<QualityDatasetArtifact> {
-  const response = await apiClient.post(`/projects/${projectId}/spot-weld/demo-dataset`, {
-    row_count: rowCount,
-  });
-  return response.data;
-}
-
-export async function getQualityWarningSummary(projectId: string): Promise<QualityWarningSummary> {
-  const response = await apiClient.get(`/projects/${projectId}/spot-weld/warnings`);
-  return response.data as QualityWarningSummary;
 }

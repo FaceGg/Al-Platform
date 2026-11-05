@@ -12,7 +12,7 @@ import V2PageFrame from "../components/V2PageFrame";
 import { apiGet, apiPost, apiPut, apiDelete } from "../api/client";
 import { parseBackendTime } from "../utils/time";
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 const stColor: Record<string, string> = { online: "green", offline: "red", busy: "orange" };
 const stName: Record<string, string> = { online: "在线", offline: "离线", busy: "忙碌" };
 

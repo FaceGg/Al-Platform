@@ -1,8 +1,8 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Card, Input, Button, Typography, Space, Spin, Tag, Empty, Divider, Modal, Select, Collapse, Popover, Upload, Slider, message as antdMessage, Dropdown } from "antd";
 import {
-  SendOutlined, RobotOutlined, UserOutlined, ClearOutlined, SettingOutlined, ShareAltOutlined,
-  FileTextOutlined, BlockOutlined, DownOutlined, PlusOutlined, EllipsisOutlined, CopyOutlined,
+  SendOutlined, RobotOutlined, UserOutlined, SettingOutlined,
+  FileTextOutlined, DownOutlined, PlusOutlined, EllipsisOutlined, CopyOutlined,
   EditOutlined, DeleteOutlined, CloudDownloadOutlined,
 } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
@@ -15,22 +15,6 @@ const { Text, Title } = Typography;
 interface ChatSource { index: number; chunk_id: string; doc_id: string; filename: string; score: number; }
 interface ChatMsg { role: "user" | "assistant" | "system"; content: string; time: string; sources?: ChatSource[]; }
 interface ChatSession { id: string; title: string; messages: ChatMsg[]; created_at?: string; updated_at?: string; }
-
-// 白名单工具的中文名映射（与后端 TOOL_CATALOG 一致的展示口径）
-const TOOL_LABELS: Record<string, string> = {
-  list_datasets: "查看数据集列表",
-  preview_dataset: "预览数据集",
-  query_training_status: "查询训练状态",
-  query_loop_status: "查询闭环任务状态",
-  get_api_call_example: "获取 API 调用示例",
-  query_recipe_reports: "查询配方报告",
-  save_insight: "沉淀对话洞察为经验",
-  create_automl_task: "创建自动建模任务",
-  create_loop_task: "创建闭环任务",
-  create_recipe_task: "按配方创建任务",
-  publish_workflow_api: "发布工作流为 API",
-  offline_api: "下线 API",
-};
 
 export default function AIChatPage() {
   const { t, lang } = useI18n();
@@ -76,7 +60,6 @@ export default function AIChatPage() {
   const [kbs, setKbs] = useState<any[]>([]);
   const [listProjects, setListProjects] = useState(false);
   const [projects, setProjects] = useState<any[]>([]);
-  const [datasets, setDatasets] = useState<any[]>([]);
   const [attachProject, setAttachProject] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   // 多会话
@@ -121,11 +104,6 @@ export default function AIChatPage() {
   const saveActive = (msgs: ChatMsg[]) => {
     if (!activeSessionId) return;
     apiClient.put(`/chat-sessions/${activeSessionId}`, { messages: msgs }).catch(() => {});
-  };
-
-  const persistMessages = (next: ChatMsg[]) => {
-    setMessages(next);
-    saveActive(next);
   };
 
   const newChat = async () => {
@@ -235,8 +213,6 @@ export default function AIChatPage() {
   };
 
   const boundKb = kbs.find(kb => kb.id === kbId);
-  const activeModel = profiles.find(p => p.id === profileId) ?? profiles.find(p => p.is_default);
-  const thinkingLabel = ({ off: zh ? "关闭" : "off", low: zh ? "低" : "low", medium: zh ? "中" : "med", high: zh ? "最高" : "max" } as Record<string, string>)[thinkingLevel] ?? "";
   const carried = messages.filter(m => m.role === "user" || m.role === "assistant").slice(-contextWindow);
   // 上下文容量 = 压缩摘要 + 携带窗口内原文（估算 tokens）
   const [compressedSummary, setCompressedSummary] = useState(() => localStorage.getItem("chat.summary") || "");
@@ -361,14 +337,6 @@ export default function AIChatPage() {
           }} />
           {/* ZCode 式输入框：最左 + 号（数据/知识库/系统提示词/白名单工具），右侧容量圆圈/模型/思考强度/发送 */}
           {(() => {
-            const sysTokens = Math.ceil(systemPrompt.length / 4);
-            const kbTokens = kbId ? 1200 : 0;
-            const rows: Array<[string, number, string]> = [
-              [zh ? "消息" : "Messages", usedTokens, "#2f9bf5"],
-              [zh ? "知识库RAG" : "KB RAG", kbTokens, "#47c3a0"],
-              [zh ? "系统提示词" : "System prompt", sysTokens, "#9b7bff"],
-            ];
-            const rowTotal = Math.max(1, rows.reduce((s, [, v]) => s + v, 0));
             return (
               <div style={{
                 border: "1px solid var(--v2-line, #d9d9d9)", borderRadius: 16,

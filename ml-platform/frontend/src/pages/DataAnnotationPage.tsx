@@ -39,7 +39,6 @@ import {
   createGenericAnnotationTask,
   updateGenericAnnotationTaskConfiguration,
   transitionAnnotationTask,
-  type AnnotationPreview,
   type AnnotationTask,
   type AnnotationOperation,
 } from "../api/annotationTasks";
@@ -516,7 +515,7 @@ export default function DataAnnotationPage() {
   const [genericFinalPreviewId, setGenericFinalPreviewId] = useState<string | null>(null);
   const [genericFinalPreviewError, setGenericFinalPreviewError] = useState<string | null>(null);
   const [genericFinalStage, setGenericFinalStage] = useState(false);
-  const [genericFinalAttempt, setGenericFinalAttempt] = useState(0);
+  const [, setGenericFinalAttempt] = useState(0);
   const [genericFinalSamples, setGenericFinalSamples] = useState<Awaited<ReturnType<typeof listAnnotationPreviewSamples>> | null>(null);
   const [genericAutomaticDraft, setGenericAutomaticDraft] = useState<AutomaticStrategyDraft>(() => createAutomaticStrategyDraft([]));
   // 聚类预览后管理员可在向导第 2 步定义标签列；保存后优先于模型输出契约列参与策略配置
@@ -1404,17 +1403,6 @@ export default function DataAnnotationPage() {
     const requestedSample = samples.find((sample) => sample.id === requestedSampleId);
     if (requestedSample) void selectSample(requestedSample);
   }, [samples, selected?.id, searchParams]);
-
-  const refreshSamples = async (sampleId: string) => {
-    if (!projectId || !runId) return;
-    const expectedProjectId = projectId;
-    const expectedRunId = runId;
-    const items = await listQualitySamples(expectedProjectId, expectedRunId);
-    if (!isCurrentContext(expectedProjectId, expectedRunId)) return;
-    setSamples(items);
-    const refreshed = items.find((item) => item.id === sampleId);
-    if (refreshed) await selectSample(refreshed);
-  };
 
   const previewAnnotationClusters = async () => {
     if (!projectId || !datasetArtifactId || !selectedModelId || previewingClusters) return;

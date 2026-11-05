@@ -142,16 +142,6 @@ export function buildExportBlob(
   return new Blob([text], { type: "text/plain;charset=utf-8" });
 }
 
-function isResultRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function completedExportValue(result: unknown): unknown {
-  if (!isResultRecord(result)) return result;
-  const outputs = isResultRecord(result.outputs) ? result.outputs : result;
-  return Object.prototype.hasOwnProperty.call(outputs, "data") ? outputs.data : outputs;
-}
-
 /** Returns false after the first completion event for a run/node pair. */
 export function markRunNodeExported(completed: Set<string>, runId: string, nodeId: string): boolean {
   const key = `${runId}:${nodeId}`;
@@ -169,16 +159,6 @@ export async function saveWorkflowExport(
   const writable = await file.createWritable();
   await writable.write(blob);
   await writable.close();
-}
-
-export function triggerBrowserDownload(blob: Blob, filename: string): void {
-  if (typeof document === "undefined" || typeof URL.createObjectURL !== "function") return;
-  const href = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = href;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(href);
 }
 
 export async function exportCompletedWorkflowNode({

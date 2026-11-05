@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Card, Table, Tag, Button, Space, Typography, Modal, Input, Select, Form, message, Progress, Row, Col } from "antd";
+import { Card, Table, Tag, Button, Space, Typography, Modal, Input, Select, Form, message, Progress } from "antd";
 import { PlusOutlined, ThunderboltOutlined, EyeOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import AnnotationCanvas from "../components/AnnotationCanvas";
