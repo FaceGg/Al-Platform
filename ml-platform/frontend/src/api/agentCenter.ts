@@ -101,6 +101,8 @@ export interface AgentRunCreatePayload {
     analysis?: { column_notes?: { column: string; note: string }[]; prompts?: string[] };
     feature?: {
       data_shape?: "tabular" | "waveform" | "mixed";
+      // 列级数据类型标注（向导自动预填+可改）；全局 data_shape 单选已退役
+      column_shapes?: Record<string, "tabular" | "waveform">;
       must_keep?: string[];
       suggest_drop?: { column: string; reason?: string }[];
       prompts?: string[];
@@ -125,6 +127,7 @@ export interface DatasetProfileColumn {
   missing_rate: number;
   cardinality: number;
   constant: boolean;
+  dtype?: string;
 }
 
 export interface DatasetProfile {

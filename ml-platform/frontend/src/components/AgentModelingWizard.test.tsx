@@ -81,8 +81,7 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     fireEvent.change(screen.getByPlaceholderText(/这批数据来自换夹具/), { target: { value: "关注工装漂移" } });
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
 
-    // Step 2: default mixed shape; mark DECIDE-like column as keep via directive.
-    fireEvent.click(await screen.findByText(/表格数据/));
+    // Step 2: 数据形态单选已退役；列级数据类型默认自动预填（本例全部表格）。
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
 
     // Step 3: whitelist one algorithm.
@@ -107,9 +106,41 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
       { column: "ACTUAL_TORQUE", note: "核心质量信号，关注偏差" },
     ]);
     expect(payload.guidance.analysis.prompts).toEqual(["关注工装漂移"]);
-    expect(payload.guidance.feature.data_shape).toBe("tabular");
+    expect(payload.guidance.feature.column_shapes).toEqual({
+      ACTUAL_TORQUE: "tabular",
+      TARGET_TORQUE: "tabular",
+    });
+    expect(payload.guidance.feature.data_shape).toBeUndefined();
     expect(payload.guidance.modeling.algorithm_whitelist).toEqual(["lightgbm"]);
     expect(payload.guidance.evaluation.metric_gates).toEqual({});
+  });
+
+  it("auto-detects waveform columns by name and honors manual override", async () => {
+    datasetMocks.getDatasetPreview.mockResolvedValue({
+      columns: ["num1", "cvev(焊接电流波形)", "fault"],
+    });
+    renderWizard();
+    fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });
+    fireEvent.change(await screen.findByLabelText("选择数据集"), { target: { value: "d1" } });
+    await waitFor(() => expect(screen.getByLabelText("选择目标列").querySelectorAll("option").length).toBeGreaterThan(1));
+
+    fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
+    // 波形列按列名自动预填为「波形」，普通数值列为「表格」。
+    expect(await screen.findByLabelText("数据类型 cvev(焊接电流波形)")).toHaveValue("waveform");
+    expect(screen.getByLabelText("数据类型 num1")).toHaveValue("tabular");
+    // 用户手改波形列为表格：提交载荷以手改值为准。
+    fireEvent.change(screen.getByLabelText("数据类型 cvev(焊接电流波形)"), { target: { value: "tabular" } });
+
+    for (let i = 0; i < 3; i += 1) {
+      fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
+    }
+    fireEvent.click(await screen.findByRole("button", { name: /^rocket 启动智能体$/ }));
+    await waitFor(() => expect(agentCenterMocks.createAgentRun).toHaveBeenCalled());
+    const payload = agentCenterMocks.createAgentRun.mock.calls[0][0];
+    expect(payload.guidance.feature.column_shapes).toEqual({
+      num1: "tabular",
+      "cvev(焊接电流波形)": "tabular",
+    });
   });
 
   it("expands step-by-step mode into the pause plan on submit", async () => {

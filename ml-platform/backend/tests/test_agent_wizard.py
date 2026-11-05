@@ -83,6 +83,16 @@ class TestGuidanceContract(unittest.TestCase):
         with self.assertRaises(ValidationError):
             UserGuidance(feature={"data_shape": "audio"})
 
+    def test_column_shapes_persisted_and_data_shape_defaults_neutral(self):
+        """向导数据形态单选退役后的合同面：列级标注进 guidance_json 随 S2
+        引述块下发；data_shape 缺省改中性 mixed（UI 不再传时不带偏 S2）。"""
+        guidance = UserGuidance(feature={
+            "column_shapes": {"num1": "tabular", "cvev(焊接波形)": "waveform"},
+        })
+        self.assertEqual(guidance.feature.column_shapes["cvev(焊接波形)"], "waveform")
+        self.assertEqual(guidance.feature.data_shape, "mixed")
+        self.assertFalse(guidance.is_empty())
+
     def test_pause_stages_intersected_with_legal_positions(self):
         guidance = UserGuidance(pause_at_stages=["s1", "s3", "s9"])
         self.assertEqual(pause_plan(guidance), {"s1", "s3"})

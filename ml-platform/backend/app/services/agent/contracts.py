@@ -91,7 +91,12 @@ class GuidanceAnalysis(BaseModel):
 
 
 class GuidanceFeature(BaseModel):
-    data_shape: str = Field(default="tabular", pattern="^(tabular|waveform|mixed)$")
+    # 数据形态全局单选已退役（向导改列级标注）：默认改中性 mixed，
+    # 避免 UI 不再传该字段时把 S2 带偏成纯表格处理。
+    data_shape: str = Field(default="mixed", pattern="^(tabular|waveform|mixed)$")
+    # 列级数据类型标注（tabular|waveform），向导按 dtype/高基数自动预填、
+    # 用户可改；随引导引述块进入 S2 提示词。
+    column_shapes: dict[str, str] = Field(default_factory=dict)
     must_keep: list[str] = Field(default_factory=list)
     suggest_drop: list[dict] = Field(default_factory=list)
     prompts: list[str] = Field(default_factory=list)
@@ -130,6 +135,7 @@ class UserGuidance(BaseModel):
             or self.analysis.suspect_focus
             or self.feature.must_keep
             or self.feature.suggest_drop
+            or self.feature.column_shapes
             or self.feature.prompts
             or self.modeling.algorithm_whitelist
             or self.modeling.param_hints

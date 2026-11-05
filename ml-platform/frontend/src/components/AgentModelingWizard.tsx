@@ -16,7 +16,7 @@ import { useI18n } from "../i18n";
  * UserGuidance（第四契约）并创建 pending AgentRun。
  */
 type StepId = 1 | 2 | 3 | 4 | 5;
-type DataShape = "tabular" | "waveform" | "mixed";
+type ColumnShape = "tabular" | "waveform";
 
 const ANALYSIS_PROMPT_CHIPS = [
   { label: "聚焦扭矩-目标偏差", prompt: "聚焦扭矩与目标设定值的偏差通道" },
@@ -64,7 +64,11 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   const [stepByStep, setStepByStep] = useState(false);
 
   // Step 2
-  const [dataShape, setDataShape] = useState<DataShape>("mixed");
+  // 数据形态全局单选已退役（用户指示）：列级「数据类型」自动预填 + 可改。
+  // autoShapes 随画像刷新重算；shapeOverrides 只记用户手改，避免换目标列
+  // 触发画像重取时覆盖用户已选的值。
+  const [autoShapes, setAutoShapes] = useState<Record<string, ColumnShape>>({});
+  const [shapeOverrides, setShapeOverrides] = useState<Record<string, ColumnShape>>({});
   const [columnDirectives, setColumnDirectives] = useState<Record<string, "keep" | "drop" | "">>({});
   const [featurePrompt, setFeaturePrompt] = useState("");
 
@@ -110,8 +114,23 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           miRank[item.column] = index + 1;
         });
         setProfileStats({ missing, miRank });
+        // 列级数据类型自动预填：列名含 wave/波形，或字符串列基数≈行数
+        // （每行唯一的编码数组是波形列的典型指纹）判为波形，其余表格。
+        const shapes: Record<string, ColumnShape> = {};
+        profile.columns.forEach((column) => {
+          const nearUnique = profile.row_count > 0
+            && column.cardinality / profile.row_count >= 0.9;
+          shapes[column.name] = /wave|波形/i.test(column.name)
+            || ((column.dtype ?? "string") === "string" && nearUnique)
+            ? "waveform"
+            : "tabular";
+        });
+        setAutoShapes(shapes);
       })
-      .catch(() => setProfileStats({ missing: {}, miRank: {} }));
+      .catch(() => {
+        setProfileStats({ missing: {}, miRank: {} });
+        setAutoShapes({});
+      });
     return () => {
       cancelled = true;
     };
@@ -162,7 +181,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   }, [projectId]);
 
   useEffect(() => {
-    setColumns([]); setSelectedColumns({}); setColumnNotes({}); setColumnDirectives({}); setTargetColumn("");
+    setColumns([]); setSelectedColumns({}); setColumnNotes({}); setColumnDirectives({}); setShapeOverrides({}); setTargetColumn("");
     if (!datasetId) return;
     getDatasetPreview(datasetId).then((data) => {
       const cols: string[] = Array.isArray(data.columns)
@@ -183,9 +202,14 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   );
 
   const stepStatus = (n: StepId) => (n === step ? "on" : n < step ? "done" : "");
+  // 列数据类型的三级取值：手改 > 画像自动（dtype/高基数+列名）> 列名兜底
+  // （画像未覆盖/获取失败时名字含 wave/波形 仍可判波形）。
+  const shapeOf = (column: string): ColumnShape =>
+    shapeOverrides[column] ?? autoShapes[column]
+    ?? (/wave|波形/i.test(column) ? "waveform" : "tabular");
   const steps: { n: StepId; tt: string; st: string }[] = [
     { n: 1, tt: zh ? "数据分析" : "Analysis", st: zh ? "选列说明 · 提示词" : "columns · prompts" },
-    { n: 2, tt: zh ? "特征工程" : "Features", st: zh ? "表格/波形 · 列指令" : "shape · directives" },
+    { n: 2, tt: zh ? "特征工程" : "Features", st: zh ? "列数据类型 · 指令" : "dtypes · directives" },
     { n: 3, tt: zh ? "自动建模" : "Modeling", st: zh ? "算法白名单 · 参数" : "whitelist · params" },
     { n: 4, tt: zh ? "评估验收" : "Evaluation", st: zh ? "测试集 · 指标阈值" : "gates" },
     { n: 5, tt: zh ? "服务化发布" : "Serving", st: zh ? "闭环 · 编排 · API" : "closed loop · API" },
@@ -217,7 +241,11 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
             prompts: analysisPrompt.trim() ? [analysisPrompt.trim()] : [],
           },
           feature: {
-            data_shape: dataShape,
+            // 全局 data_shape 单选已退役：列级标注随引导进 S2 提示词
+            column_shapes: Object.fromEntries(
+              columns.filter((c) => c !== targetColumn).slice(0, 30)
+                .map((c) => [c, shapeOf(c)])
+            ),
             must_keep: Object.entries(columnDirectives).filter(([, v]) => v === "keep").map(([c]) => c),
             suggest_drop: Object.entries(columnDirectives).filter(([, v]) => v === "drop").map(([c]) => ({ column: c })),
             prompts: featurePrompt.trim() ? [featurePrompt.trim()] : [],
@@ -378,25 +406,22 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
       {step === 2 && (
         <>
           <div className="v2-panel">
-            <h4><span className="bar" />{zh ? "数据形态（约束特征脚本的处理方式）" : "Data shape"}</h4>
-            <div className="v2-radio-cards">
-              {([["tabular", "" + (zh ? "表格数据" : "Tabular"), zh ? "常规列式制造记录（拧紧样例适用）" : "columnar records"],
-                ["waveform", "" + (zh ? "波形数据" : "Waveform"), zh ? "含编码波形列，需解码后统计（电焊 cvei/cvev/cver/cvep）" : "encoded waveform columns"],
-                ["mixed", "" + (zh ? "混合形态" : "Mixed"), zh ? "报告列 + 波形列并存，两者兼顾" : "both"]] as [DataShape, string, string][]).map(([value, title, desc]) => (
-                <button key={value} type="button" className={`v2-radio-card${dataShape === value ? " on" : ""}`} onClick={() => setDataShape(value)}>
-                  <b>{title}</b><span>{desc}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="v2-panel">
-            <h4><span className="bar" />{zh ? "列级指令（可选）" : "Column directives (optional)"}</h4>
+            <h4><span className="bar" />{zh ? "列级指令（可选）" : "Column directives (optional)"}
+              <span className="more">{zh ? "数据类型按画像自动预填（高基数字符串列判为波形），可手动调整" : "shapes auto-detected from profile, editable"}</span></h4>
             <table className="v2-table">
-              <thead><tr><th>{zh ? "列" : "Column"}</th><th>{zh ? "指令" : "Directive"}</th></tr></thead>
+              <thead><tr><th>{zh ? "列" : "Column"}</th><th>{zh ? "数据类型" : "Data type"}</th><th>{zh ? "指令" : "Directive"}</th></tr></thead>
               <tbody>
                 {columns.filter((c) => c !== targetColumn).slice(0, 30).map((column) => (
                   <tr key={column}>
                     <td className="tt">{column}</td>
+                    <td>
+                      <select className="v2-select" style={{ minWidth: 110 }} aria-label={`${zh ? "数据类型" : "data type"} ${column}`}
+                        value={shapeOf(column)}
+                        onChange={(e) => setShapeOverrides((cur) => ({ ...cur, [column]: e.target.value as ColumnShape }))}>
+                        <option value="tabular">{zh ? "表格" : "Tabular"}</option>
+                        <option value="waveform">{zh ? "波形" : "Waveform"}</option>
+                      </select>
+                    </td>
                     <td>
                       <select className="v2-select" style={{ minWidth: 150 }} value={columnDirectives[column] ?? ""}
                         onChange={(e) => setColumnDirectives((cur) => ({ ...cur, [column]: e.target.value as "keep" | "drop" | "" }))}>
