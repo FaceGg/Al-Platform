@@ -341,3 +341,16 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 **追加修复（2026-11-05，用户报障）：S3 标签自泄漏——目标列随特征表直接进训练器**——用户在 7c9415b1 档案发现 `[S3]` 特征重要性首位是 `fault(0.2938)`（目标列本身），全指标 1.0。证据链：S2 数据契约含 `target_must_survive: True`（cdda7aef，意图为配方换模对齐需目标列存活于特征表），S1 泄漏名单（LLM 判定）不含 fault（LLM 把泄漏理解为业务关联列，不会把标签本身列进去），S2 脚本 drop_cols 39 列不含 fault → 全量重放输出含 fault → `runner.py` 取 `y=self.frame[fault]` 后把 feature_df **原样**喂轻量训练器 → 标签列成为输入特征（"看答案答题"）。**同时解释**了此前 run 的 `AGENT_REVIEW_ESCALATE`：评审对全 1.0 完美指标的泄漏怀疑是**正确**的，此前文档仅记为"设计内升级"而未深挖——真因是本泄漏。修复（平台侧无条件剔除，不依赖 LLM 自觉）：`runner.py` S3 在喂训练器前 `feature_df.drop(columns=[target])`，s3 digest 留痕 `target_excluded_from_features`；`target_must_survive` 契约保留（配方对齐仍需目标列，剔除只发生在训练边界）。前端档案面板 S3 行显示「标签列已从特征矩阵剥离：fault」注脚（agentCenter.ts 类型同步）。S5 换模重训走主平台 AutoML 引擎（自带 target 切分）不受影响。验证：`test_agent_runner.py` 11 passed（新增回归：脚本透传目标列场景断言训练器不见目标列+档案留痕）；executor/hard_gates/contracts 31 passed（distill 1 例仍为已确证既有 flake）；前端 tsc 通过+AgentRunDetailPage 4 passed。**未验证**：修复后该数据集真实指标（fault 剔除后不再是全 1.0，需重跑任务观察门禁/评审真实表现）。
 
 **向导改版（2026-11-05，用户指示）：第二步「特征工程」数据形态全局单选退役，改列级「数据类型」标注**——① 前端 `AgentModelingWizard`：删除「数据形态（约束特征脚本的处理方式）」radio 卡片；「列级指令」表新增「数据类型」列（顺序：列/数据类型/指令），按画像自动预填（列名含 wave/波形，或字符串列基数≥0.9×行数的编码数组指纹判波形，其余表格），用户可改（手改值存 overrides，画像重取不覆盖）；提交载荷 `guidance.feature.column_shapes` 替代 `data_shape`。② 后端 `contracts.py::GuidanceFeature`：新增 `column_shapes: dict[str,str]`；`data_shape` 缺省 tabular→**mixed**（UI 不再传时保持中性不把 S2 带偏成纯表格）；`is_empty()` 纳入 column_shapes（只标列类型不再被判空跳过注入——新测试抓到的真缺口）。列级标注随既有引导引述块机制自动进 S2 提示词，无新链路。验证：后端 wizard/contracts/runner 34 passed（新增 column_shapes 持久化+mixed 缺省+is_empty 三断言）；前端 tsc 通过+向导 4 passed（新增：列名含「波形」自动预填 waveform+手改后载荷以手改为准+data_shape 不再发送）。**未验证**：线上栈待重建镜像后人工走查向导五步。
+
+## 2026-11-05 CI 门禁收敛记录（死代码清理批次，分支 release/opt-20261105-cleanup）
+
+| 轮次 | run | head | 结果 |
+|---|---|---|---|
+| 轮 1 | 41962460335 | 8a43fd92 | 5绿1败：experiment 集成训练 TRAINING_FAILED（mlflow S3 artifact 延迟 import boto3 被依赖瘦身误删） |
+| 轮 2 | 41970328353 | d5582364 | **六绿**（boto3 恢复 d5582364）→ origin/main ff 至 d5582364 |
+| 轮 3 | 41978635915 | cf9768c6 | cancelled（并发组外部取消；双平台 Quality+双集成已绿） |
+| 轮 4 | 41985352970 | cf9768c6 | 5绿1败：JobRunsPage「加载更多」ant-btn-loading 即刻断言撞 Windows 高负载（等待式加固 1b571181） |
+| 轮 5 | 42000145765 | 1b571181 | 5绿1败：连带推送的并行会话 P3 拆分件 spot_weld_automl.py 未过泛化门禁（白名单+LEGACY_ADAPTER_ONLY marker 修复 ea5060bf；marker 必须在 __future__ 导入之后） |
+| 轮 6 | 42003451928 | **ea5060bf** | **六绿 → origin/main 推进至 ea5060bf**（SHA 定界推送） |
+
+**核心教训**：①依赖退役必须过「运行时动态 import 面」——mlflow 客户端向 S3/MinIO artifact root 上传在 s3_artifact_repo.py:148 函数内延迟 import boto3，静态零引用≠运行时不需要（boto3 已恢复并注释原因；seaborn 经双平台全套验证维持退役）；②并行会话共享工作树下分支推送一律 **SHA 定界**（`git push origin <sha>:refs/heads/<branch>`），main 的未验证直推已被本轮门禁轮次补验覆盖；③test_demo_loop 6 败根治+开发库 239 项目/225 配置残留属用户数据未擅删；④字体观感人工验收待部署预览时进行（六镜像已重建携带新字体/瘦身/boto3）。
