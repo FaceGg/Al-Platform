@@ -84,13 +84,6 @@ def build_mount_injection(binding: dict, *, mount_path: str) -> dict:
     }
 
 
-# ---- quotas ----
-
-def quota_bump_revision(quota_policy) -> int:
-    quota_policy.revision = (quota_policy.revision or 0) + 1
-    return quota_policy.revision
-
-
 # ---- usage snapshots ----
 
 def _client_for(cluster: KubernetesCluster, credential_ref, run_settings):

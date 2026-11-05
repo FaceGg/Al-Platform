@@ -1201,39 +1201,3 @@ def resolve_annotation_payload(db: Any, model_version: Any) -> dict[str, Any] | 
         },
     }
 
-
-def create_model_export(
-    model_version_id: Any,
-    annotation_task_revision: int | str | None,
-    include_runtime: bool,
-    idempotency_key: str,
-    *,
-    output_dir: str | Path | None = None,
-    signing_key: str | bytes | None = None,
-    annotation_payload: Mapping[str, Any] | None = None,
-    db: Any = None,
-    model_version: Any = None,
-) -> ExportResult:
-    """Create an export from a supplied version or an ORM session.
-
-    API handlers should pass ``db`` and let the project-scoped service resolve
-    the model version.  Contract tests may pass ``model_version`` directly.
-    """
-
-    if model_version is None and hasattr(model_version_id, "conversion_metadata"):
-        model_version = model_version_id
-    if model_version is None and db is not None:
-        from app.models.model_registry import ModelVersion
-
-        model_version = db.get(ModelVersion, model_version_id)
-    if model_version is None:
-        raise ExportError("MODEL_VERSION_NOT_FOUND")
-    destination = output_dir or Path.cwd() / "exports"
-    return build_export_package(
-        model_version,
-        output_dir=destination,
-        include_runtime=include_runtime,
-        signing_key=signing_key,
-        annotation_task_revision=annotation_task_revision,
-        annotation_payload=annotation_payload,
-    )

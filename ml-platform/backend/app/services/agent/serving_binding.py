@@ -49,14 +49,3 @@ def resolve_deployment_model_artifact(artifact_service, project_id, deployment_i
     if library is None or not library.model_artifact_id:
         raise RuntimeError("deployment model library entry has no joblib artifact")
     return str(library.model_artifact_id)
-
-
-def bound_artifact_id(context, params) -> str:
-    """Operator-facing entry: static artifact id unless a deployment is bound."""
-    artifact_id = str(params.get("model_artifact_id") or "").strip()
-    deployment_id = str(params.get("deployment_id") or "").strip()
-    if deployment_id:
-        return resolve_deployment_model_artifact(
-            context.artifact_service, context.project_id, deployment_id
-        )
-    return artifact_id

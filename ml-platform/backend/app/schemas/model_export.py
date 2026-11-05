@@ -21,20 +21,3 @@ class ExportValidationResponse(BaseModel):
     valid: bool
     files: list[str] = Field(default_factory=list)
     errors: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class ModelExportResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: UUID
-    operation_id: UUID | None = None
-    status: str
-    manifest_sha256: str | None = None
-
-
-class OfflineInferenceResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    mode: str
-    row_count: int
-    output_path: str

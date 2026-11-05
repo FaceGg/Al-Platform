@@ -229,21 +229,6 @@ def retire_entry(db: Session, entry_id: UUID) -> ExperienceEntry:
     return entry
 
 
-def supersede_entry(db: Session, entry_id: UUID) -> ExperienceEntry:
-    entry = db.get(ExperienceEntry, entry_id)
-    if entry is None:
-        raise LookupError(f"experience entry not found: {entry_id}")
-    entry.status = "superseded"
-    db.commit()
-    from app.services.knowledge_center import remove_experience_projection
-
-    try:
-        remove_experience_projection(db, entry_id)
-    except Exception:  # noqa: BLE001 - 投影清理失败不影响状态落库
-        db.rollback()
-    return entry
-
-
 def annotate_entry(db: Session, entry_id: UUID, human_note: str) -> ExperienceEntry:
     """Human note attached from the knowledge center (16.4: 正文只读，意见走附注)."""
     entry = db.get(ExperienceEntry, entry_id)

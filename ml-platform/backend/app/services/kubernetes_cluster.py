@@ -214,6 +214,3 @@ def upsert_namespace_row(db, cluster: KubernetesCluster, name: str, quota_json: 
     db.flush()
     return row
 
-
-def make_fake_client(**kwargs) -> FakeKubernetesClient:
-    return FakeKubernetesClient(**kwargs)

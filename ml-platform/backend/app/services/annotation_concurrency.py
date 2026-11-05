@@ -1088,7 +1088,3 @@ def return_assignment(db: Session, assignment_id, task_revision: int, scope_hash
 
     enqueue_annotation_return(batch.id, operation.id)
     return ReturnBatchRef(batch.id, batch.state, operation.id)
-
-
-def write_with_revision_guard(db: Session, task_id, sample_id: str, values, author_id, base_revision: int):
-    return save_labels(db, task_id, sample_id, values, base_revision)

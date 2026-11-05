@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-from dataclasses import dataclass
 from typing import Mapping
 
 import numpy as np
@@ -60,13 +59,6 @@ class QualityPipelineError(ValueError):
             "field_name": self.field_name,
             "message": str(self),
         }
-
-
-@dataclass(frozen=True)
-class DecodedReportRow:
-    index: int
-    values: dict[str, float]
-    waveforms: dict[str, list[float]]
 
 
 def decode_waveform(encoded: str, *, field_name: str, row_index: int) -> np.ndarray:

@@ -99,24 +99,6 @@ class ImageBuildAdapter:
     def logs(self, handle: dict, cursor: int, limit_bytes: int) -> str: ...
 
 
-class FakeBuildAdapter(ImageBuildAdapter):
-    """Records submissions and reports success with a deterministic digest."""
-
-    def __init__(self, output_digest: str):
-        self.output_digest = output_digest
-        self.submitted: list[dict] = []
-
-    def submit(self, manifest: dict) -> dict:
-        self.submitted.append(manifest)
-        return {"handle": manifest["metadata"]["name"]}
-
-    def status(self, handle: dict) -> dict:
-        return {"status": "succeeded", "output_digest": self.output_digest}
-
-    def logs(self, handle: dict, cursor: int, limit_bytes: int) -> str:
-        return "build ok"
-
-
 def record_build(
     db: Session,
     *,
@@ -162,6 +144,3 @@ def record_build(
     db.commit()
     return build
 
-
-def new_build_id() -> uuid.UUID:
-    return uuid.uuid4()

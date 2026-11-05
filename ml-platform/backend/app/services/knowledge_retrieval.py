@@ -56,13 +56,6 @@ def extract_pos_pairs(text: str, *, min_len: int = 2, max_len: int = 20) -> list
     ]
 
 
-def extract_noun_phrases(text: str, *, min_len: int = 2, max_len: int = 20) -> list[str]:
-    """Noun-phrase candidates for graph entity extraction (jieba POS tags)."""
-    noun_flags = {"n", "nz", "nr", "ns", "nt", "nw", "vn", "eng"}
-    return [word for word, flag in extract_pos_pairs(text, min_len=min_len, max_len=max_len)
-            if flag in noun_flags]
-
-
 def _compute_tfidf_embedding(texts, single_text=None):
     """Compute TF-IDF vectors for a list of texts, optionally vectorize a single query."""
     if not texts:

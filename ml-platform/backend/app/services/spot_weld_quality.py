@@ -506,11 +506,6 @@ def _quality_required_input_columns(field_mapping: Mapping[str, str] | None = No
     return [mapping[name] for name in (*REPORT_TABLE_FIELDS, *WAVEFORM_FIELDS)]
 
 
-def is_quality_report_frame(frame: pd.DataFrame) -> bool:
-    required = set(REPORT_TABLE_FIELDS) | set(WAVEFORM_FIELDS)
-    return required.issubset({str(column) for column in frame.columns})
-
-
 def _resolve_quality_input_schema(
     frame: pd.DataFrame,
     *,

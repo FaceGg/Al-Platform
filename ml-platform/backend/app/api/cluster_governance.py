@@ -358,7 +358,7 @@ def create_quota_policy(
 
 
 def _project_of(db: Session, row: ResourceQuotaPolicy):
-    from app.models.resource_group import KubernetesResourceGroup
+    from app.models.cloud_resources import KubernetesResourceGroup
 
     if row.scope == "resource_group":
         group = db.query(KubernetesResourceGroup).filter(KubernetesResourceGroup.id == row.scope_id).first()

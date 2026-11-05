@@ -1333,7 +1333,3 @@ class DemoLoopService:
                 for event in reversed(events)
             ],
         }
-
-
-def demo_loop_service(db):
-    return DemoLoopService(db)

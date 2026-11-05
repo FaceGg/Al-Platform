@@ -19,21 +19,6 @@ enqueue_annotation_execution = None
 enqueue_annotation_return = None
 
 
-def recover_pending_runs(db, enqueue, limit: int = 100) -> int:
-    runs = db.query(WorkflowRun).filter(
-        WorkflowRun.status.in_(["pending", "queued"]),
-        WorkflowRun.task_id.is_(None),
-    ).limit(limit).all()
-    count = 0
-    for run in runs:
-        task_id = enqueue(str(run.id))
-        run.status = "queued"
-        run.task_id = task_id
-        db.commit()
-        count += 1
-    return count
-
-
 def reconcile_stale_runs(db, active_task_ids: set[str], hard_timeout: timedelta) -> int:
     cutoff = utcnow() - hard_timeout
     runs = db.query(WorkflowRun).filter(

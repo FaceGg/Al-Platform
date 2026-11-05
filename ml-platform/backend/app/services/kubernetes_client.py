@@ -14,7 +14,7 @@ import os
 import re
 import socket
 import ssl
-from typing import Any, Protocol
+from typing import Any
 from urllib.parse import urlsplit
 
 _ENV_REF_PATTERN = re.compile(r"^env:([A-Z][A-Z0-9_]*)$")
@@ -141,18 +141,6 @@ def resolve_credential(secret_ref: str) -> tuple[str, str]:
     except OSError as error:
         raise KubernetesClientError(CREDENTIAL_INVALID, f"credential file {value} is not readable") from error
     return "file", material.strip()
-
-
-class KubernetesClientProtocol(Protocol):
-    """Week 13 surface: read-only discovery plus one idempotent write."""
-
-    def check_connectivity(self) -> dict: ...
-
-    def list_nodes(self) -> list[dict]: ...
-
-    def list_namespaces(self) -> list[str]: ...
-
-    def ensure_namespace(self, name: str, quota_json: dict | None = None) -> dict: ...
 
 
 def _map_exception(error: Exception) -> KubernetesClientError:
@@ -732,20 +720,6 @@ class FakeKubernetesClient:
         if queued:
             return dict(queued.pop(0))
         return {"status": 200, "body": b"notebook-ready", "headers": {"Content-Type": "text/plain"}}
-
-
-class JobClientProtocol(Protocol):
-    """Week 14 surface: batch Job lifecycle against one cluster namespace."""
-
-    def create_job(self, manifest: dict) -> dict: ...
-
-    def get_job(self, name: str, namespace: str | None = None) -> dict | None: ...
-
-    def delete_job(self, name: str, namespace: str | None = None) -> None: ...
-
-    def list_job_pods(self, job_name: str, namespace: str | None = None, label_selector: str | None = None) -> list[dict]: ...
-
-    def read_pod_log(self, pod_name: str, cursor: int, limit_bytes: int, namespace: str | None = None) -> str: ...
 
 
 def _job_status_to_dict(job) -> dict:

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from numbers import Real
 from pathlib import Path
 from types import MappingProxyType
-from typing import Iterator, Mapping, Protocol, Sequence
+from typing import Iterator, Mapping, Sequence
 
 from mlflow.entities import Metric, Param, RunTag
 from mlflow.exceptions import MlflowException
@@ -85,67 +85,6 @@ class TrackedRun:
         object.__setattr__(self, "params", MappingProxyType(dict(self.params)))
         object.__setattr__(self, "metrics", MappingProxyType(dict(self.metrics)))
         object.__setattr__(self, "tags", MappingProxyType(dict(self.tags)))
-
-
-class ExperimentTracking(Protocol):
-    def ensure_experiment(self, name: str) -> str: ...
-
-    def start_run(
-        self,
-        experiment_id: str,
-        *,
-        run_name: str,
-        tags: Mapping[str, object],
-        parent_run_id: str | None = None,
-    ) -> TrackedRun: ...
-
-    def log_params(self, run_id: str, params: Mapping[str, object]) -> None: ...
-
-    def log_metrics(
-        self,
-        run_id: str,
-        metrics: Mapping[str, Real],
-        *,
-        step: int,
-    ) -> None: ...
-
-    def set_tags(self, run_id: str, tags: Mapping[str, object]) -> None: ...
-
-    def get_run(self, run_id: str) -> TrackedRun: ...
-
-    def search_runs(
-        self,
-        experiment_ids: Sequence[str],
-        *,
-        filter_string: str = "",
-        max_results: int = 1000,
-    ) -> tuple[TrackedRun, ...]: ...
-
-    def compare_runs(self, run_ids: Sequence[str]) -> tuple[TrackedRun, ...]: ...
-
-    def get_metric_history(self, run_id: str, key: str) -> tuple[TrackedMetric, ...]: ...
-
-    def log_artifact(
-        self,
-        run_id: str,
-        local_path: str | Path,
-        artifact_path: str | None = None,
-    ) -> None: ...
-
-    def list_artifacts(
-        self,
-        run_id: str,
-        path: str | None = None,
-    ) -> tuple[TrackedArtifact, ...]: ...
-
-    def download_artifact(
-        self,
-        run_id: str,
-        path: str,
-        destination: str | Path,
-    ) -> Path: ...
-
-    def end_run(self, run_id: str, status: str) -> None: ...
 
 
 class MlflowExperimentTracking:
