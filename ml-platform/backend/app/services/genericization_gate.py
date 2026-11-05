@@ -15,6 +15,8 @@ ADAPTER_MARKERS = ("LEGACY_ADAPTER_ONLY = True", "GENERICIZATION_BRIDGE_ONLY = T
 LEGACY_ADAPTER_FILES = {
     "models/spot_weld_quality.py",
     "services/spot_weld_quality.py",
+    # P3 拆分第二刀自 spot_weld_quality.py 原位迁出的纯算法块，随桥一并退役。
+    "services/spot_weld_automl.py",
     "services/spot_weld_features.py",
     "services/python_script_examples.py",
     "tasks/spot_weld_quality_tasks.py",

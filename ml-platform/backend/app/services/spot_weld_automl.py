@@ -7,6 +7,10 @@ ClusterResult/run_clustering）。
 """
 from __future__ import annotations
 
+# 泛化门禁：本文件自 legacy 桥 spot_weld_quality.py 原位迁出，保留点焊域
+# 字段名与阈值常量，随桥一并退役（genericization_gate.LEGACY_ADAPTER_FILES）。
+LEGACY_ADAPTER_ONLY = True
+
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, Sequence
