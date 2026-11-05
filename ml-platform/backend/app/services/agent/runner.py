@@ -174,7 +174,11 @@ class AgentRunner:
             {"feature": item.get("feature"), "importance": round(item.get("importance", 0), 4)}
             for item in (trainer_result.get("importance") or [])[:5]
         ]
-        return {"metrics": metrics, "importance": importance}
+        return {
+            "metrics": metrics,
+            "importance": importance,
+            "minority_test_count": trainer_result.get("minority_test_count"),
+        }
 
     def _escalate(self, error_code: str, detail: str | None = None) -> AgentRun:
         # 用户已终止的 run 不再覆盖为升级态（cancelled 终态优先）
@@ -630,6 +634,7 @@ class AgentRunner:
                 topk_metrics=trainer_result.get("topk_metrics"),
                 importance=trainer_result.get("importance"),
                 leakage_columns=[item.column for item in report.leakage_suspects],
+                minority_test_count=trainer_result.get("minority_test_count"),
             )
             self._stage_digest(
                 round_number,

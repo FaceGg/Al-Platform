@@ -106,6 +106,8 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
     X_train, X_test, y_train, y_test = train_test_split(
         X, labels, test_size=0.25, random_state=7, stratify=stratify
     )
+    # S4 方差门禁的噪声底输入：召回粒度 = 1/少数类测试样本数。
+    minority_test_count = int((y_test == minority).sum())
     families = {
         "logistic": LogisticRegression(max_iter=500, class_weight="balanced"),
         "random_forest": RandomForestClassifier(
@@ -138,7 +140,12 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
             continue
         scored.append((name, model, recall, f1, precision, accuracy, roc_auc))
     if not scored:
-        return {"metrics": {}, "topk_metrics": [], "importance": []}
+        return {
+            "metrics": {},
+            "topk_metrics": [],
+            "importance": [],
+            "minority_test_count": minority_test_count,
+        }
     scored.sort(key=lambda item: item[2], reverse=True)
     best_name, best, best_recall, best_f1, best_precision, best_accuracy, best_roc_auc = scored[0]
     if hasattr(best, "feature_importances_"):
@@ -167,6 +174,7 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
             for _n, _m, recall, _f, _p, _a, _r in scored
         ],
         "importance": importance,
+        "minority_test_count": minority_test_count,
     }
 
 

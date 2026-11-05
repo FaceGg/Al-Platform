@@ -317,3 +317,16 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 - 本批全部为本地验证；全量 CI 六 job 与镜像重建未跑（按需触发）。
 
 
+
+## 2026-11-05 S4 硬门禁 topk_variance 校准修复（A+B，用户决策）
+
+**背景**：点焊 9:1 不平衡任务（fault 0:1800/1:200，run 51d1c078）三轮全部死在 `topk_variance_high: std=0.1226/0.0899 > 0.02`，冠军模型全指标 1.0 仍被否决后 AGENT_MAX_ROUNDS 升级。根因有二：① 固定 0.02 低于采样噪声底——n≈50 少数类测试样本下召回粒度即 0.02（一个样本），同一模型换切分的二项波动 σ≈√(p̄(1−p̄)/n)≈0.04，固定常数等价零容差且无法公平覆盖不同 n；② 方差在全部 3 个异构家族（logistic/RF/HGB）间计算，线性家族在不平衡数据上天然落后（≈0.7 vs 1.0）属预期行为而非冠军不稳定信号。用户确认 A+B 方案（另一候选"白名单缩家族"被否：whitelist 当前未被 trainer 消费且属挑数据讨好裁判）。
+
+**改动**（无迁移/无 API 契约变化，失败消息前缀 `topk_variance_high` 保持）：
+- `agent/hard_gates.py`：① A 噪声底自适应——`evaluate_hard_gates` 新参 `minority_test_count`，有效阈值 = max(0.02, 2σ)（`NOISE_FLOOR_MULTIPLIER=2.0`），大 n 时退回基线不放松门禁；② B 合格候选过滤——被主指标门禁（gates[primary_metric]，含默认 recall_minority 0.9）淘汰的候选不参与方差投票，<2 个合格候选时跳过该守卫（冠军自身指标门禁仍独立生效）。失败消息附 `(qualified x/y, n_minority_test=n)` 便于审计。
+- `agent/executor.py`：轻量训练器切分后产出 `minority_test_count = (y_test==minority).sum()`，空/正常两条返回路径均带该键。
+- `agent/runner.py`：S4 调用传入 `minority_test_count`；`_s3_digest` 记录该值留痕。
+
+**验证**：`test_agent_hard_gates.py` 10 passed（新增 4：噪声底放行同档高原/大 n 退回基线不放松/不合格候选剔除（复刻本任务 {1.0,0.91,0.7}+n=50 场景）/单合格候选跳过）；横截面 `test_agent_runner/recipe_gated_swap/wizard` 33 passed（runner 三轮升级用例兼容）；真训练器 `test_agent_accuracy_alignment` 2 passed。既有用例 `test_topk_variance_guard`（无 gates 全候选+无 n）行为不变。
+
+**未验证/遗留**：全量 CI 六 job 与镜像级回归未跑；线上栈 backend/worker 镜像重建后该 run 可从 waiting_escalate resume。
