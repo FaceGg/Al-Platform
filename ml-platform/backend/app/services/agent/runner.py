@@ -602,8 +602,23 @@ class AgentRunner:
             target = self.run.target_column
             frame_columns = getattr(self.frame, "columns", [])
             y = self.frame[target] if target and target in frame_columns else None
+            # 标签列绝不进特征矩阵（真机 7c9415b1：target_must_survive 契约
+            # 下 S2 输出保留 fault 列，全量重放后原样喂训练器 → 标签自泄漏，
+            # 全指标 1.0 假完美、importance 首位是 fault 本身）。平台侧无
+            # 条件剔除，不依赖 S1 把标签列列进泄漏名单或 S2 脚本自觉；
+            # target_must_survive 契约保留——配方换模对齐仍需目标列存活于
+            # 特征表，剔除只发生在喂给训练器之前。
+            target_excluded = bool(target) and target in list(
+                getattr(feature_df, "columns", [])
+            )
+            if target_excluded:
+                feature_df = feature_df.drop(columns=[target])
             trainer_result = self.trainer(feature_df, y, {})
-            self._stage_digest(round_number, "s3", self._s3_digest(trainer_result))
+            s3_digest = self._s3_digest(trainer_result)
+            if target_excluded:
+                # 留痕：评审与排障能看到"特征表里的标签列已被平台剥离"。
+                s3_digest["target_excluded_from_features"] = target
+            self._stage_digest(round_number, "s3", s3_digest)
 
             # ---- S4 hard gates (before any LLM sees the numbers) ----
             self.run.current_stage = "s4"

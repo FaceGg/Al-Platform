@@ -51,7 +51,7 @@ export interface AgentRunDetail extends AgentRunItem {
         wide_table_note?: string;
       };
       s2?: { description?: string; generated_columns?: string[]; dropped_columns?: string[]; data_shape?: string; attempts?: number };
-      s3?: { metrics?: Record<string, number>; importance?: { feature?: string; importance?: number }[] };
+      s3?: { metrics?: Record<string, number>; importance?: { feature?: string; importance?: number }[]; target_excluded_from_features?: string };
       s4?: { gates?: Record<string, number>; gate_passed?: boolean; gate_failures?: string[] };
       review?: { verdict?: string; surprises?: string[]; readiness?: string; hints?: string[] };
     }[];

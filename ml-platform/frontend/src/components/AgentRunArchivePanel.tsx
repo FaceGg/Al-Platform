@@ -289,6 +289,10 @@ function buildStreamLines(archive: AgentRunDetail, zh: boolean): StreamLine[] {
     if (s3) {
       push(sid, "text", `[S3] ${zh ? "候选训练" : "Training"} · ${zh ? "指标" : "metrics"}：${Object.entries(s3.metrics ?? {}).map(([k, v]) => `${k}=${v}`).join("  ")}`);
       if (s3.importance?.length) push(sid, "text", `${zh ? "特征重要性" : "Importance"}：${s3.importance.slice(0, 5).map((i) => `${i.feature}(${i.importance})`).join("、")}`);
+      // 标签列被平台剥离的留痕（防标签自泄漏）：指标可信性的关键注脚
+      if (s3.target_excluded_from_features) {
+        push(sid, "text", `${zh ? "标签列已从特征矩阵剥离：" : "Target excluded from features: "}${s3.target_excluded_from_features}`, "dim");
+      }
     }
     const s4 = round.s4;
     if (s4) {

@@ -215,6 +215,42 @@ class TestAgentRunner(RunnerHarness, unittest.TestCase):
         # 全量 40 行（_frame 默认）而非 5000 行样本；且特征与标签等长。
         self.assertEqual(seen_shapes[0], (40, 40))
 
+    def test_s3_never_feeds_target_column_into_features(self):
+        """回归（真机 7c9415b1）：标签列不得进入特征矩阵。
+
+        target_must_survive 契约下 S2 脚本原样透传目标列（_SCRIPT_OK 不剔除
+        DECIDE(判定结果)）；修复前该列随全量重放直接喂训练器 → 标签自泄漏、
+        全指标 1.0 假完美。平台侧必须在训练前无条件剥离并留痕。
+        """
+        seen_columns = []
+
+        def trainer(feature_df, y, hints):
+            seen_columns.append(list(feature_df.columns))
+            return {
+                "metrics": {"recall_minority": 0.94, "f1": 0.9},
+                "topk_metrics": [{"recall_minority": 0.94}],
+                "importance": [{"feature": "TORQUE_DEVIATION", "importance": 0.6}],
+            }
+
+        runner, db, run_id = self.build(
+            {
+                "run_s1": lambda db, **kw: (_REPORT, None, {"total_tokens": 100}),
+                "run_s2": lambda db, **kw: (_SCRIPT_OK, None, {"total_tokens": 100}),
+                "run_s4": lambda db, **kw: (_verdict("pass"), None, {"total_tokens": 100}),
+            },
+            trainer=trainer,
+        )
+        result = runner.run_to_completion()
+        self.assertEqual(result.status, "accepted")
+        self.assertNotIn("DECIDE(判定结果)", seen_columns[0])
+        # 档案留痕：排障与评审可见"标签列已被平台剥离"。
+        with SessionLocal() as db2:
+            memory = db2.get(AgentRun, run_id).memory_json
+        self.assertEqual(
+            memory["rounds"][0]["s3"]["target_excluded_from_features"],
+            "DECIDE(判定结果)",
+        )
+
     def test_s4_fail_carries_hints_into_next_round_s1(self):
         seen_memories = []
 
