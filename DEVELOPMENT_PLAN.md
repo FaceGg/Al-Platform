@@ -333,3 +333,5 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 **e2e 验证（2026-11-05，镜像重建后线上栈）**：原 run 51d1c078 为 `waiting_escalate` 终态且无升级态重试端点（resume 仅收 `waiting_guidance`），以同参数新建 run 验证——S4 硬门禁**第 1 轮即通过**（`gate_passed: true`，同数据集此前 std=0.1226 三连拒），修复生效。新终态为 `AGENT_REVIEW_ESCALATE`（评审层、设计内行为）：评审对全 1.0 完美指标提出泄漏怀疑（合理），并点出单一特征 `wldc_mean` 重要性 0.0 的异常——根因是轻量训练器 importance 抽取缺陷：最优家族 hist_gb 无 `feature_importances_` 且非 logistic 时 weights=[0]，zip 截断成单特征 0.0（独立遗留，见问题区）。`waiting_escalate` 为人工接管终态，无 accept 端点（设计如此）。
 
 **未验证/遗留**：全量 CI 六 job 与镜像级回归未跑（本批已重建 backend/worker 镜像并线上验证）。
+
+**同批运维修复：前端容器 nginx 代理死 IP（用户两轮报障根因）**——backend 容器滚动重建换 IP 后，frontend 容器（5173 入口）nginx 的静态 `proxy_pass http://backend:8000` 因启动时一次性 DNS 解析永久持旧 IP → 全站 `/api` 502（页面框架正常、数据全挂，"所有页面数据加载失败"）。修复（frontend `Dockerfile` 内联配置与 `nginx-default.conf`【prebuilt 变体】两处同步）：`resolver 127.0.0.11 valid=10s ipv6=off` + 变量 `proxy_pass http://$backend_upstream`，按周期重解析、backend 重建后 ≤10s 自愈。隔离网络实证：临时 nginx+上游容器，销毁重建上游后 t=2s 恢复；坑：nginx 内置变量 `$upstream_addr` 不可被 `set`（"duplicate variable" emerg，测试时撞名暴露）。主入口 nginx(80) 为纯静态不受影响；标注门户无反代不受影响。frontend 镜像已重建滚动上线（5173 根路径与 /api 双 200）。
