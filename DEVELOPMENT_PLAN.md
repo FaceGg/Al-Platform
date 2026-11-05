@@ -312,7 +312,7 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 
 ### 四、风险与未验证项
 
-- test_demo_loop 6 个存量失败（retrain/swap 流，`stub.enqueued 0!=1`）为**本批之前已存在**，建议另立缺陷单排查（疑似环境/时序敏感）。
+- ~~test_demo_loop 6 个存量失败~~ **✅ 已根治（2026-11-05 续批，提交 6066860a）**：根因是 `tests/conftest.py` 模块级 `import app.database` 固化引擎 URL，先于 test_demo_loop 文件头的密封兜底执行——pytest 直跑路径的用例一直**静默写入共享开发库**（已累积 239 个 demo-loop 测试项目/225 条闭环配置残留），历史残留 `experiments.mlflow_experiment_id` 与打补丁的共享 mlflow 库返回的小整数 id 撞 UNIQUE → 重训触发被 `_trigger_retrain` 的兜底 except 吞掉（仅落 retrain_failed 事件）→ `stub.enqueued=0`。修复：密封兜底前移至 conftest 顶部（setdefault，不影响 run_suite/CI 硬赋值注入路径）。验证：test_demo_loop 27 全绿 + 19 模块横截面 250 绿 + 迁移模块 9 绿。**遗留**：开发库 ml_platform.db 中的测试残留（239 项目/225 配置等）属用户数据未擅删，如需清理另开任务。
 - 字体观感（Noto Sans SC 替代系统字体后的字形/密度差异）未做人工视觉验收，建议部署预览时过一眼大屏与标注页。
 - 本批全部为本地验证；全量 CI 六 job 与镜像重建未跑（按需触发）。
 
