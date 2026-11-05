@@ -37,3 +37,8 @@ venv/
 *.egg-info/
 .DS_Store
 .mimosa/
+
+# JetBrains IDE 本地状态：.name 记录"项目显示名"，本仓库 .idea 由单文件打开
+# 生成，内容随 IDE 每次打开被重写（曾以 .tmp_show_anomalies.py/processing.py
+# 等单脚本名身份变更），跟踪它 = git status 永久挂一个 M。移出跟踪，保留本地。
+.idea/.name
