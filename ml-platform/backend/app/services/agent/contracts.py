@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import re
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 class AgentContractError(ValueError):
@@ -65,6 +65,11 @@ class FeatureScript(BaseModel):
 
 
 class ReviewAlignment(BaseModel):
+    # LLM 评审常把 observed/expected 写成裸数字（如 0.99 而非 "0.99"），
+    # 语义无损——仅此模型放宽数字→字符串，其余契约仍严格 fail-closed
+    # （真机 7c9415b1 run：alignment[8..11].observed 数字违约整轮升级）。
+    model_config = ConfigDict(coerce_numbers_to_str=True)
+
     expected: str = Field(min_length=1, max_length=256)
     observed: str = Field(min_length=1, max_length=256)
     aligned: bool

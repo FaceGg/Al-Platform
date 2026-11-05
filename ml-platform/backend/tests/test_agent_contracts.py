@@ -98,6 +98,35 @@ class TestContracts(unittest.TestCase):
         with self.assertRaises(AgentContractError):
             validate_contract(ReviewVerdict, {"verdict": "maybe", "business_readiness": "x"})
 
+    def test_review_alignment_coerces_numeric_observed(self):
+        """LLM 常把 observed 写成裸数字（真机 7c9415b1 alignment[8..11] 违约）；
+        数字/布尔语义无损转字符串收单，结构违约（null/列表/空串）仍拒收。"""
+        verdict = validate_contract(
+            ReviewVerdict,
+            {
+                "verdict": "pass",
+                "alignment": [
+                    {"expected": "RON1 重要性高", "observed": 0.99, "aligned": True},
+                    {"expected": "WLD 差值特征", "observed": 2, "aligned": True},
+                ],
+                "business_readiness": "可上线",
+            },
+        )
+        self.assertEqual(verdict.alignment[0].observed, "0.99")
+        self.assertEqual(verdict.alignment[1].observed, "2")
+        for bad in (None, ["0.99"], ""):
+            with self.assertRaises(AgentContractError):
+                validate_contract(
+                    ReviewVerdict,
+                    {
+                        "verdict": "pass",
+                        "alignment": [
+                            {"expected": "x", "observed": bad, "aligned": True}
+                        ],
+                        "business_readiness": "可上线",
+                    },
+                )
+
     def test_parse_llm_json_tolerates_fences_and_prose(self):
         fenced = "好的，以下是分析：\n```json\n" + __import__("json").dumps(_VALID_ANALYSIS) + "\n```"
         self.assertEqual(parse_llm_json(fenced)["domain_hypothesis"], "tightening")
