@@ -116,6 +116,7 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 5. 杂项：git 代理 7897 间歇故障（直连不通时用 `-c http.proxy=http://127.0.0.1:7897`）；`.worktrees/` 残留 4 个空目录 ACL 损坏（文件已清空，彻底删除需管理员 shell 或 WSL sudo，暂留无害）。
 6. ~~**`test_demo_loop.py` 本地连跑失败集漂移（既有，2026-10-27 诊断收窄）**~~ ✅ 已收口（2026-11-03，e222cf86 随 555528b6 合入主线）：套件密封化落地——未显式设 `DATABASE_URL` 时自动落进程专属临时库（`temp_test/demo-loop-<pid>-<hex>.db`），退出时先 `engine.dispose()` 再删（Windows sqlite 文件锁 WinError 32 语义）；新库 27 passed 验证。诊断过程保留：同代码共享库失败数 6/5/1/6 震荡、全新临时库连跑两次均 27 全绿——确证触发条件是共享库多年残留，代码无回归。
 7. ~~本地共享库 `workflows.project_id` NULLability 漂移~~ ✅ 已修复（2026-10-27）：全库 schema 体检确认仅此一处漂移；`temp_test/fix_workflows_nullable.py` 按现行 ORM DDL 重建表（510 行保全、外键问题数与修复前完全一致均为历史孤儿行、差异复扫清零），`test_api_workflow_templates` 4 passed 恢复；修复前备份 `temp_test/ml_platform.db.bak-20261027`。
+8. **轻量训练器 importance 抽取缺陷（2026-11-05 发现）**：最优家族为 hist_gb（无 `feature_importances_`）且非 logistic 时，`executor.py` 的 weights 回退 `[0]` 经 zip 截断输出"单一特征重要性 0.0"——误导 S4 评审（本轮 AGENT_REVIEW_ESCALATE 的 surprises 之一即此 artifact）。修法方向：hist_gb 用 permutation importance 或按树节点增益自算；属低危（只影响评审证据质量，不影响选优与门禁数字）。
 
 ### 后续（执行顺序）
 
@@ -329,4 +330,6 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 
 **验证**：`test_agent_hard_gates.py` 10 passed（新增 4：噪声底放行同档高原/大 n 退回基线不放松/不合格候选剔除（复刻本任务 {1.0,0.91,0.7}+n=50 场景）/单合格候选跳过）；横截面 `test_agent_runner/recipe_gated_swap/wizard` 33 passed（runner 三轮升级用例兼容）；真训练器 `test_agent_accuracy_alignment` 2 passed。既有用例 `test_topk_variance_guard`（无 gates 全候选+无 n）行为不变。
 
-**未验证/遗留**：全量 CI 六 job 与镜像级回归未跑；线上栈 backend/worker 镜像重建后该 run 可从 waiting_escalate resume。
+**e2e 验证（2026-11-05，镜像重建后线上栈）**：原 run 51d1c078 为 `waiting_escalate` 终态且无升级态重试端点（resume 仅收 `waiting_guidance`），以同参数新建 run 验证——S4 硬门禁**第 1 轮即通过**（`gate_passed: true`，同数据集此前 std=0.1226 三连拒），修复生效。新终态为 `AGENT_REVIEW_ESCALATE`（评审层、设计内行为）：评审对全 1.0 完美指标提出泄漏怀疑（合理），并点出单一特征 `wldc_mean` 重要性 0.0 的异常——根因是轻量训练器 importance 抽取缺陷：最优家族 hist_gb 无 `feature_importances_` 且非 logistic 时 weights=[0]，zip 截断成单特征 0.0（独立遗留，见问题区）。`waiting_escalate` 为人工接管终态，无 accept 端点（设计如此）。
+
+**未验证/遗留**：全量 CI 六 job 与镜像级回归未跑（本批已重建 backend/worker 镜像并线上验证）。
