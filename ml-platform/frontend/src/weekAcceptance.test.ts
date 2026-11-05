@@ -124,7 +124,7 @@ const weekTestFiles: Record<number | string, string[]> = {
     "./pages/InfraOverviewPage.test.tsx",
     "./pages/SystemSettingsPage.test.tsx",
     "./components/AgentModelingWizard.test.tsx",
-    "./components/ChatToolsPanel.test.tsx",
+    "./components/ChatToolsConfigModal.test.tsx",
     "./hooks/useAdaptivePolling.test.tsx",
   ],
 };

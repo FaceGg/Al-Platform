@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { Card, Input, Button, Typography, Space, Spin, Tag, Empty, Divider, Modal, Select, Collapse, Popover, Upload, Slider, message as antdMessage, Dropdown } from "antd";
 import {
-  SendOutlined, RobotOutlined, UserOutlined, ClearOutlined, SettingOutlined, ShareAltOutlined,
+  SendOutlined, RobotOutlined, UserOutlined, ClearOutlined, SettingOutlined,
   FileTextOutlined, BlockOutlined, DownOutlined, PlusOutlined, EllipsisOutlined, CopyOutlined,
   EditOutlined, DeleteOutlined, CloudDownloadOutlined,
 } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
-import ChatToolsPanel from "../components/ChatToolsPanel";
+import ChatToolsConfigModal from "../components/ChatToolsConfigModal";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
 
@@ -70,6 +70,8 @@ export default function AIChatPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // 白名单工具管理弹窗（+ 菜单入口）：配置与执行统一收拢，面板不再常驻输入框上方
+  const [toolsConfigOpen, setToolsConfigOpen] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState(() => localStorage.getItem("chat.systemPrompt") || "你是汽车焊接制造领域的智能助手。");
   const [temperature] = useState(() => Number(localStorage.getItem("chat.temperature") || "0.7"));
   const [kbId, setKbId] = useState(() => localStorage.getItem("chat.kbId") || "");
@@ -305,7 +307,6 @@ export default function AIChatPage() {
           >
             <Button icon={<DownOutlined />}>{text.sessions}</Button>
           </Dropdown>
-          <Button icon={<SettingOutlined />} onClick={() => { fetchKbs(); setSettingsOpen(true); }}>{text.settings}</Button>
         </Space>
       </div>
       <Card styles={{ body: { height: "calc(100vh - 260px)", display: "flex", flexDirection: "column", padding: 0 } }}>
@@ -354,11 +355,6 @@ export default function AIChatPage() {
         </div>
         <Divider style={{ margin: 0 }} />
         <div style={{ padding: "12px 16px" }}>
-          <ChatToolsPanel onResult={(resultText) => {
-            const next = [...messages, { role: "assistant", content: resultText, time: new Date().toLocaleTimeString() } as ChatMsg];
-            setMessages(next);
-            saveActive(next);
-          }} />
           {/* ZCode 式输入框：最左 + 号（数据/知识库/系统提示词/白名单工具），右侧容量圆圈/模型/思考强度/发送 */}
           {(() => {
             const sysTokens = Math.ceil(systemPrompt.length / 4);
@@ -406,10 +402,7 @@ export default function AIChatPage() {
                       ],
                       onClick: ({ key }) => {
                         if (key === "kb" || key === "system") { fetchKbs(); setSettingsOpen(true); }
-                        if (key === "tools") {
-                          const btn = Array.from(document.querySelectorAll("button")).find(b => (b.innerText || "").includes("白名单工具"));
-                          btn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-                        }
+                        if (key === "tools") setToolsConfigOpen(true);
                         if (key === "attach") {
                           apiClient.get("/projects").then(r => {
                             const items = r.data?.items ?? r.data;
@@ -620,6 +613,15 @@ export default function AIChatPage() {
         <Text strong>{text.systemPrompt}</Text>
         <Input.TextArea autoComplete="off" value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} rows={5} style={{ marginTop: 8 }} />
       </Modal>
+      <ChatToolsConfigModal
+        open={toolsConfigOpen}
+        onClose={() => setToolsConfigOpen(false)}
+        onResult={(resultText) => {
+          const next = [...messages, { role: "assistant", content: resultText, time: new Date().toLocaleTimeString() } as ChatMsg];
+          setMessages(next);
+          saveActive(next);
+        }}
+      />
     </AppLayout>
   );
 }

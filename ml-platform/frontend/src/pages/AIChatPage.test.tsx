@@ -53,9 +53,9 @@ describe("AIChatPage", () => {
     renderPage();
     await waitFor(() => expect(apiClient.get).toHaveBeenCalledWith("/knowledge/bases"));
     expect(await screen.findByText(/知识库: 焊接工艺知识库/)).toBeInTheDocument();
-    // 顶部按钮组：新建对话/会话/对话设置（发布为API与旧配置入口已移除）
+    // 顶部按钮组：新建对话/会话（对话设置按钮已移除，配置入口收拢到 + 菜单）
     expect(await screen.findByText(/新建对话/)).toBeInTheDocument();
-    expect(await screen.findByText(/对话设置/)).toBeInTheDocument();
+    expect(screen.queryByText(/对话设置/)).not.toBeInTheDocument();
     expect(screen.queryByText(/发布为 API/)).not.toBeInTheDocument();
   });
 
@@ -111,6 +111,29 @@ describe("AIChatPage", () => {
       if (!inModal) throw new Error("modal KB select not found");
       expect(inModal.closest(".ant-modal")).toBeTruthy();
     });
+  });
+
+  it("opens whitelist tools config via the + menu, header button removed", async () => {
+    localStorage.setItem("role", "admin");
+    apiClient.get.mockImplementation((url: string) => {
+      if (url === "/knowledge/bases") return Promise.resolve({ data: [KB] });
+      if (url === "/llm-profiles") return Promise.resolve({ data: [PROFILE] });
+      if (url === "/chat-sessions") return Promise.resolve({ data: [] });
+      if (url === "/chat-tools/config") {
+        return Promise.resolve({
+          data: { tools: [{ tool: "list_datasets", label: "查看数据集列表", kind: "read", enabled: true }] },
+        });
+      }
+      return Promise.reject(new Error("unexpected get " + url));
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /添加/ }));
+    await waitFor(() => expect(screen.getByText("白名单工具管理")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("白名单工具管理"));
+    // 受控弹窗：拉取 /chat-tools/config 并渲染工具启停列表
+    expect(await screen.findByText("查看数据集列表")).toBeInTheDocument();
+    // 右上角「对话设置」按钮已删除（设置弹窗仅经 + 菜单打开）
+    expect(screen.queryByRole("button", { name: /对话设置/ })).not.toBeInTheDocument();
   });
 
   it("persists thinking level and context window choices", async () => {
