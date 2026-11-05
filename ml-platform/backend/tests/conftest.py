@@ -10,6 +10,37 @@ os.environ.setdefault("LOGIN_IP_RATE_LIMIT_CAPACITY", "100")
 # of bootstrapping a real venv (which would download packages from PyPI).
 os.environ.setdefault("PYTHON_SCRIPT_VENV_DIR", "")
 
+# 直跑 pytest 的密封兜底：本 conftest 自身会 import app.database 固化引擎 URL，
+# 若不在此时兜底，各测试模块文件头的密封兜底（如 test_demo_loop）全部来不及
+# 生效——用例会静默写入共享开发库，残留行再引发计数漂移与
+# experiments.mlflow_experiment_id 唯一键冲突（test_demo_loop 6 败的根因）。
+# run_suite/CI 在进程外用硬赋值注入 DATABASE_URL，此 setdefault 不影响其路径。
+if not os.environ.get("DATABASE_URL"):
+    import atexit
+    import uuid as _uuid
+    from pathlib import Path as _Path
+
+    _SEALED_DIR = _Path("temp_test")
+    _SEALED_DIR.mkdir(exist_ok=True)
+    _SEALED_DB = _SEALED_DIR / f"pytest-{os.getpid()}-{_uuid.uuid4().hex[:8]}.db"
+    os.environ["DATABASE_URL"] = "sqlite:///" + _SEALED_DB.as_posix()
+
+    def _cleanup_sealed_db():
+        # Windows 语义：sqlite 文件被 engine 连接持有时 unlink 报 WinError 32，
+        # 先 dispose 再删；仍失败则静默留下（temp_test 不入库）。
+        try:
+            import app.database as _sealed_database
+
+            _sealed_database.engine.dispose()
+        except Exception:
+            pass
+        try:
+            _SEALED_DB.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    atexit.register(_cleanup_sealed_db)
+
 import pytest
 from sqlalchemy import event
 
