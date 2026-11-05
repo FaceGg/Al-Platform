@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import AppLayout from "../components/AppLayout";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import apiClient, { apiGet, apiPost, formatApiError } from "../api/client";
+import { formatLocalTime } from "../utils/time";
 import { useI18n } from "../i18n";
 
 const { Title, Text } = Typography;
@@ -227,7 +228,7 @@ export default function OrchestrationPage() {
                   </Tag>
                   <Tag>{tpl.node_count} 节点</Tag>
                   {tpl.updated_at
-                    ? <Text type="secondary" style={{ fontSize: 12 }}>{tpl.updated_at.replace("T", " ").slice(0, 16)}</Text>
+                    ? <Text type="secondary" style={{ fontSize: 12 }}>{formatLocalTime(tpl.updated_at)}</Text>
                     : null}
                 </span>
                 <Space size={4}>

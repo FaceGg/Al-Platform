@@ -4,7 +4,7 @@ import { ArrowLeftOutlined, ReloadOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import AgentRunArchivePanel from "../components/AgentRunArchivePanel";
 import { getAgentRun, type AgentRunDetail } from "../api/agentCenter";
-import { formatLocalTime } from "../utils/time";
+import { formatLocalTime, parseBackendTime } from "../utils/time";
 import { useI18n } from "../i18n";
 
 /** 智能体中心→任务详情页：单个 Agent 运行的全链路档案（/agent/task/:runId）。 */
@@ -15,9 +15,9 @@ const ACTIVE_POLL_MS = 10_000;
 
 function runSeconds(created?: string | null, updated?: string | null): string {
   if (!created || !updated) return "—";
-  const start = new Date(`${created}Z`.endsWith("Z") ? created : `${created}Z`).getTime();
-  const end = new Date(`${updated}Z`.endsWith("Z") ? updated : `${updated}Z`).getTime();
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return "—";
+  const start = parseBackendTime(created)?.getTime();
+  const end = parseBackendTime(updated)?.getTime();
+  if (start === undefined || end === undefined) return "—";
   return `${Math.max(0, Math.round((end - start) / 1000))} s`;
 }
 

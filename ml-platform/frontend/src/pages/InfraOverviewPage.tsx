@@ -6,6 +6,7 @@ import apiClient from "../api/client";
 import { listClusters, listClusterNodes, type ClusterInfo, type NodeCapability } from "../api/kubernetes";
 import { listJobRuns, type JobRun } from "../api/kubernetesJobs";
 import { listNotebooks } from "../api/notebooks";
+import { parseBackendTime } from "../utils/time";
 import { useI18n } from "../i18n";
 
 const statusBadge = (status: string): string => {
@@ -19,7 +20,10 @@ const statusBadge = (status: string): string => {
 
 function relativeTime(iso?: string | null, zh = true): string {
   if (!iso) return "-";
-  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  // 后端时间为无时区 UTC ISO——直 new Date 会当本地时间，心跳/年龄多算 8 小时。
+  const parsed = parseBackendTime(iso);
+  if (!parsed) return "-";
+  const minutes = Math.round((Date.now() - parsed.getTime()) / 60000);
   if (minutes < 1) return zh ? "刚刚" : "just now";
   if (minutes < 60) return zh ? `${minutes} 分钟前` : `${minutes}m ago`;
   const hours = Math.round(minutes / 60);
