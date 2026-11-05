@@ -310,9 +310,20 @@ function buildStreamLines(archive: AgentRunDetail, zh: boolean): StreamLine[] {
     }
   }
   if (!rounds.length) {
+    // 空轮次有三种含义，不能一律解释成"旧任务"（真机 1c586acf：新任务
+    // S1 三连失败升级，档案却显示"早于落档案功能上线"误导排障方向）：
+    // 运行中=正在 S1 长生成；终态=第 1 阶段即失败；仅 2026-10-27 前的
+    // 历史任务才是真的"功能未上线"。
+    const created = parseBackendTime(archive.created_at);
+    const predates = !!created && created.getTime() < Date.parse("2026-10-27T00:00:00Z");
+    const emptyText = ACTIVE_STATUSES.has(archive.status)
+      ? (zh ? "任务正在第 1 阶段（S1 大模型分析）——生成耗时可达数分钟（含重试最长约 12 分钟），阶段产物将在完成后逐段写入这里。" : "S1 LLM analysis in progress (up to ~12 min with retries); artifacts will stream here once complete.")
+      : predates
+        ? (zh ? "暂无轮次记录——该任务运行早于阶段产物落档案功能上线（2026-10-27），新任务将逐阶段流式记录。" : "This run predates per-stage artifact persistence.")
+        : (zh ? "暂无轮次记录——任务在第 1 阶段（S1 大模型分析）即失败/升级，未产出阶段产物；原因见下方升级详情。" : "No stage artifacts: the run failed or escalated during S1; see the decision note below.");
     lines.push({
       key: "empty", sectionId: "rounds", sectionLabel: zh ? "轮次" : "Rounds", kind: "text",
-      text: zh ? "暂无轮次记录——该任务运行早于阶段产物落档案功能上线（2026-10-27），新任务将逐阶段流式记录。" : "This run predates per-stage artifact persistence.",
+      text: emptyText,
     });
   }
   // 结果块只在终态渲染——running/pending 不是"未通过"（a1d8bd26 误报修复）。
