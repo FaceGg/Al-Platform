@@ -126,9 +126,17 @@ describe("JobRunsPage", () => {
     expect(await screen.findByText(/chunk-1/)).toBeInTheDocument();
     expect(mocks.getJobRunLogs).toHaveBeenCalledWith(job.id, 0);
 
-    const more = screen.getByRole("button", { name: /加载更多/ });
-    expect(more).not.toBeDisabled();
-    expect(more).not.toHaveClass("ant-btn-loading");
+    // CI 高负载下初次日志加载的 loading 解除可能晚于内容渲染（run 41985352970
+    // Windows 实证）；且 antd Wave 重渲会替换节点，等待期内实时重查
+    // （run 41428207476 同族根因），等待而非即刻断言。
+    await waitFor(
+      () => {
+        const more = screen.getByRole("button", { name: /加载更多/ });
+        expect(more).not.toBeDisabled();
+        expect(more).not.toHaveClass("ant-btn-loading");
+      },
+      { timeout: 5000 },
+    );
     // 点击时实时重查：CI 高负载下 antd Wave/重渲可能替换节点，持旧引用
     // 派发的事件到不了 React 根监听（run 41428207476 Windows 两连挂根因）
     fireEvent.click(screen.getByRole("button", { name: /加载更多/ }));
