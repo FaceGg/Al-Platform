@@ -154,7 +154,12 @@ export default function AgentRunArchivePanel({ runId, archive, archiveError, zh,
                     .catch(() => setCancelling(false));
                 }}
                 title={zh ? "终止任务：当前 LLM 调用（最长约 12 分钟）完成后在阶段边界停止" : "Cancel at the next stage boundary"}
-              >{cancelling ? (zh ? "终止中…" : "Cancelling…") : (zh ? "■ 终止" : "■ Cancel")}</button>
+              >{cancelling ? (zh ? "终止中…" : "Cancelling…") : (
+                <>
+                  <span aria-hidden style={{ width: 10, height: 10, background: "var(--v2-red)", borderRadius: 2, flexShrink: 0 }} />
+                  {zh ? "终止" : "Cancel"}
+                </>
+              )}</button>
             ) : null}
           </>
         ) : null}
