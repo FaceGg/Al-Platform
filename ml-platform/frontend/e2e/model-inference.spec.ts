@@ -33,10 +33,14 @@ function runInferenceFixture<T>(name: string, ...args: string[]): T {
   })) as T;
 }
 
-// ModelLibraryPage v2 重构（发布运维抽屉 → 部署信息/版本抽屉，密钥与发布 UI 变形）
-// 后本 spec 的操作流整体失效；需按新 UI 重写 lifecycle 流程（DEVELOPMENT_PLAN 待办）。
-// 后端级 release lifecycle 回归由 production-integration job 覆盖，浏览器层此处暂缺。
-test.fixme("model registry production release lifecycle", async ({ page, browser }) => {
+// ModelLibraryPage v2 重写（2026-11-05）：发布运维抽屉仍暴露 dialog role
+// （标题 `发布运维: <name>` 不变）；访问令牌链路重命名（创建 API 密钥→
+// 创建访问令牌 / 密钥明文→令牌明文 / 关闭已创建密钥→关闭已创建令牌）；
+// 新建发布表单新增策略 Select（默认 canary 无需交互）；部署行动作新增
+// 「部署信息」；其余流程（注册/批准/启动/新建发布/暂停恢复回滚/在线测试/
+// viewer 只读断言）与原生命周期一致。后端级 release lifecycle 回归由
+// production-integration job 覆盖。
+test("model registry production release lifecycle", async ({ page, browser }) => {
   const unique = Date.now();
   const projectName = `Inference E2E ${unique}`;
   const modelName = `Weld fault ${unique}`;
@@ -181,13 +185,13 @@ test.fixme("model registry production release lifecycle", async ({ page, browser
   await operationsDrawer.getByRole("button", { name: "Close" }).click();
   operationsDrawer = await openOperations();
 
-  await operationsDrawer.getByRole("button", { name: "创建 API 密钥" }).click();
-  const createdKeyDialog = page.getByRole("dialog", { name: "API 密钥已创建" });
-  const plaintextInput = createdKeyDialog.getByLabel("API 密钥明文");
+  await operationsDrawer.getByRole("button", { name: "创建访问令牌" }).click();
+  const createdKeyDialog = page.getByRole("dialog", { name: "访问令牌已创建" });
+  const plaintextInput = createdKeyDialog.getByLabel("访问令牌明文");
   await expect(plaintextInput).toHaveValue(/^mli_/);
-  await createdKeyDialog.getByRole("button", { name: "关闭已创建密钥" }).click();
+  await createdKeyDialog.getByRole("button", { name: "关闭已创建令牌" }).click();
   await expect(createdKeyDialog).toBeHidden();
-  await expect(page.getByLabel("API 密钥明文")).toHaveCount(0);
+  await expect(page.getByLabel("访问令牌明文")).toHaveCount(0);
 
   const progressingReleaseRow = operationsDrawer.getByRole("row").filter({ hasText: "进行中" });
   await progressingReleaseRow.getByRole("button", { name: /^暂停 发布 / }).click();
@@ -251,7 +255,7 @@ test.fixme("model registry production release lifecycle", async ({ page, browser
     const viewerOperations = viewerPage.getByRole("dialog", { name: `发布运维: ${deploymentName}` });
     await expect(viewerOperations).toBeVisible();
     await expect(viewerOperations.getByRole("button", { name: "新建发布" })).toHaveCount(0);
-    await expect(viewerOperations.getByRole("button", { name: "创建 API 密钥" })).toHaveCount(0);
+    await expect(viewerOperations.getByRole("button", { name: "创建访问令牌" })).toHaveCount(0);
     await expect(viewerOperations.getByRole("button", { name: /^回滚 发布 / })).toHaveCount(0);
   } finally {
     await viewerContext.close();
