@@ -444,7 +444,10 @@ def run_s4(
         config=config,
         messages=messages,
         temperature=0.2,
-        max_tokens=1024,
+        # S4 评审 JSON（findings/strengths/unsatisfactory/next_hints）在
+        # 大数据量任务上可超 1k tokens；与 S1/S2 同取 3000（受 ~250s
+        # 连接寿命上限约束，超长由重试自纠）。
+        max_tokens=3000,
         purpose="agent_s4",
         actor=actor,
         timeout_floor=AGENT_STAGE_TIMEOUT_FLOOR,
