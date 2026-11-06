@@ -133,7 +133,12 @@ def servitize_recipe(
             "name": loop_name or (model_api_name or "智能体闭环")[:120],
             "deployment_id": str(deployment.id),
             "error_classes": error_classes,
-            "feature_engineering_mode": "script",
+            # 闭环回流直通：S2 特征脚本是智能体沙箱契约（def transform），
+            # 与闭环 python_script 算子契约（result= 赋值）不同构——硬塞会
+            # 在冒烟/回流时必挂（闭环 agent 重训 E2E 实证）。回流记录本身
+            # 已含部署模型特征列（引擎铸造模型按原始报告列训练），legacy
+            # 直通即可；脚本桥接（S2→闭环算子契约）留独立批次。
+            "feature_engineering_mode": "legacy",
             "feature_script": recipe_content.get("feature_script") or "",
             "retrain_target_column": recipe_content.get("inputs", {}).get(
                 "target_column", ""

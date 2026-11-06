@@ -169,7 +169,7 @@ class TestServitize(unittest.TestCase):
         self.assertEqual(api.source_kind, "servitize")
         self.assertIsNotNone(loop)
         self.assertEqual(loop.error_classes, ["0"])
-        self.assertEqual(loop.feature_engineering_mode, "script")
+        self.assertEqual(loop.feature_engineering_mode, "legacy")
         # A draft loop has seen zero traffic.
         self.assertEqual(int(loop.total_count or 0), 0)
         # 旧配方无 retrain_ensemble 键：闭环重训集成默认关闭（行为不变）
