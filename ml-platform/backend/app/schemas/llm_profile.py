@@ -21,6 +21,7 @@ class LLMProfileCreate(BaseModel):
     purpose_tags: list[str] = Field(default_factory=list)
     deployment: str = Field(default="cloud", pattern="^(cloud|private)$")
     is_default: bool = False
+    enabled: bool = True
 
     @field_validator("api_url")
     @classmethod
@@ -56,6 +57,7 @@ class LLMProfileUpdate(BaseModel):
     purpose_tags: list[str] | None = None
     deployment: str | None = Field(default=None, pattern="^(cloud|private)$")
     is_default: bool | None = None
+    enabled: bool | None = None
 
     @field_validator("api_url")
     @classmethod
@@ -77,6 +79,7 @@ class LLMProfileOut(BaseModel):
     purpose_tags: list[str]
     deployment: str
     is_default: bool
+    enabled: bool
     api_key_masked: str | None
     created_at: datetime
     updated_at: datetime

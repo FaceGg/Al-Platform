@@ -59,6 +59,8 @@ class LLMProfile(Base):
     purpose_tags = Column(JSON, nullable=False, default=list)
     deployment = Column(String(16), nullable=False, default="cloud")
     is_default = Column(Boolean, nullable=False, default=False)
+    # 模型行启用开关：多模型可同时开启（is_default 仅标记平台默认，单选）
+    enabled = Column(Boolean, nullable=False, default=True)
     created_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),

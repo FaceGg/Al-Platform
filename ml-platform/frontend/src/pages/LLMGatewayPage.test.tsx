@@ -138,22 +138,25 @@ describe("LLMGatewayPage", () => {
       </AntApp>
     );
     await screen.findByText("glm-default");
-    fireEvent.click(screen.getByText("测试"));
+    // 模型行为图标按钮（ZCode 样式）：可访问名来自 aria-label
+    fireEvent.click(screen.getByRole("button", { name: "测试" }));
     await waitFor(() => expect(mocks.testLlmProfile).toHaveBeenCalledWith("profile-1"));
   });
 
-  it("deletes a profile after confirmation", async () => {
-    mocks.deleteLlmProfile.mockResolvedValue(undefined);
+  it("toggles per-model enabled switch without touching is_default", async () => {
+    // ZCode 样式：模型行开关绑 enabled（多模型可同时开启），不影响默认标记
     render(
       <AntApp>
         <LLMGatewayPage />
       </AntApp>
     );
     await screen.findByText("glm-default");
-    fireEvent.click(screen.getByText("删除"));
-    await screen.findByText("确认删除该档案？");
-    const confirmOk = await screen.findByRole("button", { name: /^(OK|确\s*定)$/ });
-    fireEvent.click(confirmOk);
-    await waitFor(() => expect(mocks.deleteLlmProfile).toHaveBeenCalledWith("profile-1"));
+    const row = screen.getByText("glm-default").closest("div") as HTMLElement;
+    const switches = within(row).getAllByRole("switch");
+    fireEvent.click(switches[switches.length - 1]);
+    await waitFor(() => expect(mocks.updateLlmProfile).toHaveBeenCalled());
+    const payload = mocks.updateLlmProfile.mock.calls[0][1];
+    expect(payload.enabled).toBe(false);
+    expect(payload.is_default).toBe(true);
   });
 });

@@ -12,6 +12,8 @@ export interface LLMProfile {
   purpose_tags: string[];
   deployment: "cloud" | "private";
   is_default: boolean;
+  /** 模型行启用开关：多模型可同时开启 */
+  enabled?: boolean;
   api_key_masked: string | null;
   created_at: string;
   updated_at: string;
@@ -29,6 +31,7 @@ export interface LLMProfilePayload {
   purpose_tags?: string[];
   deployment: "cloud" | "private";
   is_default?: boolean;
+  enabled?: boolean;
 }
 
 export interface LLMConnectivity {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AutoComplete, Button, Collapse, Dropdown, Form, Input, InputNumber, message, Modal, Popconfirm, Select, Space, Switch } from 'antd'
+import { AutoComplete, Button, Collapse, Dropdown, Form, Input, InputNumber, message, Modal, Select, Space, Switch } from 'antd'
 import { ApiOutlined, CloudDownloadOutlined, DeleteOutlined, EditOutlined, MoreOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useI18n } from '../i18n'
 import AppLayout from '../components/AppLayout'
@@ -204,8 +204,16 @@ export default function LLMGatewayPage() {
     setEditing(null)
     form.resetFields()
     setModelOptions([])
+    // 预填名与既有档案去重（重名会触发唯一约束 409）
+    let name = tpl?.name ?? ''
+    const taken = new Set(profiles.map((p) => p.name))
+    if (name && taken.has(name)) {
+      let serial = 2
+      while (taken.has(`${name} ${serial}`)) serial += 1
+      name = `${name} ${serial}`
+    }
     form.setFieldsValue({
-      name: tpl?.name ?? '',
+      name,
       provider: tpl?.provider ?? 'openai_compatible',
       api_url: tpl?.api_url ?? '',
       model_id: tpl?.model_id ?? '',
@@ -350,6 +358,7 @@ export default function LLMGatewayPage() {
     purpose_tags: profile.purpose_tags,
     deployment: profile.deployment,
     is_default: profile.is_default,
+    enabled: profile.enabled !== false,
     ...patch,
   })
 
@@ -366,9 +375,9 @@ export default function LLMGatewayPage() {
     }
   }
 
-  const setDefaultProfile = async (profile: LLMProfile, next: boolean) => {
+  const setEnabledProfile = async (profile: LLMProfile, next: boolean) => {
     try {
-      await updateLlmProfile(profile.id, payloadOf(profile, { is_default: next }))
+      await updateLlmProfile(profile.id, payloadOf(profile, { enabled: next }))
       load()
     } catch (error) {
       message.error(formatApiError(error, zh ? '设置失败' : 'Failed'))
@@ -377,12 +386,19 @@ export default function LLMGatewayPage() {
 
   const toggleProviderEnabled = async (next: boolean) => {
     if (!selected) return
-    const target = selected.profiles.find((p) => p.is_default) ?? selected.profiles[0]
-    if (!target) {
+    if (!selected.profiles.length) {
       message.info(zh ? '该供应商暂无模型，先「添加模型」' : 'No models yet — add one first')
       return
     }
-    await setDefaultProfile(target, next)
+    // 供应商开关 = 组内全部模型档案统一启用/停用
+    try {
+      for (const profile of selected.profiles) {
+        await updateLlmProfile(profile.id, payloadOf(profile, { enabled: next }))
+      }
+      load()
+    } catch (error) {
+      message.error(formatApiError(error, zh ? '设置失败' : 'Failed'))
+    }
   }
 
   const removeProvider = async () => {
@@ -667,25 +683,21 @@ export default function LLMGatewayPage() {
                           {profile.is_default ? <span className="v2-badge v2-bb">{text.defaultTag}</span> : null}
                           <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
                             <Button
-                              size="small"
+                              type="text" size="small"
                               icon={<ApiOutlined spin={testingId === profile.id} />}
-                              loading={testingId === profile.id}
+                              title={text.probe} aria-label={text.probe}
                               onClick={() => void runProbe(profile)}
-                            >
-                              {text.probe}
-                            </Button>
-                            <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(profile)}>
-                              {text.edit}
-                            </Button>
-                            <Popconfirm title={text.deleteConfirm} onConfirm={() => remove(profile)}>
-                              <Button size="small" danger icon={<DeleteOutlined />}>
-                                {text.delete}
-                              </Button>
-                            </Popconfirm>
+                            />
+                            <Button
+                              type="text" size="small"
+                              icon={<EditOutlined />}
+                              title={text.edit} aria-label={text.edit}
+                              onClick={() => openEdit(profile)}
+                            />
                             <Switch
                               size="small"
-                              checked={profile.is_default}
-                              onChange={(next) => void setDefaultProfile(profile, next)}
+                              checked={profile.enabled !== false}
+                              onChange={(next) => void setEnabledProfile(profile, next)}
                             />
                           </span>
                         </div>

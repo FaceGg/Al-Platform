@@ -63,6 +63,7 @@ def _out(db: Session, profile: LLMProfile) -> LLMProfileOut:
         purpose_tags=profile.purpose_tags or [],
         deployment=profile.deployment,
         is_default=profile.is_default,
+        enabled=getattr(profile, "enabled", True),
         api_key_masked=masked,
         created_at=profile.created_at,
         updated_at=profile.updated_at,
@@ -239,6 +240,7 @@ def create_profile(
             purpose_tags=payload.purpose_tags,
             deployment=payload.deployment,
             is_default=payload.is_default,
+            enabled=payload.enabled,
             created_by=admin.id,
         )
         # Clear prior defaults before INSERT: the partial unique index would
@@ -303,22 +305,36 @@ def clone_profile(
         raise HTTPException(status_code=503, detail={"code": "LLM_KEY_UNREADABLE"}) from error
     name = (payload.name or f"{source.name}·{payload.model_id}").strip()[:128]
     profile_id_new = uuid4()
-    profile = LLMProfile(
-        id=profile_id_new,
-        name=name,
-        provider=source.provider,
-        api_url=source.api_url,
-        api_key_encrypted=encrypt_llm_api_key(api_key, _master_key()),
-        model_id=payload.model_id,
-        temperature=source.temperature,
-        max_tokens=source.max_tokens,
-        timeout_seconds=source.timeout_seconds,
-        purpose_tags=source.purpose_tags,
-        deployment=source.deployment,
-        is_default=False,
-        created_by=admin.id,
-    )
-    db.add(profile)
+    # 名称唯一约束：冲突时自动加 -2/-3 后缀（自动获取目录后批量添加候选模型
+    # 常与既有档案同名——手动改名或删除可再调整，不应阻断添加）
+    attempt: dict = {"name": name}
+    profile = None
+    for attempt_no in range(1, 6):
+        try:
+            profile = LLMProfile(
+                id=profile_id_new,
+                name=attempt["name"],
+                provider=source.provider,
+                api_url=source.api_url,
+                api_key_encrypted=encrypt_llm_api_key(api_key, _master_key()),
+                model_id=payload.model_id,
+                temperature=source.temperature,
+                max_tokens=source.max_tokens,
+                timeout_seconds=source.timeout_seconds,
+                purpose_tags=source.purpose_tags,
+                deployment=source.deployment,
+                is_default=False,
+                enabled=getattr(source, "enabled", True),
+                created_by=admin.id,
+            )
+            db.add(profile)
+            db.flush()
+            break
+        except IntegrityError:
+            db.rollback()
+            if attempt_no == 5:
+                raise HTTPException(status_code=409, detail={"code": "LLM_PROFILE_NAME_CONFLICT"}) from None
+            attempt["name"] = f"{name[:120]}-{attempt_no + 1}"
     record_platform_event(
         db,
         actor=admin,
@@ -356,6 +372,7 @@ def update_profile(
         "timeout_seconds",
         "purpose_tags",
         "deployment",
+        "enabled",
     ):
         value = getattr(payload, field)
         if value is not None:
