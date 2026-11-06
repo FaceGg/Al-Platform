@@ -133,61 +133,52 @@ export default function LLMGatewayPage() {
 
   useEffect(load, [])
 
-  // 供应商分组（左栏）：已知模板按域名聚合，未匹配的按域名归入自定义
+  // 供应商分组（左栏）：按 provider_group（供应商组）聚合——同一供应商下的
+  // 多个模型共享组；重复添加同名模板生成新组（DeepSeek2 独立条目不并入）。
+  // 无组档案（迁移 95 前存量）按域名兜底聚合。
   const entries = useMemo<ProviderEntry[]>(() => {
-    const usedHosts = new Set<string>()
-    const known: ProviderEntry[] = PROVIDER_TEMPLATES.map((tpl) => {
-      const host = hostOf(tpl.api_url)
-      usedHosts.add(host)
-      const own = profiles.filter((p) => hostOf(p.api_url) === host)
-      const api_url = own[0]?.api_url ?? tpl.api_url
-      const provider = (own[0]?.provider ?? tpl.provider) as LLMProfile['provider']
-      return {
-        key: `tpl:${tpl.name}`,
-        title: tpl.name,
-        short: tpl.short,
-        color: tpl.color,
-        keyUrl: tpl.key_url,
-        template: tpl,
-        custom: false,
-        api_url,
-        provider,
-        profiles: own,
-      }
-    })
-    const customMap = new Map<string, ProviderEntry>()
+    const entriesByKey = new Map<string, ProviderEntry>()
+    const ordered: ProviderEntry[] = []
     for (const profile of profiles) {
-      const host = hostOf(profile.api_url)
-      if (usedHosts.has(host)) continue
-      let entry = customMap.get(host)
+      const tpl = PROVIDER_TEMPLATES.find((item) => hostOf(item.api_url) === hostOf(profile.api_url))
+      const groupKey = profile.provider_group
+        ? `grp:${profile.provider_group}`
+        : (tpl ? `tpl:${tpl.name}` : `host:${hostOf(profile.api_url)}`)
+      let entry = entriesByKey.get(groupKey)
       if (!entry) {
         entry = {
-          key: `custom:${host}`,
-          title: host,
-          short: (profile.name || host).slice(0, 2).toUpperCase(),
-          color: '#6b7280',
-          custom: true,
+          key: groupKey,
+          title: profile.name,
+          short: (tpl?.short ?? profile.name.slice(0, 2).toUpperCase()),
+          color: tpl?.color ?? '#6b7280',
+          keyUrl: tpl?.key_url,
+          template: tpl,
+          custom: !tpl,
           api_url: profile.api_url,
           provider: profile.provider as LLMProfile['provider'],
           profiles: [],
         }
-        customMap.set(host, entry)
+        entriesByKey.set(groupKey, entry)
+        ordered.push(entry)
       }
       entry.profiles.push(profile)
+    }
+    // 分组标题 = 组内默认档案名，否则组内第一个档案名
+    for (const entry of ordered) {
+      const named = entry.profiles.find((p) => p.is_default) ?? entry.profiles[0]
+      if (named) entry.title = named.name
     }
     const groupOf = (entry: ProviderEntry): 0 | 1 | 2 =>
       entry.custom ? 2 : entry.template?.group === 'international' ? 1 : 0
     // 左栏只显示已添加（有档案）的供应商；未添加的模板项经「添加供应商」加入后出现
     const sorted: ProviderEntry[] = []
     for (const group of [0, 1, 2] as const) {
-      const members = [...known, ...customMap.values()]
-        .filter((entry) => groupOf(entry) === group)
-        .filter((entry) => entry.profiles.length > 0)
+      const members = ordered.filter((entry) => groupOf(entry) === group)
       if (!members.length) continue
       sorted.push(...members)
     }
     return sorted
-  }, [profiles, zh])
+  }, [profiles])
 
   const groups = useMemo(() => {
     const groupOf = (entry: ProviderEntry): 0 | 1 | 2 =>
@@ -718,7 +709,7 @@ export default function LLMGatewayPage() {
           </div>
 
           {/* 右栏：选中供应商设置 */}
-          <div style={{ flex: 1, padding: '16px 20px', overflowY: 'auto', maxHeight: 560 }}>
+          <div data-testid="provider-detail" style={{ flex: 1, padding: '16px 20px', overflowY: 'auto', maxHeight: 560 }}>
             {!selected ? (
               <div className="v2-empty" style={{ padding: 40 }}>
                 {zh ? '从左侧选择供应商，或点击「添加供应商」' : 'Pick a provider or add one'}

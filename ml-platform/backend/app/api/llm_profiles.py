@@ -64,6 +64,7 @@ def _out(db: Session, profile: LLMProfile) -> LLMProfileOut:
         deployment=profile.deployment,
         is_default=profile.is_default,
         enabled=getattr(profile, "enabled", True),
+        provider_group=getattr(profile, "provider_group", None),
         model_config_json=getattr(profile, "model_config_json", None),
         api_key_masked=masked,
         created_at=profile.created_at,
@@ -243,6 +244,8 @@ def create_profile(
             is_default=payload.is_default,
             enabled=payload.enabled,
             model_config_json=payload.model_config_json,
+            # 供应商组：未指定则新建独立组（每张模板卡 = 一个新供应商条目）
+            provider_group=payload.provider_group or uuid4().hex,
             created_by=admin.id,
         )
         # Clear prior defaults before INSERT: the partial unique index would
@@ -328,6 +331,8 @@ def clone_profile(
         is_default=False,
         enabled=getattr(source, "enabled", True),
         model_config_json=payload.model_config_json,
+        # 克隆（供应商内添加模型/候选一键添加）继承源供应商组
+        provider_group=source.provider_group,
         created_by=admin.id,
     )
             db.add(profile)

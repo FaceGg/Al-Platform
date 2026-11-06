@@ -14,6 +14,10 @@ export interface LLMProfile {
   is_default: boolean;
   /** 模型行启用开关：多模型可同时开启 */
   enabled?: boolean;
+  /** 供应商组：同组 = 同一供应商下的多个模型；重复添加同名模板生成新组 */
+  provider_group?: string | null;
+  /** ZCode 风格模型配置：上下文窗口/最大输出/输入类型/能力/推理等级与映射 */
+  model_config_json?: Record<string, unknown> | null;
   api_key_masked: string | null;
   created_at: string;
   updated_at: string;
@@ -32,6 +36,7 @@ export interface LLMProfilePayload {
   deployment: "cloud" | "private";
   is_default?: boolean;
   enabled?: boolean;
+  model_config_json?: Record<string, unknown> | null;
 }
 
 export interface LLMConnectivity {

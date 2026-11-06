@@ -23,6 +23,8 @@ class LLMProfileCreate(BaseModel):
     is_default: bool = False
     enabled: bool = True
     model_config_json: dict | None = None
+    # 供应商组：空 = 新建独立供应商组（后端生成）；克隆链路显式传入源组
+    provider_group: str | None = Field(default=None, max_length=64)
 
     @field_validator("api_url")
     @classmethod
@@ -60,6 +62,7 @@ class LLMProfileUpdate(BaseModel):
     is_default: bool | None = None
     enabled: bool | None = None
     model_config_json: dict | None = None
+    provider_group: str | None = Field(default=None, max_length=64)
     model_config_json: dict | None = None
     enabled: bool | None = None
 
@@ -84,6 +87,7 @@ class LLMProfileOut(BaseModel):
     deployment: str
     is_default: bool
     enabled: bool
+    provider_group: str | None
     model_config_json: dict | None
     api_key_masked: str | None
     created_at: datetime
@@ -104,3 +108,4 @@ class LLMProfileClone(BaseModel):
     model_id: str = Field(min_length=1, max_length=128)
     name: str | None = Field(default=None, max_length=128)
     model_config_json: dict | None = Field(default=None)
+    provider_group: str | None = Field(default=None, max_length=64)

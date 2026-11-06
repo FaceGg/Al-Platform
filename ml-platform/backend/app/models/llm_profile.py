@@ -61,6 +61,9 @@ class LLMProfile(Base):
     is_default = Column(Boolean, nullable=False, default=False)
     # 模型行启用开关：多模型可同时开启（is_default 仅标记平台默认，单选）
     enabled = Column(Boolean, nullable=False, default=True)
+    # 供应商组 ID：同组 = 同一供应商下的多个模型（共享 URL/Key 语义）；
+    # 重复添加同名供应商模板会生成新组（DeepSeek2 独立条目，不并入已有组）
+    provider_group = Column(String(64), nullable=True, index=True)
     # ZCode 风格模型配置（上下文窗口/最大输出/输入类型/能力/推理等级与映射等）
     model_config_json = Column(JSON, nullable=True)
     created_by = Column(

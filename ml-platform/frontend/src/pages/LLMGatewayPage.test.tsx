@@ -92,7 +92,7 @@ describe("LLMGatewayPage", () => {
         <LLMGatewayPage />
       </AntApp>
     );
-    await screen.findByText("glm-default").catch(() => {}); screen.debug(undefined, 30000); expect(await screen.findByText("glm-default")).toBeInTheDocument();
+     screen.debug(undefined, 30000); expect((await within(screen.getByTestId("provider-detail")).findAllByText("glm-default")).length).toBeGreaterThan(0);
     expect(screen.getByPlaceholderText("***abcd")).toBeInTheDocument();
     expect(screen.getByText("默认")).toBeInTheDocument();
   });
@@ -104,7 +104,7 @@ describe("LLMGatewayPage", () => {
         <LLMGatewayPage />
       </AntApp>
     );
-    await screen.findByText("glm-default");
+    await screen.findByTestId("provider-detail");
     fireEvent.click(screen.getByText("添加供应商"));
     // 模板卡自动添加（无表单）：裸 base + 模板默认模型，无 Key
     const picker = screen.getByTestId("provider-picker");
@@ -148,7 +148,7 @@ describe("LLMGatewayPage", () => {
         <LLMGatewayPage />
       </AntApp>
     );
-    await screen.findByText("glm-default");
+    await screen.findByTestId("provider-detail");
     // 模型行为图标按钮（ZCode 样式）：可访问名来自 aria-label
     fireEvent.click(screen.getByRole("button", { name: "测试" }));
     await waitFor(() => expect(mocks.testLlmProfile).toHaveBeenCalledWith("profile-1"));
@@ -161,8 +161,12 @@ describe("LLMGatewayPage", () => {
         <LLMGatewayPage />
       </AntApp>
     );
-    await screen.findByText("glm-default");
-    const row = screen.getByText("glm-default").closest("div") as HTMLElement;
+    await screen.findByTestId("provider-detail");
+    // 组标题与模型行都显示档案名：取右栏中带开关的模型行
+    const row = within(screen.getByTestId("provider-detail")).getAllByText("glm-default")
+      .map((el) => el.closest("div"))
+      .find((el) => el && within(el as HTMLElement).queryAllByRole("switch").length > 0)
+      ?.closest("div") as HTMLElement;
     const switches = within(row).getAllByRole("switch");
     fireEvent.click(switches[switches.length - 1]);
     await waitFor(() => expect(mocks.updateLlmProfile).toHaveBeenCalled());
