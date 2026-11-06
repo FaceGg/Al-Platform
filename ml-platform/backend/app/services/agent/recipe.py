@@ -236,10 +236,12 @@ def _json_safe(value):
     return value
 
 
-def smoke_row_from_frame(frame, max_columns: int = 32) -> dict:
+def smoke_row_from_frame(frame, max_columns: int = 200) -> dict:
     """数据帧首行 → S5 冒烟行（JSON-safe，列数截断防超大 payload）。
 
-    全 None 列剔除；列顺序按 frame 原序取前 max_columns 列。"""
+    全 None 列剔除；上限 200 对齐宽表列上限（memory：宽表 200 列上限）——
+    截断过窄会让部署模型特征列缺失、闭环 predict 走点焊特征桥而挂
+    （E2E 实证：87 列数据 32 列截断后缺 wres/cve* 触发桥校验失败）。"""
     if frame is None:
         return {}
     try:
