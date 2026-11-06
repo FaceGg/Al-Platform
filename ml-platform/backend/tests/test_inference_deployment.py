@@ -42,7 +42,7 @@ class FakeRuntimeClient:
     def predict(self, deployment_id, records):
         if str(deployment_id) not in self.loaded:
             raise InferenceDeploymentError("DEPLOYMENT_NOT_READY")
-        return {"predictions": [1], "records_seen": len(records)}
+        return {"predictions": [1], "records_seen": len(records), "served_key": str(deployment_id)}
 
     def list(self):
         return {"items": [
@@ -184,6 +184,61 @@ class TestInferenceDeploymentService(unittest.TestCase):
         self.assertIn(
             f"{revision.id}:{self.candidate_version.id}", self.runtime.loaded,
         )
+
+    def _swap_revision(self, deployment):
+        """模拟闭环换模：旧 stable → superseded，新 stable 指向 candidate，部署行切换。"""
+        stable = self.db.query(DeploymentRevision).filter(
+            DeploymentRevision.deployment_id == deployment.id,
+            DeploymentRevision.status == "stable",
+        ).order_by(DeploymentRevision.revision_number.desc()).first()
+        stable.status = "superseded"
+        revision = DeploymentRevision(
+            deployment_id=deployment.id,
+            revision_number=stable.revision_number + 1,
+            strategy="immediate",
+            status="stable",
+        )
+        self.db.add(revision)
+        self.db.flush()
+        self.db.add(DeploymentTarget(
+            revision_id=revision.id,
+            model_version_id=self.candidate_version.id,
+            weight_bps=10000,
+            role="stable",
+        ))
+        deployment.model_version_id = self.candidate_version.id
+        self.db.commit()
+        return revision
+
+    def test_plain_predict_follows_swapped_stable_revision(self):
+        """回归（闭环实测 716e5803）：换模轮换 revision 后，不带 rollout 路由的
+        默认 predict 此前永远打旧键（部署的仍是旧模型）。别名已由 reconcile
+        预载时必须路由到新 revision 的集成/新模型。"""
+        deployment = self.service.create(
+            self.db, project_id=self.project.id, version_id=self.version.id,
+            actor_id=self.user.id, name="swap-follow",
+        )
+        self.service.start(self.db, deployment.id)
+        revision = self._swap_revision(deployment)
+        self.service.reconcile(self.db)
+
+        result = self.service.predict(self.db, deployment.id, [{"current": 8.0}])
+
+        self.assertEqual(result["served_key"], f"{revision.id}:{self.candidate_version.id}")
+
+    def test_plain_predict_falls_back_when_alias_not_preloaded(self):
+        """换模后 reconcile 尚未运行（≤60s 窗口）：别名缺失 → 回落旧键继续服务，
+        不允许默认路径报 DEPLOYMENT_NOT_READY。"""
+        deployment = self.service.create(
+            self.db, project_id=self.project.id, version_id=self.version.id,
+            actor_id=self.user.id, name="swap-fallback",
+        )
+        self.service.start(self.db, deployment.id)
+        self._swap_revision(deployment)  # 不跑 reconcile：别名未预载
+
+        result = self.service.predict(self.db, deployment.id, [{"current": 8.0}])
+
+        self.assertEqual(result["served_key"], str(deployment.id))
 
     def test_stable_weighted_route_uses_legacy_runtime_session(self):
         deployment = self.service.create(

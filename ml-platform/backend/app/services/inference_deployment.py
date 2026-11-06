@@ -305,7 +305,32 @@ class InferenceDeploymentService:
                     or str(routed.model_version_id) != str(deployment.model_version_id)
                 ):
                     runtime_key = f"{routed.revision_id}:{routed.model_version_id}"
-            return self.runtime.predict(runtime_key, records)
+            else:
+                # 默认路径跟随换模：换模只轮换 revision（旧键仍载旧模型，别名由
+                # reconcile ≤60s 预载），不带 rollout 路由的调用此前永远打旧模型
+                # （闭环实测 716e5803：换模后 predict 仍返回 v1）。路由到最新
+                # stable revision 的别名；别名尚未预载时回落旧键（窗口 ≤1 个
+                # reconcile 周期，行为与旧版一致）。
+                stable = db.query(DeploymentRevision).filter(
+                    DeploymentRevision.deployment_id == deployment.id,
+                    DeploymentRevision.status == "stable",
+                ).order_by(DeploymentRevision.revision_number.desc()).first()
+                if stable is not None and str(deployment.model_version_id) and any(
+                    str(target.model_version_id) == str(deployment.model_version_id)
+                    for target in stable.targets or ()
+                ):
+                    runtime_key = f"{stable.id}:{deployment.model_version_id}"
+            try:
+                return self.runtime.predict(runtime_key, records)
+            except InferenceRuntimeClientError as alias_error:
+                if runtime_key != deployment.id and "DEPLOYMENT_NOT_READY" in str(alias_error):
+                    return self.runtime.predict(deployment.id, records)
+                raise
+            except InferenceDeploymentError as alias_error:
+                # 仅"别名未载"回落（换模后 ≤60s 窗口）；别名的真实推理错误照常上抛
+                if runtime_key != deployment.id and getattr(alias_error, "code", "") == "DEPLOYMENT_NOT_READY":
+                    return self.runtime.predict(deployment.id, records)
+                raise
         except (InferenceRuntimeClientError, InferenceDeploymentError) as error:
             raise InferenceDeploymentError(self._runtime_code(error)) from None
 
