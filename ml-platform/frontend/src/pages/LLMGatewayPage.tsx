@@ -177,9 +177,12 @@ export default function LLMGatewayPage() {
     }
     const groupOf = (entry: ProviderEntry): 0 | 1 | 2 =>
       entry.custom ? 2 : entry.template?.group === 'international' ? 1 : 0
+    // 左栏只显示已添加（有档案）的供应商；未添加的模板项经「添加供应商」加入后出现
     const sorted: ProviderEntry[] = []
     for (const group of [0, 1, 2] as const) {
-      const members = [...known, ...customMap.values()].filter((entry) => groupOf(entry) === group)
+      const members = [...known, ...customMap.values()]
+        .filter((entry) => groupOf(entry) === group)
+        .filter((entry) => entry.profiles.length > 0)
       if (!members.length) continue
       sorted.push(...members)
     }
@@ -245,7 +248,38 @@ export default function LLMGatewayPage() {
     setModalOpen(true)
   }
 
-  // 「获取」：经后端代理拉上游模型目录（浏览器直连跨域且 Key 不落前端日志）。
+  // 添加供应商（模板卡）：自动创建并出现在左栏，提示填写 API Key（不走表单）
+  const quickAddProvider = async (tpl: ProviderTemplate) => {
+    const taken = new Set(profiles.map((p) => p.name))
+    let name = tpl.name
+    let serial = 2
+    while (taken.has(name)) {
+      name = `${tpl.name} ${serial}`
+      serial += 1
+    }
+    try {
+      await createLlmProfile({
+        name,
+        provider: tpl.provider,
+        api_url: tpl.api_url,
+        model_id: tpl.model_id,
+        deployment: 'cloud',
+        timeout_seconds: 60,
+        temperature: 0.7,
+        max_tokens: 2000,
+        purpose_tags: ['chat', 'agent'],
+        is_default: profiles.length === 0, // 第一个供应商自动设为平台默认
+      })
+      setPickerOpen(false)
+      setManualKey(`tpl:${tpl.name}`) // 新供应商出现在左栏并自动选中
+      load()
+      message.info(zh ? '供应商已添加，请在右侧填写 API Key' : 'Provider added — fill the API Key', 6)
+    } catch (error) {
+      message.error(formatApiError(error, zh ? '添加失败' : 'Failed to add'))
+    }
+  }
+
+  // 「获取」：经后端代理拉上游模型目录（浏览器直连跨域且 Key 不落前端日志）。。
   // 表单里 Base URL 与 API Key 齐备后 blur 自动触发，无需手动点按钮。
   const fetchModels = async () => {
     const api_url = form.getFieldValue('api_url')
@@ -535,6 +569,24 @@ export default function LLMGatewayPage() {
     setModelCfgTarget(profile)
     setModelCfgMode('edit')
     setModelCfgOpen(true)
+  }
+
+  // 智能配置关闭：自动填入推荐配置（空字段填默认值；推理等级缺省为
+  // disabled/low/high 并生成映射模板；已填字段不覆盖）
+  const fillRecommendedModelCfg = () => {
+    const current = modelForm.getFieldsValue()
+    const patch: Record<string, unknown> = {}
+    if (!current.context_window) patch.context_window = 131072
+    if (!current.max_output_tokens) patch.max_output_tokens = 32768
+    if (!current.input_types?.length) patch.input_types = ['text', 'image']
+    if (!current.capabilities?.length) patch.capabilities = ['system_message']
+    if (!current.reasoning_levels?.length) {
+      patch.reasoning_levels = ['disabled', 'low', 'high']
+      patch.reasoning_mapping = buildReasoningMapping(['disabled', 'low', 'high'])
+    } else if (!String(current.reasoning_mapping || '').trim()) {
+      patch.reasoning_mapping = buildReasoningMapping(current.reasoning_levels)
+    }
+    if (Object.keys(patch).length) modelForm.setFieldsValue(patch)
   }
 
   const saveModelCfg = async () => {
@@ -865,7 +917,7 @@ export default function LLMGatewayPage() {
                 <button
                   key={tpl.name}
                   type="button"
-                  onClick={() => openCreateWith(tpl)}
+                  onClick={() => void quickAddProvider(tpl)}
                   className="llm-tpl-card"
                 >
                   <span
@@ -1019,9 +1071,9 @@ export default function LLMGatewayPage() {
             label={zh ? '智能配置' : 'Smart config'}
             name="smart_config"
             valuePropName="checked"
-            tooltip={zh ? '开启后上下文窗口、输入类型等由平台按上游目录自动填充' : 'Auto-fill config from upstream catalog'}
+            tooltip={zh ? '开启：配置由平台按上游目录自动填充；关闭：填入推荐配置后手动调整' : 'On: auto-fill from catalog; Off: fill recommended values'}
           >
-            <Switch />
+            <Switch onChange={(next) => { if (!next) fillRecommendedModelCfg() }} />
           </Form.Item>
           <Form.Item name="model_id" label={zh ? '模型 ID' : 'Model ID'} rules={[{ required: true, message: zh ? '请输入模型 ID' : 'Model ID required' }]}>
             <Input placeholder="deepseek-chat" />
@@ -1034,7 +1086,6 @@ export default function LLMGatewayPage() {
           </Form.Item>
           <Collapse
             ghost
-            defaultActiveKey={['advanced']}
             items={[{
               key: 'advanced',
               label: zh ? '高级配置' : 'Advanced',

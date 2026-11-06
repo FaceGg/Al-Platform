@@ -97,9 +97,8 @@ describe("LLMGatewayPage", () => {
     expect(screen.getByText("默认")).toBeInTheDocument();
   });
 
-  it("creates a profile through the modal", async () => {
-    mocks.createLlmProfile.mockResolvedValue(makeProfile({ id: "p2", name: "new" }));
-    const fixtureKey = "vitest-" + crypto.randomUUID().slice(0, 12);
+  it("adds a provider from a template card and hints to fill the key", async () => {
+    mocks.createLlmProfile.mockResolvedValue(makeProfile({ id: "p2", name: "DeepSeek" }));
     render(
       <AntApp>
         <LLMGatewayPage />
@@ -107,25 +106,37 @@ describe("LLMGatewayPage", () => {
     );
     await screen.findByText("glm-default");
     fireEvent.click(screen.getByText("添加供应商"));
-    // 两段式：先选模板卡（预填 URL/模型），再进创建表单（在弹窗内点卡片——左栏现在也有同名供应商项）
+    // 模板卡自动添加（无表单）：裸 base + 模板默认模型，无 Key
     const picker = screen.getByTestId("provider-picker");
     await waitFor(() => expect(within(picker).getByText("DeepSeek", { selector: "span" })).toBeInTheDocument());
     fireEvent.click(within(picker).getByText("DeepSeek", { selector: "span" }));
+    await waitFor(() => expect(mocks.createLlmProfile).toHaveBeenCalled());
+    expect(mocks.createLlmProfile.mock.calls[0][0]).toMatchObject({
+      name: "DeepSeek",
+      provider: "anthropic",
+      api_url: "https://api.deepseek.com/anthropic",
+      model_id: "deepseek-chat",
+    });
+    expect(mocks.createLlmProfile.mock.calls[0][0].api_key).toBeUndefined();
+    // 自定义供应商卡：仍走表单（含 Key）
+    fireEvent.click(screen.getByText("添加供应商"));
+    fireEvent.click(within(screen.getByTestId("provider-picker")).getByText("创建自定义供应商")); screen.debug(undefined, 40000);
+    const fixtureKey = "vitest-" + crypto.randomUUID().slice(0, 12);
     await waitFor(() => expect(screen.getByLabelText("名称")).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "glm-backup" } });
     fireEvent.change(screen.getByLabelText("Base URL"), {
       target: { value: "https://api.backup.com/v1/chat/completions" },
     });
-    // 模型列表为 AutoComplete：DeepSeek 模板已预填 deepseek-chat，此处不再手改
-    // （受控组件原生 change 事件不生效，交互路径由「获取」按钮用例覆盖）
+    // 模型字段：外层 Form.Item 只有 label，内层 AutoComplete 无 label 关联 → 按字段 id 定位
+    const modelInput = document.querySelector("#model_id") as HTMLInputElement;
+    fireEvent.change(modelInput, { target: { value: "glm-4.6" } });
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: fixtureKey } });
     const okButton = await screen.findByRole("button", { name: /保\s*存|Save|OK|确\s*定/ });
     fireEvent.click(okButton);
-    await waitFor(() => expect(mocks.createLlmProfile).toHaveBeenCalled());
-    expect(mocks.createLlmProfile.mock.calls[0][0]).toMatchObject({
+    await waitFor(() => expect(mocks.createLlmProfile).toHaveBeenCalledTimes(2));
+    expect(mocks.createLlmProfile.mock.calls[1][0]).toMatchObject({
       name: "glm-backup",
       api_url: "https://api.backup.com/v1/chat/completions",
-      model_id: "deepseek-chat",
       api_key: fixtureKey,
     });
   });
