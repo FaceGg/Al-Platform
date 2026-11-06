@@ -458,3 +458,21 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 **验证**：干净检出（git archive，工作区含并行会话 LLMGatewayPage 半成品脏文件不可用）92 文件 540 用例+tsc+build 全绿；浏览器 EN 验收智能体知识中心 tab：卡片头/列头/按钮/提示全英文（数据行名如「点焊标准法规」为后端数据保持原文）。
 
 **部署**：栈前端镜像以干净检出 a4425c1a 构建替换（prebuilt 路线）。
+
+## 2026-11-07 闭环智能体重训模式 P1（agent 重放→验收→铸造换模）
+
+**语义**：`retrain_mode=agent` 时报错回流达增量阈值不再直接派引擎 AutoML，而是复用部署绑定固化配方的 guidance 快照重放智能体全流程（S1 分析→S2 特征沙箱→S3 轻量训练→S4 硬门禁+评审），验收通过→固化新配方版本→引擎在重放物化的合并工件上铸造部署模型（配方白名单/集成转发+`complete_retrain_swap` 配方门禁一票否决）→换模→三资产建议档案页重服务化（事件提示，P1 手动）。验收拒绝/升级/失败/超时不换模旧模继续服务。
+
+**增量边沿触发（根治存量连环重训）**：触发判据 `error_count - retrain_trained_baseline_count >= threshold`（引擎/agent 两路径共用），基线仅在换模成功时推进——失败/门禁否决不推进（旧模继续服务，回流信号不作废）；`reset` 清零；评估三入口（回流逐行 / 轮次终态追赶 / 空闲轮询，含失败事件 10min 去重）。「部署完成后用全量积累补一轮、报错停了不再多跑」的追赶语义由此成立（用户设计）。
+
+**护栏**（防突发回流连环重训，最坏情况费用有上界、人始终在环）：部署级单飞（沿用 retrain_status/job_id/agent_run_id 三重守卫）+ 项目并发上限 2（`agent_retrain_project_concurrency`，跨部署资源护栏）+ 轮次终态冷却 30min（`agent_retrain_cooldown_minutes`，`retrain_cool_until`）+ 24h 滚动熔断 3 次（`agent_retrain_daily_limit`，首触顶一次性 `retrain_agent_circuit_break` critical+`notify_project_admins`）。`refresh_retrain_status` 轮询上限 `agent_retrain_poll_max_age_seconds`（默认 2h，重放含 LLM 阶段按小时留量）。
+
+**合同要点**：配方版本 content 必须含 `guidance`（UserGuidance 快照）+`source_run_id`，缺失 fail-closed（`DEMO_LOOP_AGENT_RECIPE_UNBOUND/MISSING/INVALID`/`DEMO_LOOP_AGENT_GUIDANCE_INVALID`），不静默降级引擎；fixate 端点幂等回填存量配方（缺快照→同配方行补版本）；构造器下沉 `recipe.build_fixation_content`（固化/重放唯一来源）。重放 guidance 剥 `pause_at_stages`、强制 `auto_servitize=False`（换模由闭环接管，不走「项目内最新 running 部署」启发式）。合并工件物化时完成自动标注（轻量训练器无引擎侧惰性标注），`build_retrain_frame` 从 trigger_retrain_job 抽取共用（行为不变）。
+
+**状态机**：`idle→agent_running→（accepted→queued→running→idle | 失败/取消/门禁否决→failed/idle）`；轮次终态统一走 `finish_agent_cycle`（清重放引用+agent 模式进冷却）；`complete_retrain_swap` 加项目级换模锁（跨闭环 revision 轮换防 last-writer-wins 乱序）。经验写入核查（D7）：ExperienceEntry 无唯一约束、蒸馏纯追加，并发安全，无需改动。
+
+**迁移**：`20261107_96`（六列；head 链 88→89→90→91→92→93→94→95→96 已核对）。
+
+**测试**：新 `test_agent_loop_retrain.py` 14 用例（增量触发/未绑定配方 fail-closed/重放创建含无人值守 guidance/部署级单飞/冷却静默/熔断一次通知/accepted→固化+铸造派发白名单转发/失败与升级不推基线/轮询超时/换模推进基线+冷却/门禁否决保留信号/追赶全量/报错停止不再触发/模式 API 校验含外来配方拒绝）；`test_demo_loop`(27)+`test_agent_recipe_gated_swap`+`test_agent_servitize` 回归 56 绿；迁移图 8 绿；前端 tsc 全绿+DemoLoopDetailPage 3 绿+i18n parity 1 绿。week_manifest 已登记。
+
+**坑**：测试 CSV 生成把单字符串元组按字符 join 成乱码（用现成文本行）；跨用例项目级并发闸门会算上遗留 agent_running 配置（setUp 清场）；`_swap_to_best_model` 不自提交，测试断言前需 commit；reset 不清基线会让历史换模基线挡住 reset 后触发。
