@@ -11,11 +11,18 @@ the API returns immediately; status/progress is persisted on the run row.
 from __future__ import annotations
 
 import io
+import logging
 import threading
 from uuid import UUID
 
 from app.config import settings
 from app.models.agent_run import AgentRun
+
+logger = logging.getLogger(__name__)
+
+# 心跳保活刷新周期（秒）：远小于 stale_after（默认 600s），长生成阶段
+# 也持续保活。测试注入短周期验证线程行为。
+AGENT_HEARTBEAT_INTERVAL_SECONDS = 60.0
 
 
 class AgentRunNotExecutable(RuntimeError):
@@ -58,6 +65,42 @@ def _resolve_config(db, run: AgentRun):
     return config
 
 
+def _binary_metrics(proba, y_test, minority) -> tuple[float, float, float, float, float | None]:
+    """少数类布尔口径五指标（truth/preds 均 1=少数类，accuracy 口径坑见
+    test_agent_accuracy_alignment）；测试集单类时 roc_auc 无定义置 None。"""
+    from sklearn.metrics import (
+        accuracy_score,
+        f1_score,
+        precision_score,
+        recall_score,
+        roc_auc_score,
+    )
+
+    preds = (proba >= 0.5).astype(int)
+    truth = y_test == minority
+    recall = float(recall_score(truth, preds, zero_division=0))
+    f1 = float(f1_score(truth, preds, zero_division=0))
+    precision = float(precision_score(truth, preds, zero_division=0))
+    accuracy = float(accuracy_score(truth, preds))
+    roc_auc = (
+        float(roc_auc_score(truth.astype(int), proba))
+        if len(set(y_test)) > 1
+        else None
+    )
+    return recall, f1, precision, accuracy, roc_auc
+
+
+def _ensemble_member_importance(model) -> list[float] | None:
+    """成员特征重要性向量：RF/HGB 走 feature_importances_，logistic 走
+    |coef_|；都没有（如 HGB 无该属性，问题区第 8 条）返回 None 由调用方跳过。"""
+    if hasattr(model, "feature_importances_"):
+        return [float(value) for value in model.feature_importances_]
+    coef = getattr(model, "coef_", None)
+    if coef is not None and len(coef) and len(coef[0]):
+        return [abs(float(value)) for value in coef[0]]
+    return None
+
+
 def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
     """S3 真训练（轻量）：分层切分 + 少量 sklearn 家族，按少数类召回选优。
 
@@ -70,13 +113,6 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
     import pandas as pd
     from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
     from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import (
-        accuracy_score,
-        f1_score,
-        precision_score,
-        recall_score,
-        roc_auc_score,
-    )
     from sklearn.model_selection import train_test_split
     from sklearn.preprocessing import LabelEncoder
 
@@ -121,20 +157,8 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
         try:
             model.fit(X_train, y_train)
             proba = model.predict_proba(X_test)[:, list(model.classes_).index(minority)]
-            preds = (proba >= 0.5).astype(int)
-            truth = y_test == minority
-            recall = float(recall_score(truth, preds, zero_division=0))
-            f1 = float(f1_score(truth, preds, zero_division=0))
-            precision = float(precision_score(truth, preds, zero_division=0))
-            # accuracy 与上三者同一布尔口径（truth/preds 均 1=少数类）：
-            # 若用 y_test 原编码，当少数类编码为 0、多数类为 1 时两者 0/1
-            # 语义相反，accuracy 会显示成 1−真实值（点焊/拧紧双域实测踩坑）。
-            accuracy = float(accuracy_score(truth, preds))
-            # roc_auc 需要测试集两类齐全；单类测试集下无定义 → 置 None 跳过门禁。
-            roc_auc = (
-                float(roc_auc_score(truth.astype(int), proba))
-                if len(set(y_test)) > 1
-                else None
+            recall, f1, precision, accuracy, roc_auc = _binary_metrics(
+                proba, y_test, minority
             )
         except Exception:  # noqa: BLE001 - 单家族失败不拖垮整个 S3
             continue
@@ -147,11 +171,90 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
             "minority_test_count": minority_test_count,
         }
     scored.sort(key=lambda item: item[2], reverse=True)
-    best_name, best, best_recall, best_f1, best_precision, best_accuracy, best_roc_auc = scored[0]
-    if hasattr(best, "feature_importances_"):
-        weights = best.feature_importances_
+
+    # ---- 集成学习（可选，guidance.modeling.ensemble）：多模型加权投票 ----
+    # soft-voting + 按验证集少数类召回比例自动加权；冠军取集成与最佳单模型
+    # 中 recall 更高者（持平取集成——多模型平均通常更稳）。集成只影响智能体
+    # S3 评估（门禁/评审/档案）；S5 服务化部署模型仍走配方重训（平台引擎）。
+    ensemble_cfg = (hints or {}).get("ensemble") or {}
+    ensemble_info: dict | None = None
+    champion: tuple = scored[0]
+    if ensemble_cfg.get("enabled"):
+        members = scored[: max(2, min(int(ensemble_cfg.get("top_k") or 3), len(scored)))]
+        if len(members) >= 2:
+            weight_total = sum(item[2] for item in members) or 1.0
+            member_weights = [item[2] / weight_total for item in members]
+            vote = None
+            try:
+                from sklearn.ensemble import VotingClassifier
+
+                vote = VotingClassifier(
+                    estimators=[(name, model) for name, model, *_r in members],
+                    voting="soft",
+                    n_jobs=-1,
+                )
+                vote.fit(X_train, y_train)
+                proba = vote.predict_proba(X_test)[:, list(vote.classes_).index(minority)]
+                ens_recall, ens_f1, ens_precision, ens_accuracy, ens_roc_auc = (
+                    _binary_metrics(proba, y_test, minority)
+                )
+            except Exception:  # noqa: BLE001 - 集成失败退回单模型冠军
+                ensemble_info = {
+                    "enabled": True, "adopted": False,
+                    "reason": "ensemble_fit_failed",
+                    "members": [
+                        {"name": name, "weight": round(weight, 4)}
+                        for (name, _m, _r, *_rest), weight in zip(members, member_weights)
+                    ],
+                }
+            if vote is not None:
+                adopted = ens_recall >= champion[2]
+                ensemble_info = {
+                    "enabled": True,
+                    "adopted": adopted,
+                    "voting": "soft",
+                    "members": [
+                        {"name": name, "weight": round(weight, 4)}
+                        for (name, _m, _r, *_rest), weight in zip(members, member_weights)
+                    ],
+                    "metrics": {
+                        "recall_minority": round(ens_recall, 4),
+                        "f1": round(ens_f1, 4),
+                    },
+                }
+                if adopted:
+                    champion = (
+                        "ensemble", vote, ens_recall, ens_f1,
+                        ens_precision, ens_accuracy, ens_roc_auc,
+                    )
+        else:
+            ensemble_info = {
+                "enabled": True, "adopted": False,
+                "reason": "fewer_than_2_candidates",
+            }
+
+    champ_name, champ_model, champ_recall, champ_f1, champ_precision, champ_accuracy, champ_roc_auc = champion
+    if champ_name == "ensemble":
+        # 集成重要性 = 各成员重要性按集成权重加权平均（无重要性的成员跳过，
+        # 权重仅在贡献者内归一；全部缺失时退零向量——与单模型 HGB [0] 现状一致）。
+        contributions = []
+        for (name, model, *_rest), weight in zip(members, member_weights):
+            vector = _ensemble_member_importance(model)
+            if vector is not None:
+                contributions.append((weight, vector))
+        if contributions:
+            norm = sum(weight for weight, _v in contributions) or 1.0
+            size = len(contributions[0][1])
+            weights = [
+                sum(weight * vector[idx] for weight, vector in contributions) / norm
+                for idx in range(size)
+            ]
+        else:
+            weights = [0] * len(X.columns)
+    elif hasattr(champ_model, "feature_importances_"):
+        weights = champ_model.feature_importances_
     else:
-        weights = abs(getattr(best, "coef_", [0])[0]) if best_name == "logistic" else [0]
+        weights = abs(getattr(champ_model, "coef_", [0])[0]) if champ_name == "logistic" else [0]
     importance = sorted(
         (
             {"feature": str(name), "importance": float(weight)}
@@ -160,14 +263,14 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
         key=lambda item: -item["importance"],
     )[:12]
     metrics = {
-        "recall_minority": round(best_recall, 4),
-        "f1": round(best_f1, 4),
-        "precision": round(best_precision, 4),
-        "accuracy": round(best_accuracy, 4),
+        "recall_minority": round(champ_recall, 4),
+        "f1": round(champ_f1, 4),
+        "precision": round(champ_precision, 4),
+        "accuracy": round(champ_accuracy, 4),
     }
-    if best_roc_auc is not None:
-        metrics["roc_auc"] = round(best_roc_auc, 4)
-    return {
+    if champ_roc_auc is not None:
+        metrics["roc_auc"] = round(champ_roc_auc, 4)
+    result = {
         "metrics": metrics,
         "topk_metrics": [
             {"recall_minority": round(recall, 4)}
@@ -176,6 +279,9 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
         "importance": importance,
         "minority_test_count": minority_test_count,
     }
+    if ensemble_info is not None:
+        result["ensemble"] = ensemble_info
+    return result
 
 
 def execute_agent_run(run_id, actor_id=None) -> AgentRun:
@@ -196,20 +302,64 @@ def execute_agent_run(run_id, actor_id=None) -> AgentRun:
 
         run.heartbeat_at = _agent_utcnow()
         db.commit()
-        frame = _load_dataset_frame(db, run)
-        config = _resolve_config(db, run)
-        profile = profile_data(frame, target=run.target_column)
-        runner = AgentRunner(
-            db,
-            run=run,
-            config=config,
-            profile_report=profile,
-            dataset_frame=frame,
-            guidance=dict(run.guidance_json or {}),
-            trainer=lightweight_trainer,
-            actor=actor_id or run.created_by,
+
+        # 心跳保活线程：S1/S2 长生成（280k 画像下单阶段可达 12 分钟）期间
+        # 阶段边界不提交，心跳冻结超过 stale_after（默认 600s）会被恢复
+        # 清扫误杀活任务（已知竞态，2026-11-06 判据③实验实证）。独立会话
+        # 周期刷新，绕开 runner 主会话的事务边界。
+        heartbeat_stop = threading.Event()
+
+        def _refresh_heartbeat() -> None:
+            from sqlalchemy import update as _sa_update
+
+            from app.database import SessionLocal as _SessionLocal
+            from app.models.agent_run import AgentRun as _AgentRun
+
+            while not heartbeat_stop.wait(AGENT_HEARTBEAT_INTERVAL_SECONDS):
+                try:
+                    with _SessionLocal() as heartbeat_db:
+                        heartbeat_db.execute(
+                            _sa_update(_AgentRun)
+                            .where(
+                                _AgentRun.id == UUID(str(run_id)),
+                                _AgentRun.status.in_(
+                                    ["pending", "running", "waiting_guidance"]
+                                ),
+                            )
+                            .values(heartbeat_at=_agent_utcnow())
+                        )
+                        heartbeat_db.commit()
+                except Exception:  # noqa: BLE001 - 心跳失败不阻断建模主链
+                    logger.warning(
+                        "agent run heartbeat refresh failed",
+                        extra={"run_id": str(run_id)},
+                    )
+
+        heartbeat_thread = threading.Thread(
+            target=_refresh_heartbeat,
+            name=f"agent-heartbeat-{str(run_id)[:8]}",
+            daemon=True,
         )
-        return runner.run_to_completion()
+        heartbeat_thread.start()
+
+        try:
+            frame = _load_dataset_frame(db, run)
+            config = _resolve_config(db, run)
+            profile = profile_data(frame, target=run.target_column)
+            runner = AgentRunner(
+                db,
+                run=run,
+                config=config,
+                profile_report=profile,
+                dataset_frame=frame,
+                guidance=dict(run.guidance_json or {}),
+                trainer=lightweight_trainer,
+                actor=actor_id or run.created_by,
+            )
+            return runner.run_to_completion()
+        finally:
+            heartbeat_stop.set()
+            heartbeat_thread.join(timeout=5.0)
     finally:
         db.close()
 

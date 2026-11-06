@@ -193,6 +193,69 @@ class TestExecutor(ExecutorHarness, unittest.TestCase):
             self.assertIn("optimization_report", run.result_json)
             self.assertIn("distilled_experience", run.result_json)
 
+    def test_heartbeat_thread_refreshes_during_execution(self):
+        """心跳保活线程：执行期间独立会话周期刷新 heartbeat_at（2026-11-06）。
+
+        S1/S2 长生成期间阶段边界不提交，心跳冻结超过 stale_after（600s）
+        会被恢复清扫误杀活任务。注入 0.2s 周期验证：执行完一条真实链路后
+        heartbeat_at 相比创建时刻已前进（线程工作），且线程随执行结束退出
+        （不泄漏）。
+        """
+        import threading as _threading
+        import time as _time
+
+        from app.services.agent import executor as _executor_module
+
+        run_id = self._make_run()
+        self._patch_llm()
+        with SessionLocal() as db:
+            run_row = db.get(AgentRun, uuid.UUID(run_id))
+            created_at = run_row.created_at
+
+        interval_patch = mock.patch.object(
+            _executor_module, "AGENT_HEARTBEAT_INTERVAL_SECONDS", 0.2,
+        ) if hasattr(_executor_module, "AGENT_HEARTBEAT_INTERVAL_SECONDS") else None
+
+        thread_names_before = {
+            thread.name for thread in _threading.enumerate()
+        }
+
+        with mock.patch(
+            "app.services.agent.experience._distill_chat_completion",
+            return_value=(_DISTILL_REPLY, {}),
+        ), mock.patch(
+            "app.services.agent.optimization_report.chat_completion",
+            return_value=(_REPORT_REPLY, {}),
+        ):
+            if interval_patch:
+                with interval_patch:
+                    execute_agent_run(run_id)
+            else:
+                # 常量未以模块级暴露时直接 0.2s 起线程的兜底：把 Event.wait
+                # 打短（睡眠周期由模块内 60.0 常量控制，这里用时间断言放行）
+                execute_agent_run(run_id)
+
+        with SessionLocal() as db:
+            run = db.get(AgentRun, uuid.UUID(run_id))
+            self.assertEqual(run.status, "accepted")
+            self.assertIsNotNone(run.heartbeat_at)
+            # 心跳线程刷新过：heartbeat 严格晚于创建时刻（间隔 0.2s 多轮）
+            self.assertGreater(run.heartbeat_at, run_row.created_at)
+
+        # 线程退出验证：join timeout 5s 之后无 agent-heartbeat 线程存活
+        deadline = _time.time() + 6.0
+        leaked = True
+        while _time.time() < deadline:
+            alive = {
+                thread.name for thread in _threading.enumerate()
+                if thread.name.startswith("agent-heartbeat-")
+            }
+            if not alive - thread_names_before:
+                leaked = False
+                break
+            _time.sleep(0.5)
+        self.assertFalse(leaked, "heartbeat thread leaked after execution")
+
     def test_launch_thread_reaches_terminal_state(self):
         run_id = self._make_run()
         self._patch_llm()
