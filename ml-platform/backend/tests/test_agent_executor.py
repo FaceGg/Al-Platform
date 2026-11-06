@@ -9,6 +9,7 @@ the gateway call faked at each service module.
 import io
 import os
 import tempfile
+import threading
 import time
 import unittest
 import uuid
@@ -269,6 +270,20 @@ class TestExecutor(ExecutorHarness, unittest.TestCase):
                 break
             time.sleep(0.5)
         self.assertEqual(status, "accepted")
+        # 等异步执行线程彻底结束（含 distill 落库）再返回——否则线程生命周期
+        # 跨越测试边界，其 distill 调用会延迟到后续用例期间、吞掉后续用例
+        # 设置的 mock reply 并错位 source_tasks 归属（run 42175434755 实证）。
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            alive = [
+                thread
+                for thread in threading.enumerate()
+                if thread.name == f"agent-run-{run_id[:8]}"
+            ]
+            if not alive:
+                break
+            time.sleep(0.2)
+        self.assertFalse(alive, "launch async worker thread outlived the test")
 
     def test_not_executable_on_missing_target(self):
         run_id = self._make_run(target_column="nonexistent_col")
