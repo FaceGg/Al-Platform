@@ -55,6 +55,8 @@ from app.services.automl_search import (
     automl_metric_sort_key,
     classification_metrics,
     choose_family_winner,
+    family_result_sort_key,
+    _evaluate_estimator,
     rank_candidates,
     run_family_search,
     normalize_task_type,
@@ -324,6 +326,126 @@ def _native_feature_importance(estimator, expected_width: int) -> list[float]:
 
 
 VALID_CROSS_VALIDATION_FOLDS = frozenset({2, 3, 4, 5})
+
+
+def _ensemble_metric_key(auc, f1, accuracy) -> tuple[float, float, float]:
+    """与家族排序同构的三元比较键（None 视为 -1，即缺席不占优）。"""
+    return (
+        float(auc) if auc is not None else -1.0,
+        float(f1) if f1 is not None else -1.0,
+        float(accuracy) if accuracy is not None else -1.0,
+    )
+
+
+def _build_ensemble_candidate(
+    *,
+    winner,
+    family_results,
+    task,
+    features,
+    target,
+    evaluation,
+    ensemble_config,
+):
+    """终选层集成（方案一）：Top-K 完成家族 soft-voting 加权投票。
+
+    权重按各家族主指标（auc 缺席退 best_score）占比自动分配；评估走与
+    单模型同一 CV 协议（classification_metrics/_evaluate_estimator，无泄漏）。
+    采纳规则镜像家族排序键 (auc, f1, accuracy)——集成不低于最佳单模型才
+    采纳（持平取集成，多模型平均更稳），绝不降低现有水平。回归任务不支持
+    （soft-voting 依赖 predict_proba），返回未采纳；失败同样退回单模型冠军。
+
+    返回 (model, info, members, member_weights)：model 仅在采纳时非 None；
+    members/member_weights 供调用方计算集成特征重要性（评估失败时为空）。
+    """
+    info: dict = {"enabled": True}
+    if task != "classification":
+        info.update({"adopted": False, "reason": "classification_only"})
+        return None, info, [], []
+    # family_result_sort_key 是"越大越好"（choose_family_winner 用 max），
+    # 取前 K 名必须降序——升序会选到最差家族（测试抓住）。
+    successful = sorted(
+        (item for item in family_results
+         if item.status == "completed" and item.best_estimator is not None),
+        key=family_result_sort_key,
+        reverse=True,
+    )
+    try:
+        requested = max(2, min(int(ensemble_config.get("top_k") or 3), 5))
+    except (TypeError, ValueError):
+        requested = 3
+    members = successful[:requested]
+    if len(members) < 2:
+        info.update({"adopted": False, "reason": "fewer_than_2_candidates"})
+        return None, info, [], []
+    from sklearn.ensemble import VotingClassifier
+
+    primary = [
+        (item.auc if item.auc is not None else item.best_score) or 0.0
+        for item in members
+    ]
+    total = sum(primary) or 1.0
+    member_weights = [value / total for value in primary]
+    vote = VotingClassifier(
+        estimators=[(item.algorithm_id, item.best_estimator) for item in members],
+        voting="soft",
+        n_jobs=-1,
+    )
+    try:
+        auc, f1 = classification_metrics(
+            vote, features=features, target=target, evaluation=evaluation,
+        )
+        accuracy = _evaluate_estimator(
+            vote, task=task, features=features, target=target, evaluation=evaluation,
+        )
+        vote.fit(features, target)
+    except Exception:  # noqa: BLE001 - 集成失败退回单模型冠军，不拖垮任务
+        info.update({
+            "adopted": False,
+            "reason": "ensemble_fit_failed",
+            "members": [
+                {"name": item.algorithm_id, "weight": round(weight, 4)}
+                for item, weight in zip(members, member_weights)
+            ],
+        })
+        return None, info, [], []
+    info.update({
+        "adopted": bool(
+            _ensemble_metric_key(auc, f1, accuracy)
+            >= _ensemble_metric_key(winner.auc, winner.f1, winner.best_score)
+        ),
+        "voting": "soft",
+        "members": [
+            {"name": item.algorithm_id, "weight": round(weight, 4)}
+            for item, weight in zip(members, member_weights)
+        ],
+        "metrics": {
+            "auc": round(auc, 4) if auc is not None else None,
+            "f1": round(f1, 4) if f1 is not None else None,
+            "accuracy": round(accuracy, 4),
+        },
+    })
+    return (vote if info["adopted"] else None), info, members, member_weights
+
+
+def _ensemble_feature_importance(members, member_weights, expected_width: int):
+    """集成特征重要性 = 各成员原生重要性按集成权重加权平均。
+
+    无重要性向量的成员（如 HGB）自动跳过，权重仅在贡献者内归一；全部缺失
+    时返回空（与单模型 HGB importance 不可用的现状一致）。"""
+    contributions = []
+    norm = 0.0
+    for member, weight in zip(members, member_weights):
+        vector = _native_feature_importance(member.best_estimator, expected_width)
+        if vector:
+            contributions.append((weight, np.asarray(vector, dtype=float)))
+            norm += weight
+    if not contributions or norm <= 0:
+        return []
+    merged = np.zeros(expected_width, dtype=float)
+    for weight, vector in contributions:
+        merged += (weight / norm) * vector
+    return merged.tolist()
 
 
 def normalize_evaluation_config(
@@ -892,6 +1014,80 @@ def _execute_optuna_job(
         "per_target": {str(target_column): feature_importance},
         "unavailable_targets": [] if winner_importance else [str(target_column)],
     }
+    # ---- 终选层集成（params.ensemble，方案一）：部署模型可为加权投票体 ----
+    # 集成候选与单模型冠军同协议评估、同键比较；采纳才替换 model_artifact。
+    ensemble_config = params.get("ensemble") if isinstance(params.get("ensemble"), dict) else {}
+    ensemble_info: dict | None = None
+    ensemble_artifact: ModelLibrary | None = None
+    if ensemble_config.get("enabled"):
+        ensemble_model, ensemble_info, ens_members, ens_weights = _build_ensemble_candidate(
+            winner=winner,
+            family_results=family_results,
+            task=task,
+            features=features,
+            target=target,
+            evaluation=evaluation,
+            ensemble_config=ensemble_config,
+        )
+        if ensemble_model is not None:
+            ens_vector = _ensemble_feature_importance(
+                ens_members, ens_weights, len(feature_schema),
+            )
+            if ens_vector:
+                feature_importance = {
+                    str(name): float(ens_vector[index])
+                    for index, name in enumerate(features.columns)
+                }
+                feature_importance_report = {
+                    "source": "model_native_ensemble",
+                    "by_feature": feature_importance,
+                    "per_target": {str(target_column): feature_importance},
+                    "unavailable_targets": [],
+                }
+            with tempfile.TemporaryDirectory() as temporary:
+                ens_path = Path(temporary) / f"{job.id}-ensemble.joblib"
+                joblib.dump({
+                    "model": ensemble_model,
+                    "feature_schema": feature_schema,
+                    "target_schema": target_schema,
+                    "input_contract": input_contract,
+                    "preprocessing": preprocessing,
+                    "feature_importance": feature_importance,
+                    "feature_importance_report": feature_importance_report,
+                    "ensemble": ensemble_info,
+                }, ens_path)
+                ensemble_artifact = artifact_service.create_from_file(
+                    job.project_id,
+                    ens_path,
+                    f"{job.name}-ensemble.joblib",
+                    "model",
+                    metadata={
+                        "source": "automl",
+                        "kind": "ensemble",
+                        "training_job_id": str(job.id),
+                        "dataset_artifact_id": str(dataset.id),
+                        "best_algorithm": "ensemble",
+                        "evaluation": evaluation,
+                        "ensemble": ensemble_info,
+                        "input_contract": input_contract,
+                        "preprocessing": preprocessing,
+                        "feature_importance_report": feature_importance_report,
+                    },
+                )
+    if ensemble_artifact is not None:
+        # 摘要行与工件映射：结果列表可见集成候选及其采纳原因，富化循环统一补 id。
+        persisted["ensemble"] = ensemble_artifact
+        ensemble_metrics = ensemble_info.get("metrics") or {}
+        all_results.append({
+            "name": "集成加权投票",
+            "algorithm_id": "ensemble",
+            "score": ensemble_metrics.get("accuracy"),
+            "auc": ensemble_metrics.get("auc"),
+            "f1": ensemble_metrics.get("f1"),
+            "params": {"members": ensemble_info.get("members"), "voting": "soft"},
+            "training_time_seconds": 0.0,
+            "status": "completed",
+        })
     result_rows = []
     for item in all_results:
         source = persisted.get(str(item["algorithm_id"]))
@@ -920,6 +1116,24 @@ def _execute_optuna_job(
         "feature_schema": feature_schema,
         "target_schema": target_schema,
     }
+    # 集成留痕与冠军替换（采纳时部署工件指向集成体，指标不低于单模型冠军）。
+    champion_algorithm_id = winner.algorithm_id
+    if ensemble_info is not None:
+        job.metrics["ensemble"] = ensemble_info
+    if ensemble_info is not None and ensemble_info.get("adopted") and ensemble_artifact is not None:
+        champion_algorithm_id = "ensemble"
+        ensemble_metrics = ensemble_info.get("metrics") or {}
+        job.metrics["best_candidate"] = "ensemble"
+        job.metrics["best_model"] = {
+            "algorithm_id": "ensemble",
+            "name": "集成加权投票",
+            "score": ensemble_metrics.get("accuracy"),
+            "auc": ensemble_metrics.get("auc"),
+            "f1": ensemble_metrics.get("f1"),
+            "params": {"members": ensemble_info.get("members"), "voting": "soft"},
+            "model_artifact_id": str(model_artifact.id),
+        }
+        job.metrics["progress"]["current_algorithm"] = "ensemble"
     job.feature_schema = feature_schema
     job.target_schema = target_schema
     job.preprocessing = preprocessing
@@ -931,13 +1145,13 @@ def _execute_optuna_job(
     job.heartbeat_at = utcnow()
     tracking.log_metrics(parent.run_id, {"best_score": winner.best_score}, step=0)
     tracking.set_tags(parent.run_id, {
-        "platform.best_candidate": winner.algorithm_id,
+        "platform.best_candidate": champion_algorithm_id,
         "platform.search_method": method,
         "platform.model_artifact_id": str(model_artifact.id),
     })
     tracking.end_run(parent.run_id, "FINISHED")
     db.commit()
-    return AutoMLExecutionResult(str(job.id), "completed", winner.algorithm_id)
+    return AutoMLExecutionResult(str(job.id), "completed", champion_algorithm_id)
 
 
 def _execute_multioutput_job(

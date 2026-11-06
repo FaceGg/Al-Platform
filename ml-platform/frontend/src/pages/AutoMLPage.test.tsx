@@ -736,6 +736,38 @@ describe("AutoMLPage", () => {
     const payload = api.post.mock.calls[0][1];
     expect(payload).not.toHaveProperty("max_trials");
     expect(payload).not.toHaveProperty("target_columns");
+    // 集成学习默认关闭：载荷不携带 ensemble（引擎行为与旧版一致）
+    expect(payload).not.toHaveProperty("ensemble");
+  });
+
+  it("sends the ensemble config when weighted-voting is enabled for classification", async () => {
+    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "目标列" }));
+    fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
+    await waitFor(() => expect(screen.getByTitle("feature")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("switch", { name: "启用集成学习" }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "集成成员数" }));
+    fireEvent.click(await screen.findByText("前 4 名"));
+    fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/training/automl/run",
+      expect.objectContaining({
+        task: "classification",
+        ensemble: { enabled: true, top_k: 4 },
+      }),
+      expect.anything(),
+    ));
   });
 
   it("does not expose a user-editable maximum trial count", async () => {

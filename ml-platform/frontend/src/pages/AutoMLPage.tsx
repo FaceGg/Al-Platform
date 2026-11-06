@@ -160,6 +160,9 @@ export default function AutoMLPage() {
   const [classWeight, setClassWeight] = useState(true);
   const [crossValidationEnabled, setCrossValidationEnabled] = useState(true);
   const [crossValidationFolds, setCrossValidationFolds] = useState<2 | 3 | 4 | 5>(5);
+  // 终选层集成（多模型加权投票）：仅分类任务生效，引擎按主指标取前 K 名 soft-voting
+  const [ensembleEnabled, setEnsembleEnabled] = useState(false);
+  const [ensembleTopK, setEnsembleTopK] = useState<2 | 3 | 4 | 5>(3);
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<any>(null);
   const [analysisReport, setAnalysisReport] = useState<Record<string, unknown> | null>(null);
@@ -479,6 +482,10 @@ export default function AutoMLPage() {
             ...payloadBase,
             task: taskType as "classification" | "regression",
             target_column: targetColumns[0],
+            // 集成仅单输出分类生效（引擎回归/多输出不支持 soft-voting）
+            ...(ensembleEnabled && taskType === "classification"
+              ? { ensemble: { enabled: true, top_k: ensembleTopK } }
+              : {}),
           };
       const fingerprint = JSON.stringify(payload);
       const existingSubmission = automlSubmissionRef.current;
@@ -855,6 +862,18 @@ export default function AutoMLPage() {
               disabled={!crossValidationEnabled}
               onChange={(folds: 2 | 3 | 4 | 5) => setCrossValidationFolds(folds)}
               options={[2, 3, 4, 5].map((folds) => ({ value: folds, label: `${folds} 折` }))}
+            /></Col>
+          <Col xs={12} sm={3}><Text strong>集成学习</Text>
+            <div style={{ marginTop: 7 }}><Switch aria-label="启用集成学习" checked={ensembleEnabled}
+              disabled={taskType !== "classification"} onChange={setEnsembleEnabled} /></div></Col>
+          <Col xs={12} sm={3}><Text strong>集成成员</Text>
+            <Select
+              aria-label="集成成员数"
+              style={{ width: "100%", marginTop: 4 }}
+              value={ensembleTopK}
+              disabled={!ensembleEnabled || taskType !== "classification"}
+              onChange={(k: 2 | 3 | 4 | 5) => setEnsembleTopK(k)}
+              options={[2, 3, 4, 5].map((k) => ({ value: k, label: `前 ${k} 名` }))}
             /></Col>
           <Col xs={24} sm={2}><Button type="primary" icon={<ThunderboltOutlined />} onClick={handleRun} loading={running} block style={{ marginTop: 22 }}>{t.automl?.run || "Run"}</Button></Col>
         </Row>

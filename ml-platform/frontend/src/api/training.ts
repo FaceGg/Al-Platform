@@ -32,6 +32,8 @@ export type AutoMLRunPayload =
       task: "classification" | "regression";
       target_column: string;
       target_columns?: never;
+      /** 终选层集成（多模型加权投票），仅单输出分类生效 */
+      ensemble?: { enabled: boolean; top_k: 2 | 3 | 4 | 5 };
     })
   | (AutoMLRunPayloadBase & {
       task: "multioutput_classification" | "multioutput_regression";

@@ -235,12 +235,14 @@ def trigger_retrain_job(
     db, *, project_id, actor_id, experiment_name: str, job_name: str,
     dataset_artifact_id=None, dataset_artifact_ids=None, target_column: str,
     max_trials: int = 10,
+    ensemble: dict | None = None,
 ) -> TrainingJob:
     """Create and dispatch one AutoML job on the given dataset(s)/target.
 
     Multiple datasets are concatenated in selection order. Rows that lack the
     target column but carry a ``prediction`` column (closed-loop reflow rows)
-    are auto-labeled with that inference result.
+    are auto-labeled with that inference result. ``ensemble``（{"enabled",
+    "top_k"}）转发给引擎终选层：部署换模模型本身可为加权投票集成体。
     """
     project_id = _as_uuid(project_id)
     actor_id = _as_uuid(actor_id)
@@ -381,6 +383,7 @@ def trigger_retrain_job(
             "time_budget": controls["time_budget"],
             "search_strength": controls["strength"],
             "class_weight": controls["class_weight"],
+            **({"ensemble": dict(ensemble)} if ensemble else {}),
         },
         dataset_artifact_id=dataset.id,
         dataset_path=service.storage_reference(dataset),

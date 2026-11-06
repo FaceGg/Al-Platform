@@ -106,7 +106,22 @@ class AutoMLRunRequest(BaseModel):
     time_budget: int = Field(default=3600, ge=60, le=86400)
     search_strength: str = "medium"
     class_weight: bool = True
+    # 终选层集成（多模型加权投票）：{"enabled": bool, "top_k": 2-5}；
+    # 仅分类任务生效，引擎按主指标取前 K 名家族 soft-voting。
+    ensemble: dict | None = None
     name: str = Field(default="automl-job", min_length=1, max_length=128)
+
+    @field_validator("ensemble")
+    @classmethod
+    def validate_ensemble(cls, value: dict | None) -> dict | None:
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise ValueError("ensemble must be an object")
+        top_k = value.get("top_k")
+        if top_k is not None and (not isinstance(top_k, int) or isinstance(top_k, bool) or not 2 <= top_k <= 5):
+            raise ValueError("ensemble.top_k must be an integer between 2 and 5")
+        return value
 
     @field_validator("algorithm_params")
     @classmethod
@@ -772,6 +787,7 @@ def start_automl(
                 "search_strength": controls["strength"],
                 "class_weight": controls["class_weight"],
                 "time_budget": controls["time_budget"],
+                **({"ensemble": dict(data.ensemble)} if data.ensemble else {}),
             },
             dataset_artifact_id=dataset.id,
             dataset_path=artifact_service.storage_reference(dataset), status="pending",
