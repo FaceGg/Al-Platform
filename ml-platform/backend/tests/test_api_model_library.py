@@ -170,15 +170,6 @@ class TestModelLibraryAPI(unittest.TestCase):
             [f"{marker}-high", f"{marker}-mid", f"{marker}-low", f"{marker}-noscore"],
         )
 
-        r = client.get("/api/dashboard/top-models", headers=self.h)
-        self.assertEqual(r.status_code, 200, r.text)
-        dash_top = [item["name"] for item in r.json()["items"]]
-        self.assertIn(f"{marker}-high", dash_top)
-        self.assertEqual(
-            [name for name in dash_top if name.startswith(marker)],
-            [f"{marker}-high", f"{marker}-mid", f"{marker}-low", f"{marker}-noscore"],
-        )
-
         # 清理
         db = SessionLocal()
         try:

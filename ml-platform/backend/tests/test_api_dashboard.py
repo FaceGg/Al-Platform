@@ -525,6 +525,12 @@ class TestDashboardAPI(unittest.TestCase):
         response = client.get("/api/dashboard/recent-model-versions")
         self.assertEqual(response.status_code, 401)
 
+    def test_11b_legacy_public_dashboard_endpoints_are_removed(self):
+        # 这两个旧端点免登录、不按项目过滤，前端已不用，已删除：登录与否都不能再取到数据
+        for path in ("/api/dashboard/top-models", "/api/dashboard/recent-activity"):
+            self.assertEqual(client.get(path, headers=self.admin_headers).status_code, 404, path)
+            self.assertNotEqual(client.get(path).status_code, 200, path)
+
     def test_12_recent_versions_and_algorithm_coverage_follow_the_registry(self):
         marker = f"dashboard-recent-{uuid.uuid4().hex}"
         member_username = f"{marker}-member"

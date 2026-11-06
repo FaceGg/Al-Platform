@@ -317,15 +317,11 @@ class TestProjectsCRUD(unittest.TestCase):
         r = client.delete(f"/api/projects/{pid}", headers=self.h)
         self.assertEqual(r.status_code, 204)
 
-        # 旧版数据集表脱钩保留，但不再出现在平台最近活动中
+        # 旧版数据集表脱钩保留（project_id 置空）
         with SessionLocal() as db:
             row = db.get(PlatformDataset, dataset_id)
             self.assertIsNotNone(row)
             self.assertIsNone(row.project_id)
-        r = client.get("/api/dashboard/recent-activity")
-        self.assertEqual(r.status_code, 200)
-        recent_ids = [item["id"] for item in r.json().get("recent_datasets", [])]
-        self.assertNotIn(str(dataset_id), recent_ids)
 
 
 if __name__ == "__main__":

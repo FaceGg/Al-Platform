@@ -422,3 +422,15 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 **验证**：前端全量 92 文件 539 通过、19 跳过，tsc 与构建通过；独立 dev 服务（5179，代理到本地栈后端）登录后截图核对：系统管理/用户管理、系统管理/公告管理（单行）、算法平台/应用编排、算法平台/闭环自动化、智能体中心/任务列表、基础设施/Kubernetes 集群·集群治理·Notebook 会话、算法平台/模型训练均正确；英文模式「Administration / Notices」「Algorithms / Closed-Loop Automation」与侧栏英文一致。共享栈前端镜像已在工作区与 HEAD 一致（并行会话改动全部提交）后替换（prebuilt 路线，容器内产物核对含 `v2-pt-sec`、无 `v2-crumb`），全量 CI 未跑。
 
 **遗留**：①闭环自动化页正文控件（项目/刷新/操作手册等）在英文模式仍是中文——该页 `demo_loop` 英文词条本就缺失（存量 i18n 缺口，非本次引入）。②非菜单的详情页（任务详情、知识库详情、工作区画布等）保留各自头部，未纳入本次统一。③侧栏中 4 个菜单名（公告管理/审计日志/平台状态/Tokens 用量）在 `AppLayout` 仍是内联文案，与 `NAV_FALLBACK` 同值但非同源（并行会话当时正在改 `AppLayout`，为避免冲突未动）。
+
+## 2026-11-06 模型库无效候选清理 + 删除两个免登录接口
+
+**用户指令**：删除模型库中无效的模型；删除两个免登录接口；完成后推送。
+
+**模型库清理（数据操作，共享栈 PostgreSQL）**：删除全部 9 个模型库候选——3 个 `UpdatedXGBoostModel`（无项目、pth 格式、无模型文件、无训练任务，测试残留）+ 6 个 joblib 候选（拧紧 2、点焊 4；所属自动建模任务已全部删除，注册恒为 `MODEL_SOURCE_UNTRUSTED`）。删前排查：9 条记录未被任何表按 ID 引用（注册版本、API 市场、训练任务、编排、闭环、标注均无）；其中 3 个候选的模型文件被编排流程节点（拧紧 HistGradientBoosting）和自动标注任务冻结配置（点焊 CatBoost、集成实测 train_v2_full）直接使用——删除接口只删模型库记录、不删模型文件，这些用法不受影响（删后核对 3 个文件仍在）。经正常接口 `DELETE /api/model-library/{id}` 逐条删除（9 条均 200，留审计），删前整表导出备份至 `temp_test/model_library_backup_20261106.jsonl`（未入库）。删后两个项目「注册版本」对话框候选为空。
+
+**删除接口**：`GET /api/dashboard/top-models`、`GET /api/dashboard/recent-activity`（无需登录、不按项目过滤，前端已不使用）连同 `dashboard.py` 中随之无用的 `ModelLibrary`/`Dataset` 导入一并删除；`/api/model-library/stats/summary` 及其 `top_models_by_score` 保留。测试：`test_api_model_library` test_13 去掉 top-models 段（保留 stats/summary 排序断言），`test_api_projects` test_16 去掉 recent-activity 段（保留项目删除后旧数据集脱钩断言），新增 `test_11b` 守住两接口不再出现（登录 404、未登录非 200）。
+
+**验证**：后端工作台/模型库/项目 49 通过，遍历路由的契约类（标注任务状态 API、推理生产、注册表）51 通过；后端镜像重建上线（重建前仅 1 个等人工决策的智能体任务，不受重启影响）；线上两接口登录与否均 404（经前端代理同为 404），`/dashboard/stats`、`/dashboard/recent-model-versions` 200。全量 CI 未跑。
+
+**遗留**：被删候选对应的 joblib/ONNX 模型文件仍在对象存储（部分被编排流程和标注任务使用，未清理）；被删的 9 条记录如需恢复可按备份文件重新插入。
