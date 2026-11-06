@@ -224,6 +224,16 @@ def _parse_llm_stream_event(provider: str, event: dict) -> tuple[str | None, dic
     return (delta, event.get("usage")) if (delta or event.get("usage")) else (None, None)
 
 
+def _provider_headers(provider: str, api_key: str | None) -> dict[str, str]:
+    """按 API 格式选认证头：anthropic 用 x-api-key + anthropic-version
+    （真机 DeepSeek anthropic 端点对 Bearer-only 探测回 404/401），其余 Bearer。"""
+    if not api_key:
+        return {}
+    if provider == "anthropic":
+        return {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
+    return {"Authorization": f"Bearer {api_key}"}
+
+
 def list_upstream_models(
     api_url: str, api_key: str | None, provider: str
 ) -> list[str]:
@@ -234,23 +244,32 @@ def list_upstream_models(
     （https-only、拒私网/环回）。仅 http/https。"""
     validate_llm_api_url(api_url)
     stripped = api_url.rstrip("/")
+    candidates: list[str] = []
     for suffix, list_path in (
         ("/chat/completions", "/models"),
         ("/responses", "/models"),
         ("/messages", "/models"),
     ):
         if stripped.endswith(suffix):
-            list_url = stripped[: -len(suffix)] + list_path
+            candidates.append(stripped[: -len(suffix)] + list_path)
             break
     else:
-        list_url = stripped + "/models"
-    headers: dict[str, str] = {}
-    if api_key:
-        if provider == "anthropic":
-            headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
-        else:
-            headers = {"Authorization": f"Bearer {api_key}"}
-    response = _HTTP_CLIENT.get(list_url, headers=headers, timeout=15)
+        candidates.append(stripped + "/models")
+    # 派生路径 404 时回退源站根 /models：部分供应商的兼容端点不含模型目录
+    # （真机 DeepSeek：/anthropic/v1/models 404，原生 /models 存在）
+    parts = api_url.split("/", 3)
+    if len(parts) >= 3:
+        origin = parts[0] + "//" + parts[2]
+        if origin + "/models" not in candidates:
+            candidates.append(origin + "/models")
+    headers = _provider_headers(provider, api_key)
+    response: httpx.Response | None = None
+    for list_url in candidates:
+        response = _HTTP_CLIENT.get(list_url, headers=headers, timeout=15)
+        if response.status_code != 404:
+            break
+    if response is None:
+        return []
     response.raise_for_status()
     data = response.json()
     if provider == "anthropic":
@@ -481,6 +500,7 @@ def _post_chat(
     api_key: str,
     model_id: str,
     timeout_seconds: int,
+    provider: str = "openai_compatible",
 ) -> tuple[int, float, str]:
     """Single outbound probe call, kept trivially monkeypatchable."""
     started = time.perf_counter()
@@ -491,7 +511,7 @@ def _post_chat(
             "messages": [{"role": "user", "content": "ping"}],
             "max_tokens": 1,
         },
-        headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+        headers=_provider_headers(provider, api_key),
         timeout=timeout_seconds,
     )
     latency_ms = (time.perf_counter() - started) * 1000
@@ -506,6 +526,7 @@ def test_connectivity(db: Session, profile: LLMProfile) -> dict:
             profile_api_key(profile),
             profile.model_id,
             profile.timeout_seconds or 60,
+            provider=profile.provider,
         )
     except httpx.HTTPError as error:
         return {"ok": False, "status_code": None, "latency_ms": None, "error": type(error).__name__}

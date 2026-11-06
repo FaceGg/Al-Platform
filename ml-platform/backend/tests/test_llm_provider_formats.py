@@ -142,6 +142,44 @@ class TestListUpstreamModels(unittest.TestCase):
         with self.assertRaises(LLMApiUrlError):
             list_upstream_models("https://10.0.0.5/v1/chat/completions", "sk", "openai_compatible")
 
+    def test_list_models_falls_back_to_origin_models_on_404(self):
+        """真机 DeepSeek：anthropic 兼容端点没有 /v1/models（404），
+        原生 https://api.deepseek.com/models 存在——派生路径 404 回退源站根。"""
+        response_404 = mock.Mock(status_code=404)
+        response_ok = mock.Mock(status_code=200)
+        response_ok.json.return_value = {"data": [{"id": "deepseek-chat"}]}
+        with mock.patch("app.services.llm_gateway._HTTP_CLIENT") as client:
+            client.get.side_effect = [response_404, response_ok]
+            models = list_upstream_models(
+                "https://api.deepseek.com/anthropic/v1/messages", "sk", "anthropic",
+            )
+        urls = [call[0][0] for call in client.get.call_args_list]
+        self.assertEqual(urls[0], "https://api.deepseek.com/anthropic/v1/models")
+        self.assertEqual(urls[1], "https://api.deepseek.com/models")
+        self.assertEqual(models, ["deepseek-chat"])
+
+
+class TestAnthropicProbeHeaders(unittest.TestCase):
+    def test_probe_uses_anthropic_headers_for_anthropic_profile(self):
+        """探测 anthropic 格式档案必须带 x-api-key + anthropic-version
+        （此前 Bearer-only → 真机 DeepSeek anthropic 端点 404/401）。"""
+        from app.services import llm_gateway
+
+        profile = mock.Mock()
+        profile.api_url = "https://api.deepseek.com/anthropic/v1/messages"
+        profile.provider = "anthropic"
+        profile.model_id = "deepseek-chat"
+        profile.timeout_seconds = 15
+        with mock.patch.object(llm_gateway, "profile_api_key", return_value="sk"), \
+                mock.patch.object(llm_gateway, "_HTTP_CLIENT") as client:
+            client.post.return_value.status_code = 200
+            result = llm_gateway.test_connectivity(mock.Mock(), profile)
+        headers = client.post.call_args[1]["headers"]
+        self.assertEqual(headers["x-api-key"], "sk")
+        self.assertEqual(headers["anthropic-version"], "2023-06-01")
+        self.assertNotIn("Authorization", headers)
+        self.assertTrue(result["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()
