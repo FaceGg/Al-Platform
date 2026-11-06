@@ -85,12 +85,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         { key: "/data", icon: <CloudUploadOutlined />, label: t.nav.data },
         { key: "/data-annotation", icon: <TagsOutlined />, label: t.nav.data_annotation, query: "view=tasks" },
       ] },
-      { label: zh ? "建模与服务" : "Modeling & Serving", items: [
+      { label: zh ? "建模" : "Modeling", items: [
         { key: "/automl", icon: <ThunderboltOutlined />, label: t.nav.automl },
         { key: "/training", icon: <ExperimentOutlined />, label: t.nav.training },
         { key: "/models", icon: <AppstoreOutlined />, label: t.nav.models },
-        { key: "/orchestration", icon: <RobotOutlined />, label: t.nav.orchestration },
+      ] },
+      { label: zh ? "服务" : "Serving", items: [
         { key: "/demo-loop", icon: <DeploymentUnitOutlined />, label: t.nav.demo_loop },
+        { key: "/orchestration", icon: <RobotOutlined />, label: t.nav.orchestration },
         { key: "/api-marketplace", icon: <ApiOutlined />, label: t.nav.api_market },
       ] },
     ],

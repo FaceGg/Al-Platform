@@ -109,6 +109,24 @@ describe("AppLayout (v2 five-view shell)", () => {
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/api-marketplace"));
   });
 
+  it("groups the algo sidebar into overview, data, modeling and serving", async () => {
+    const sidebarGroups = async () => Array.from((await screen.findByTestId("v2-sidebar")).children).map((group) => ({
+      label: group.querySelector(".v2-side-group")?.textContent,
+      items: Array.from(group.querySelectorAll("button")).map((button) => button.textContent),
+    }));
+    const zhView = render(<MemoryRouter initialEntries={["/automl"]}><AppLayout><div>test</div></AppLayout></MemoryRouter>);
+    expect(await sidebarGroups()).toEqual([
+      { label: "概览", items: ["工作台", "项目管理"] },
+      { label: "数据", items: ["数据管理", "数据标注"] },
+      { label: "建模", items: ["自动建模", "模型训练", "模型库"] },
+      { label: "服务", items: ["闭环自动化", "应用编排", "API市场"] },
+    ]);
+    zhView.unmount();
+
+    render(<MemoryRouter initialEntries={["/automl"]}><LangProvider><AppLayout><div>test</div></AppLayout></LangProvider></MemoryRouter>);
+    expect((await sidebarGroups()).map((group) => group.label)).toEqual(["Overview", "Data", "Modeling", "Serving"]);
+  });
+
   it("marks the theme toggle and header with stable theme-aware hooks", async () => {
     render(
       <MemoryRouter>
