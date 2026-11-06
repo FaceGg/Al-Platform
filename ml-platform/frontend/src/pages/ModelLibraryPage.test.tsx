@@ -152,7 +152,11 @@ describe("ModelLibraryPage", () => {
     await waitFor(() => expect(mocks.registerPlatformVersion).toHaveBeenCalledWith("m1", "library-1"));
 
     fireEvent.click(screen.getByRole("button", { name: "Versions Weld fault" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Approve version 1" }));
+    const approveButton = await screen.findByRole("button", { name: "Approve version 1" });
+    // 批准按钮为绿色描边，与红色的拒绝按钮成对
+    expect(approveButton).toHaveClass("ant-btn-color-green", "ant-btn-variant-outlined");
+    expect(screen.getByRole("button", { name: "Reject version 1" })).toHaveClass("ant-btn-dangerous");
+    fireEvent.click(approveButton);
     await waitFor(() => expect(mocks.approveModelVersion).toHaveBeenCalledWith("v1", ""));
 
     fireEvent.click(screen.getByRole("tab", { name: "Deployments" }));

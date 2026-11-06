@@ -633,7 +633,7 @@ export default function ModelLibraryPage() {
         { title: copy.status, dataIndex: "approval_status", render: (value: string) => <Tag color={statusColor(value)}>{statusLabel(value)}</Tag> },
         { title: copy.framework, dataIndex: "framework" },
         { title: t.model.actions, render: (_: unknown, row: ModelVersion) => versionModel && canRegister ? <Space>
-          {row.approval_status === "pending" && <><Button icon={<CheckOutlined />} aria-label={`${copy.approve} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => void approve(versionModel, row)}>{copy.approve}</Button><Button danger aria-label={`${copy.reject} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => reject(versionModel, row)}>{copy.reject}</Button></>}
+          {row.approval_status === "pending" && <><Button color="green" variant="outlined" icon={<CheckOutlined />} aria-label={`${copy.approve} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => void approve(versionModel, row)}>{copy.approve}</Button><Button danger aria-label={`${copy.reject} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => reject(versionModel, row)}>{copy.reject}</Button></>}
           {row.approval_status === "approved" && <><Button loading={exportBusy === `${row.id}:predict`} aria-label={`${copy.exportPredict} ${row.version_number}`} onClick={() => void exportVersion(row, "predict")}>{copy.exportPredict}</Button><Button loading={exportBusy === `${row.id}:annotate`} aria-label={`${copy.exportAnnotate} ${row.version_number}`} onClick={() => void exportVersion(row, "annotate")}>{copy.exportAnnotate}</Button></>}
         </Space> : null },
       ]} />
