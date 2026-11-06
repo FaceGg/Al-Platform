@@ -22,6 +22,7 @@ class LLMProfileCreate(BaseModel):
     deployment: str = Field(default="cloud", pattern="^(cloud|private)$")
     is_default: bool = False
     enabled: bool = True
+    model_config_json: dict | None = None
 
     @field_validator("api_url")
     @classmethod
@@ -58,6 +59,9 @@ class LLMProfileUpdate(BaseModel):
     deployment: str | None = Field(default=None, pattern="^(cloud|private)$")
     is_default: bool | None = None
     enabled: bool | None = None
+    model_config_json: dict | None = None
+    model_config_json: dict | None = None
+    enabled: bool | None = None
 
     @field_validator("api_url")
     @classmethod
@@ -80,6 +84,7 @@ class LLMProfileOut(BaseModel):
     deployment: str
     is_default: bool
     enabled: bool
+    model_config_json: dict | None
     api_key_masked: str | None
     created_at: datetime
     updated_at: datetime
@@ -98,3 +103,4 @@ class LLMProfileClone(BaseModel):
 
     model_id: str = Field(min_length=1, max_length=128)
     name: str | None = Field(default=None, max_length=128)
+    model_config_json: dict | None = Field(default=None)

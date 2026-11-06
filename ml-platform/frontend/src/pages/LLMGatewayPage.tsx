@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AutoComplete, Button, Collapse, Dropdown, Form, Input, InputNumber, message, Modal, Select, Space, Switch } from 'antd'
-import { ApiOutlined, CloudDownloadOutlined, DeleteOutlined, EditOutlined, MoreOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { AutoComplete, Button, Checkbox, Collapse, Dropdown, Form, Input, InputNumber, message, Modal, Select, Space, Switch, Tooltip } from 'antd'
+import { ApiOutlined, CloudDownloadOutlined, DeleteOutlined, EditOutlined, MoreOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useI18n } from '../i18n'
 import AppLayout from '../components/AppLayout'
 import PageHeading from '../components/PageHeading'
@@ -474,6 +474,85 @@ export default function LLMGatewayPage() {
     }
   }
 
+  // —— 模型配置弹窗（添加模型 / 编辑模型配置，对齐 ZCode 模型设置）——
+  const [modelCfgOpen, setModelCfgOpen] = useState(false)
+  const [modelCfgMode, setModelCfgMode] = useState<'add' | 'edit'>('add')
+  const [modelCfgTarget, setModelCfgTarget] = useState<LLMProfile | null>(null)
+  const [modelCfgSaving, setModelCfgSaving] = useState(false)
+  const [modelForm] = Form.useForm()
+
+  const openAddModel = () => {
+    if (!selected) return
+    modelForm.resetFields()
+    modelForm.setFieldsValue({
+      smart_config: true,
+      input_types: ['text'],
+      capabilities: [],
+      reasoning_levels: [],
+      reasoning_mapping: '',
+    })
+    setModelCfgTarget(null)
+    setModelCfgMode('add')
+    setModelCfgOpen(true)
+  }
+
+  const openModelCfgEdit = (profile: LLMProfile) => {
+    modelForm.resetFields()
+    const cfg = (profile.model_config_json ?? {}) as Record<string, unknown>
+    modelForm.setFieldsValue({
+      model_id: profile.model_id,
+      context_window: cfg.context_window ?? undefined,
+      max_output_tokens: cfg.max_output_tokens ?? undefined,
+      input_types: Array.isArray(cfg.input_types) && cfg.input_types.length ? cfg.input_types : ['text'],
+      capabilities: Array.isArray(cfg.capabilities) ? cfg.capabilities : [],
+      reasoning_levels: Array.isArray(cfg.reasoning_levels) ? cfg.reasoning_levels : [],
+      reasoning_mapping: String(cfg.reasoning_mapping ?? ''),
+      smart_config: cfg.smart_config !== false,
+    })
+    setModelCfgTarget(profile)
+    setModelCfgMode('edit')
+    setModelCfgOpen(true)
+  }
+
+  const saveModelCfg = async () => {
+    const values = await modelForm.validateFields()
+    const configJson = {
+      smart_config: values.smart_config !== false,
+      context_window: values.context_window ?? null,
+      max_output_tokens: values.max_output_tokens ?? null,
+      input_types: values.input_types?.length ? values.input_types : ['text'],
+      capabilities: values.capabilities ?? [],
+      reasoning_levels: values.reasoning_levels ?? [],
+      reasoning_mapping: values.reasoning_mapping ?? '',
+    }
+    setModelCfgSaving(true)
+    try {
+      if (modelCfgMode === 'add' && selected?.profiles.length) {
+        // 添加：走克隆端点复制供应商 URL/Key（前端无需明文 Key），带模型配置
+        const source = selected.profiles.find((p) => p.is_default) ?? selected.profiles[0]
+        await apiClient.post(`/llm-profiles/${source.id}/clone`, {
+          model_id: values.model_id,
+          name: values.model_id,
+          model_config_json: configJson,
+        })
+        message.success(zh ? `已添加 ${values.model_id}` : `Added ${values.model_id}`)
+      } else if (modelCfgMode === 'edit' && modelCfgTarget) {
+        // 编辑：仅更新 model_id 与模型配置
+        await updateLlmProfile(
+          modelCfgTarget.id,
+          payloadOf(modelCfgTarget, { model_id: values.model_id, model_config_json: configJson }),
+        )
+        message.success(zh ? '模型配置已更新' : 'Model config updated')
+      }
+      setModelCfgOpen(false)
+      load()
+    } catch (error) {
+      message.error(formatApiError(error, zh ? '保存失败' : 'Save failed'))
+    } finally {
+      setModelCfgSaving(false)
+    }
+  }
+
   const providerMenu = selected && selected.profiles.length ? {
     items: [
       { key: 'rename', icon: <EditOutlined />, label: zh ? '重命名' : 'Rename' },
@@ -655,7 +734,7 @@ export default function LLMGatewayPage() {
                       size="small"
                       icon={<PlusOutlined />}
                       style={{ marginLeft: 'auto' }}
-                      onClick={() => openCreateWith(selected.template)}
+                      onClick={() => openAddModel()}
                     >
                       {zh ? '添加模型' : 'Add model'}
                     </Button>
@@ -692,7 +771,7 @@ export default function LLMGatewayPage() {
                               type="text" size="small"
                               icon={<EditOutlined />}
                               title={text.edit} aria-label={text.edit}
-                              onClick={() => openEdit(profile)}
+                              onClick={() => openModelCfgEdit(profile)}
                             />
                             <Switch
                               size="small"
@@ -895,6 +974,79 @@ export default function LLMGatewayPage() {
           onChange={(e) => setRenameValue(e.target.value)}
           onPressEnter={submitRenameProvider}
         />
+      </Modal>
+      <Modal
+        title={modelCfgMode === 'add' ? (zh ? '添加模型' : 'Add model') : (zh ? '编辑模型配置' : 'Edit model config')}
+        open={modelCfgOpen}
+        onCancel={() => setModelCfgOpen(false)}
+        width={680}
+        destroyOnClose
+        footer={(
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Button type="link" onClick={() => modelForm.resetFields()}>{zh ? '重置表单' : 'Reset form'}</Button>
+            <Space>
+              <Button onClick={() => setModelCfgOpen(false)}>{zh ? '取消' : 'Cancel'}</Button>
+              <Button type="primary" loading={modelCfgSaving} onClick={() => void saveModelCfg()}>{zh ? '保存' : 'Save'}</Button>
+            </Space>
+          </div>
+        )}
+      >
+        <Form form={modelForm} layout="vertical">
+          <Form.Item
+            label={zh ? '智能配置' : 'Smart config'}
+            name="smart_config"
+            valuePropName="checked"
+            tooltip={zh ? '开启后上下文窗口、输入类型等由平台按上游目录自动填充' : 'Auto-fill config from upstream catalog'}
+          >
+            <Switch />
+          </Form.Item>
+          <Form.Item name="model_id" label={zh ? '模型 ID' : 'Model ID'} rules={[{ required: true, message: zh ? '请输入模型 ID' : 'Model ID required' }]}>
+            <Input placeholder="deepseek-chat" />
+          </Form.Item>
+          <Form.Item name="context_window" label={zh ? '上下文窗口' : 'Context window'} tooltip={zh ? '模型支持的上下文 Token 上限' : 'Max context tokens'}>
+            <InputNumber min={1} style={{ width: '100%' }} placeholder="1000000" />
+          </Form.Item>
+          <Form.Item name="max_output_tokens" label={zh ? '最大输出 Token' : 'Max output tokens'}>
+            <InputNumber min={1} style={{ width: '100%' }} placeholder="384000" />
+          </Form.Item>
+          <Collapse
+            ghost
+            defaultActiveKey={['advanced']}
+            items={[{
+              key: 'advanced',
+              label: zh ? '高级配置' : 'Advanced',
+              children: (
+                <>
+                  <Form.Item label={<span>{zh ? '输入类型' : 'Input types'} <Tooltip title={zh ? '模型支持的输入模态；文本固定开启' : 'Text is always on'}><QuestionCircleOutlined style={{ color: 'var(--v2-dim, #999)' }} /></Tooltip></span>} name="input_types">
+                    <Checkbox.Group
+                      options={[
+                        { label: zh ? '文本' : 'Text', value: 'text', disabled: true },
+                        { label: zh ? '图片' : 'Image', value: 'image' },
+                        { label: zh ? '视频' : 'Video', value: 'video' },
+                        { label: 'PDF', value: 'pdf' },
+                      ]}
+                    />
+                  </Form.Item>
+                  <Form.Item label={zh ? '模型能力' : 'Capabilities'} name="capabilities">
+                    <Checkbox.Group
+                      options={[
+                        { label: zh ? '结构化输出' : 'Structured output', value: 'structured_output' },
+                        { label: zh ? '原生联网搜索' : 'Web search', value: 'web_search' },
+                        { label: zh ? '对话中系统消息' : 'System message', value: 'system_message' },
+                      ]}
+                    />
+                  </Form.Item>
+                  <Form.Item label={<span>{zh ? '推理等级（从低到高）' : 'Reasoning levels (low to high)'} <Tooltip title={zh ? '点「+」添加等级标签，按从低到高排序' : 'Add level tags in ascending order'}><QuestionCircleOutlined style={{ color: 'var(--v2-dim, #999)' }} /></Tooltip></span>} name="reasoning_levels">
+                    <Select mode="tags" open={false} placeholder="+" style={{ width: 120 }} tokenSeparators={[',']} />
+                  </Form.Item>
+                  <Form.Item label={<span>{zh ? '推理参数映射' : 'Reasoning param mapping'} <Tooltip title={zh ? '推理等级到请求参数的映射表达式' : 'Mapping expression from reasoning level to params'}><QuestionCircleOutlined style={{ color: 'var(--v2-dim, #999)' }} /></Tooltip></span>} name="reasoning_mapping">
+                    <Input.TextArea rows={4} placeholder={'reasoningLevel == "disabled"\n  ? { ... }'} />
+                  </Form.Item>
+                </>
+              ),
+            }]}
+          />
+        </Form>
       </Modal>
     </AppLayout>
   )

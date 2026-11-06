@@ -64,6 +64,7 @@ def _out(db: Session, profile: LLMProfile) -> LLMProfileOut:
         deployment=profile.deployment,
         is_default=profile.is_default,
         enabled=getattr(profile, "enabled", True),
+        model_config_json=getattr(profile, "model_config_json", None),
         api_key_masked=masked,
         created_at=profile.created_at,
         updated_at=profile.updated_at,
@@ -241,6 +242,7 @@ def create_profile(
             deployment=payload.deployment,
             is_default=payload.is_default,
             enabled=payload.enabled,
+            model_config_json=payload.model_config_json,
             created_by=admin.id,
         )
         # Clear prior defaults before INSERT: the partial unique index would
@@ -321,12 +323,13 @@ def clone_profile(
                 temperature=source.temperature,
                 max_tokens=source.max_tokens,
                 timeout_seconds=source.timeout_seconds,
-                purpose_tags=source.purpose_tags,
-                deployment=source.deployment,
-                is_default=False,
-                enabled=getattr(source, "enabled", True),
-                created_by=admin.id,
-            )
+        purpose_tags=source.purpose_tags,
+        deployment=source.deployment,
+        is_default=False,
+        enabled=getattr(source, "enabled", True),
+        model_config_json=payload.model_config_json,
+        created_by=admin.id,
+    )
             db.add(profile)
             db.flush()
             break
@@ -373,6 +376,7 @@ def update_profile(
         "purpose_tags",
         "deployment",
         "enabled",
+        "model_config_json",
     ):
         value = getattr(payload, field)
         if value is not None:
