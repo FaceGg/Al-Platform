@@ -440,3 +440,13 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 **用户指令**：侧栏「建模与服务」拆成两组——建模：自动建模、模型训练、模型库；服务：闭环自动化、应用编排、API市场（按用户给的顺序，闭环自动化排到应用编排之前）。
 
 **改动**：`AppLayout` 算法平台侧栏改为四组（概览/数据/建模/服务，英文 Overview/Data/Modeling/Serving），菜单项与路由不变；`AppLayout.test` 新增用例锁定四组名称、成员与顺序（中英文）。平台说明文档「侧边栏菜单」一节原为改版前的 16 项平铺清单（含已不存在的折叠按钮、「点 Logo 回工作台」——现点 Logo 回首页门户），按现行顶部板块与各板块侧栏分组重写。
+
+## 2026-11-06 页面标题统一三遗留收口 + 推送
+
+**收口内容**（60dc4919，门禁 release/opt-20261105-cleanup 轮 7 run 42223023200 六绿——Chromium 首跑挂 CI 容器 redis DNS 解析瞬时故障，重跑即绿，与改动无关——后 SHA 定界推 origin/main）：①**菜单名单一真源**：i18n nav 补 announcements/audit/settings/llm_usage/agent_new/agent_tasks/agent_recipes 7 键、删 portalGroup 等 5 个零引用死键；AppLayout 顶栏板块名改读 `PageHeading.SECTIONS`（含新增 portal）、侧栏全部菜单名经 `navTitle(t,key,zh)`——页面标题与侧栏菜单永久同源，改菜单名两处自动同步。②**详情页统一页头**：PageHeading 新增 `parent`（「板块 / 父级菜单 / 详情」三段，父级弱化色可点击返回），接入任务详情/建模任务进度/闭环任务/知识库详情/项目详情/知识库/知识中心独立路由/模板向导/标注工具/算法目录共 10 页；画布工作区（全屏布局不走 AppLayout）标题胶囊补「应用编排」面包屑链接。③**闭环自动化全英文化**：i18n 新增 demo_loop zh/en 双段 115 键（parity 全树校验锁定齐平），列表页/配置弹窗/详情页全部硬编码改 `tr`；特征工程方式选项与「错误:正确」收集比例选项改为随语言构建（原为模块级常量无法翻译）；事件流标签走 `ev_*` 键。英文模式截图验收：列表页头/卡片/表格/空态、新建弹窗全表单、知识中心独立路由全英文（仅项目名「点焊」为后端数据、操作手册 markdown 正文为文档原文，保持不译）。
+
+**测试适配**：模板向导 2 用例补 MemoryRouter（父级 Link 需 Router 上下文）、AutoML 进度测试 router mock 补 Link 导出；全量 92 文件 540 用例+tsc+build 绿。
+
+**部署**：栈前端镜像用**干净检出**（git archive 60dc4919 + node_modules junction）构建后替换上栈——工作区当时含并行会话未验证的前端提交（LLM 页改动）与脏文件，不能直接用工作区构建；容器产物核对含 `v2-pt-sec` 与英文 demo_loop 文案。junction 先 rmdir 再删树（Windows 语义）。
+
+**新遗留**：①KnowledgeCenterContent 组件内部文案（知识库管理/刷新/新建知识库等）仍是中文硬编码——独立路由与智能体 tab 共用该组件，属下一批 i18n 缺口；②操作手册 markdown 正文为中文文档，英文模式不译（设计内）；③并行会话 60dc4919 之后的本地提交（LLM 修复+迁移 91/92）未过门禁未推送，由其自行收敛。
