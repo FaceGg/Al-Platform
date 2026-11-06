@@ -42,9 +42,9 @@ const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   { name: '阿里云百炼', short: '百', color: '#FF6A00', api_url: 'https://dashscope.aliyuncs.com/apps/anthropic', model_id: '', provider: 'anthropic', group: 'domestic', key_url: 'https://bailian.console.aliyun.com/' },
   { name: '火山方舟（豆包）', short: '火', color: '#1664FF', api_url: 'https://ark.cn-beijing.volces.com/api/compatible', model_id: '', provider: 'anthropic', group: 'domestic', key_url: 'https://console.volcengine.com/ark/' },
   { name: '硅基流动', short: '硅', color: '#7C3AED', api_url: 'https://api.siliconflow.cn/v1', model_id: 'deepseek-ai/DeepSeek-V3', provider: 'openai_compatible', group: 'domestic', key_url: 'https://cloud.siliconflow.cn/account/ak' },
-  { name: '腾讯 TokenHub', short: '腾', color: '#0052D9', api_url: 'https://tokenhub.tencentmaas.com/v1', model_id: '', provider: 'openai_compatible', group: 'domestic', key_url: 'https://tokenhub.tencentmaas.com/' },
+  { name: '腾讯 TokenHub', short: '腾', color: '#0052D9', api_url: 'https://tokenhub.tencentmaas.com/v1', model_id: '', provider: 'openai_compatible', group: 'domestic', key_url: 'https://cloud.tencent.com/login?s_url=https%3A%2F%2Fconsole.cloud.tencent.com%2Ftokenhub' },
   { name: 'MiniMax', short: 'M', color: '#F23F5D', api_url: 'https://api.minimaxi.com/anthropic', model_id: 'MiniMax-M2', provider: 'anthropic', group: 'domestic', key_url: 'https://platform.minimaxi.com/' },
-  { name: 'Xiaomi MiMo', short: 'Mi', color: '#FF6900', api_url: 'https://api.xiaomimimo.com/v1', model_id: '', provider: 'openai_compatible', group: 'domestic', key_url: 'https://xiaomimimo.com/' },
+  { name: 'Xiaomi MiMo', short: 'Mi', color: '#FF6900', api_url: 'https://api.xiaomimimo.com/v1', model_id: '', provider: 'openai_compatible', group: 'domestic', key_url: 'https://platform.xiaomimimo.com/token-plan' },
   // —— 国外（文档默认配置）——
   { name: 'OpenAI', short: 'AI', color: '#10A37F', api_url: 'https://api.openai.com/v1', model_id: 'gpt-4o', provider: 'responses', group: 'international', key_url: 'https://platform.openai.com/api-keys' },
   { name: 'OpenRouter', short: 'OR', color: '#8B5CF6', api_url: 'https://openrouter.ai/api/v1', model_id: '', provider: 'anthropic', group: 'international', key_url: 'https://openrouter.ai/settings/keys' },
