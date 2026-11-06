@@ -180,6 +180,104 @@ class TestOnnxConversion(unittest.TestCase):
                 )
                 self.assertEqual(validated.sha256, result.sha256)
 
+    @staticmethod
+    def _ensemble_data(labels=(0, 1)):
+        rng = np.random.RandomState(7)
+        features = np.vstack([
+            rng.normal(0.0, 1.0, (60, 2)),
+            rng.normal(2.0, 1.0, (60, 2)),
+        ])
+        target = np.asarray([labels[0]] * 60 + [labels[1]] * 60)
+        return features, target
+
+    def _assert_ensemble_matches_sklearn(self, vote, features, name):
+        import onnxruntime as ort
+
+        source = self.root / f"{name}.joblib"
+        destination = self.root / f"{name}.onnx"
+        joblib.dump(self._training_package(vote), source)
+        result = convert_platform_joblib(source, destination, timeout_seconds=120)
+        self.assertEqual(result.converter, "ensemble")
+        self.assertEqual(result.input_names, ("features",))
+        self.assertEqual(result.output_names, ("label", "probabilities"))
+        validate_onnx(destination, result.feature_schema, result.output_schema)
+        session = ort.InferenceSession(str(destination), providers=["CPUExecutionProvider"])
+        label, probabilities = session.run(None, {"features": features.astype(np.float32)})
+        # 合成图与 VotingClassifier.predict_proba 同口径（加权平均成员概率）
+        np.testing.assert_allclose(probabilities, vote.predict_proba(features), atol=1e-4)
+        self.assertEqual(list(label), list(vote.predict(features)))
+
+    def test_soft_voting_ensemble_converts_and_matches_sklearn(self):
+        """真机 91f51c69 的成员组合（CatBoost+HGB+LightGBM，含两种 ZipMap 输出）
+        及 sklearn/XGBoost/MLP 组合：ONNX 概率与标签必须与 sklearn 一致。"""
+        from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+        from sklearn.neural_network import MLPClassifier
+
+        features, target = self._ensemble_data()
+        combos = {
+            "catboost_hgb_lightgbm": [
+                ("catboost", CatBoostClassifier(iterations=20, depth=3, verbose=False, random_seed=0, allow_writing_files=False)),
+                ("hist_gradient_boosting", HistGradientBoostingClassifier(max_iter=10, random_state=0)),
+                ("lightgbm", LGBMClassifier(n_estimators=10, num_leaves=7, random_state=0, verbosity=-1)),
+            ],
+            "rf_lr_mlp_xgboost": [
+                ("random_forest", RandomForestClassifier(n_estimators=8, random_state=0, n_jobs=1)),
+                ("logistic", LogisticRegression(random_state=0)),
+                ("mlp", MLPClassifier(hidden_layer_sizes=(8,), max_iter=400, random_state=0)),
+                ("xgboost", XGBClassifier(n_estimators=8, max_depth=2, n_jobs=1, random_state=0, eval_metric="logloss")),
+            ],
+        }
+        for name, estimators in combos.items():
+            with self.subTest(combo=name):
+                weights = [0.5, 0.3, 0.2] if len(estimators) == 3 else [0.4, 0.3, 0.2, 0.1]
+                vote = VotingClassifier(estimators, voting="soft", weights=weights).fit(features, target)
+                self._assert_ensemble_matches_sklearn(vote, features, name)
+
+    def test_ensemble_with_string_labels_emits_string_label(self):
+        from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+
+        features, target = self._ensemble_data(labels=("ok", "ng"))
+        vote = VotingClassifier([
+            ("random_forest", RandomForestClassifier(n_estimators=8, random_state=0, n_jobs=1)),
+            ("logistic", LogisticRegression(random_state=0)),
+        ], voting="soft").fit(features, target)
+        import onnxruntime as ort
+
+        source = self.root / "string-labels.joblib"
+        destination = self.root / "string-labels.onnx"
+        package = self._training_package(vote)
+        package["target_schema"]["dtype"] = "object"
+        joblib.dump(package, source)
+        result = convert_platform_joblib(source, destination, timeout_seconds=120)
+        self.assertEqual(result.converter, "ensemble")
+        label, _probabilities = ort.InferenceSession(
+            str(destination), providers=["CPUExecutionProvider"],
+        ).run(None, {"features": features.astype(np.float32)})
+        self.assertEqual([str(item) for item in label], [str(item) for item in vote.predict(features)])
+
+    def test_hard_voting_ensemble_is_rejected(self):
+        from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+
+        features, target = self._ensemble_data()
+        vote = VotingClassifier([
+            ("random_forest", RandomForestClassifier(n_estimators=4, random_state=0, n_jobs=1)),
+            ("logistic", LogisticRegression(random_state=0)),
+        ], voting="hard").fit(features, target)
+        joblib.dump(self._training_package(vote), self.source)
+        with self.assertRaises(ConversionError) as raised:
+            convert_platform_joblib(self.source, self.destination)
+        self.assertEqual(raised.exception.code, "MODEL_CONVERSION_UNSUPPORTED")
+
+    def test_mlp_classifier_converts_with_skl2onnx(self):
+        """MLP 补进白名单：AutoML mlp 家族冠军此前一律 MODEL_CONVERSION_UNSUPPORTED。"""
+        from sklearn.neural_network import MLPClassifier
+
+        features, target = self._ensemble_data()
+        model = MLPClassifier(hidden_layer_sizes=(8,), max_iter=400, random_state=0).fit(features, target)
+        joblib.dump(self._training_package(model), self.source)
+        result = convert_platform_joblib(self.source, self.destination, timeout_seconds=120)
+        self.assertEqual(result.converter, "skl2onnx")
+
     def test_unknown_estimator_is_rejected(self):
         model = KMeans(n_clusters=2, random_state=0, n_init=1).fit(
             np.asarray([[0.0, 0.0], [1.0, 1.0], [8.0, 8.0]])

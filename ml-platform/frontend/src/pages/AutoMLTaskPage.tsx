@@ -10,6 +10,13 @@ import { taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 
 const { Text } = Typography;
 
+// 集成未采纳原因码 → 中文（引擎 _build_ensemble_candidate 产出）
+const ENSEMBLE_REASON_ZH: Record<string, string> = {
+  classification_only: "集成学习仅支持单输出分类任务",
+  fewer_than_2_candidates: "训练成功的候选模型不足 2 个，无法组成集成",
+  ensemble_fit_failed: "集成拟合失败（某个成员不支持概率输出等）",
+};
+
 function metric(row: Record<string, unknown>, names: string[]): number | null {
   for (const name of names) {
     const value = Number(row[name]);
@@ -132,6 +139,17 @@ export default function AutoMLTaskPage() {
 
   const reportReady = String(job?.status) === "completed" && displayPercent >= 100 && rows.length > 0;
   const formatMetric = (value: number | null) => value == null ? "-" : value.toFixed(4);
+  // 终选层集成（metrics.ensemble）：开启后无论采纳与否都展示成员/指标/结论
+  const ensembleInfo = (metrics.ensemble && typeof metrics.ensemble === "object"
+    ? metrics.ensemble
+    : null) as {
+      enabled?: boolean; adopted?: boolean; voting?: string; reason?: string;
+      members?: Array<{ name?: string; weight?: number }>;
+      metrics?: Record<string, unknown>;
+    } | null;
+  const ensembleMetric = (value: unknown) =>
+    value != null && Number.isFinite(Number(value)) ? Number(value).toFixed(4) : "-";
+  const bestModelName = (metrics.best_model as Record<string, unknown> | undefined)?.name;
   const selectedTrials = selectedModel && Array.isArray(selectedModel.trials)
     ? selectedModel.trials as Record<string, unknown>[]
     : [];
@@ -292,6 +310,42 @@ export default function AutoMLTaskPage() {
         </Space>}>
           {rows.length === 0 ? <Empty description={job.status === "completed" ? "暂无模型结果" : "模型训练中"} /> : <Table rowKey="key" dataSource={rows} pagination={false} columns={resultColumns} />}
         </Card>
+        {ensembleInfo?.enabled ? (
+          <Card
+            size="small"
+            title="集成学习（多模型加权投票）"
+            style={{ marginTop: 16 }}
+            extra={ensembleInfo.adopted
+              ? <Tag color="green">已采纳为任务冠军</Tag>
+              : <Tag color="orange">未采纳</Tag>}
+          >
+            <Descriptions column={{ xs: 1, sm: 2, md: 4 }} size="small">
+              <Descriptions.Item label="投票方式">{ensembleInfo.voting === "soft" ? "soft-voting 加权投票" : String(ensembleInfo.voting || "-")}</Descriptions.Item>
+              <Descriptions.Item label="AUC">{ensembleMetric(ensembleInfo.metrics?.auc)}</Descriptions.Item>
+              <Descriptions.Item label="F1">{ensembleMetric(ensembleInfo.metrics?.f1)}</Descriptions.Item>
+              <Descriptions.Item label="Accuracy">{ensembleMetric(ensembleInfo.metrics?.accuracy)}</Descriptions.Item>
+            </Descriptions>
+            {(ensembleInfo.members || []).length ? (
+              <div style={{ marginTop: 8 }}>
+                <Text type="secondary">成员与权重（按各模型主指标占比自动分配）：</Text>
+                <Space wrap size={6} style={{ marginTop: 4 }}>
+                  {(ensembleInfo.members || []).map((member) => (
+                    <Tag key={String(member.name)}>{String(member.name)} · {Number.isFinite(Number(member.weight)) ? Number(member.weight).toFixed(4) : "-"}</Tag>
+                  ))}
+                </Space>
+              </div>
+            ) : null}
+            <div style={{ marginTop: 8 }}>
+              <Text type="secondary">
+                {ensembleInfo.adopted
+                  ? "集成指标不低于最佳单模型，已成为任务冠军；可在结果列表注册并发布部署。"
+                  : ensembleInfo.reason
+                    ? `${ENSEMBLE_REASON_ZH[ensembleInfo.reason] ?? ensembleInfo.reason}，任务冠军保持为最佳单模型。`
+                    : `最佳单模型（${String(bestModelName || "-")}）按 AUC→F1→Accuracy 顺序更优，任务冠军保持为单模型；集成体仍可在结果列表单独注册。`}
+              </Text>
+            </div>
+          </Card>
+        ) : null}
         {analysisReport && <Card title="分析报告预览" style={{ marginTop: 16 }}>
           <Tabs items={[
             { key: "overview", label: "总览", children: <Descriptions bordered size="small" column={{ xs: 1, sm: 2, md: 3 }}>

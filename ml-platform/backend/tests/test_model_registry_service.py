@@ -244,6 +244,80 @@ class TestModelRegistryService(unittest.TestCase):
         self.assertEqual(version.source_model_library_id is not None, True)
         self.assertEqual(job.metrics["algorithm_results"][0]["model_version_id"], str(version.id))
 
+    def _ensemble_job(self):
+        """终选层集成产物形态：集成只在 all_results（不在 algorithm_results）。"""
+        from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+
+        job = TrainingJob(
+            project_id=self.project.id,
+            user_id=self.owner.id,
+            name=f"automl-{uuid.uuid4().hex}",
+            status="completed",
+            dataset_artifact_id=None,
+        )
+        self.db.add(job)
+        self.db.flush()
+        rng = np.random.RandomState(7)
+        features = np.vstack([rng.normal(0, 1, (40, 2)), rng.normal(2, 1, (40, 2))])
+        target = np.asarray([0] * 40 + [1] * 40)
+        vote = VotingClassifier([
+            ("random_forest", RandomForestClassifier(n_estimators=6, random_state=0, n_jobs=1)),
+            ("logistic", LogisticRegression(random_state=0)),
+        ], voting="soft", weights=[0.6, 0.4]).fit(features, target)
+        schema = [{"name": "current", "dtype": "float64"}, {"name": "voltage", "dtype": "float64"}]
+        target_schema = {"name": "fault", "dtype": "int64", "task": "classification", "classes": [0, 1]}
+        source_path = self.root / f"{job.id}-ensemble.joblib"
+        joblib.dump({"model": vote, "feature_schema": schema, "target_schema": target_schema}, source_path)
+        artifact = self.artifacts.create_from_file(
+            self.project.id, source_path, source_path.name, "model",
+            metadata={"source": "automl", "kind": "ensemble", "training_job_id": str(job.id), "best_algorithm": "ensemble"},
+            commit=False,
+        )
+        ensemble_row = {
+            "algorithm_id": "ensemble", "name": "集成加权投票", "status": "completed",
+            "model_artifact_id": str(artifact.id), "metrics": {"auc": 0.99, "f1": 0.97, "accuracy": 0.97},
+        }
+        job.metrics = {
+            "algorithm_results": [],
+            "all_results": [ensemble_row],
+            "best_candidate": "ensemble",
+            "best_model": {"algorithm_id": "ensemble", "name": "集成加权投票"},
+            "input_contract": {"task_type": "classification", "target_columns": ["fault"], "input_columns": ["current", "voltage"]},
+            "target_schema": target_schema,
+        }
+        self.db.commit()
+        return job
+
+    def test_ensemble_result_registers_with_real_onnx_conversion(self):
+        """详情页「注册」路径：集成走真实子进程转换得到 ONNX 版本，结果写回集成行。"""
+        real_service = ModelRegistryService(artifact_service=self.artifacts)
+        job = self._ensemble_job()
+        _model, version, created = real_service.register_automl_result(
+            self.db, job=job, algorithm_id="ensemble", actor_id=self.owner.id, commit=True,
+        )
+        self.assertTrue(created)
+        self.assertIsNotNone(version.onnx_artifact_id)
+        self.assertEqual(version.conversion_metadata["converter"], "ensemble")
+        self.assertEqual(version.conversion_metadata["output_names"], ["label", "probabilities"])
+        self.assertEqual(job.metrics["all_results"][0]["model_version_id"], str(version.id))
+        self.assertEqual(job.metrics["best_model"]["model_version_id"], str(version.id))
+
+    def test_ensemble_candidate_is_listed_and_registers_for_closed_loop(self):
+        """闭环换模路径：集成进候选列表（带指标）且 register_automl_candidate 可注册。"""
+        real_service = ModelRegistryService(artifact_service=self.artifacts)
+        job = self._ensemble_job()
+        candidates = real_service.list_registerable_candidates(self.db, job.id)
+        self.assertEqual([row["candidate_id"] for row in candidates], ["ensemble"])
+        self.assertEqual(candidates[0]["metrics"]["auc"], 0.99)
+        version, created = real_service.register_automl_candidate(
+            self.db, task_id=job.id, candidate_id="ensemble", model_name="闭环集成",
+            actor_id=self.owner.id, idempotency_key=f"loop-{job.id}",
+        )
+        self.db.commit()
+        self.assertTrue(created)
+        self.assertIsNotNone(version.onnx_artifact_id)
+        self.assertEqual(version.conversion_metadata["converter"], "ensemble")
+
     def test_platform_conversion_failure_is_exposed_as_stable_registry_error(self):
         library, _artifact = self._platform_source()
         failing_service = ModelRegistryService(

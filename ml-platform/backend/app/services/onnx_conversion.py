@@ -136,7 +136,7 @@ def convert_platform_joblib(
             feature_schema = _normalize_feature_schema(payload["feature_schema"])
             output_schema = _normalize_output_schema(payload["output_schema"])
             converter_name = str(payload.get("converter") or "skl2onnx")
-            if converter_name not in {"skl2onnx", "catboost", "xgboost", "lightgbm"}:
+            if converter_name not in {"skl2onnx", "catboost", "xgboost", "lightgbm", "ensemble"}:
                 raise ValueError
         except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
             _delete_partial(destination)

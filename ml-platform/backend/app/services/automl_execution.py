@@ -355,8 +355,10 @@ def _build_ensemble_candidate(
     采纳（持平取集成，多模型平均更稳），绝不降低现有水平。回归任务不支持
     （soft-voting 依赖 predict_proba），返回未采纳；失败同样退回单模型冠军。
 
-    返回 (model, info, members, member_weights)：model 仅在采纳时非 None；
-    members/member_weights 供调用方计算集成特征重要性（评估失败时为空）。
+    返回 (model, info, members, member_weights)：评估成功即返回已拟合的投票器
+    （未采纳也返回——持久化后可单独注册，用户可按业务偏好选用集成）；是否
+    替换任务冠军由 info["adopted"] 决定。评估失败/不适用时 model 为 None，
+    members/member_weights 为空。
     """
     info: dict = {"enabled": True}
     if task != "classification":
@@ -384,11 +386,18 @@ def _build_ensemble_candidate(
         (item.auc if item.auc is not None else item.best_score) or 0.0
         for item in members
     ]
-    total = sum(primary) or 1.0
-    member_weights = [value / total for value in primary]
+    total = sum(primary)
+    member_weights = (
+        [value / total for value in primary]
+        if total > 0
+        else [1.0 / len(members)] * len(members)
+    )
+    # weights 必须真正传入投票器——此前只算不传，实际是等权平均，界面显示的
+    # 权重与模型行为不一致（三成员权重恰好≈1/3 时看不出来）。
     vote = VotingClassifier(
         estimators=[(item.algorithm_id, item.best_estimator) for item in members],
         voting="soft",
+        weights=member_weights,
         n_jobs=-1,
     )
     try:
@@ -425,7 +434,7 @@ def _build_ensemble_candidate(
             "accuracy": round(accuracy, 4),
         },
     })
-    return (vote if info["adopted"] else None), info, members, member_weights
+    return vote, info, members, member_weights
 
 
 def _ensemble_feature_importance(members, member_weights, expected_width: int):
@@ -1015,10 +1024,13 @@ def _execute_optuna_job(
         "unavailable_targets": [] if winner_importance else [str(target_column)],
     }
     # ---- 终选层集成（params.ensemble，方案一）：部署模型可为加权投票体 ----
-    # 集成候选与单模型冠军同协议评估、同键比较；采纳才替换 model_artifact。
+    # 集成候选与单模型冠军同协议评估、同键比较；评估成功即持久化（未采纳
+    # 也可在结果列表单独注册），采纳才替换任务冠军（model_artifact）。
     ensemble_config = params.get("ensemble") if isinstance(params.get("ensemble"), dict) else {}
     ensemble_info: dict | None = None
     ensemble_artifact: ModelLibrary | None = None
+    ensemble_importance: dict = {}
+    ensemble_importance_report: dict = {}
     if ensemble_config.get("enabled"):
         ensemble_model, ensemble_info, ens_members, ens_weights = _build_ensemble_candidate(
             winner=winner,
@@ -1033,17 +1045,17 @@ def _execute_optuna_job(
             ens_vector = _ensemble_feature_importance(
                 ens_members, ens_weights, len(feature_schema),
             )
-            if ens_vector:
-                feature_importance = {
-                    str(name): float(ens_vector[index])
-                    for index, name in enumerate(features.columns)
-                }
-                feature_importance_report = {
-                    "source": "model_native_ensemble",
-                    "by_feature": feature_importance,
-                    "per_target": {str(target_column): feature_importance},
-                    "unavailable_targets": [],
-                }
+            ensemble_importance = {
+                str(name): float(ens_vector[index])
+                for index, name in enumerate(features.columns)
+            } if ens_vector else {}
+            ensemble_importance_report = {
+                "source": "model_native_ensemble" if ens_vector else "unavailable",
+                "by_feature": ensemble_importance,
+                "per_target": {str(target_column): ensemble_importance},
+                "unavailable_targets": [] if ens_vector else [str(target_column)],
+            }
+            ens_metrics = ensemble_info.get("metrics") or {}
             with tempfile.TemporaryDirectory() as temporary:
                 ens_path = Path(temporary) / f"{job.id}-ensemble.joblib"
                 joblib.dump({
@@ -1052,10 +1064,12 @@ def _execute_optuna_job(
                     "target_schema": target_schema,
                     "input_contract": input_contract,
                     "preprocessing": preprocessing,
-                    "feature_importance": feature_importance,
-                    "feature_importance_report": feature_importance_report,
+                    "feature_importance": ensemble_importance,
+                    "feature_importance_report": ensemble_importance_report,
                     "ensemble": ensemble_info,
                 }, ens_path)
+                # 元数据与单族工件同形（best_score/best_params 等），注册表按
+                # 同一套 automl 来源规则校验与登记。
                 ensemble_artifact = artifact_service.create_from_file(
                     job.project_id,
                     ens_path,
@@ -1067,26 +1081,47 @@ def _execute_optuna_job(
                         "training_job_id": str(job.id),
                         "dataset_artifact_id": str(dataset.id),
                         "best_algorithm": "ensemble",
+                        "best_score": ens_metrics.get("accuracy"),
+                        "best_params": {"members": ensemble_info.get("members"), "voting": "soft"},
                         "evaluation": evaluation,
                         "ensemble": ensemble_info,
                         "input_contract": input_contract,
                         "preprocessing": preprocessing,
-                        "feature_importance_report": feature_importance_report,
+                        "feature_importance_report": ensemble_importance_report,
                     },
                 )
+            if ensemble_info.get("adopted"):
+                # 冠军换成集成体：任务级特征重要性随之切换（集成无可用重要性
+                # 时如实标注 unavailable，不沿用单模型冠军的重要性冒充）。
+                feature_importance = ensemble_importance
+                feature_importance_report = ensemble_importance_report
+    # 结果行无论采纳与否都要写：未采纳时用户需要看到集成指标与未采纳原因
+    # （91f51c69 实测：只显示 metrics.ensemble 而结果列表无行，用户以为功能没跑）。
+    ensemble_metrics = (ensemble_info or {}).get("metrics") or {}
     if ensemble_artifact is not None:
-        # 摘要行与工件映射：结果列表可见集成候选及其采纳原因，富化循环统一补 id。
         persisted["ensemble"] = ensemble_artifact
-        ensemble_metrics = ensemble_info.get("metrics") or {}
+    if ensemble_info is not None and (ensemble_info.get("members") or ensemble_info.get("reason")):
         all_results.append({
             "name": "集成加权投票",
             "algorithm_id": "ensemble",
             "score": ensemble_metrics.get("accuracy"),
             "auc": ensemble_metrics.get("auc"),
             "f1": ensemble_metrics.get("f1"),
-            "params": {"members": ensemble_info.get("members"), "voting": "soft"},
+            # 注册表/闭环换模按 metrics 取分（单族摘要指标在顶层，集成行显式给出）
+            "metrics": {
+                key: ensemble_metrics.get(key)
+                for key in ("auc", "f1", "accuracy")
+                if ensemble_metrics.get(key) is not None
+            },
+            "params": {
+                "members": ensemble_info.get("members"),
+                "voting": ensemble_info.get("voting") or "soft",
+                "adopted": bool(ensemble_info.get("adopted")),
+                **({"reason": ensemble_info.get("reason")} if ensemble_info.get("reason") else {}),
+            },
             "training_time_seconds": 0.0,
-            "status": "completed",
+            "status": "completed" if ensemble_artifact is not None else "failed",
+            "adopted": bool(ensemble_info.get("adopted")),
         })
     result_rows = []
     for item in all_results:
@@ -1122,8 +1157,14 @@ def _execute_optuna_job(
         job.metrics["ensemble"] = ensemble_info
     if ensemble_info is not None and ensemble_info.get("adopted") and ensemble_artifact is not None:
         champion_algorithm_id = "ensemble"
+        # 部署工件必须真正切换到集成体：model_artifact 供下方 model_path/
+        # model_artifact_id/best_model 使用（测试抓到：只改标签时部署的仍是
+        # 单模型文件，集成名不副实）。
+        model_artifact = ensemble_artifact
         ensemble_metrics = ensemble_info.get("metrics") or {}
         job.metrics["best_candidate"] = "ensemble"
+        if ensemble_metrics.get("accuracy") is not None:
+            job.metrics["best_score"] = ensemble_metrics.get("accuracy")
         job.metrics["best_model"] = {
             "algorithm_id": "ensemble",
             "name": "集成加权投票",

@@ -75,12 +75,9 @@ class ModelRegistryService:
 
     @staticmethod
     def _automl_result(job, algorithm_id: str) -> dict:
-        metrics = dict(job.metrics or {})
-        results = metrics.get("algorithm_results")
-        if not isinstance(results, list):
-            raise ModelRegistryError("AUTOML_RESULT_NOT_FOUND")
-        for item in results:
-            if isinstance(item, dict) and str(item.get("algorithm_id")) == str(algorithm_id):
+        # 与 _candidate/候选列表/来源校验同一候选口径（含终选层集成行）。
+        for item in ModelRegistryService._registerable_items(job):
+            if str(item.get("algorithm_id")) == str(algorithm_id):
                 if item.get("status") != "completed" or not (
                     item.get("model_library_id") or item.get("model_artifact_id")
                 ):
@@ -263,9 +260,21 @@ class ModelRegistryService:
         return model, version, True
 
     @staticmethod
+    def _registerable_items(job) -> list[dict]:
+        """可注册候选 = 单族摘要（algorithm_results）+ 终选层集成行（all_results
+        中 algorithm_id == "ensemble"）。集成只出现在 all_results，此前三处只读
+        algorithm_results，集成永远 CANDIDATE_NOT_FOUND / MODEL_SOURCE_UNTRUSTED。"""
+        metrics = job.metrics or {}
+        items = [item for item in (metrics.get("algorithm_results") or ()) if isinstance(item, dict)]
+        for item in metrics.get("all_results") or ():
+            if isinstance(item, dict) and str(item.get("algorithm_id")) == "ensemble":
+                items.append(item)
+        return items
+
+    @staticmethod
     def _candidate(job, candidate_id):
-        for item in (job.metrics or {}).get("algorithm_results", ()):
-            if isinstance(item, dict) and str(item.get("candidate_id") or item.get("algorithm_id")) == str(candidate_id):
+        for item in ModelRegistryService._registerable_items(job):
+            if str(item.get("candidate_id") or item.get("algorithm_id")) == str(candidate_id):
                 if item.get("status") != "completed" or not item.get("model_artifact_id"):
                     raise ModelRegistryError("CANDIDATE_NOT_REGISTERABLE")
                 return item
@@ -410,14 +419,22 @@ class ModelRegistryService:
         if job.status != "completed":
             return []
         rows = []
-        for item in (job.metrics or {}).get("algorithm_results", ()):
-            if not isinstance(item, dict) or item.get("status") != "completed" or not item.get("model_artifact_id"):
+        for item in self._registerable_items(job):
+            if item.get("status") != "completed" or not item.get("model_artifact_id"):
                 continue
+            metrics = dict(item.get("aggregate") or item.get("metrics") or {})
+            if not metrics:
+                # 单输出族摘要的指标在顶层（auc/f1/best_score）。此前这里取空 →
+                # 闭环换模所有候选同分 0.0，max 恒选目录第一个族而非冠军。
+                for key, source_key in (("auc", "auc"), ("f1", "f1"), ("accuracy", "best_score")):
+                    value = item.get(source_key)
+                    if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        metrics[key] = float(value)
             rows.append({
                 "candidate_id": str(item.get("candidate_id") or item.get("algorithm_id")),
                 "algorithm_id": item.get("algorithm_id"),
                 "name": item.get("name") or item.get("algorithm_id"),
-                "metrics": dict(item.get("aggregate") or item.get("metrics") or {}),
+                "metrics": metrics,
                 "model_artifact_id": str(item.get("model_artifact_id")),
             })
         return rows
@@ -576,10 +593,9 @@ class ModelRegistryService:
                 or metadata.get("candidate_id")
                 or ""
             )
-            results = (job.metrics or {}).get("algorithm_results")
-            trusted = isinstance(results, list) and any(
-                isinstance(item, dict)
-                and str(item.get("algorithm_id")) == algorithm_id
+            results = self._registerable_items(job)
+            trusted = any(
+                str(item.get("algorithm_id")) == algorithm_id
                 and (
                     str(item.get("model_library_id")) == str(library.id)
                     or str(item.get("model_artifact_id")) == str(artifact.id)

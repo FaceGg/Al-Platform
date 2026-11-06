@@ -182,15 +182,21 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
     if ensemble_cfg.get("enabled"):
         members = scored[: max(2, min(int(ensemble_cfg.get("top_k") or 3), len(scored)))]
         if len(members) >= 2:
-            weight_total = sum(item[2] for item in members) or 1.0
-            member_weights = [item[2] / weight_total for item in members]
+            weight_total = sum(item[2] for item in members)
+            member_weights = (
+                [item[2] / weight_total for item in members]
+                if weight_total > 0
+                else [1.0 / len(members)] * len(members)
+            )
             vote = None
             try:
                 from sklearn.ensemble import VotingClassifier
 
+                # weights 必须真正传入（此前只算不传 = 等权平均，展示权重名不副实）
                 vote = VotingClassifier(
                     estimators=[(name, model) for name, model, *_r in members],
                     voting="soft",
+                    weights=member_weights,
                     n_jobs=-1,
                 )
                 vote.fit(X_train, y_train)
@@ -199,6 +205,8 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
                     _binary_metrics(proba, y_test, minority)
                 )
             except Exception:  # noqa: BLE001 - 集成失败退回单模型冠军
+                # vote 在拟合前已赋值：失败必须清空，否则下方采纳分支读未定义指标崩溃
+                vote = None
                 ensemble_info = {
                     "enabled": True, "adopted": False,
                     "reason": "ensemble_fit_failed",

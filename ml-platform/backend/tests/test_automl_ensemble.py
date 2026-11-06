@@ -81,9 +81,39 @@ class TestEnsembleCandidate(unittest.TestCase):
         self.assertTrue(info["adopted"])
         self.assertIsNotNone(model)
         self.assertEqual(info["voting"], "soft")
+        # 权重必须真正传入投票器（此前只算不传 = 等权平均，展示名不副实）
+        self.assertEqual([round(w, 6) for w in model.weights], [round(w, 6) for w in weights])
         X, _ = _make_frame()
         proba = model.predict_proba(X)
         self.assertEqual(proba.shape, (len(X), 2))
+
+    def test_not_adopted_still_returns_fitted_vote_for_persistence(self):
+        """未采纳也返回已拟合投票器——持久化后可在结果列表单独注册。"""
+        rng = np.random.RandomState(3)
+        X = np.vstack([rng.normal(0, 1, (200, 2)), rng.normal(1, 1, (200, 2))])
+        y = np.array([0] * 200 + [1] * 200)
+        families = []
+        for index, (name, estimator) in enumerate([
+            ("random_forest", RandomForestClassifier(n_estimators=12, random_state=7)),
+            ("logistic", LogisticRegression(max_iter=300)),
+        ]):
+            estimator.fit(X, y)
+            # 冠军指标虚高到 1.0：噪声数据上集成的真实 CV 指标必然更低 → 不采纳
+            families.append(FamilySearchResult(
+                algorithm_id=name, display_name=name, catalog_index=index,
+                status="completed", best_score=1.0, best_estimator=estimator,
+                auc=1.0, f1=1.0,
+            ))
+        model, info, members, weights = _build_ensemble_candidate(
+            winner=families[0], family_results=families, task="classification",
+            features=X, target=y,
+            evaluation={"cross_validation_enabled": True, "cross_validation_folds": 3},
+            ensemble_config={"enabled": True, "top_k": 2},
+        )
+        self.assertFalse(info["adopted"])
+        self.assertIsNotNone(model)
+        self.assertEqual(len(members), 2)
+        self.assertEqual(model.predict_proba(X[:5]).shape, (5, 2))
 
     def test_top_k_clamped_and_fewer_than_two_not_adopted(self):
         winner, families, evaluation = self._families()

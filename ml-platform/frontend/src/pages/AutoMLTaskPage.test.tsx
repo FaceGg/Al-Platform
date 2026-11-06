@@ -62,6 +62,86 @@ describe("AutoMLTaskPage model registration", () => {
     expect(screen.queryByText("焊点缺陷建模")).not.toBeInTheDocument();
   });
 
+  it("shows the not-adopted ensemble with members, metrics and the reason (91f51c69 shape)", async () => {
+    // 复刻真机 91f51c69：集成跑了但 AUC 略低于 CatBoost 冠军 → 未采纳
+    get.mockResolvedValue({ data: {
+      id: "job-1", project_id: "project-1", project_name: "一号焊装项目", experiment_name: "焊点缺陷实验",
+      status: "completed",
+      metrics: {
+        progress: { completed: 8, total: 8, percent: 100 },
+        best_model: { algorithm_id: "catboost", name: "CatBoost", auc: 0.9997, f1: 0.9922 },
+        all_results: [
+          { algorithm_id: "catboost", name: "CatBoost", status: "completed", model_artifact_id: "a-1", auc: 0.9997, f1: 0.9922, score: 0.9923 },
+          { algorithm_id: "ensemble", name: "集成加权投票", status: "completed", model_artifact_id: "ens-1", auc: 0.9996, f1: 0.9937, score: 0.9937, adopted: false },
+        ],
+        ensemble: {
+          enabled: true, adopted: false, voting: "soft",
+          members: [
+            { name: "catboost", weight: 0.3334 },
+            { name: "hist_gradient_boosting", weight: 0.3333 },
+            { name: "lightgbm", weight: 0.3333 },
+          ],
+          metrics: { auc: 0.9996, f1: 0.9937, accuracy: 0.9937 },
+        },
+      },
+    } });
+    renderPage();
+
+    expect(await screen.findByText("集成学习（多模型加权投票）")).toBeInTheDocument();
+    expect(screen.getByText("未采纳")).toBeInTheDocument();
+    expect(screen.getByText("soft-voting 加权投票")).toBeInTheDocument();
+    expect(screen.getByText("catboost · 0.3334")).toBeInTheDocument();
+    expect(screen.getByText("lightgbm · 0.3333")).toBeInTheDocument();
+    expect(screen.getByText(/最佳单模型（CatBoost）按 AUC→F1→Accuracy 顺序更优/)).toBeInTheDocument();
+    expect(screen.getByText(/集成体仍可在结果列表单独注册/)).toBeInTheDocument();
+    // 结果列表同时出现集成行；未采纳也已持久化 → 可单独注册（用户可按业务偏好选用）
+    const ensembleRow = screen.getByText("集成加权投票").closest("tr") as HTMLElement;
+    expect(within(ensembleRow).getByRole("button", { name: "注册" })).toBeEnabled();
+  });
+
+  it("marks an adopted ensemble as the deployed model", async () => {
+    get.mockResolvedValue({ data: {
+      id: "job-1", project_id: "project-1", project_name: "一号焊装项目", experiment_name: "焊点缺陷实验",
+      status: "completed",
+      metrics: {
+        progress: { completed: 3, total: 3, percent: 100 },
+        best_model: { algorithm_id: "ensemble", name: "集成加权投票" },
+        all_results: [
+          { algorithm_id: "ensemble", name: "集成加权投票", status: "completed", model_artifact_id: "ens-1", auc: 0.99, f1: 0.98, score: 0.98, adopted: true },
+        ],
+        ensemble: {
+          enabled: true, adopted: true, voting: "soft",
+          members: [{ name: "random_forest", weight: 0.6 }, { name: "logistic", weight: 0.4 }],
+          metrics: { auc: 0.99, f1: 0.98, accuracy: 0.98 },
+        },
+      },
+    } });
+    renderPage();
+
+    expect(await screen.findByText("已采纳为任务冠军")).toBeInTheDocument();
+    expect(screen.getByText(/已成为任务冠军；可在结果列表注册并发布部署/)).toBeInTheDocument();
+  });
+
+  it("explains an ensemble skipped for lack of candidates and hides the card when disabled", async () => {
+    get.mockResolvedValue({ data: {
+      id: "job-1", project_id: "project-1", project_name: "一号焊装项目", experiment_name: "焊点缺陷实验",
+      status: "completed",
+      metrics: {
+        progress: { completed: 1, total: 1, percent: 100 },
+        algorithm_results: [{ algorithm_id: "gbdt", name: "梯度提升树", status: "completed", model_library_id: "library-1", auc: 0.9, f1: 0.8, trials: [] }],
+        ensemble: { enabled: true, adopted: false, reason: "fewer_than_2_candidates" },
+      },
+    } });
+    renderPage();
+    expect(await screen.findByText(/训练成功的候选模型不足 2 个/)).toBeInTheDocument();
+  });
+
+  it("does not render the ensemble card when ensemble training was not enabled", async () => {
+    renderPage();
+    expect(await screen.findByText("焊点缺陷实验")).toBeInTheDocument();
+    expect(screen.queryByText("集成学习（多模型加权投票）")).not.toBeInTheDocument();
+  });
+
   it("shows completed jobs at 100% when a time budget ends before all planned trials", async () => {
     get.mockResolvedValue({ data: {
       id: "job-1",

@@ -869,6 +869,91 @@ class TestAutoMLTracking(unittest.TestCase):
             self.assertIsNotNone(job.model_artifact_id)
             self.assertTrue(job.metrics["search"]["budget_exhausted"])
 
+    def _ensemble_family_search(self, aucs):
+        """按给定 auc 序列返回完成家族（DummyClassifier 恒定概率 → 集成真实
+        AUC≈0.5，用假 auc 高于/低于 0.5 即可确定性地控制采纳走向）。"""
+        def family_search(**kwargs):
+            kwargs["progress_callback"](SimpleNamespace(trial_number=0))
+            return FamilySearchResult(
+                algorithm_id=kwargs["family"].id,
+                display_name=kwargs["family"].display_name,
+                catalog_index=kwargs["catalog_index"], status="completed",
+                best_score=round(aucs[kwargs["catalog_index"]] - 0.01, 4),
+                best_params=dict(kwargs["family"].default_params),
+                best_estimator=DummyClassifier(strategy="most_frequent").fit([[0], [1]], [0, 1]),
+                auc=aucs[kwargs["catalog_index"]],
+                f1=round(aucs[kwargs["catalog_index"]] - 0.005, 4),
+                completed_trials=1, training_time_seconds=1.0,
+            )
+        return family_search
+
+    def _execute_optuna(self, job_id, family_search):
+        return execute_automl_job(job_id, dependencies=AutoMLDependencies(
+            session_factory=self.Session, artifact_service_factory=lambda _db: self.artifacts,
+            tracking_factory=lambda: self.tracking, worker_id="worker-1", task_id="task-1",
+            family_search=family_search, monotonic=lambda: 0.0,
+        ))
+
+    def test_optuna_ensemble_not_adopted_still_reports_row_and_members(self):
+        """未采纳（91f51c69 形态）也要出结果行与成员摘要——用户可见集成跑过。"""
+        job_id = self.create_job(params={
+            "search_contract": "optuna_v1", "target_column": "quality",
+            "input_columns": ["current", "force"], "task": "classification",
+            "algorithm_ids": ["gbdt", "random_forest", "extra_trees"],
+            "search_method": "random", "max_trials": 3, "time_budget": 3600,
+            "ensemble": {"enabled": True, "top_k": 3},
+        })
+        # 假 auc 0.9/0.8/0.7 均高于恒定概率集成的真实 ~0.5 → 必不采纳
+        result = self._execute_optuna(job_id, self._ensemble_family_search([0.9, 0.8, 0.7]))
+        self.assertEqual(result.status, "completed")
+        self.assertNotEqual(result.best_candidate, "ensemble")
+        with self.Session() as db:
+            job = db.get(TrainingJob, job_id)
+            ensemble = job.metrics["ensemble"]
+            self.assertFalse(ensemble["adopted"])
+            self.assertEqual(len(ensemble["members"]), 3)
+            self.assertAlmostEqual(sum(m["weight"] for m in ensemble["members"]), 1.0, places=6)
+            rows = {item["algorithm_id"]: item for item in job.metrics["all_results"]}
+            self.assertIn("ensemble", rows)
+            self.assertFalse(rows["ensemble"]["adopted"])
+            # 未采纳也持久化 → 有工件可单独注册；任务冠军仍是单模型
+            self.assertIsNotNone(rows["ensemble"].get("model_artifact_id"))
+            self.assertNotEqual(str(job.model_artifact_id), str(rows["ensemble"]["model_artifact_id"]))
+            # 注册表候选同时列出单族与集成；单输出族指标从顶层回填（此前为空）
+            from app.services.model_registry import ModelRegistryService
+            candidates = {
+                row["candidate_id"]: row
+                for row in ModelRegistryService(artifact_service=self.artifacts).list_registerable_candidates(db, job.id)
+            }
+            self.assertIn("ensemble", candidates)
+            self.assertIn("gbdt", candidates)
+            self.assertEqual(candidates["gbdt"]["metrics"]["auc"], 0.9)
+            self.assertIn("auc", candidates["ensemble"]["metrics"])
+
+    def test_optuna_ensemble_adopted_deploys_the_voting_artifact(self):
+        """采纳时部署工件/最佳模型/返回 algorithm_id 全部指向集成体。"""
+        job_id = self.create_job(params={
+            "search_contract": "optuna_v1", "target_column": "quality",
+            "input_columns": ["current", "force"], "task": "classification",
+            "algorithm_ids": ["gbdt", "random_forest", "extra_trees"],
+            "search_method": "random", "max_trials": 3, "time_budget": 3600,
+            "ensemble": {"enabled": True, "top_k": 3},
+        })
+        # 假 auc 全部 0.4 低于恒定概率集成的真实 ~0.5 → 必采纳（持平取集成）
+        result = self._execute_optuna(job_id, self._ensemble_family_search([0.4, 0.4, 0.4]))
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.best_candidate, "ensemble")
+        with self.Session() as db:
+            job = db.get(TrainingJob, job_id)
+            self.assertEqual(job.metrics["best_candidate"], "ensemble")
+            self.assertEqual(job.metrics["best_model"]["algorithm_id"], "ensemble")
+            self.assertTrue(job.metrics["ensemble"]["adopted"])
+            winner_artifact = job.metrics["best_model"]["model_artifact_id"]
+            # 部署工件必须是集成体（与最佳单模型工件不同或 exactly ensemble 行的 id）
+            rows = {item["algorithm_id"]: item for item in job.metrics["all_results"]}
+            self.assertEqual(rows["ensemble"]["adopted"], True)
+            self.assertEqual(str(rows["ensemble"]["model_artifact_id"]), str(winner_artifact))
+
     def test_all_failed_marks_parent_and_job_failed(self):
         job_id = self.create_job()
         result = self.execute(job_id, [

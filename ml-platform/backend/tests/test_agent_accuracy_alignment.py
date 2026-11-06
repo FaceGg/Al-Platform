@@ -94,6 +94,36 @@ class TestLightTrainerEnsemble(unittest.TestCase):
         })
         self.assertEqual(len(result["ensemble"]["members"]), 2)
 
+    def test_ensemble_passes_reported_weights_into_voting(self):
+        """展示的成员权重必须就是投票器实际使用的权重（此前只算不传）。"""
+        from unittest import mock
+
+        from sklearn.ensemble import VotingClassifier
+
+        frame = self._make_frame()
+        with mock.patch("sklearn.ensemble.VotingClassifier", wraps=VotingClassifier) as spy:
+            result = lightweight_trainer(frame, frame["target"], hints={
+                "ensemble": {"enabled": True, "top_k": 3},
+            })
+        used = spy.call_args.kwargs["weights"]
+        reported = [member["weight"] for member in result["ensemble"]["members"]]
+        self.assertEqual([round(w, 4) for w in used], reported)
+
+    def test_ensemble_fit_failure_falls_back_without_crashing(self):
+        """投票器拟合抛错：退回单模型冠军并记录原因，不得读未定义指标崩溃。"""
+        from unittest import mock
+
+        from sklearn.ensemble import VotingClassifier
+
+        frame = self._make_frame()
+        with mock.patch.object(VotingClassifier, "fit", side_effect=RuntimeError("boom")):
+            result = lightweight_trainer(frame, frame["target"], hints={
+                "ensemble": {"enabled": True, "top_k": 3},
+            })
+        self.assertFalse(result["ensemble"]["adopted"])
+        self.assertEqual(result["ensemble"]["reason"], "ensemble_fit_failed")
+        self.assertIn("recall_minority", result["metrics"])
+
 
 if __name__ == "__main__":
     unittest.main()
