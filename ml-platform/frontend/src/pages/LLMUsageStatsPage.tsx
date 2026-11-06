@@ -63,7 +63,8 @@ export default function LLMUsageStatsPage() {
     chart.setOption({
       tooltip: { trigger: "axis" },
       legend: { data: zh ? ["输入 tokens", "输出 tokens"] : ["Prompt", "Completion"], bottom: 0, textStyle: { fontSize: 11 } },
-      grid: { left: 48, right: 16, top: 24, bottom: 34 },
+      // bottom 预留日期轴标签 + 图例两行的高度：34px 时两者挤在一起重叠（用户报障）
+      grid: { left: 48, right: 16, top: 24, bottom: 64 },
       xAxis: { type: "category", data: stats.by_day.map((d) => d.date.slice(5)), axisLabel: { fontSize: 10 } },
       yAxis: { type: "value", axisLabel: { fontSize: 10 } },
       series: [
