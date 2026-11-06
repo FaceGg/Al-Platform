@@ -64,11 +64,14 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   const [stepByStep, setStepByStep] = useState(false);
 
   // Step 2
-  // 数据形态全局单选已退役（用户指示）：列级「数据类型」自动预填 + 可改。
-  // autoShapes 随画像刷新重算；shapeOverrides 只记用户手改，避免换目标列
-  // 触发画像重取时覆盖用户已选的值。
+  // 数据形态全局单选已退役（用户指示）：列级「数据类型」自动识别 + 可改。
+  // 波形是"这类列"而非固定列名（cvei/cvev/cver/cvep 只是当前数据里的实例，
+  // 下次可能换名）：列名含 wave/波形，或字符串列单元格为长编码串（≥100
+  // 字符，波形编码指纹；VIN/编号类短 ID 不误判）判为波形，其余表格。
+  // shapeOverrides 只记用户手改，列清单变化不覆盖已选值。
   const [autoShapes, setAutoShapes] = useState<Record<string, ColumnShape>>({});
   const [shapeOverrides, setShapeOverrides] = useState<Record<string, ColumnShape>>({});
+  const [columnFilter, setColumnFilter] = useState("");
   const [columnDirectives, setColumnDirectives] = useState<Record<string, "keep" | "drop" | "">>({});
   const [featurePrompt, setFeaturePrompt] = useState("");
 
@@ -114,23 +117,8 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           miRank[item.column] = index + 1;
         });
         setProfileStats({ missing, miRank });
-        // 列级数据类型自动预填：列名含 wave/波形，或字符串列基数≈行数
-        // （每行唯一的编码数组是波形列的典型指纹）判为波形，其余表格。
-        const shapes: Record<string, ColumnShape> = {};
-        profile.columns.forEach((column) => {
-          const nearUnique = profile.row_count > 0
-            && column.cardinality / profile.row_count >= 0.9;
-          shapes[column.name] = /wave|波形/i.test(column.name)
-            || ((column.dtype ?? "string") === "string" && nearUnique)
-            ? "waveform"
-            : "tabular";
-        });
-        setAutoShapes(shapes);
       })
-      .catch(() => {
-        setProfileStats({ missing: {}, miRank: {} });
-        setAutoShapes({});
-      });
+      .catch(() => setProfileStats({ missing: {}, miRank: {} }));
     return () => {
       cancelled = true;
     };
@@ -181,13 +169,31 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   }, [projectId]);
 
   useEffect(() => {
-    setColumns([]); setSelectedColumns({}); setColumnNotes({}); setColumnDirectives({}); setShapeOverrides({}); setTargetColumn("");
+    setColumns([]); setSelectedColumns({}); setColumnNotes({}); setColumnDirectives({}); setShapeOverrides({}); setAutoShapes({}); setTargetColumn("");
     if (!datasetId) return;
     getDatasetPreview(datasetId).then((data) => {
       const cols: string[] = Array.isArray(data.columns)
         ? data.columns.filter((c: unknown): c is string => typeof c === "string")
         : [];
       setColumns(cols);
+      // 列级数据类型自动识别（按"这类列"的结构特征，不写死列名）：
+      // 列名含 wave/波形；或字符串列的样例单元格出现 ≥100 字符的长编码串
+      // （波形编码的指纹——cvei/cvev/cver/cvep 此类；VIN/工位号等短 ID
+      // 不误判）。样例不足时退列名规则，再退表格。
+      const rows: Array<Record<string, unknown>> = Array.isArray(data.preview) ? data.preview : [];
+      const dtypes: Record<string, string> = (data.dtypes ?? {}) as Record<string, string>;
+      const shapes: Record<string, ColumnShape> = {};
+      for (const col of cols) {
+        const samples = rows
+          .map((row) => row?.[col])
+          .filter((value): value is string => typeof value === "string" && value.length > 0);
+        const isStringType = (dtypes[col] ?? "object") === "object" || samples.length > 0;
+        const maxLen = samples.reduce((max, value) => Math.max(max, value.length), 0);
+        shapes[col] = /wave|波形/i.test(col) || (isStringType && maxLen >= 100)
+          ? "waveform"
+          : "tabular";
+      }
+      setAutoShapes(shapes);
       setTargetColumn(cols.includes("DECIDE(判定（最终判定）（0-不合格，1-合格）)")
         ? "DECIDE(判定（最终判定）（0-不合格，1-合格）)"
         : cols.includes("label") ? "label" : cols.includes("fault") ? "fault" : "");
@@ -202,11 +208,17 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   );
 
   const stepStatus = (n: StepId) => (n === step ? "on" : n < step ? "done" : "");
-  // 列数据类型的三级取值：手改 > 画像自动（dtype/高基数+列名）> 列名兜底
-  // （画像未覆盖/获取失败时名字含 wave/波形 仍可判波形）。
+  // 列数据类型三级取值：手改 > 预览结构识别 > 列名兜底（预览失败时
+  // 名字含 wave/波形 仍可判波形，不写死具体列名——波形列下次可能换名）。
   const shapeOf = (column: string): ColumnShape =>
     shapeOverrides[column] ?? autoShapes[column]
     ?? (/wave|波形/i.test(column) ? "waveform" : "tabular");
+  // 第二步列清单 = 全部非目标列（30 列上限已退役）；筛选项只影响显示，
+  // 载荷始终带全量，避免"搜索态下提交漏列"。
+  const directiveColumns = columns.filter(
+    (c) => c !== targetColumn
+      && (!columnFilter.trim() || c.toLowerCase().includes(columnFilter.trim().toLowerCase())),
+  );
   const steps: { n: StepId; tt: string; st: string }[] = [
     { n: 1, tt: zh ? "数据分析" : "Analysis", st: zh ? "选列说明 · 提示词" : "columns · prompts" },
     { n: 2, tt: zh ? "特征工程" : "Features", st: zh ? "列数据类型 · 指令" : "dtypes · directives" },
@@ -243,7 +255,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           feature: {
             // 全局 data_shape 单选已退役：列级标注随引导进 S2 提示词
             column_shapes: Object.fromEntries(
-              columns.filter((c) => c !== targetColumn).slice(0, 30)
+              columns.filter((c) => c !== targetColumn)
                 .map((c) => [c, shapeOf(c)])
             ),
             must_keep: Object.entries(columnDirectives).filter(([, v]) => v === "keep").map(([c]) => c),
@@ -407,33 +419,43 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
         <>
           <div className="v2-panel">
             <h4><span className="bar" />{zh ? "列级指令（可选）" : "Column directives (optional)"}
-              <span className="more">{zh ? "数据类型按画像自动预填（高基数字符串列判为波形），可手动调整" : "shapes auto-detected from profile, editable"}</span></h4>
-            <table className="v2-table">
-              <thead><tr><th>{zh ? "列" : "Column"}</th><th>{zh ? "数据类型" : "Data type"}</th><th>{zh ? "指令" : "Directive"}</th></tr></thead>
-              <tbody>
-                {columns.filter((c) => c !== targetColumn).slice(0, 30).map((column) => (
-                  <tr key={column}>
-                    <td className="tt">{column}</td>
-                    <td>
-                      <select className="v2-select" style={{ minWidth: 110 }} aria-label={`${zh ? "数据类型" : "data type"} ${column}`}
-                        value={shapeOf(column)}
-                        onChange={(e) => setShapeOverrides((cur) => ({ ...cur, [column]: e.target.value as ColumnShape }))}>
-                        <option value="tabular">{zh ? "表格" : "Tabular"}</option>
-                        <option value="waveform">{zh ? "波形" : "Waveform"}</option>
-                      </select>
-                    </td>
-                    <td>
-                      <select className="v2-select" style={{ minWidth: 150 }} value={columnDirectives[column] ?? ""}
-                        onChange={(e) => setColumnDirectives((cur) => ({ ...cur, [column]: e.target.value as "keep" | "drop" | "" }))}>
-                        <option value="">{zh ? "无" : "none"}</option>
-                        <option value="keep">{zh ? "必须保留" : "must keep"}</option>
-                        <option value="drop">{zh ? "建议剔除" : "suggest drop"}</option>
-                      </select>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+              <span className="more">{zh ? `全部 ${columns.filter((c) => c !== targetColumn).length} 列 · 数据类型自动识别（波形列=长编码串，换名也能识别），可手动调整` : `all ${columns.filter((c) => c !== targetColumn).length} columns · auto-detected, editable`}</span></h4>
+            <input className="v2-select" style={{ width: "100%", minWidth: 0, marginBottom: 8 }}
+              aria-label={zh ? "筛选列" : "filter columns"}
+              placeholder={zh ? "输入列名关键词筛选显示（不影响提交范围）" : "filter columns (display only)"}
+              value={columnFilter}
+              onChange={(e) => setColumnFilter(e.target.value)} />
+            <div style={{ maxHeight: 420, overflowY: "auto", border: "1px solid var(--v2-line)", borderRadius: 8 }}>
+              <table className="v2-table" style={{ margin: 0 }}>
+                <thead><tr><th>{zh ? "列" : "Column"}</th><th>{zh ? "数据类型" : "Data type"}</th><th>{zh ? "指令" : "Directive"}</th></tr></thead>
+                <tbody>
+                  {directiveColumns.map((column) => (
+                    <tr key={column}>
+                      <td className="tt">{column}</td>
+                      <td>
+                        <select className="v2-select" style={{ minWidth: 110 }} aria-label={`${zh ? "数据类型" : "data type"} ${column}`}
+                          value={shapeOf(column)}
+                          onChange={(e) => setShapeOverrides((cur) => ({ ...cur, [column]: e.target.value as ColumnShape }))}>
+                          <option value="tabular">{zh ? "表格" : "Tabular"}</option>
+                          <option value="waveform">{zh ? "波形" : "Waveform"}</option>
+                        </select>
+                      </td>
+                      <td>
+                        <select className="v2-select" style={{ minWidth: 150 }} value={columnDirectives[column] ?? ""}
+                          onChange={(e) => setColumnDirectives((cur) => ({ ...cur, [column]: e.target.value as "keep" | "drop" | "" }))}>
+                          <option value="">{zh ? "无" : "none"}</option>
+                          <option value="keep">{zh ? "必须保留" : "must keep"}</option>
+                          <option value="drop">{zh ? "建议剔除" : "suggest drop"}</option>
+                        </select>
+                      </td>
+                    </tr>
+                  ))}
+                  {!directiveColumns.length ? (
+                    <tr><td colSpan={3}><div className="v2-empty">{zh ? "无匹配列" : "no matching columns"}</div></td></tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
           </div>
           <div className="v2-panel">
             <h4><span className="bar" />{zh ? "特征提示词（可选）" : "Feature prompt (optional)"}</h4>

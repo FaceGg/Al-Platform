@@ -115,9 +115,16 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     expect(payload.guidance.evaluation.metric_gates).toEqual({});
   });
 
-  it("auto-detects waveform columns by name and honors manual override", async () => {
+  it("auto-detects waveform columns structurally and honors manual override", async () => {
+    // 波形是"这类列"而非固定列名：长编码串单元格（换名也能识别）判波形；
+    // VIN 类短 ID 字符串列不误判。
     datasetMocks.getDatasetPreview.mockResolvedValue({
-      columns: ["num1", "cvev(焊接电流波形)", "fault"],
+      columns: ["num1", "current_curve", "vin", "fault"],
+      dtypes: { num1: "float64", current_curve: "object", vin: "object", fault: "int64" },
+      preview: [
+        { num1: 1.5, current_curve: "[" + "0.12,0.13,".repeat(120) + "0.14]", vin: "LFV2A21J8E4100001" },
+        { num1: 2.5, current_curve: "[" + "0.22,0.23,".repeat(120) + "0.24]", vin: "LFV2A21J8E4100002" },
+      ],
     });
     renderWizard();
     fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });
@@ -125,11 +132,12 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     await waitFor(() => expect(screen.getByLabelText("选择目标列").querySelectorAll("option").length).toBeGreaterThan(1));
 
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
-    // 波形列按列名自动预填为「波形」，普通数值列为「表格」。
-    expect(await screen.findByLabelText("数据类型 cvev(焊接电流波形)")).toHaveValue("waveform");
+    // 长编码串列（名字不含"波形"）判波形；短 ID 列保持表格。
+    expect(await screen.findByLabelText("数据类型 current_curve")).toHaveValue("waveform");
+    expect(screen.getByLabelText("数据类型 vin")).toHaveValue("tabular");
     expect(screen.getByLabelText("数据类型 num1")).toHaveValue("tabular");
     // 用户手改波形列为表格：提交载荷以手改值为准。
-    fireEvent.change(screen.getByLabelText("数据类型 cvev(焊接电流波形)"), { target: { value: "tabular" } });
+    fireEvent.change(screen.getByLabelText("数据类型 current_curve"), { target: { value: "tabular" } });
 
     for (let i = 0; i < 3; i += 1) {
       fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
@@ -139,8 +147,37 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     const payload = agentCenterMocks.createAgentRun.mock.calls[0][0];
     expect(payload.guidance.feature.column_shapes).toEqual({
       num1: "tabular",
-      "cvev(焊接电流波形)": "tabular",
+      current_curve: "tabular",
+      vin: "tabular",
     });
+  });
+
+  it("shows all non-target columns without the 30-row cap and filters display only", async () => {
+    const many = Array.from({ length: 40 }, (_, i) => `COL_${i + 1}`);
+    datasetMocks.getDatasetPreview.mockResolvedValue({ columns: [...many, "fault"], preview: [] });
+    renderWizard();
+    fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });
+    fireEvent.change(await screen.findByLabelText("选择数据集"), { target: { value: "d1" } });
+    await waitFor(() => expect(screen.getByLabelText("选择目标列").querySelectorAll("option").length).toBeGreaterThan(1));
+
+    fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
+    // 30 列上限已退役：第 31-40 列同样渲染。
+    expect(await screen.findByLabelText("数据类型 COL_31")).toBeInTheDocument();
+    expect(screen.getByLabelText("数据类型 COL_40")).toBeInTheDocument();
+    // 筛选只影响显示：搜 COL_3 剩 COL_3/COL_30-COL_39（匹配子串），载荷仍全量。
+    fireEvent.change(screen.getByLabelText("筛选列"), { target: { value: "COL_31" } });
+    expect(screen.queryByLabelText("数据类型 COL_1")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("数据类型 COL_31")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("筛选列"), { target: { value: "" } });
+
+    for (let i = 0; i < 3; i += 1) {
+      fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
+    }
+    fireEvent.click(await screen.findByRole("button", { name: /^rocket 启动智能体$/ }));
+    await waitFor(() => expect(agentCenterMocks.createAgentRun).toHaveBeenCalled());
+    const payload = agentCenterMocks.createAgentRun.mock.calls[0][0];
+    expect(Object.keys(payload.guidance.feature.column_shapes)).toHaveLength(40);
+    expect(payload.guidance.feature.column_shapes["COL_40"]).toBe("tabular");
   });
 
   it("expands step-by-step mode into the pause plan on submit", async () => {
