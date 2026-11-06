@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Modal, Popconfirm, message } from "antd";
+import { Button, Modal, Popconfirm, message } from "antd";
+import { DeleteOutlined, EyeOutlined } from "@ant-design/icons";
 import {
   deleteRecipe,
   getRecipeDetail,
@@ -105,23 +106,13 @@ export default function RecipeRow({
             : "-"}
         </td>
         <td>{relative(recipe.updated_at ?? recipe.created_at, zh)}</td>
-        <td>
-          <button
-            type="button"
-            className="v2-chip"
-            style={{ cursor: "pointer" }}
-            onClick={toggle}
-          >
+        <td style={{ whiteSpace: "nowrap" }}>
+          <Button type="link" size="small" onClick={toggle}>
             {versions ? "▾" : "▸"} {zh ? "版本" : "Versions"}
-          </button>
-          <button
-            type="button"
-            className="v2-chip"
-            style={{ cursor: "pointer", marginLeft: 6 }}
-            onClick={() => void openDetail()}
-          >
+          </Button>
+          <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => void openDetail()}>
             {zh ? "详情" : "Detail"}
-          </button>
+          </Button>
           <Popconfirm
             title={zh ? "删除配方？" : "Delete recipe?"}
             description={zh ? "将删除全部版本；不影响已部署模型（部署持内容副本）。" : "All versions removed; deployed models keep their copies."}
@@ -130,14 +121,9 @@ export default function RecipeRow({
             okButtonProps={{ danger: true }}
             onConfirm={() => void remove()}
           >
-            <button
-              type="button"
-              className="v2-chip"
-              style={{ cursor: deleting ? "wait" : "pointer", marginLeft: 6, color: "var(--v2-red)" }}
-              disabled={deleting}
-            >
+            <Button type="link" size="small" danger icon={<DeleteOutlined />} disabled={deleting}>
               {zh ? "删除" : "Delete"}
-            </button>
+            </Button>
           </Popconfirm>
         </td>
       </tr>
