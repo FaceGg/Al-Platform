@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AutoComplete, Button, Collapse, Dropdown, Form, Input, InputNumber, message, Modal, Select, Space, Switch } from 'antd'
+import { AutoComplete, Button, Collapse, Dropdown, Form, Input, InputNumber, message, Modal, Popconfirm, Select, Space, Switch } from 'antd'
 import { ApiOutlined, CloudDownloadOutlined, DeleteOutlined, EditOutlined, MoreOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useI18n } from '../i18n'
 import AppLayout from '../components/AppLayout'
@@ -400,19 +400,24 @@ export default function LLMGatewayPage() {
     load()
   }
 
-  // 模型级操作（…菜单）：重命名（改档案名）/ 删除（删该模型档案）
-  const [renaming, setRenaming] = useState<LLMProfile | null>(null)
+  // 模型级操作：恢复原样式（测试/编辑/删除独立按钮+开关），见模型行渲染
+  const [renaming, setRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
   const [savingRename, setSavingRename] = useState(false)
+  // 自动获取的模型目录（供应商 Base URL+Key 可用时拉取；未配置的模型显示为可添加候选行）
+  const [catalog, setCatalog] = useState<string[]>([])
+  const [catalogLoading, setCatalogLoading] = useState(false)
 
-  const submitRename = async () => {
+  const submitRenameProvider = async () => {
     const name = renameValue.trim()
-    if (!renaming || !name) return
+    if (!selected || !name) return
     setSavingRename(true)
     try {
-      await updateLlmProfile(renaming.id, payloadOf(renaming, { name }))
+      for (const profile of selected.profiles) {
+        await updateLlmProfile(profile.id, payloadOf(profile, { name }))
+      }
       message.success(zh ? '已重命名' : 'Renamed')
-      setRenaming(null)
+      setRenaming(false)
       load()
     } catch (error) {
       message.error(formatApiError(error, zh ? '重命名失败' : 'Rename failed'))
@@ -421,60 +426,49 @@ export default function LLMGatewayPage() {
     }
   }
 
-  const removeModel = async (profile: LLMProfile) => {
+  // 自动拉取该供应商的模型目录（有已配置档案即可复用其 Key）
+  useEffect(() => {
+    if (!selected || !selected.profiles.length) { setCatalog([]); return }
+    const primary = selected.profiles.find((p) => p.is_default) ?? selected.profiles[0]
+    let cancelled = false
+    setCatalogLoading(true)
+    apiClient.post('/llm-profiles/list-models', {
+      api_url: selected.api_url,
+      provider: selected.provider === 'custom' ? 'openai_compatible' : selected.provider,
+      profile_id: primary.id,
+    }).then((res: { data?: { models?: string[] } }) => {
+      if (!cancelled) setCatalog(res.data?.models ?? [])
+    }).catch(() => {
+      if (!cancelled) setCatalog([])
+    }).finally(() => {
+      if (!cancelled) setCatalogLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [selected])
+
+  const addCatalogModel = async (modelId: string) => {
+    if (!selected?.profiles.length) return
+    const source = selected.profiles.find((p) => p.is_default) ?? selected.profiles[0]
     try {
-      await deleteLlmProfile(profile.id)
-      message.success(text.deleteOk)
+      await apiClient.post(`/llm-profiles/${source.id}/clone`, { model_id: modelId })
+      message.success(zh ? `已添加 ${modelId}` : `Added ${modelId}`)
       load()
     } catch (error) {
-      message.error(formatApiError(error, text.deleteFailed))
+      message.error(formatApiError(error, zh ? '添加失败' : 'Failed to add'))
     }
   }
 
-  const modelMenu = (profile: LLMProfile) => ({
+  const providerMenu = selected && selected.profiles.length ? {
     items: [
-      {
-        key: 'rename',
-        icon: <EditOutlined />,
-        label: zh ? '重命名' : 'Rename',
-      },
-      {
-        key: 'delete',
-        icon: <DeleteOutlined />,
-        label: zh ? '删除' : 'Delete',
-        danger: true,
-      },
+      { key: 'rename', icon: <EditOutlined />, label: zh ? '重命名' : 'Rename' },
+      { type: 'divider' as const },
+      { key: 'delete', icon: <DeleteOutlined />, label: zh ? '删除供应商' : 'Delete provider', danger: true },
     ],
     onClick: ({ key }: { key: string }) => {
       if (key === 'rename') {
-        setRenameValue(profile.name)
-        setRenaming(profile)
+        setRenameValue(selected.title)
+        setRenaming(true)
       }
-      if (key === 'delete') {
-        Modal.confirm({
-          title: zh ? '删除模型？' : 'Delete model?',
-          content: zh
-            ? `将删除档案「${profile.name}」（${profile.model_id}），不可恢复。`
-            : `Profile "${profile.name}" (${profile.model_id}) will be removed.`,
-          okText: zh ? '删除' : 'Delete',
-          okButtonProps: { danger: true },
-          cancelText: zh ? '取消' : 'Cancel',
-          onOk: () => removeModel(profile),
-        })
-      }
-    },
-  })
-
-  const providerMenu = selected && selected.profiles.length ? {
-    items: [
-      primaryProfile ? { key: 'probe', icon: <ApiOutlined />, label: zh ? '测试连接' : 'Test connection' } : null,
-      { key: 'default', icon: <PlusOutlined />, label: zh ? '设为平台默认' : 'Set as platform default' },
-      { type: 'divider' as const },
-      { key: 'delete', icon: <DeleteOutlined />, label: zh ? '删除供应商' : 'Delete provider', danger: true },
-    ].filter(Boolean),
-    onClick: ({ key }: { key: string }) => {
-      if (key === 'probe' && primaryProfile) void runProbe(primaryProfile)
-      if (key === 'default' && primaryProfile) void setDefaultProfile(primaryProfile, true)
       if (key === 'delete') {
         Modal.confirm({
           title: zh ? '删除供应商？' : 'Delete provider?',
@@ -673,22 +667,58 @@ export default function LLMGatewayPage() {
                           {profile.is_default ? <span className="v2-badge v2-bb">{text.defaultTag}</span> : null}
                           <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
                             <Button
-                              type="text" size="small"
+                              size="small"
                               icon={<ApiOutlined spin={testingId === profile.id} />}
-                              title={text.probe} aria-label={text.probe}
+                              loading={testingId === profile.id}
                               onClick={() => void runProbe(profile)}
-                            />
+                            >
+                              {text.probe}
+                            </Button>
+                            <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(profile)}>
+                              {text.edit}
+                            </Button>
+                            <Popconfirm title={text.deleteConfirm} onConfirm={() => remove(profile)}>
+                              <Button size="small" danger icon={<DeleteOutlined />}>
+                                {text.delete}
+                              </Button>
+                            </Popconfirm>
                             <Switch
                               size="small"
                               checked={profile.is_default}
                               onChange={(next) => void setDefaultProfile(profile, next)}
                             />
-                            <Dropdown menu={modelMenu(profile)} trigger={['click']}>
-                              <Button type="text" size="small" icon={<MoreOutlined />} aria-label={zh ? '更多操作' : 'More'} />
-                            </Dropdown>
                           </span>
                         </div>
                       ))}
+                      {/* 自动获取的模型目录：未配置的模型显示为候选行，一键克隆添加 */}
+                      {(catalogLoading || catalog.length) && selected.profiles.length ? (
+                        <div style={{ marginTop: 2 }}>
+                          <div style={{ fontSize: 12, color: 'var(--v2-dim, #999)', marginBottom: 4 }}>
+                            {catalogLoading
+                              ? (zh ? '正在获取模型目录…' : 'Fetching model catalog…')
+                              : `${zh ? '目录中尚未配置的模型' : 'Models in catalog not yet configured'}：`}
+                          </div>
+                          {catalog.filter((modelId) => !selected.profiles.some((p) => p.model_id === modelId)).map((modelId) => (
+                            <div
+                              key={modelId}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: 10,
+                                border: '1px dashed var(--v2-line, #e5e7eb)', borderRadius: 8,
+                                padding: '6px 12px', marginBottom: 6, color: 'var(--v2-sub, #999)',
+                              }}
+                            >
+                              <span className="tt">{modelId}</span>
+                              <Button
+                                type="link" size="small" icon={<PlusOutlined />}
+                                style={{ marginLeft: 'auto' }}
+                                onClick={() => void addCatalogModel(modelId)}
+                              >
+                                {zh ? '添加' : 'Add'}
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   )}
                 </div>
@@ -837,10 +867,10 @@ export default function LLMGatewayPage() {
         </Form>
       </Modal>
       <Modal
-        title={zh ? '重命名模型档案' : 'Rename profile'}
-        open={renaming !== null}
-        onOk={submitRename}
-        onCancel={() => setRenaming(null)}
+        title={zh ? '重命名供应商' : 'Rename provider'}
+        open={renaming}
+        onOk={submitRenameProvider}
+        onCancel={() => setRenaming(false)}
         confirmLoading={savingRename}
         okText={zh ? '保存' : 'Save'}
         cancelText={zh ? '取消' : 'Cancel'}
@@ -849,9 +879,9 @@ export default function LLMGatewayPage() {
       >
         <Input
           value={renameValue}
-          placeholder={zh ? '档案名称' : 'Profile name'}
+          placeholder={zh ? '供应商名称（供应商下全部模型档案统一改名）' : 'Provider name (applies to all profiles)'}
           onChange={(e) => setRenameValue(e.target.value)}
-          onPressEnter={submitRename}
+          onPressEnter={submitRenameProvider}
         />
       </Modal>
     </AppLayout>

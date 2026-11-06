@@ -118,6 +118,38 @@ class TestLLMProfilesAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["api_url"], "https://api.deepseek.com/anthropic")
 
+    def test_clone_copies_config_with_new_model_and_key(self):
+        """供应商自动获取目录后「一键添加候选模型」：克隆源档案含 Key，
+        仅替换 model_id/name，默认开关不随之复制。"""
+        secret = _fake_key("clone")
+        created = self._create(name="source-model", api_key=secret)
+        source_id = created.json()["id"]
+        clone_response = client.post(
+            f"/api/llm-profiles/{source_id}/clone",
+            json={"model_id": "glm-4.6-air", "name": "air-model"},
+            headers=self.h,
+        )
+        self.assertEqual(clone_response.status_code, 201)
+        clone = clone_response.json()
+        self.assertEqual(clone["model_id"], "glm-4.6-air")
+        self.assertEqual(clone["name"], "air-model")
+        self.assertFalse(clone["is_default"])
+        # 源档案存的是裸 base（剥后缀），克隆原样复制
+        self.assertEqual(clone["api_url"], "https://api.example-llm.com/v1")
+        # 克隆体带 Key（掩码尾号与源一致）
+        self.assertTrue(clone["api_key_masked"].endswith(secret[-4:]))
+        # 源档案不受影响
+        fetched = client.get(f"/api/llm-profiles/{source_id}", headers=self.h)
+        self.assertEqual(fetched.json()["model_id"], "glm-4.6")
+
+    def test_clone_unknown_source_404(self):
+        response = client.post(
+            f"/api/llm-profiles/{uuid4()}/clone",
+            json={"model_id": "m"},
+            headers=self.h,
+        )
+        self.assertEqual(response.status_code, 404)
+
     def test_api_url_validation_rejects_non_https_and_private_targets(self):
         bad_urls = [
             "http://api.example-llm.com/v1/chat/completions",

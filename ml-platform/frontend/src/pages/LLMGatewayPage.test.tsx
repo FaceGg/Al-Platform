@@ -138,8 +138,7 @@ describe("LLMGatewayPage", () => {
       </AntApp>
     );
     await screen.findByText("glm-default");
-    const row = screen.getByText("glm-default").closest("div") as HTMLElement;
-    fireEvent.click(within(row).getByRole("button", { name: "测试" }));
+    fireEvent.click(screen.getByText("测试"));
     await waitFor(() => expect(mocks.testLlmProfile).toHaveBeenCalledWith("profile-1"));
   });
 
@@ -151,14 +150,9 @@ describe("LLMGatewayPage", () => {
       </AntApp>
     );
     await screen.findByText("glm-default");
-    // 模型行「…」菜单 → 删除 → Modal.confirm 确认
-    const row = screen.getByText("glm-default").closest("div") as HTMLElement;
-    fireEvent.click(within(row).getByRole("button", { name: "更多操作" }));
-    const menuItem = await screen.findByRole("menuitem", { name: /删除/ });
-    fireEvent.click(menuItem);
-    await screen.findByText(/将删除档案/);
-    // antd 对两字中文按钮自动插空格：可访问名为「删 除」
-    const confirmOk = await screen.findByRole("button", { name: /^(删\s*除|OK)$/ });
+    fireEvent.click(screen.getByText("删除"));
+    await screen.findByText("确认删除该档案？");
+    const confirmOk = await screen.findByRole("button", { name: /^(OK|确\s*定)$/ });
     fireEvent.click(confirmOk);
     await waitFor(() => expect(mocks.deleteLlmProfile).toHaveBeenCalledWith("profile-1"));
   });

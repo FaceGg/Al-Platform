@@ -19,6 +19,7 @@ from app.models.llm_profile import LLMProfile
 from app.models.user import User
 from app.schemas.llm_profile import (
     LLMModelListRequest,
+    LLMProfileClone,
     LLMProfileConnectivity,
     LLMProfileCreate,
     LLMProfileOut,
@@ -285,6 +286,54 @@ def get_profile(
     current_user: User = Depends(get_current_user),
 ):
     return _out(db, _get_profile(db, profile_id))
+
+
+@router.post("/{profile_id}/clone", response_model=LLMProfileOut, status_code=201)
+def clone_profile(
+    profile_id: UUID,
+    payload: LLMProfileClone,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    source = _get_profile(db, profile_id)
+    try:
+        api_key = profile_api_key(source)
+    except LLMCredentialError as error:
+        raise HTTPException(status_code=503, detail={"code": "LLM_KEY_UNREADABLE"}) from error
+    name = (payload.name or f"{source.name}·{payload.model_id}").strip()[:128]
+    profile_id_new = uuid4()
+    profile = LLMProfile(
+        id=profile_id_new,
+        name=name,
+        provider=source.provider,
+        api_url=source.api_url,
+        api_key_encrypted=encrypt_llm_api_key(api_key, _master_key()),
+        model_id=payload.model_id,
+        temperature=source.temperature,
+        max_tokens=source.max_tokens,
+        timeout_seconds=source.timeout_seconds,
+        purpose_tags=source.purpose_tags,
+        deployment=source.deployment,
+        is_default=False,
+        created_by=admin.id,
+    )
+    db.add(profile)
+    record_platform_event(
+        db,
+        actor=admin,
+        request=request,
+        intent=PlatformAuditIntent(
+            action="llm_profile.clone",
+            resource_type="llm_profile",
+            resource_id=str(profile.id),
+            changes={"source_id": str(source.id), "model_id": payload.model_id},
+        ),
+        result="success",
+    )
+    db.commit()
+    db.refresh(profile)
+    return _out(db, profile)
 
 
 @router.patch("/{profile_id}", response_model=LLMProfileOut)

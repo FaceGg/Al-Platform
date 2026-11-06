@@ -87,3 +87,11 @@ class LLMProfileConnectivity(BaseModel):
     status_code: int | None
     latency_ms: float | None
     error: str | None
+
+
+class LLMProfileClone(BaseModel):
+    """从源档案克隆新模型：复制 URL/格式/Key 等全部配置，仅替换模型与名称
+    （供应商自动获取目录后「一键添加候选模型」用——前端只有掩码，无法自填 Key）。"""
+
+    model_id: str = Field(min_length=1, max_length=128)
+    name: str | None = Field(default=None, max_length=128)
