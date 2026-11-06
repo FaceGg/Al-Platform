@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App as AntApp } from "antd";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LLMGatewayPage from "./LLMGatewayPage";
@@ -20,6 +20,7 @@ vi.mock("../api/client", () => ({
 }));
 vi.mock("../i18n", () => ({
   useI18n: () => ({
+    lang: "zh",
     t: {
       llm: {
         title: "大模型管理",
@@ -91,8 +92,8 @@ describe("LLMGatewayPage", () => {
         <LLMGatewayPage />
       </AntApp>
     );
-    expect(await screen.findByText("glm-default")).toBeInTheDocument();
-    expect(screen.getByText("***abcd")).toBeInTheDocument();
+    await screen.findByText("glm-default").catch(() => {}); screen.debug(undefined, 30000); expect(await screen.findByText("glm-default")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("***abcd")).toBeInTheDocument();
     expect(screen.getByText("默认")).toBeInTheDocument();
   });
 
@@ -106,9 +107,10 @@ describe("LLMGatewayPage", () => {
     );
     await screen.findByText("glm-default");
     fireEvent.click(screen.getByText("添加供应商"));
-    // 两段式：先选模板卡（预填 URL/模型），再进创建表单
-    await waitFor(() => expect(screen.getByText("DeepSeek", { selector: "span" })).toBeInTheDocument());
-    fireEvent.click(screen.getByText("DeepSeek", { selector: "span" }));
+    // 两段式：先选模板卡（预填 URL/模型），再进创建表单（在弹窗内点卡片——左栏现在也有同名供应商项）
+    const picker = screen.getByTestId("provider-picker");
+    await waitFor(() => expect(within(picker).getByText("DeepSeek", { selector: "span" })).toBeInTheDocument());
+    fireEvent.click(within(picker).getByText("DeepSeek", { selector: "span" }));
     await waitFor(() => expect(screen.getByLabelText("名称")).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "glm-backup" } });
     fireEvent.change(screen.getByLabelText("Base URL"), {
@@ -136,7 +138,8 @@ describe("LLMGatewayPage", () => {
       </AntApp>
     );
     await screen.findByText("glm-default");
-    fireEvent.click(screen.getByText("测试"));
+    const row = screen.getByText("glm-default").closest("div") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "测试" }));
     await waitFor(() => expect(mocks.testLlmProfile).toHaveBeenCalledWith("profile-1"));
   });
 
@@ -148,7 +151,8 @@ describe("LLMGatewayPage", () => {
       </AntApp>
     );
     await screen.findByText("glm-default");
-    fireEvent.click(screen.getByText("删除"));
+    const row = screen.getByText("glm-default").closest("div") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "删除" }));
     await screen.findByText("确认删除该档案？");
     const confirmOk = await screen.findByRole("button", { name: /^(OK|确\s*定)$/ });
     fireEvent.click(confirmOk);
