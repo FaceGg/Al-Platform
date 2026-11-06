@@ -5,6 +5,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import apiClient from '../api/client'
 import type { ProjectRole } from '../api/securityNotifications'
 import AppLayout from '../components/AppLayout'
+import PageHeading from '../components/PageHeading'
 import ProjectGovernanceTabs from './ProjectGovernanceTabs'
 import { formatLocalTime } from '../utils/time'
 
@@ -70,24 +71,26 @@ export default function ProjectDetailPage() {
 
   return (
     <AppLayout>
-      <div style={{ marginBottom: 16 }}>
-        <Button onClick={() => navigate('/projects')} type="link">&larr; 返回项目列表</Button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0' }}>
-          {editingName ? (
-            <Input value={projName}
-              onChange={(e) => setProjName(e.target.value)}
-              onPressEnter={saveProjectName} onBlur={saveProjectName}
-              autoFocus style={{ width: 300, fontSize: 18, fontWeight: 600 }} />
-          ) : (
-            <>
-              <h3 style={{ margin: 0 }}>{project.name}</h3>
+      <PageHeading
+        section="algo"
+        parent={{ navKey: "projects", to: '/projects' }}
+        title={project.name}
+        desc={project.description}
+        actions={(
+          <>
+            <Button onClick={() => navigate('/projects')} type="link">&larr; 返回项目列表</Button>
+            {editingName ? (
+              <Input value={projName}
+                onChange={(e) => setProjName(e.target.value)}
+                onPressEnter={saveProjectName} onBlur={saveProjectName}
+                autoFocus style={{ width: 300, fontSize: 18, fontWeight: 600 }} />
+            ) : (
               <Button type="text" size="small" icon={<EditOutlined />}
                 onClick={() => setEditingName(true)} />
-            </>
-          )}
-        </div>
-        <p style={{ color: '#666' }}>{project.description}</p>
-      </div>
+            )}
+          </>
+        )}
+      />
 
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <h4>工作流</h4>

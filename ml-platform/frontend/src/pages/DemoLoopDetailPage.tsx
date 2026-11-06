@@ -8,6 +8,7 @@ import {
 } from "@ant-design/icons";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import LoopConfigModal, { type FieldDescTask, type LoopEditorState } from "../components/loop/LoopConfigModal";
 import { formatApiError } from "../api/client";
 import { listAnnotationTasks } from "../api/annotationTasks";
@@ -20,7 +21,7 @@ import {
 import { useI18n } from "../i18n";
 import { parseBackendTime } from "../utils/time";
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 interface ParsedRow { __index: number; values: Record<string, unknown>; }
 
@@ -121,7 +122,7 @@ export default function DemoLoopDetailPage() {
       setDatasets((ds?.items || []).map((item: any) => ({ id: item.id, name: item.name })));
       setAnnotators((ann?.items || []).map((item: any) => ({ id: item.id, username: item.username })));
     } catch (error) {
-      message.error(formatApiError(error, "闭环数据加载失败"));
+      message.error(formatApiError(error, tr.load_failed || "闭环数据加载失败"));
     }
   }, [projectId, loopId]);
 
@@ -197,7 +198,7 @@ export default function DemoLoopDetailPage() {
           // 重试仍失败：跳过该行并在结果面板标记，不中断整个回放
           consecutiveFailures += 1;
           failedRows += 1;
-          const reason = formatApiError(lastError, "调用失败");
+          const reason = formatApiError(lastError, tr.call_failed || "调用失败");
           const detail = reason.length > 80 ? `${reason.slice(0, 80)}…` : reason;
           setResults((prev) => [...prev.slice(-29), {
             index: rows[i].__index,
@@ -209,7 +210,7 @@ export default function DemoLoopDetailPage() {
           }]);
           if (consecutiveFailures >= CONSECUTIVE_LIMIT) {
             stoppedByFailures = true;
-            message.error(`连续 ${CONSECUTIVE_LIMIT} 行调用失败，闭环已停止，请检查推理服务与网络后重试`);
+            message.error((tr.consecutive_stop || "连续 {n} 行调用失败，闭环已停止，请检查推理服务与网络后重试").replace("{n}", String(CONSECUTIVE_LIMIT)));
             break;
           }
           continue;
@@ -233,10 +234,10 @@ export default function DemoLoopDetailPage() {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       if (!stoppedByFailures && failedRows > 0) {
-        message.warning(`回放结束：${failedRows} 行调用失败已跳过（详见结果面板）`);
+        message.warning((tr.playback_done || "回放结束：{n} 行调用失败已跳过（详见结果面板）").replace("{n}", String(failedRows)));
       }
     } catch (error) {
-      message.error(formatApiError(error, "单行调用失败，闭环已停止"));
+      message.error(formatApiError(error, tr.call_failed_stop || "单行调用失败，闭环已停止"));
     } finally {
       setRunning(false);
       fetchDemoLoopStatusScoped(projectId, loopId).then((st: any) => setStatus(st)).catch(() => undefined);
@@ -252,7 +253,7 @@ export default function DemoLoopDetailPage() {
       setProgress(0);
       message.success(tr.reset_done || "闭环状态已重置");
     } catch (error) {
-      message.error(formatApiError(error, "重置失败"));
+      message.error(formatApiError(error, tr.reset_failed || "重置失败"));
     }
   };
 
@@ -277,37 +278,39 @@ export default function DemoLoopDetailPage() {
         .demo-swap-card { animation: demoSwapGlow 1.1s ease; transform-origin: center; }
       `}</style>
 
-      <Card style={{ marginBottom: 16 }}>
-        <Space wrap size="large">
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(`/demo-loop`)}>返回任务列表</Button>
-          <Title level={3} style={{ margin: 0 }}>
-            <DeploymentUnitOutlined /> {loop?.name || "闭环任务详情"}
-          </Title>
-          <Button icon={<EditOutlined />} disabled={running || !loop}
-            onClick={async () => {
-              if (loop) {
-                setEditor({ mode: "edit", loop });
-                try {
-                  const tasksRes: any = await listAnnotationTasks(projectId, 50);
-                  const tasks = tasksRes?.items || tasksRes || [];
-                  setFieldDescTasks((Array.isArray(tasks) ? tasks : [])
-                    .filter((task: any) => Object.keys(task.task_snapshot?.field_descriptions || {}).length > 0)
-                    .map((task: any) => ({
-                      id: task.id,
-                      name: task.name || task.id.slice(0, 8),
-                      descriptions: task.task_snapshot?.field_descriptions || {},
-                    })));
-                } catch { setFieldDescTasks([]); }
-              }
-            }}>编辑配置</Button>
-          <Button icon={<ReloadOutlined />} onClick={() => { loadLoop(); }}>刷新</Button>
-          <Button icon={<MonitorOutlined />}
-            onClick={() => window.open(`/demo-showcase.html`, "_blank")}>
-            {tr.showcase || "运行监控大屏"}
-          </Button>
-          <Button danger icon={<RestOutlined />} onClick={handleReset} disabled={!loop}>{tr.reset || "重置闭环"}</Button>
-        </Space>
-      </Card>
+      <PageHeading
+        section="algo"
+        parent={{ navKey: "demo_loop", to: "/demo-loop" }}
+        title={loop?.name || tr.detail_title || "闭环任务详情"}
+        actions={(
+          <>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(`/demo-loop`)}>{tr.back_to_list || "返回任务列表"}</Button>
+            <Button icon={<EditOutlined />} disabled={running || !loop}
+              onClick={async () => {
+                if (loop) {
+                  setEditor({ mode: "edit", loop });
+                  try {
+                    const tasksRes: any = await listAnnotationTasks(projectId, 50);
+                    const tasks = tasksRes?.items || tasksRes || [];
+                    setFieldDescTasks((Array.isArray(tasks) ? tasks : [])
+                      .filter((task: any) => Object.keys(task.task_snapshot?.field_descriptions || {}).length > 0)
+                      .map((task: any) => ({
+                        id: task.id,
+                        name: task.name || task.id.slice(0, 8),
+                        descriptions: task.task_snapshot?.field_descriptions || {},
+                      })));
+                  } catch { setFieldDescTasks([]); }
+                }
+              }}>{tr.edit_config || "编辑配置"}</Button>
+            <Button icon={<ReloadOutlined />} onClick={() => { loadLoop(); }}>{tr.refresh || "刷新"}</Button>
+            <Button icon={<MonitorOutlined />}
+              onClick={() => window.open(`/demo-showcase.html`, "_blank")}>
+              {tr.showcase || "运行监控大屏"}
+            </Button>
+            <Button danger icon={<RestOutlined />} onClick={handleReset} disabled={!loop}>{tr.reset || "重置闭环"}</Button>
+          </>
+        )}
+      />
 
       <Row gutter={16}>
         <Col span={14}>
@@ -350,9 +353,9 @@ export default function DemoLoopDetailPage() {
                       borderRadius: 6, marginBottom: 4,
                       background: item.error ? "rgba(255,77,79,.08)" : "rgba(82,196,26,.06)",
                     }}>
-                    <Text>第 {item.index} 行 · {item.failed ? "调用失败：" : "预测 "}<Text strong>{item.prediction}</Text>
-                      {item.confidence !== null && item.confidence !== undefined ? ` · 置信度 ${(item.confidence * 100).toFixed(1)}%` : null}</Text>
-                    {item.failed ? <Tag color="red">调用失败</Tag> : item.appended ? <Tag color="red">已回流</Tag> : <Tag color="green">正常</Tag>}
+                    <Text>{(tr.row_prefix || "第 {n} 行").replace("{n}", String(item.index))} · {item.failed ? (tr.call_failed_colon || "调用失败：") : (tr.predicted || "预测 ")}<Text strong>{item.prediction}</Text>
+                      {item.confidence !== null && item.confidence !== undefined ? ` · ${(tr.confidence || "置信度 {p}%").replace("{p}", (item.confidence * 100).toFixed(1))}` : null}</Text>
+                    {item.failed ? <Tag color="red">{tr.tag_failed || "调用失败"}</Tag> : item.appended ? <Tag color="red">{tr.tag_appended || "已回流"}</Tag> : <Tag color="green">{tr.tag_normal || "正常"}</Tag>}
                   </div>
                 ))}
               </div>
@@ -369,41 +372,41 @@ export default function DemoLoopDetailPage() {
           )} size="small">
             <Space direction="vertical" style={{ width: "100%" }} size="middle">
               <Row gutter={12}>
-                <Col span={6}><Statistic title="已推理" value={totalCount} /></Col>
-                <Col span={6}><Statistic title="回流行数" value={errorCount} valueStyle={{ color: errorCount ? "#cf1322" : undefined }} /></Col>
-                <Col span={6}><Statistic title="告警次数" value={status?.alert_count ?? 0} /></Col>
+                <Col span={6}><Statistic title={tr.stat_inferred || "已推理"} value={totalCount} /></Col>
+                <Col span={6}><Statistic title={tr.stat_reflow || "回流行数"} value={errorCount} valueStyle={{ color: errorCount ? "#cf1322" : undefined }} /></Col>
+                <Col span={6}><Statistic title={tr.stat_alerts || "告警次数"} value={status?.alert_count ?? 0} /></Col>
                 <Col span={6}>
-                  <Statistic title="自动建模" valueRender={() => (
+                  <Statistic title={tr.stat_retrain || "自动建模"} valueRender={() => (
                     <Tag color={status?.retrain_status === "completed" ? "green"
                       : status?.retrain_status === "failed" ? "red"
                         : status?.retrain_status === "running" || status?.retrain_status === "queued" ? "blue" : "default"}
                       style={{ marginTop: 8 }}>
-                      {status?.retrain_status === "completed" ? "已完成" : status?.retrain_status === "failed" ? "失败"
-                        : status?.retrain_status === "running" ? "执行中" : status?.retrain_status === "queued" ? "已排队" : "空闲"}
+                      {status?.retrain_status === "completed" ? (tr.retrain_done || "已完成") : status?.retrain_status === "failed" ? (tr.retrain_failed || "失败")
+                        : status?.retrain_status === "running" ? (tr.retrain_running || "执行中") : status?.retrain_status === "queued" ? (tr.retrain_queued || "已排队") : (tr.retrain_idle || "空闲")}
                     </Tag>
                   )} />
                 </Col>
               </Row>
               <div>
-                <Text type="secondary" style={{ fontSize: 12 }}>告警进度（{errorCount}/{alertThreshold}）</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{(tr.alert_progress || "告警进度（{e}/{t}）").replace("{e}", String(errorCount)).replace("{t}", String(alertThreshold))}</Text>
                 <Progress percent={Math.min(100, alertThreshold ? (errorCount % alertThreshold || (errorCount ? alertThreshold : 0)) / alertThreshold * 100 : 0)}
                   showInfo={false} size="small" strokeColor="#fa8c16" />
                 {retrainThreshold > 0 && (
                   <>
-                    <Text type="secondary" style={{ fontSize: 12 }}>重训进度（{errorCount}/{retrainThreshold}）</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>{(tr.retrain_progress || "重训进度（{e}/{t}）").replace("{e}", String(errorCount)).replace("{t}", String(retrainThreshold))}</Text>
                     <Progress percent={Math.min(100, errorCount / retrainThreshold * 100)}
                       showInfo={false} size="small" strokeColor="#722ed1" />
                   </>
                 )}
               </div>
               {status?.error_artifact && (
-                <Text>报错数据文件：<a href="/data">{status.error_artifact.name}</a> · {status.error_artifact.row_count} 行</Text>
+                <Text>{tr.error_file || "报错数据文件："}<a href="/data">{status.error_artifact.name}</a> · {status.error_artifact.row_count} {tr.rows_unit || "行"}</Text>
               )}
               {status?.review_task_id && (
-                <Alert type="info" showIcon message={<a href="/annotations">人工审核任务已创建，前往标注工作台</a>} />
+                <Alert type="info" showIcon message={<a href="/annotations">{tr.review_created || "人工审核任务已创建，前往标注工作台"}</a>} />
               )}
               {status?.retrain_job_id && (
-                <Alert type="info" showIcon message={<a href={`/automl/task/${status.retrain_job_id}`}>查看自动建模任务</a>} />
+                <Alert type="info" showIcon message={<a href={`/automl/task/${status.retrain_job_id}`}>{tr.view_retrain || "查看自动建模任务"}</a>} />
               )}
               <div style={{ maxHeight: 320, overflowY: "auto" }}>
                 <Timeline
@@ -411,7 +414,7 @@ export default function DemoLoopDetailPage() {
                     color: EVENT_COLORS[event.event_type] || "gray",
                     children: (
                       <div className={event.event_type === "model_swapped" ? "demo-swap-card" : undefined}>
-                        <Text strong style={{ fontSize: 13 }}>{EVENT_LABELS[event.event_type] || event.event_type}</Text>
+                        <Text strong style={{ fontSize: 13 }}>{tr[`ev_${event.event_type}`] || EVENT_LABELS[event.event_type] || event.event_type}</Text>
                         <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
                           {event.message}
                           {event.created_at ? ` · ${parseBackendTime(event.created_at)?.toLocaleTimeString() ?? ""}` : ""}

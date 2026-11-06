@@ -5,10 +5,11 @@ import { UploadOutlined, DeleteOutlined, SearchOutlined, SendOutlined, PlusOutli
 import * as echarts from "echarts";
 import apiClient from "../api/client";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import { useI18n } from "../i18n";
 import { formatLocalTime } from "../utils/time";
 
-const { Text, Paragraph, Title } = Typography;
+const { Text, Paragraph } = Typography;
 const { Panel } = Collapse;
 
 export default function KnowledgeDetailPage() {
@@ -601,13 +602,15 @@ export default function KnowledgeDetailPage() {
 
   return (
     <AppLayout>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/knowledge-center")}>{t.ai_chat.back}</Button>
-        <div>
-          <Title level={4} style={{ margin: 0 }}>{kbMeta?.name || t.ai_chat.knowledge_base}</Title>
-          {kbMeta?.description ? <Text type="secondary" style={{ fontSize: 12 }}>{kbMeta.description}</Text> : null}
-        </div>
-      </div>
+      <PageHeading
+        section="agent"
+        parent={{ navKey: "knowledge_center", to: "/knowledge-center" }}
+        title={kbMeta?.name || t.ai_chat.knowledge_base}
+        desc={kbMeta?.description}
+        actions={(
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/knowledge-center")}>{t.ai_chat.back}</Button>
+        )}
+      />
       <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
       <Modal
         open={!!previewDoc}

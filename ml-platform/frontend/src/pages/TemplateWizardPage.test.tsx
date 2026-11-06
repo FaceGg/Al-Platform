@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { App as AntApp } from "antd";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import TemplateWizardPage from "./TemplateWizardPage";
@@ -79,7 +80,8 @@ describe("TemplateWizardPage", () => {
   });
 
   it("selects a project dataset and submits semantic parameters", async () => {
-    render(<AntApp><TemplateWizardPage /></AntApp>);
+    // 模板向导页头含父级菜单 Link（算法平台 / 项目管理 / 模板名），需 Router 上下文
+    render(<MemoryRouter><AntApp><TemplateWizardPage /></AntApp></MemoryRouter>);
 
     expect(await screen.findByText("Weld quality")).toBeInTheDocument();
     expect(screen.getByText("Fault classification")).toBeInTheDocument();
@@ -101,7 +103,7 @@ describe("TemplateWizardPage", () => {
   });
 
   it("creates a project before selecting its dataset", async () => {
-    render(<AntApp><TemplateWizardPage /></AntApp>);
+    render(<MemoryRouter><AntApp><TemplateWizardPage /></AntApp></MemoryRouter>);
     await screen.findByText("Weld quality");
 
     fireEvent.click(screen.getByRole("button", { name: /Create project/ }));

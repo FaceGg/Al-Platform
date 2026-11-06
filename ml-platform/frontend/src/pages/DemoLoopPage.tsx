@@ -44,7 +44,7 @@ export default function DemoLoopPage() {
       const items = res.items || [];
       setProjects(items);
       if (items.length) setProjectId(items[0].id);
-    }).catch((error) => message.error(formatApiError(error, "项目加载失败")));
+    }).catch((error) => message.error(formatApiError(error, tr.project_load_failed || "项目加载失败")));
   }, []);
 
   const loadProjectData = useCallback(async (pid: string) => {
@@ -76,7 +76,7 @@ export default function DemoLoopPage() {
           })));
       } catch { setFieldDescTasks([]); }
     } catch (error) {
-      message.error(formatApiError(error, "闭环数据加载失败"));
+      message.error(formatApiError(error, tr.load_failed || "闭环数据加载失败"));
     }
   }, []);
 
@@ -97,7 +97,7 @@ export default function DemoLoopPage() {
       message.success(tr.deleted || "闭环任务已删除");
       await refreshLoops();
     } catch (error) {
-      message.error(formatApiError(error, "删除失败"));
+      message.error(formatApiError(error, tr.delete_failed || "删除失败"));
     }
   };
 
@@ -149,7 +149,7 @@ export default function DemoLoopPage() {
         title={<><TeamOutlined /> {tr.loops_title || "闭环任务"}</>}
         extra={(
           <Space>
-            <Text type="secondary" style={{ fontSize: 12 }}>点击任务行进入任务详情</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>{tr.rows_hint || "点击任务行进入任务详情"}</Text>
             <Button type="primary" icon={<PlusOutlined />}
               onClick={() => setEditor({ mode: "create" })} data-testid="new-loop-btn">
               {tr.new_loop || "新建闭环"}
@@ -179,16 +179,16 @@ export default function DemoLoopPage() {
               title: tr.col_error || "回流行数",
               dataIndex: "error_count",
               width: 100,
-              render: (value: number) => <Tag color={value > 0 ? "orange" : "default"}>回流 {value ?? 0}</Tag>,
+              render: (value: number) => <Tag color={value > 0 ? "orange" : "default"}>{(tr.reflow_tag || "回流 {n}").replace("{n}", String(value ?? 0))}</Tag>,
             },
             {
               title: tr.col_alert || "告警次数",
               dataIndex: "alert_count",
               width: 100,
-              render: (value: number) => <Tag color={value > 0 ? "red" : "default"}>告警 {value ?? 0}</Tag>,
+              render: (value: number) => <Tag color={value > 0 ? "red" : "default"}>{(tr.alert_tag || "告警 {n}").replace("{n}", String(value ?? 0))}</Tag>,
             },
             {
-              title: "创建时间",
+              title: tr.col_created || "创建时间",
               dataIndex: "created_at",
               width: 130,
               render: (value: string | null) => {
@@ -204,7 +204,10 @@ export default function DemoLoopPage() {
               width: 110,
               render: (value: string) => (
                 <Tag color={value === "completed" ? "green" : value === "failed" ? "red" : value === "running" || value === "queued" ? "blue" : "default"}>
-                  {value === "completed" ? "已换模" : value === "failed" ? "重训失败" : value === "running" || value === "queued" ? "重训中" : "未重训"}
+                  {value === "completed" ? (tr.retrain_done || "已换模")
+                    : value === "failed" ? (tr.retrain_failed || "重训失败")
+                    : value === "running" || value === "queued" ? (tr.retrain_running || "重训中")
+                    : (tr.retrain_idle || "未重训")}
                 </Tag>
               ),
             },
@@ -217,15 +220,15 @@ export default function DemoLoopPage() {
                     size="small" icon={<ArrowRightOutlined />}
                     onClick={(event) => { event.stopPropagation(); openDetail(record); }}
                   >
-                    详情
+                    {tr.detail || "详情"}
                   </Button>
                   <Button
                     size="small" icon={<EditOutlined />}
                     onClick={(event) => { event.stopPropagation(); setEditor({ mode: "edit", loop: record }); }}
                   />
                   <Popconfirm
-                    title="删除该闭环任务？"
-                    description="事件与计数一并删除，报错数据文件保留。"
+                    title={tr.delete_confirm_title || "删除该闭环任务？"}
+                    description={tr.delete_confirm_desc || "事件与计数一并删除，报错数据文件保留。"}
                     onConfirm={(event) => { event?.stopPropagation(); handleDeleteLoop(record.id); }}
                     onCancel={(event) => event?.stopPropagation()}
                   >
@@ -253,7 +256,7 @@ export default function DemoLoopPage() {
       />
 
       <Modal
-        title="闭环操作手册（方案 A / 方案 B）"
+        title={tr.manual_title || "闭环操作手册（方案 A / 方案 B）"}
         open={manualOpen}
         onCancel={() => setManualOpen(false)}
         footer={null}

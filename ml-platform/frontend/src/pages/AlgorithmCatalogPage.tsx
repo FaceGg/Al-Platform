@@ -1,10 +1,9 @@
 import { useState, useEffect } from "react";
-import { Card, Table, Tag, Input, Select, Space, Typography } from "antd";
+import { Card, Table, Tag, Input, Select, Space } from "antd";
 import { SearchOutlined, ApiOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import { apiGet } from "../api/client";
-
-const { Title } = Typography;
 
 const categoryColors: Record<string, string> = {
   computer_vision: "blue", ocr: "cyan", speech: "purple",
@@ -55,14 +54,20 @@ export default function AlgorithmCatalogPage() {
 
   return (
     <AppLayout>
-      <Card><Title level={4}>算法目录</Title>
-        <Space style={{ marginBottom: 16 }} wrap>
-          <Input placeholder="搜索算法..." prefix={<SearchOutlined />} value={search}
-            onChange={e => setSearch(e.target.value)} style={{ width: 250 }} allowClear />
-          <Select placeholder="筛选类别" value={category || undefined}
-            onChange={v => setCategory(v || "")} allowClear style={{ width: 180 }}
-            options={Object.entries(categoryNames).map(([k,v]) => ({value:k, label:v}))} />
-        </Space>
+      <PageHeading
+        section="algo"
+        navKey="algorithms"
+        actions={(
+          <>
+            <Input placeholder="搜索算法..." prefix={<SearchOutlined />} value={search}
+              onChange={e => setSearch(e.target.value)} style={{ width: 250 }} allowClear />
+            <Select placeholder="筛选类别" value={category || undefined}
+              onChange={v => setCategory(v || "")} allowClear style={{ width: 180 }}
+              options={Object.entries(categoryNames).map(([k,v]) => ({value:k, label:v}))} />
+          </>
+        )}
+      />
+      <Card>
         <Table dataSource={filtered} columns={columns} rowKey="id" loading={loading}
           pagination={{ pageSize: 15 }} size="small" scroll={{ x: 1000 }} />
       </Card>

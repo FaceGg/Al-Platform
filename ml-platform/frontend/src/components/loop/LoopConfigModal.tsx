@@ -27,11 +27,18 @@ interface Props {
   onSaved: (loop: DemoLoopConfig) => void;
 }
 
-const FEATURE_MODE_OPTIONS = [
-  { value: "legacy", label: "内置点焊特征桥（原始点焊报告数据 → 73 特征）" },
-  { value: "operator", label: "特征工程类别算子（面板「特征工程」类别，按默认参数执行）" },
-  { value: "script", label: "Python 脚本自定义（与 python_script 算子同接口）" },
-];
+/** 特征工程方式选项；label 随语言。 */
+function buildFeatureModeOptions(zh: boolean): Array<{ value: string; label: string }> {
+  return zh ? [
+    { value: "legacy", label: "内置点焊特征桥（原始点焊报告数据 → 73 特征）" },
+    { value: "operator", label: "特征工程类别算子（面板「特征工程」类别，按默认参数执行）" },
+    { value: "script", label: "Python 脚本自定义（与 python_script 算子同接口）" },
+  ] : [
+    { value: "legacy", label: "Built-in spot-weld bridge (raw report rows → 73 features)" },
+    { value: "operator", label: "Feature-engineering operator (default parameters)" },
+    { value: "script", label: "Custom Python script (same interface as python_script)" },
+  ];
+}
 
 /** 「特征工程」类别下的算子（与算子面板分类一致，随平台算子扩展自动更新） */
 async function fetchFeatureOperators(): Promise<Array<{ id: string; name: string }>> {
@@ -57,18 +64,23 @@ async function fetchPythonScriptTemplate(): Promise<string> {
   }
 }
 
-const RATIO_OPTIONS: Array<{ value: string; label: string }> = [
-  ...Array.from({ length: 9 }, (_, i) => ({
-    value: `${10 - i}:1`, label: `错误:正确 = ${10 - i}:1`,
-  })),
-  { value: "1:1", label: "错误:正确 = 1:1" },
-  ...Array.from({ length: 9 }, (_, i) => ({
-    value: `1:${i + 2}`, label: `错误:正确 = 1:${i + 2}`,
-  })),
-];
+/** 错误:正确 收集比例选项；label 随语言（zh 用「错误:正确」，en 用 "Error:Correct"）。 */
+function buildRatioOptions(zh: boolean): Array<{ value: string; label: string }> {
+  const prefix = zh ? "错误:正确" : "Error:Correct";
+  return [
+    ...Array.from({ length: 9 }, (_, i) => ({
+      value: `${10 - i}:1`, label: `${prefix} = ${10 - i}:1`,
+    })),
+    { value: "1:1", label: `${prefix} = 1:1` },
+    ...Array.from({ length: 9 }, (_, i) => ({
+      value: `1:${i + 2}`, label: `${prefix} = 1:${i + 2}`,
+    })),
+  ];
+}
 
 export default function LoopConfigModal({ editor, projectId, deployments, datasets, annotators, fieldDescTasks, onCancel, onSaved }: Props) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const zh = (lang ?? "zh") === "zh";
   const tr = ((t as unknown as Record<string, Record<string, string | undefined>>).demo_loop ?? {}) as Record<string, string | undefined>;
   const [form] = Form.useForm();
   const [feOperatorOptions, setFeOperatorOptions] = useState<Array<{ value: string; label: string }>>([]);
@@ -139,7 +151,7 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
       });
     } else {
       form.setFieldsValue({
-        name: "自动化闭环", error_classes: [], preprocess_enabled: false,
+        name: tr.default_name || "自动化闭环", error_classes: [], preprocess_enabled: false,
         feature_engineering_mode: "legacy", feature_operator_id: undefined,
         feature_script: undefined,
         alert_threshold_rows: 1, require_review: false, review_annotator_ids: [],
@@ -169,18 +181,24 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
       // 后端保证同项目任务名唯一（重名自动 -2/-3）；提示展示实际名称。
       const submittedName = String(values.name ?? "");
       const finalName = String(cfg?.name ?? submittedName);
-      const suffix = finalName !== submittedName ? `（重名，已自动命名为 ${finalName}）` : "";
+      const suffix = finalName !== submittedName
+        ? (tr.renamed_suffix || "（重名，已自动命名为 {name}）").replace("{name}", finalName)
+        : "";
       message.success((editor?.mode === "create" ? (tr.created || "闭环任务已创建") : (tr.saved || "配置已保存")) + suffix);
       onSaved(cfg as DemoLoopConfig);
     } catch (error) {
-      message.error(formatApiError(error, editor?.mode === "create" ? "闭环创建失败" : "配置保存失败"));
+      message.error(formatApiError(error, editor?.mode === "create"
+        ? (tr.create_failed || "闭环创建失败")
+        : (tr.save_failed || "配置保存失败")));
     }
   };
 
   return (
     <Modal
       open={editor !== null}
-      title={editor?.mode === "create" ? "新建闭环任务" : `编辑闭环配置：${editor?.mode === "edit" ? editor.loop.name : ""}`}
+      title={editor?.mode === "create"
+        ? (tr.create_title || "新建闭环任务")
+        : (tr.edit_title || "编辑闭环配置：{name}").replace("{name}", editor?.mode === "edit" ? editor.loop.name : "")}
       onCancel={onCancel}
       footer={null}
       width={560}
@@ -194,7 +212,7 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
           <Select
             options={deployments.map((item) => ({
               value: item.id,
-              label: `${item.name}（${item.observed_state === "running" ? "运行中" : item.observed_state}）`,
+              label: `${item.name}（${item.observed_state === "running" ? (tr.state_running || "运行中") : item.observed_state}）`,
             }))}
             placeholder={tr.choose_deployment || "选择推理部署"}
             onChange={(value) => {
@@ -217,9 +235,9 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
           name="feature_engineering_mode"
           label={tr.preprocess || "特征工程方式"}
           initialValue="legacy"
-          tooltip="上传数据缺少模型特征列时的自动补齐方式：内置点焊桥 / 「特征工程」类别算子 / 自写 Python 脚本"
+          tooltip={tr.preprocess_tooltip || "上传数据缺少模型特征列时的自动补齐方式：内置点焊桥 / 「特征工程」类别算子 / 自写 Python 脚本"}
         >
-          <Select options={FEATURE_MODE_OPTIONS} />
+          <Select options={buildFeatureModeOptions(zh)} />
         </Form.Item>
         <Form.Item noStyle shouldUpdate={(prev, next) => prev.feature_engineering_mode !== next.feature_engineering_mode}>
           {({ getFieldValue }) => {
@@ -228,17 +246,19 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
               return (
                 <Form.Item
                   name="feature_operator_id"
-                  label="特征工程算子"
-                  rules={[{ required: true, message: "请选择「特征工程」类别下的算子" }]}
-                  tooltip="直接选用算子面板「特征工程」类别下的算子，按其默认参数执行（如拧紧特征工程默认剔除 DECIDE_ONE/DECIDE_TWO 泄漏列、中位数填充缺失并生成缺失标记列；需要自定义逻辑请用 Python 脚本模式）"
+                  label={tr.fe_operator || "特征工程算子"}
+                  rules={[{ required: true, message: tr.fe_operator_rule || "请选择「特征工程」类别下的算子" }]}
+                  tooltip={tr.fe_operator_tooltip || "直接选用算子面板「特征工程」类别下的算子，按其默认参数执行（如拧紧特征工程默认剔除 DECIDE_ONE/DECIDE_TWO 泄漏列、中位数填充缺失并生成缺失标记列；需要自定义逻辑请用 Python 脚本模式）"}
                 >
                   <Select
                     showSearch
                     optionFilterProp="label"
                     loading={feOperatorsLoading}
                     options={feOperatorOptions}
-                    placeholder={feOperatorsLoading ? "正在加载特征工程算子…" : "选择「特征工程」类别下的算子"}
-                    notFoundContent="未找到「特征工程」类别下的算子"
+                    placeholder={feOperatorsLoading
+                      ? (tr.fe_operator_loading || "正在加载特征工程算子…")
+                      : (tr.fe_operator_placeholder || "选择「特征工程」类别下的算子")}
+                    notFoundContent={tr.fe_operator_empty || "未找到「特征工程」类别下的算子"}
                   />
                 </Form.Item>
               );
@@ -247,9 +267,9 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
               return (
                 <Form.Item
                   name="feature_script"
-                  label="特征工程 Python 脚本"
-                  rules={[{ required: true, message: "请填写特征工程脚本" }]}
-                  tooltip="与 python_script 算子相同的固定输入输出接口：输入 df（单行记录的 DataFrame），在 process(df) 中补齐模型特征列并返回；缺失依赖库按平台白名单源自动安装"
+                  label={tr.fe_script || "特征工程 Python 脚本"}
+                  rules={[{ required: true, message: tr.fe_script_rule || "请填写特征工程脚本" }]}
+                  tooltip={tr.fe_script_tooltip || "与 python_script 算子相同的固定输入输出接口：输入 df（单行记录的 DataFrame），在 process(df) 中补齐模型特征列并返回；缺失依赖库按平台白名单源自动安装"}
                 >
                   <Input.TextArea
                     rows={14}
@@ -261,7 +281,7 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
             return (
               <Form.Item>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  上传原始点焊报告行（报告字段 + cvei/cvev/cver/cvep 波形列）时会先经内置特征桥补齐 73 特征再做预测；拧紧等其它场景请切换为「工作流特征工程算子」或「Python 脚本」。
+                  {tr.legacy_hint || "上传原始点焊报告行（报告字段 + cvei/cvev/cver/cvep 波形列）时会先经内置特征桥补齐 73 特征再做预测；拧紧等其它场景请切换为「工作流特征工程算子」或「Python 脚本」。"}
                 </Typography.Text>
               </Form.Item>
             );
@@ -282,12 +302,12 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
             </Form.Item>
           ) : null}
         </Form.Item>
-        <Divider plain style={{ margin: "8px 0" }}>数据收集</Divider>
+        <Divider plain style={{ margin: "8px 0" }}>{tr.data_collection || "数据收集"}</Divider>
         <Form.Item
           name="collect_correct_enabled"
-          label="同步收集正确数据"
+          label={tr.collect_correct || "同步收集正确数据"}
           valuePropName="checked"
-          tooltip="回流报错行时，按比例自动并入缓冲中的正常预测行（重新平衡重训数据的正负样本）"
+          tooltip={tr.collect_correct_tooltip || "回流报错行时，按比例自动并入缓冲中的正常预测行（重新平衡重训数据的正负样本）"}
         >
           <Switch />
         </Form.Item>
@@ -295,23 +315,25 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
           {({ getFieldValue }) => getFieldValue("collect_correct_enabled") ? (
             <Form.Item
               name="correct_sample_ratio"
-              label="错误:正确 收集比例"
+              label={tr.collect_ratio_label || "错误:正确 收集比例"}
               initialValue="1:1"
-              rules={[{ required: true, message: "请选择收集比例" }]}
+              rules={[{ required: true, message: tr.collect_ratio_rule || "请选择收集比例" }]}
             >
-              <Select options={RATIO_OPTIONS} />
+              <Select options={buildRatioOptions(zh)} />
             </Form.Item>
           ) : null}
         </Form.Item>
-        <Divider plain style={{ margin: "8px 0" }}>字段解释</Divider>
-        <Form.Item label="复用已有标注任务的字段解释（可选）">
+        <Divider plain style={{ margin: "8px 0" }}>{tr.field_interp || "字段解释"}</Divider>
+        <Form.Item label={tr.reuse_field_desc || "复用已有标注任务的字段解释（可选）"}>
           <Select
             allowClear
-            placeholder={(fieldDescTasks || []).length ? "选择标注任务" : "暂无带字段解释的标注任务"}
+            placeholder={(fieldDescTasks || []).length
+              ? (tr.choose_desc_task || "选择标注任务")
+              : (tr.no_desc_tasks || "暂无带字段解释的标注任务")}
             disabled={!(fieldDescTasks || []).length}
             options={(fieldDescTasks || []).map((task) => ({
               value: task.id,
-              label: `${task.name}（${Object.keys(task.descriptions).length} 个字段）`,
+              label: `${task.name}（${Object.keys(task.descriptions).length} ${zh ? "个字段" : "fields"}）`,
             }))}
             onSelect={(taskId: string) => {
               const task = (fieldDescTasks || []).find((item) => item.id === taskId);
@@ -319,7 +341,7 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
             }}
           />
         </Form.Item>
-        <Form.Item label="或上传字段解释文件（csv/txt，每行：字段名,描述）">
+        <Form.Item label={tr.upload_desc || "或上传字段解释文件（csv/txt，每行：字段名,描述）"}>
           <Upload
             accept=".csv,.txt"
             maxCount={1}
@@ -339,15 +361,15 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
                 }
                 if (Object.keys(descriptions).length) {
                   form.setFieldValue("field_descriptions", descriptions);
-                  message.success(`已解析 ${Object.keys(descriptions).length} 个字段说明`);
+                  message.success((tr.parsed_ok || "已解析 {n} 个字段说明").replace("{n}", String(Object.keys(descriptions).length)));
                 } else {
-                  message.error("未从文件中解析到任何「字段名,描述」行");
+                  message.error(tr.parsed_empty || "未从文件中解析到任何「字段名,描述」行");
                 }
               });
               return false;
             }}
           >
-            <Button>选择文件</Button>
+            <Button>{tr.choose_file || "选择文件"}</Button>
           </Upload>
         </Form.Item>
         <Form.Item noStyle shouldUpdate={(prev, next) => prev.field_descriptions !== next.field_descriptions}>
@@ -356,7 +378,9 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
             const count = Object.keys(descriptions).length;
             return (
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                {count ? `已配置 ${count} 个字段解释，将展示在标注员工作区的对应字段旁` : "未配置字段解释"}
+                {count
+                  ? (tr.desc_configured || "已配置 {n} 个字段解释，将展示在标注员工作区的对应字段旁").replace("{n}", String(count))
+                  : (tr.desc_none || "未配置字段解释")}
               </Typography.Text>
             );
           }}
@@ -374,7 +398,7 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
               <Form.Item
                 name="retrain_dataset_artifact_ids"
                 label={tr.retrain_dataset || "重训数据集（可多选合并训练；闭环收集的报错数据集默认参与）"}
-                rules={[{ required: true, message: "请选择至少一个重训数据集" }]}
+                rules={[{ required: true, message: tr.retrain_dataset_rule || "请选择至少一个重训数据集" }]}
               >
                 <Select
                   mode="multiple"
@@ -382,7 +406,7 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
                     const options = datasets.map((item) => ({ value: item.id, label: item.name }));
                     const errId = editor?.mode === "edit" ? editor.loop.error_artifact_id : undefined;
                     if (errId && !options.some((o) => o.value === errId)) {
-                      options.unshift({ value: errId, label: "报错数据集（闭环自动收集）" });
+                      options.unshift({ value: errId, label: tr.error_dataset_tag || "报错数据集（闭环自动收集）" });
                     }
                     return options;
                   })()}
@@ -397,19 +421,19 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
               </Form.Item>
               <Form.Item
                 name="retrain_ensemble_enabled"
-                label="集成学习（多模型加权投票）"
+                label={tr.ensemble_label || "集成学习（多模型加权投票）"}
                 valuePropName="checked"
                 initialValue={false}
-                tooltip="重训时按主指标取前 K 名模型做 soft-voting；不低于单模型冠军才成为任务冠军并参与换模（仅单输出分类）"
+                tooltip={tr.ensemble_tooltip || "重训时按主指标取前 K 名模型做 soft-voting；不低于单模型冠军才成为任务冠军并参与换模（仅单输出分类）"}
               >
-                <Switch aria-label="重训集成学习" />
+                <Switch aria-label={tr.ensemble_aria || "重训集成学习"} />
               </Form.Item>
               <Form.Item noStyle shouldUpdate={(prev, cur) => prev.retrain_ensemble_enabled !== cur.retrain_ensemble_enabled}>
                 {({ getFieldValue }) => getFieldValue("retrain_ensemble_enabled") ? (
-                  <Form.Item name="retrain_ensemble_top_k" label="集成成员数" initialValue={3}>
+                  <Form.Item name="retrain_ensemble_top_k" label={tr.ensemble_members || "集成成员数"} initialValue={3}>
                     <Select
-                      aria-label="重训集成成员数"
-                      options={[2, 3, 4, 5].map((k) => ({ value: k, label: `前 ${k} 名` }))}
+                      aria-label={tr.ensemble_members_aria || "重训集成成员数"}
+                      options={[2, 3, 4, 5].map((k) => ({ value: k, label: zh ? `前 ${k} 名` : `Top ${k}` }))}
                     />
                   </Form.Item>
                 ) : null}
@@ -418,7 +442,7 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
           ) : null}
         </Form.Item>
         <Space style={{ width: "100%", justifyContent: "flex-end" }}>
-          <Button onClick={onCancel}>取消</Button>
+          <Button onClick={onCancel}>{tr.cancel || "取消"}</Button>
           <Button type="primary" htmlType="submit" disabled={!projectId}>
             {editor?.mode === "create" ? (tr.create || "创建闭环") : (tr.save || "保存配置")}
           </Button>

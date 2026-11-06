@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import PageHeading, { type SectionId } from "./PageHeading";
+import PageHeading, { type PageHeadingParent, type SectionId } from "./PageHeading";
 
 /**
  * P3 v2 页面框架：把算法平台/基础设施/系统管理的既有 antd 页统一到
@@ -14,6 +14,7 @@ export default function V2PageFrame({
   section,
   title,
   navKey,
+  parent,
   desc,
   actions,
   children,
@@ -23,6 +24,8 @@ export default function V2PageFrame({
   /** 静态页面名；菜单页优先用 navKey（页面名取侧栏菜单名真源）。 */
   title?: string;
   navKey?: string;
+  /** 详情页父级菜单：标题渲染为「板块 / 父级 / 当前页」。 */
+  parent?: PageHeadingParent;
   desc?: string;
   actions?: ReactNode;
   children: ReactNode;
@@ -30,7 +33,7 @@ export default function V2PageFrame({
 }) {
   return (
     <div className="v2-legacy" data-testid={testId}>
-      <PageHeading section={section} title={title} navKey={navKey} desc={desc} actions={actions} />
+      <PageHeading section={section} title={title} navKey={navKey} parent={parent} desc={desc} actions={actions} />
       {children}
     </div>
   );

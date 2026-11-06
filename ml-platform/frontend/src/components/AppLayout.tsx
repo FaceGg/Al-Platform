@@ -14,6 +14,7 @@ import { SunOutlined, MoonOutlined } from "@ant-design/icons";
 import { useI18n } from "../i18n";
 import { useTheme } from "../stores/themeContext";
 import NotificationCenter from "./NotificationCenter";
+import { navTitle, sectionName } from "./PageHeading";
 import apiClient from "../api/client";
 import "../styles/v2-shell.css";
 
@@ -65,75 +66,78 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const isAdmin = userRole === "admin";
 
   const zh = lang === "zh";
+  // 菜单名与页面标题同源：一律经 navTitle 取 t.nav（缺键回退 PageHeading 内置表）；
+  // 板块名一律取 PageHeading 的 SECTIONS。
+  const nav = (key: string) => navTitle(t, key, zh);
 
   const viewTabs: { id: ViewId; label: string; tag?: string }[] = [
-    { id: "portal", label: zh ? "首页门户" : "Portal" },
-    { id: "algo", label: zh ? "算法平台" : "Algorithms" },
-    { id: "agent", label: zh ? "智能体中心" : "Agent Center" },
-    { id: "infra", label: zh ? "基础设施" : "Infrastructure" },
-    ...(isAdmin ? [{ id: "admin" as ViewId, label: zh ? "系统管理" : "Administration" }] : []),
+    { id: "portal", label: sectionName("portal", zh) },
+    { id: "algo", label: sectionName("algo", zh) },
+    { id: "agent", label: sectionName("agent", zh) },
+    { id: "infra", label: sectionName("infra", zh) },
+    ...(isAdmin ? [{ id: "admin" as ViewId, label: sectionName("admin", zh) }] : []),
   ];
 
   const sideGroups: Record<ViewId, SideGroup[]> = {
     portal: [],
     algo: [
       { label: zh ? "概览" : "Overview", items: [
-        { key: "/algo", icon: <AppstoreOutlined />, label: zh ? "工作台" : "Dashboard" },
-        { key: "/projects", icon: <ProjectOutlined />, label: zh ? "项目管理" : "Projects" },
+        { key: "/algo", icon: <AppstoreOutlined />, label: nav("dashboard") },
+        { key: "/projects", icon: <ProjectOutlined />, label: nav("projects") },
       ] },
       { label: zh ? "数据" : "Data", items: [
-        { key: "/data", icon: <CloudUploadOutlined />, label: t.nav.data },
-        { key: "/data-annotation", icon: <TagsOutlined />, label: t.nav.data_annotation, query: "view=tasks" },
+        { key: "/data", icon: <CloudUploadOutlined />, label: nav("data") },
+        { key: "/data-annotation", icon: <TagsOutlined />, label: nav("data_annotation"), query: "view=tasks" },
       ] },
       { label: zh ? "建模" : "Modeling", items: [
-        { key: "/automl", icon: <ThunderboltOutlined />, label: t.nav.automl },
-        { key: "/training", icon: <ExperimentOutlined />, label: t.nav.training },
-        { key: "/models", icon: <AppstoreOutlined />, label: t.nav.models },
+        { key: "/automl", icon: <ThunderboltOutlined />, label: nav("automl") },
+        { key: "/training", icon: <ExperimentOutlined />, label: nav("training") },
+        { key: "/models", icon: <AppstoreOutlined />, label: nav("models") },
       ] },
       { label: zh ? "服务" : "Serving", items: [
-        { key: "/demo-loop", icon: <DeploymentUnitOutlined />, label: t.nav.demo_loop },
-        { key: "/orchestration", icon: <RobotOutlined />, label: t.nav.orchestration },
-        { key: "/api-marketplace", icon: <ApiOutlined />, label: t.nav.api_market },
+        { key: "/demo-loop", icon: <DeploymentUnitOutlined />, label: nav("demo_loop") },
+        { key: "/orchestration", icon: <RobotOutlined />, label: nav("orchestration") },
+        { key: "/api-marketplace", icon: <ApiOutlined />, label: nav("api_market") },
       ] },
     ],
     agent: [
       { label: zh ? "建模智能体" : "Modeling agent", items: [
-        { key: "/agent", icon: <RocketOutlined />, label: zh ? "新建任务" : "New task" },
-        { key: "/agent", query: "tab=tasks", icon: <PlayCircleOutlined />, label: zh ? "任务列表" : "Jobs" },
-        { key: "/agent", query: "tab=recipes", icon: <DeploymentUnitOutlined />, label: zh ? "配方库" : "Recipes" },
-        { key: "/agent", query: "tab=knowledge", icon: <BookOutlined />, label: zh ? "知识中心" : "Knowledge" },
+        { key: "/agent", icon: <RocketOutlined />, label: nav("agent_new") },
+        { key: "/agent", query: "tab=tasks", icon: <PlayCircleOutlined />, label: nav("agent_tasks") },
+        { key: "/agent", query: "tab=recipes", icon: <DeploymentUnitOutlined />, label: nav("agent_recipes") },
+        { key: "/agent", query: "tab=knowledge", icon: <BookOutlined />, label: nav("knowledge_center") },
       ] },
       { label: zh ? "知识与对话" : "Knowledge & chat", items: [
-        { key: "/prompt-templates", icon: <CopyOutlined />, label: t.nav.prompt_templates },
-        { key: "/chat", icon: <MessageOutlined />, label: t.nav.chat },
+        { key: "/prompt-templates", icon: <CopyOutlined />, label: nav("prompt_templates") },
+        { key: "/chat", icon: <MessageOutlined />, label: nav("chat") },
         { key: "/knowledge-graph", icon: <ApartmentOutlined />, label: t.knowledge?.graph || "Graph" },
       ] },
     ],
     infra: [
       { label: zh ? "集群" : "Cluster", items: [
-        { key: "/kubernetes", icon: <ClusterOutlined />, label: t.nav.kubernetes },
-        { key: "/cluster-governance", icon: <ControlOutlined />, label: t.nav.cluster_governance },
+        { key: "/kubernetes", icon: <ClusterOutlined />, label: nav("kubernetes") },
+        { key: "/cluster-governance", icon: <ControlOutlined />, label: nav("cluster_governance") },
       ] },
       { label: zh ? "运行" : "Runtime", items: [
-        { key: "/kubernetes/jobs", icon: <PlayCircleOutlined />, label: t.nav.job_runs },
-        { key: "/notebooks", icon: <BookOutlined />, label: t.nav.notebooks },
-        { key: "/images", icon: <DatabaseOutlined />, label: t.nav.images },
+        { key: "/kubernetes/jobs", icon: <PlayCircleOutlined />, label: nav("job_runs") },
+        { key: "/notebooks", icon: <BookOutlined />, label: nav("notebooks") },
+        { key: "/images", icon: <DatabaseOutlined />, label: nav("images") },
       ] },
       { label: zh ? "资源" : "Resources", items: [
-        { key: "/monitor", icon: <MonitorOutlined />, label: t.nav.monitor },
-        { key: "/compute", icon: <CloudServerOutlined />, label: t.nav.compute },
+        { key: "/monitor", icon: <MonitorOutlined />, label: nav("monitor") },
+        { key: "/compute", icon: <CloudServerOutlined />, label: nav("compute") },
       ] },
     ],
     admin: [
       { label: zh ? "管理" : "Management", items: [
-        { key: "/admin/users", icon: <TeamOutlined />, label: t.nav.users },
-        { key: "/admin/announcements", icon: <NotificationOutlined />, label: zh ? "公告管理" : "Notices" },
-        { key: "/admin/audit", icon: <FileTextOutlined />, label: zh ? "审计日志" : "Audit log" },
+        { key: "/admin/users", icon: <TeamOutlined />, label: nav("users") },
+        { key: "/admin/announcements", icon: <NotificationOutlined />, label: nav("announcements") },
+        { key: "/admin/audit", icon: <FileTextOutlined />, label: nav("audit") },
       ] },
       { label: zh ? "平台" : "Platform", items: [
-        { key: "/admin/settings", icon: <SettingOutlined />, label: zh ? "平台状态" : "Platform Status" },
-        { key: "/llm-gateway", icon: <ApiOutlined />, label: t.nav.llm_gateway },
-        { key: "/admin/llm-usage", icon: <BarChartOutlined />, label: zh ? "Tokens 用量" : "Token usage" },
+        { key: "/admin/settings", icon: <SettingOutlined />, label: nav("settings") },
+        { key: "/llm-gateway", icon: <ApiOutlined />, label: nav("llm_gateway") },
+        { key: "/admin/llm-usage", icon: <BarChartOutlined />, label: nav("llm_usage") },
       ] },
     ],
   };

@@ -7,6 +7,8 @@ const getJob = vi.hoisted(() => vi.fn());
 vi.mock("react-router-dom", () => ({
   useNavigate: () => vi.fn(),
   useParams: () => ({ taskId: "job-1" }),
+  // V2PageFrame 详情页头含父级菜单 Link（板块 / 父级 / 当前页）
+  Link: ({ children, to }: { children: React.ReactNode; to: string }) => <a href={to}>{children}</a>,
 }));
 vi.mock("../api/client", () => ({
   default: { get: getJob, post: vi.fn() },

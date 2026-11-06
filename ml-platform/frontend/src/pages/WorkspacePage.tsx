@@ -4,6 +4,7 @@ import { App as AntApp, Button, Dropdown, Form, Layout, Radio, Space, Divider, I
 import { DownOutlined, EllipsisOutlined, PlayCircleOutlined, SaveOutlined, ArrowLeftOutlined, EditOutlined, PauseCircleOutlined, DeleteOutlined, CloudUploadOutlined, HistoryOutlined, ApiOutlined, CopyOutlined } from "@ant-design/icons";
 import { ReactFlowProvider } from "reactflow";
 import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import apiClient from "../api/client";
 import { formatApiError } from "../api/client";
 import OperatorPanel from "../components/workspace/OperatorPanel";
@@ -75,6 +76,7 @@ export default function WorkspacePage() {
     scopeProject: "仅当前项目", scopeProjectHint: "项目内可见，可复用",
     scopeGlobal: "全平台通用", scopeGlobalHint: "所有项目可见可实例化；仅平台管理员可保存/编辑/删除",
     tplSaved: "已保存为模板", tplSavedGlobal: "已保存为平台通用模板", tplSaveFailed: "保存为模板失败，请重试",
+    orchestration: "应用编排",
   } : {
     loadFailed: "Failed to load workflow", saved: "Saved", saveFailed: "Save failed. Please retry.", publishFailed: "Publish failed",
     historyFailed: "Failed to load version history", cancelled: "Cancellation requested; the current node will stop safely.", cancelFailed: "Cancellation failed",
@@ -88,6 +90,7 @@ export default function WorkspacePage() {
     scopeProject: "This project only", scopeProjectHint: "Reusable inside the current project",
     scopeGlobal: "Platform-wide", scopeGlobalHint: "Visible and instantiable in every project; admins manage global templates",
     tplSaved: "Saved as template", tplSavedGlobal: "Saved as a platform-wide template", tplSaveFailed: "Save as template failed. Please retry.",
+    orchestration: "App Orchestration",
   };
   const { workflowId } = useParams<{ workflowId: string }>();
   const navigate = useNavigate();
@@ -608,6 +611,10 @@ export default function WorkspacePage() {
             <Button type="text" size="small" icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}
               aria-label={text.back} title={text.back} />
             <Divider type="vertical" style={{ margin: "0 2px" }} />
+            {/* 父级菜单面包屑：画布页不走 AppLayout 页头，标题胶囊内保持「板块 / 菜单 / 工作流名」层析 */}
+            <Link to="/orchestration" style={{ color: "var(--v2-dim)", fontSize: 12, textDecoration: "none" }}
+              title={text.orchestration || "应用编排"}>{text.orchestration || "应用编排"}</Link>
+            <span style={{ color: "var(--v2-dim)", fontSize: 12 }}>/</span>
             {editingName ? (
               <Input size="small" value={wfName} onChange={(e) => setWfName(e.target.value)}
                 onPressEnter={handleNameSave} onBlur={handleNameSave} autoFocus style={{ width: 180 }} />

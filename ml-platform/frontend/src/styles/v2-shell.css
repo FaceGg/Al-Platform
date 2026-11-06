@@ -215,9 +215,12 @@
 .v2-main { flex: 1; padding: 18px 24px 40px; max-width: 1320px; min-width: 0; margin: 0 auto; }
 .v2-pagehead { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; gap: 12px; flex-wrap: wrap; }
 .v2-pagehead h2 { font-size: 19px; color: var(--v2-txt); margin: 0; }
-/* 全平台统一页面标题「板块/页面名」（PageHeading）：板块与分隔符弱化，页面名为主色 */
+/* 全平台统一页面标题「板块/页面名」（PageHeading）：板块与分隔符弱化，页面名为主色；
+   详情页的父级菜单同为弱化色、可点击返回 */
 .v2-pagehead .v2-pt-sec { color: var(--v2-dim); font-weight: 500; }
 .v2-pagehead .v2-pt-sep { color: var(--v2-dim); font-weight: 400; margin: 0 8px; }
+.v2-pagehead .v2-pt-parent { color: var(--v2-dim); font-weight: 500; text-decoration: none; transition: color .15s; }
+.v2-pagehead .v2-pt-parent:hover { color: var(--v2-blue2, #2f9bf5); }
 .v2-pagehead-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
 .v2-pdesc { color: var(--v2-sub); font-size: 14.5px; margin-top: 3px; }
 

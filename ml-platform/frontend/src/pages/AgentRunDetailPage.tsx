@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeftOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import AgentRunArchivePanel from "../components/AgentRunArchivePanel";
 import { getAgentRun, type AgentRunDetail } from "../api/agentCenter";
 import { formatLocalTime, parseBackendTime } from "../utils/time";
@@ -57,16 +58,16 @@ export default function AgentRunDetailPage() {
 
   return (
     <AppLayout>
-      <div className="v2-pagehead">
-        <div>
-          <h2>{zh ? "任务详情" : "Run detail"}</h2>
-        </div>
-        <div style={{ display: "flex", gap: 9 }}>
+      <PageHeading
+        section="agent"
+        parent={{ navKey: "agent_tasks", to: "/agent?tab=tasks" }}
+        title={zh ? "任务详情" : "Run detail"}
+        actions={(
           <button type="button" className="v2-btn" onClick={() => navigate("/agent?tab=tasks")}>
             <ArrowLeftOutlined /> {zh ? "返回任务列表" : "Back to jobs"}
           </button>
-        </div>
-      </div>
+        )}
+      />
 
       {archive ? (
         <>

@@ -1,13 +1,13 @@
 import { useState, useEffect } from "react";
-import { Card, Table, Tag, Button, Space, Typography, Modal, Input, Select, Form, message, Progress } from "antd";
+import { Card, Table, Tag, Button, Space, Modal, Input, Select, Form, message, Progress } from "antd";
 import { PlusOutlined, ThunderboltOutlined, EyeOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import AnnotationCanvas from "../components/AnnotationCanvas";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import { apiGet, apiPost, apiPut, apiDelete } from "../api/client";
 import { formatLocalTime } from "../utils/time";
 
-const { Title } = Typography;
 const stColor: Record<string, string> = { pending: "default", labeling: "blue", review: "orange", completed: "green" };
 const stName: Record<string, string> = { pending: "待标注", labeling: "标注中", review: "审核中", completed: "已完成" };
 
@@ -102,8 +102,12 @@ export default function AnnotationPage() {
 
   return (
     <AppLayout>
-      <Card title={<Title level={4}>标注工具</Title>}
-        extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => setShowCreate(true)}>新建标注任务</Button>}>
+      <PageHeading
+        section="algo"
+        navKey="annotation"
+        actions={<Button type="primary" icon={<PlusOutlined />} onClick={() => setShowCreate(true)}>新建标注任务</Button>}
+      />
+      <Card>
         <Table dataSource={tasks} columns={columns} rowKey="id" loading={loading} size="small" />
       </Card>
 

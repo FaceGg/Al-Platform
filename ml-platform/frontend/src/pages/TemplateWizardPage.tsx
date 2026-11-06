@@ -5,9 +5,10 @@ import { PlusOutlined, SwapOutlined } from "@ant-design/icons";
 import apiClient, { formatApiError } from "../api/client";
 import { getTemplate, instantiateTemplate, type IndustrialTemplateDetail } from "../api/templates";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import { useI18n } from "../i18n";
 
-const { Title, Paragraph, Text } = Typography;
+const { Title } = Typography;
 
 interface ProjectOption {
   id: string;
@@ -100,10 +101,13 @@ export default function TemplateWizardPage() {
 
   return <AppLayout>
     <div style={{ maxWidth: 920, margin: "0 auto" }}>
+      <PageHeading
+        section="algo"
+        parent={{ navKey: "projects", to: "/projects" }}
+        title={template.name}
+        desc={template.description}
+      />
       <div style={{ borderBottom: "1px solid #d9dde3", paddingBottom: 20, marginBottom: 24 }}>
-        <Text type="secondary">{labels.wizard_title}</Text>
-        <Title level={3} style={{ margin: "4px 0 8px", letterSpacing: 0 }}>{template.name}</Title>
-        <Paragraph style={{ maxWidth: 720, marginBottom: 16 }}>{template.description}</Paragraph>
         <Descriptions column={{ xs: 1, sm: 3 }} size="small">
           <Descriptions.Item label={labels.scenario}>{template.scenario}</Descriptions.Item>
           <Descriptions.Item label={labels.target}><Tag color="red">{template.target_column}</Tag></Descriptions.Item>

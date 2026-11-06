@@ -287,11 +287,15 @@ export default function AutoMLTaskPage() {
   };
 
   return <AppLayout>
-    <V2PageFrame section="algo" title="建模任务进度" desc="通用自动建模全链路档案" testId="v2-automl-task">
+    <V2PageFrame
+      section="algo"
+      parent={{ navKey: "automl", to: "/automl" }}
+      title="建模任务进度"
+      desc="通用自动建模全链路档案"
+      testId="v2-automl-task"
+      actions={<button type="button" className="ant-btn" onClick={() => navigate("/automl")}>返回任务列表</button>}
+    >
     <div style={{ maxWidth: 1440, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16 }}>
-        <button type="button" className="ant-btn" onClick={() => navigate("/automl")}>返回任务列表</button>
-      </div>
       {error && <Alert type="error" showIcon message={error} />}
       {loading && !job ? <Card><Spin /></Card> : job ? <>
         <Card style={{ marginBottom: 16 }}>

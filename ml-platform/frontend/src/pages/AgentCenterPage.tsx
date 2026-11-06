@@ -34,28 +34,12 @@ interface AgentJob {
 
 type TabId = "wizard" | "tasks" | "recipes" | "knowledge";
 
-/** 各侧栏项的页面标题与描述（与其他视图的 pagehead 结构一致）。 */
-const PAGE_TITLES: Record<TabId, { zh: string; en: string; descZh: string; descEn: string }> = {
-  wizard: {
-    zh: "新建任务", en: "New task",
-    descZh: "五步向导：数据分析 → 特征工程 → 自动建模 → 评估验收 → 服务化发布",
-    descEn: "Five-step wizard: analysis → features → modeling → gates → serving",
-  },
-  tasks: {
-    zh: "任务列表", en: "Jobs",
-    descZh: "全部智能体运行与自动建模任务；点击行查看全链路档案",
-    descEn: "All agent runs and AutoML jobs; click a row for the full archive",
-  },
-  recipes: {
-    zh: "配方库", en: "Recipes",
-    descZh: "验收通过固化的建模配方：特征脚本 + 建模配置 + 门禁 + 评审记录，版本化可回滚",
-    descEn: "Versioned recipes fixated from accepted runs: script + config + gates + review log",
-  },
-  knowledge: {
-    zh: "知识中心", en: "Knowledge",
-    descZh: "用户上传的工艺文档/标准/法规 + 系统自动管理的平台经验分区",
-    descEn: "Uploaded documents and standards plus the auto-managed platform experience partition",
-  },
+/** 各 tab 对应的侧栏菜单键：页面名与侧栏同源（t.nav）。 */
+const TAB_NAV_KEYS: Record<TabId, string> = {
+  wizard: "agent_new",
+  tasks: "agent_tasks",
+  recipes: "agent_recipes",
+  knowledge: "knowledge_center",
 };
 
 const activeChipStyle: React.CSSProperties = { color: "#fff", background: "rgba(47,155,245,.22)", borderColor: "rgba(92,178,255,.45)" };
@@ -157,7 +141,7 @@ export default function AgentCenterPage() {
 
   return (
     <AppLayout>
-      <PageHeading section="agent" title={zh ? PAGE_TITLES[tab].zh : PAGE_TITLES[tab].en} />
+      <PageHeading section="agent" navKey={TAB_NAV_KEYS[tab]} />
 
       {tab === "wizard" && (
         <AgentModelingWizard onSubmitted={() => { loadAgentData(); }} />

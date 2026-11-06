@@ -4,6 +4,7 @@ import { PlusOutlined, DeleteOutlined, BookOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import apiClient from "../api/client";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import { useI18n } from "../i18n";
 
 const { Text, Paragraph } = Typography;
@@ -63,12 +64,15 @@ export default function KnowledgeBasePage() {
 
   return (
     <AppLayout>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-        <h3>{t.knowledge.title}</h3>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
-          {t.knowledge.create}
-        </Button>
-      </div>
+      <PageHeading
+        section="agent"
+        title={t.knowledge.title}
+        actions={(
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
+            {t.knowledge.create}
+          </Button>
+        )}
+      />
       <Row gutter={[16, 16]}>
         {bases.map((kb: any) => (
           <Col xs={24} sm={12} md={8} key={kb.id}>
