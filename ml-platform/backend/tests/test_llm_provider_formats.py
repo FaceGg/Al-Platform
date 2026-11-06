@@ -21,6 +21,7 @@ from app.services.llm_gateway import (  # noqa: E402
     _build_llm_request,
     _parse_llm_stream_event,
     list_upstream_models,
+    normalize_llm_endpoint,
 )
 
 MESSAGES = [
@@ -179,6 +180,46 @@ class TestAnthropicProbeHeaders(unittest.TestCase):
         self.assertEqual(headers["anthropic-version"], "2023-06-01")
         self.assertNotIn("Authorization", headers)
         self.assertTrue(result["ok"])
+
+
+class TestEndpointNormalization(unittest.TestCase):
+    """裸 base 按格式补全端点（真机：DeepSeek 存 /anthropic/ → 探测/聊天 404）。"""
+
+    def test_bare_bases_get_format_suffix(self):
+        cases = [
+            ("https://api.deepseek.com/anthropic/", "anthropic", "https://api.deepseek.com/anthropic/v1/messages"),
+            ("https://api.deepseek.com/anthropic", "anthropic", "https://api.deepseek.com/anthropic/v1/messages"),
+            ("https://api.deepseek.com/v1", "openai_compatible", "https://api.deepseek.com/v1/chat/completions"),
+            ("https://api.example.com", "responses", "https://api.example.com/responses"),
+        ]
+        for api_url, provider, expected in cases:
+            self.assertEqual(normalize_llm_endpoint(api_url, provider), expected)
+
+    def test_complete_endpoints_unchanged(self):
+        for api_url, provider in (
+            ("https://api.deepseek.com/anthropic/v1/messages", "anthropic"),
+            ("https://api.example.com/v1/chat/completions", "openai_compatible"),
+            ("https://api.example.com/v1/responses", "responses"),
+            # 换格式保护：旧完整端点不被二次加尾巴
+            ("https://api.example.com/v1/chat/completions", "anthropic"),
+        ):
+            self.assertEqual(normalize_llm_endpoint(api_url, provider), api_url)
+
+    def test_probe_normalizes_bare_base_url(self):
+        """探测裸 base 档案：实际 POST 到补全后的 /v1/messages 端点。"""
+        from app.services import llm_gateway
+
+        profile = mock.Mock()
+        profile.api_url = "https://api.deepseek.com/anthropic/"
+        profile.provider = "anthropic"
+        profile.model_id = "deepseek-chat"
+        profile.timeout_seconds = 15
+        with mock.patch.object(llm_gateway, "profile_api_key", return_value="sk"), \
+                mock.patch.object(llm_gateway, "_HTTP_CLIENT") as client:
+            client.post.return_value.status_code = 200
+            llm_gateway.test_connectivity(mock.Mock(), profile)
+        posted_url = client.post.call_args[0][0]
+        self.assertEqual(posted_url, "https://api.deepseek.com/anthropic/v1/messages")
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ from app.services.llm_gateway import (
     LLMApiUrlError,
     list_upstream_models,
     mask_llm_api_key,
+    normalize_llm_endpoint,
     profile_api_key,
     test_connectivity,
 )
@@ -217,11 +218,13 @@ def create_profile(
 ):
     try:
         profile_id = uuid4()
+        # 端点规范化：裸 base 按格式补全后缀（用户按供应商文档习惯常填 base）
+        normalized_url = normalize_llm_endpoint(payload.api_url, payload.provider)
         profile = LLMProfile(
             id=profile_id,
             name=payload.name,
             provider=payload.provider,
-            api_url=payload.api_url,
+            api_url=normalized_url,
             api_key_encrypted=(
                 encrypt_llm_api_key(payload.api_key, _master_key())
                 if payload.api_key
@@ -308,6 +311,10 @@ def update_profile(
         if value is not None:
             setattr(profile, field, value)
             changes[field] = value
+    # 端点规范化：provider 或 api_url 变更后按格式补全后缀（裸 base 可用）
+    if "provider" in changes or "api_url" in changes:
+        profile.api_url = normalize_llm_endpoint(profile.api_url, profile.provider or "openai_compatible")
+        changes["api_url"] = profile.api_url
     if payload.api_key:
         profile.api_key_encrypted = encrypt_llm_api_key(payload.api_key, _master_key())
         changes["api_key"] = "rotated"

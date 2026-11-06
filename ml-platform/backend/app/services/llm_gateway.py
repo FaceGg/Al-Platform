@@ -39,6 +39,28 @@ class LLMProfileNotFoundError(LookupError):
     """Explicit profile_id does not resolve to an existing profile."""
 
 
+def normalize_llm_endpoint(api_url: str, provider: str) -> str:
+    """按 API 格式补全端点后缀：平台合同是完整端点 URL，但用户按供应商文档
+    习惯常填裸 base（真机：DeepSeek 存 https://api.deepseek.com/anthropic/
+    → 探测/聊天 POST 到 /anthropic/ 全部 404）。已带任一已知后缀则原样返回
+    （换格式时避免把旧完整端点二次加尾巴）。"""
+    url = (api_url or "").strip()
+    if not url:
+        return url
+    base = url.rstrip("/")
+    suffixes = {
+        "anthropic": "/v1/messages",
+        "openai_compatible": "/chat/completions",
+        "responses": "/responses",
+    }
+    if any(base.endswith(known) for known in suffixes.values()):
+        return url
+    suffix = suffixes.get(provider)
+    if not suffix:
+        return url
+    return base + suffix
+
+
 def _env_fallback_config() -> GatewayLLMConfig:
     return GatewayLLMConfig(
         api_url=settings.llm_api_url,
@@ -98,7 +120,7 @@ def resolve_profile(
         # consumer surface. Production startup validates the key separately.
         return _env_fallback_config()
     return GatewayLLMConfig(
-        api_url=profile.api_url,
+        api_url=normalize_llm_endpoint(profile.api_url, profile.provider or "openai_compatible"),
         api_key=api_key,
         model_id=profile.model_id,
         temperature=profile.temperature,
@@ -243,7 +265,8 @@ def list_upstream_models(
     /v1/messages→/v1/models）。URL 先过 validate_llm_api_url 的 SSRF 校验
     （https-only、拒私网/环回）。仅 http/https。"""
     validate_llm_api_url(api_url)
-    stripped = api_url.rstrip("/")
+    normalized = normalize_llm_endpoint(api_url, provider)
+    stripped = normalized.rstrip("/")
     candidates: list[str] = []
     for suffix, list_path in (
         ("/chat/completions", "/models"),
@@ -519,10 +542,10 @@ def _post_chat(
 
 
 def test_connectivity(db: Session, profile: LLMProfile) -> dict:
-    validate_llm_api_url(profile.api_url)
+    validate_llm_api_url(normalize_llm_endpoint(profile.api_url, profile.provider or "openai_compatible"))
     try:
         status_code, latency_ms, error = _post_chat(
-            profile.api_url,
+            normalize_llm_endpoint(profile.api_url, profile.provider or "openai_compatible"),
             profile_api_key(profile),
             profile.model_id,
             profile.timeout_seconds or 60,
