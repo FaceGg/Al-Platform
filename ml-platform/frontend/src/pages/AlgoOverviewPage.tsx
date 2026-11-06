@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ReloadOutlined, RocketOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import apiClient from "../api/client";
 import { DASHBOARD_STATS_CHANGED } from "../events/dashboardStats";
 import { useAdaptivePolling } from "../hooks/useAdaptivePolling";
@@ -164,25 +165,25 @@ export default function AlgoOverviewPage() {
 
   return (
     <AppLayout>
-      <div className="v2-crumb">{zh ? "算法平台 / " : "Algorithms / "}<b>{zh ? "建模总览" : "Overview"}</b></div>
-      <div className="v2-pagehead">
-        <div>
-          <h2>{zh ? "建模总览" : "Modeling overview"}</h2>
-        </div>
-        <div style={{ display: "flex", gap: 9, alignItems: "center" }}>
-          {clock ? (
-            <span style={{ fontSize: 12, color: "var(--v2-dim)" }}>
-              {zh ? `每 15 秒自动刷新 · 更新于 ${clock}` : `Auto-refresh every 15s · updated ${clock}`}
-            </span>
-          ) : null}
-          <button type="button" className="v2-btn" onClick={() => { void load(true); }}>
-            <ReloadOutlined spin={loading} />{zh ? "刷新" : "Refresh"}
-          </button>
-          <button type="button" className="v2-btn primary" onClick={() => navigate("/agent")}>
-            <RocketOutlined />{zh ? "新建智能体任务" : "New agent job"}
-          </button>
-        </div>
-      </div>
+      <PageHeading
+        section="algo"
+        navKey="dashboard"
+        actions={(
+          <>
+            {clock ? (
+              <span style={{ fontSize: 12, color: "var(--v2-dim)" }}>
+                {zh ? `每 15 秒自动刷新 · 更新于 ${clock}` : `Auto-refresh every 15s · updated ${clock}`}
+              </span>
+            ) : null}
+            <button type="button" className="v2-btn" onClick={() => { void load(true); }}>
+              <ReloadOutlined spin={loading} />{zh ? "刷新" : "Refresh"}
+            </button>
+            <button type="button" className="v2-btn primary" onClick={() => navigate("/agent")}>
+              <RocketOutlined />{zh ? "新建智能体任务" : "New agent job"}
+            </button>
+          </>
+        )}
+      />
 
       {failed ? (
         <div className="v2-note" style={{ marginBottom: 14 }}>注意：{zh ? "统计数据加载失败，将自动重试，也可点击刷新。" : "Failed to load stats; retrying automatically."}</div>
