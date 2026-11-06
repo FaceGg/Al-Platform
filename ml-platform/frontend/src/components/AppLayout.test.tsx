@@ -99,6 +99,16 @@ describe("AppLayout (v2 five-view shell)", () => {
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/projects"));
   });
 
+  it("keeps the API marketplace entry in the algo sidebar", async () => {
+    function LocationProbe() {
+      const location = useLocation();
+      return <output data-testid="location">{location.pathname}</output>;
+    }
+    render(<MemoryRouter initialEntries={["/automl"]}><AppLayout><LocationProbe /></AppLayout></MemoryRouter>);
+    fireEvent.click(await screen.findByText("API市场"));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/api-marketplace"));
+  });
+
   it("marks the theme toggle and header with stable theme-aware hooks", async () => {
     render(
       <MemoryRouter>

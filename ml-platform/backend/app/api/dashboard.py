@@ -1,7 +1,7 @@
 """Dashboard / Data Cockpit API - aggregated platform stats."""
 import time
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
@@ -36,6 +36,18 @@ def _visible_dataset_filters() -> list:
     ]
 
 
+def _access_scope(db: Session, user: User) -> tuple[bool, list]:
+    """(是否平台管理员, 可访问项目)——统计与列表共用同一权限口径。"""
+    access_service = ProjectAccessService()
+    is_platform_admin = access_service.is_platform_admin(db, user.id)
+    projects = (
+        db.query(Project).all()
+        if is_platform_admin
+        else access_service.accessible_project_query(db, user.id).all()
+    )
+    return is_platform_admin, projects
+
+
 @router.get("/stats")
 def get_dashboard_stats(
     db: Session = Depends(get_db),
@@ -53,13 +65,7 @@ def get_dashboard_stats(
         return cached[1]
 
     operators = OperatorRegistry.list_all()
-    access_service = ProjectAccessService()
-    is_platform_admin = access_service.is_platform_admin(db, current_user.id)
-    accessible_projects = (
-        db.query(Project).all()
-        if is_platform_admin
-        else access_service.accessible_project_query(db, current_user.id).all()
-    )
+    is_platform_admin, accessible_projects = _access_scope(db, current_user)
     accessible_project_ids = [project.id for project in accessible_projects]
 
     dataset_filters = _visible_dataset_filters()
@@ -119,6 +125,15 @@ def get_dashboard_stats(
     model_published = len(deployed_version_ids)
     model_completed = max(0, total_models - model_published)
 
+    # 算法覆盖（工作台）：模型库各算法被多少个模型版本采用，口径同 total_models。
+    # 版本未记录算法时（如直接上传的 ONNX）退回框架名，仍为空记 unknown。
+    model_algorithms = Counter()
+    for algorithm, framework, count in registry_query.with_entities(
+        ModelVersion.algorithm, ModelVersion.framework, func.count(ModelVersion.id),
+    ).group_by(ModelVersion.algorithm, ModelVersion.framework).all():
+        model_algorithms[(algorithm or framework or "").strip() or "unknown"] += count
+
+    # 旧仪表板的「算子分布」：内置算子按类别计数，与模型无关
     algorithm_categories = Counter(
         getattr(operator, "category", "utility") or "utility"
         for operator in operators
@@ -148,9 +163,59 @@ def get_dashboard_stats(
             {"category": category, "count": count}
             for category, count in sorted(algorithm_categories.items())
         ],
+        "model_algorithm_coverage": [
+            {"name": name, "count": count}
+            for name, count in sorted(model_algorithms.items(), key=lambda item: (-item[1], item[0]))
+        ],
     }
     _stats_cache[cache_key] = (now + _STATS_CACHE_TTL_SECONDS, payload)
     return payload
+
+
+@router.get("/recent-model-versions")
+def get_recent_model_versions(
+    limit: int = Query(default=6, ge=1, le=20),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """最近注册的模型版本，按注册时间倒序；数据源与权限口径同「模型版本」统计。
+
+    不走统计缓存：工作台轮询要立即看到注册/删除。
+    """
+    is_platform_admin, accessible_projects = _access_scope(db, current_user)
+    query = db.query(ModelVersion, RegisteredModel).join(
+        RegisteredModel, ModelVersion.registered_model_id == RegisteredModel.id,
+    )
+    if not is_platform_admin:
+        query = query.filter(RegisteredModel.project_id.in_([project.id for project in accessible_projects]))
+    rows = query.order_by(
+        ModelVersion.created_at.desc(), ModelVersion.version_number.desc(),
+    ).limit(limit).all()
+    version_ids = [version.id for version, _ in rows]
+    published_ids = {
+        row[0] for row in db.query(InferenceDeployment.model_version_id).filter(
+            InferenceDeployment.model_version_id.in_(version_ids),
+            InferenceDeployment.observed_state == "running",
+        ).all()
+    } if version_ids else set()
+    return {
+        "items": [
+            {
+                "id": str(version.id),
+                "registered_model_id": str(model.id),
+                "project_id": str(model.project_id),
+                "model_name": model.name,
+                "version_number": version.version_number,
+                "algorithm": version.algorithm or version.framework or "",
+                "metrics": version.metrics or {},
+                "approval_status": version.approval_status,
+                "lifecycle_state": version.lifecycle_state,
+                "published": version.id in published_ids,
+                "created_at": version.created_at.isoformat() if version.created_at else None,
+            }
+            for version, model in rows
+        ]
+    }
 
 
 @router.get("/top-models")

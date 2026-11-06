@@ -1,5 +1,6 @@
 """Dashboard API integration tests."""
 import sys, os, unittest, uuid
+from datetime import datetime
 sys.path.insert(0, ".")
 
 from fastapi.testclient import TestClient
@@ -518,6 +519,143 @@ class TestDashboardAPI(unittest.TestCase):
                     Project.name == f"{marker}-project",
                 ).delete()
                 db.query(User).filter(User.username == member_username).delete()
+                db.commit()
+
+    def test_11_recent_model_versions_require_login(self):
+        response = client.get("/api/dashboard/recent-model-versions")
+        self.assertEqual(response.status_code, 401)
+
+    def test_12_recent_versions_and_algorithm_coverage_follow_the_registry(self):
+        marker = f"dashboard-recent-{uuid.uuid4().hex}"
+        member_username = f"{marker}-member"
+        # 口令取随机 marker，避免测试源码内出现口令字面量
+        member_password = marker
+        registered = client.post(
+            "/api/auth/register",
+            json={"username": member_username, "password": member_password},
+        )
+        self.assertEqual(registered.status_code, 200)
+        member_headers = login(member_username, member_password)
+        lgbm, fallback, hidden = f"{marker}-lgbm", f"{marker}-fw", f"{marker}-hidden"
+
+        try:
+            with SessionLocal() as db:
+                member = db.query(User).filter(User.username == member_username).one()
+                outsider = User(username=f"{marker}-outsider", password_hash="hash", role="engineer")
+                db.add(outsider)
+                db.flush()
+                visible_project = Project(name=f"{marker}-visible-project", owner_id=member.id)
+                hidden_project = Project(name=f"{marker}-hidden-project", owner_id=outsider.id)
+                db.add_all([visible_project, hidden_project])
+                db.flush()
+
+                def register(project, owner, name, specs):
+                    artifact = Artifact(
+                        project_id=project.id,
+                        name=f"{name}.joblib",
+                        type="model",
+                        storage_path=f"models/{name}.joblib",
+                        storage_uri=f"file:///models/{name}.joblib",
+                        file_size=16,
+                        format="joblib",
+                    )
+                    library = ModelLibrary(name=f"{name}-library", project_id=project.id, owner_id=owner.id, status="completed")
+                    model = RegisteredModel(project_id=project.id, name=name, created_by_id=owner.id)
+                    db.add_all([artifact, library, model])
+                    db.flush()
+                    versions = [
+                        ModelVersion(
+                            registered_model_id=model.id,
+                            version_number=number,
+                            source_kind="platform_joblib",
+                            source_model_library_id=library.id,
+                            source_artifact_id=artifact.id,
+                            onnx_artifact_id=artifact.id,
+                            algorithm=algorithm,
+                            framework=framework,
+                            metrics={"f1": 0.9},
+                            created_at=created_at,
+                            created_by_id=owner.id,
+                        )
+                        for number, (algorithm, framework, created_at) in enumerate(specs, start=1)
+                    ]
+                    db.add_all(versions)
+                    db.flush()
+                    return versions
+
+                # 注册时间放在未来，共享测试库里也稳定排在最前
+                first, second, third = register(visible_project, member, f"{marker}-visible-model", [
+                    (lgbm, "sklearn", datetime(2099, 1, 1, 8, 0)),
+                    (lgbm, "sklearn", datetime(2099, 1, 1, 9, 0)),
+                    ("", fallback, datetime(2099, 1, 1, 10, 0)),
+                ])
+                [outsider_version] = register(hidden_project, outsider, f"{marker}-hidden-model", [
+                    (hidden, "sklearn", datetime(2099, 1, 1, 11, 0)),
+                ])
+                db.add(InferenceDeployment(
+                    project_id=visible_project.id,
+                    name=f"{marker}-deployment",
+                    model_version_id=first.id,
+                    desired_state="running",
+                    observed_state="running",
+                    created_by_id=member.id,
+                ))
+                db.commit()
+                visible_ids = [str(third.id), str(second.id), str(first.id)]
+                hidden_id = str(outsider_version.id)
+
+            # 成员只看到自己项目的版本，按注册时间倒序；运行中部署标为已发布；无算法退回框架名
+            member_items = client.get(
+                "/api/dashboard/recent-model-versions", params={"limit": 20}, headers=member_headers,
+            ).json()["items"]
+            self.assertEqual([item["id"] for item in member_items], visible_ids)
+            self.assertEqual([item["version_number"] for item in member_items], [3, 2, 1])
+            self.assertEqual([item["published"] for item in member_items], [False, False, True])
+            self.assertEqual([item["algorithm"] for item in member_items], [fallback, lgbm, lgbm])
+            self.assertEqual(member_items[0]["model_name"], f"{marker}-visible-model")
+            self.assertEqual(member_items[0]["lifecycle_state"], "pending_review")
+
+            admin_items = client.get(
+                "/api/dashboard/recent-model-versions", params={"limit": 20}, headers=self.admin_headers,
+            ).json()["items"]
+            self.assertEqual(
+                [item["id"] for item in admin_items if item["model_name"].startswith(marker)],
+                [hidden_id, *visible_ids],
+            )
+            limited = client.get(
+                "/api/dashboard/recent-model-versions", params={"limit": 2}, headers=member_headers,
+            ).json()["items"]
+            self.assertEqual([item["id"] for item in limited], visible_ids[:2])
+
+            # 算法覆盖按模型采用数降序、带算法名，并且同样按项目权限过滤
+            dashboard_api._stats_cache.clear()
+            member_stats = client.get("/api/dashboard/stats", headers=member_headers).json()
+            self.assertEqual(member_stats["model_algorithm_coverage"], [
+                {"name": lgbm, "count": 2},
+                {"name": fallback, "count": 1},
+            ])
+            # 旧仪表板的算子分布保持原样
+            self.assertIn("category", member_stats["algorithm_coverage"][0])
+            admin_stats = client.get("/api/dashboard/stats", headers=self.admin_headers).json()
+            admin_coverage = {entry["name"]: entry["count"] for entry in admin_stats["model_algorithm_coverage"]}
+            self.assertEqual(admin_coverage[lgbm], 2)
+            self.assertEqual(admin_coverage[hidden], 1)
+        finally:
+            with SessionLocal() as db:
+                registry_ids = [
+                    row[0] for row in db.query(RegisteredModel.id).filter(
+                        RegisteredModel.name.like(f"{marker}%"),
+                    ).all()
+                ]
+                db.query(InferenceDeployment).filter(InferenceDeployment.name == f"{marker}-deployment").delete()
+                db.query(ModelVersion).filter(
+                    ModelVersion.registered_model_id.in_(registry_ids),
+                ).delete(synchronize_session=False)
+                db.query(RegisteredModel).filter(RegisteredModel.id.in_(registry_ids)).delete(synchronize_session=False)
+                db.query(ModelLibrary).filter(ModelLibrary.name.like(f"{marker}%")).delete(synchronize_session=False)
+                db.query(Artifact).filter(Artifact.name.like(f"{marker}%")).delete(synchronize_session=False)
+                db.query(Project).filter(Project.name.like(f"{marker}%")).delete(synchronize_session=False)
+                db.query(User).filter(User.username.in_([member_username, f"{marker}-outsider"])).delete(synchronize_session=False)
                 db.commit()
 
 

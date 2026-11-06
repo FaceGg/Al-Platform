@@ -91,6 +91,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         { key: "/models", icon: <AppstoreOutlined />, label: t.nav.models },
         { key: "/orchestration", icon: <RobotOutlined />, label: t.nav.orchestration },
         { key: "/demo-loop", icon: <DeploymentUnitOutlined />, label: t.nav.demo_loop },
+        { key: "/api-marketplace", icon: <ApiOutlined />, label: t.nav.api_market },
       ] },
     ],
     agent: [
