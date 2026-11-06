@@ -125,5 +125,53 @@ class TestLightTrainerEnsemble(unittest.TestCase):
         self.assertIn("recall_minority", result["metrics"])
 
 
+class TestTrainerWhitelistHardConstraint(unittest.TestCase):
+    """算法白名单硬约束智能体训练族（用户要求"必须使用勾选的"；
+    真机 43e908e7：勾了 8 族却出现未勾选的 logistic）。"""
+
+    def _make_frame(self) -> pd.DataFrame:
+        rng = np.random.RandomState(7)
+        frame = pd.DataFrame({
+            "feat_a": np.concatenate([rng.normal(10, 1, 300), rng.normal(-10, 1, 100)]),
+            "feat_b": np.concatenate([rng.normal(5, 1, 300), rng.normal(-5, 1, 100)]),
+            "target": [1] * 300 + [0] * 100,
+        })
+        return frame.sample(frac=1.0, random_state=7).reset_index(drop=True)
+
+    def _trained_names(self, whitelist) -> set:
+        frame = self._make_frame()
+        result = lightweight_trainer(frame, frame["target"], hints={
+            "ensemble": {"enabled": True, "top_k": 5},
+            "algorithm_whitelist": whitelist,
+        })
+        members = (result.get("ensemble") or {}).get("members") or []
+        return {member["name"] for member in members}
+
+    def test_only_checked_families_train(self):
+        names = self._trained_names(["random_forest", "hist_gradient_boosting"])
+        self.assertEqual(names, {"random_forest", "hist_gb"})
+
+    def test_single_family_whitelist_trains_exactly_one(self):
+        # 单族白名单：只训练勾选的那一族（不足 2 个候选 → 不组集成，reason 如实记录）
+        frame = self._make_frame()
+        result = lightweight_trainer(frame, frame["target"], hints={
+            "ensemble": {"enabled": True, "top_k": 5},
+            "algorithm_whitelist": ["mlp"],
+        })
+        self.assertEqual(len(result["topk_metrics"]), 1)
+        self.assertEqual(result["ensemble"]["reason"], "fewer_than_2_candidates")
+
+    def test_unchecked_families_never_appear(self):
+        names = self._trained_names(["catboost", "lightgbm"])
+        self.assertEqual(names, {"catboost", "lightgbm"})
+        self.assertNotIn("logistic", names)
+        self.assertNotIn("random_forest", names)
+
+    def test_empty_whitelist_trains_builtin_trio_including_logistic(self):
+        names = self._trained_names([])
+        self.assertIn("logistic", names)
+        self.assertTrue({"random_forest", "hist_gb"}.issubset(names))
+
+
 if __name__ == "__main__":
     unittest.main()

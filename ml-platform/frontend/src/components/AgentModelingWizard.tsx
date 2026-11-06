@@ -550,7 +550,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
       {step === 3 && (
         <>
           <div className="v2-panel">
-            <h4><span className="bar" />{zh ? "算法白名单（约束服务化后闭环重训的算法族，不选 = 全算法族；智能体快速评估固定使用轻量三族：逻辑回归/随机森林/HGB）" : "Algorithm whitelist (constrains the serving retrain families; empty = all; agent quick evaluation uses a fixed light trio: logistic/RF/HGB)"}</h4>
+            <h4><span className="bar" />{zh ? "算法白名单（硬约束智能体训练与 S5 闭环重训的算法族，必须使用勾选的；不选 = 全族 + 内置轻量逻辑回归）" : "Algorithm whitelist (hard constraint on agent training and serving retrain families; unchecked families never train; empty = all + built-in logistic)"}</h4>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 8 }}>
               {AUTOML_ALGORITHM_OPTIONS.map((alg) => (
                 <label key={alg.value} className={`v2-radio-card${algorithmWhitelist[alg.value] ? " on" : ""}`} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 0 }}>

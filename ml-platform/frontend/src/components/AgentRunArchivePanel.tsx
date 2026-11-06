@@ -236,7 +236,12 @@ export default function AgentRunArchivePanel({ runId, archive, archiveError, zh,
             ) : null}
           </div>
         ) : null}
-        <AgentStream archive={archive} zh={zh} active={!!active} />
+        <AgentStream
+          archive={archive} zh={zh} active={!!active}
+          onDecide={decide} deciding={deciding}
+          decisionNote={decisionNote} onNoteChange={setDecisionNote}
+          decisionError={decisionError} resolved={resolved ?? null}
+        />
         <OptReportPanel resultJson={archive.result_json} zh={zh} />
         {/* 设计稿两块：轮次关键产物表 + 注入的经验（L2 检索） */}
         <div style={{ display: "flex", gap: 14, marginTop: 14, flexWrap: "wrap" }}>
@@ -400,7 +405,15 @@ function buildStreamLines(archive: AgentRunDetail, zh: boolean): StreamLine[] {
   return lines;
 }
 
-function AgentStream({ archive, zh, active }: { archive: AgentRunDetail; zh: boolean; active: boolean }) {
+function AgentStream({
+  archive, zh, active, onDecide, deciding, decisionNote, onNoteChange, decisionError, resolved,
+}: {
+  archive: AgentRunDetail; zh: boolean; active: boolean;
+  onDecide: (decision: "accept" | "reject") => void;
+  deciding: "accept" | "reject" | null;
+  decisionNote: string; onNoteChange: (value: string) => void;
+  decisionError: string; resolved: { decision?: string; note?: string | null; actor?: string; at?: string } | null;
+}) {
   const streamRef = useRef<HTMLDivElement | null>(null);
   const followRef = useRef(true);
   const [lines, setLines] = useState<StreamLine[]>([]);
@@ -526,7 +539,7 @@ function AgentStream({ archive, zh, active }: { archive: AgentRunDetail; zh: boo
             data-line-idx={idx}
             className={`agent-line${line.kind === "section" ? " agent-line-section" : line.kind === "mono" ? " agent-line-mono" : ""}${line.tone ? ` tone-${line.tone}` : ""}`}
           >
-            {line.kind === "outcome" ? <TerminalOutcome archive={archive} zh={zh} /> : line.text}
+            {line.kind === "outcome" ? <TerminalOutcome archive={archive} zh={zh} onDecide={onDecide} deciding={deciding} decisionNote={decisionNote} onNoteChange={onNoteChange} decisionError={decisionError} resolved={resolved} /> : line.text}
           </div>
         ))}
         {active ? (
@@ -543,7 +556,15 @@ function AgentStream({ archive, zh, active }: { archive: AgentRunDetail; zh: boo
 }
 
 /** 终态块：成功给绿色验收信号；失败给「信号+原因+建议」，技术码仅作小字备注。 */
-function TerminalOutcome({ archive, zh }: { archive: AgentRunDetail; zh: boolean }) {
+function TerminalOutcome({
+  archive, zh, onDecide, deciding, decisionNote, onNoteChange, decisionError, resolved,
+}: {
+  archive: AgentRunDetail; zh: boolean;
+  onDecide: (decision: "accept" | "reject") => void;
+  deciding: "accept" | "reject" | null;
+  decisionNote: string; onNoteChange: (value: string) => void;
+  decisionError: string; resolved: { decision?: string; note?: string | null; actor?: string; at?: string } | null;
+}) {
   const explain = archive.error_code ? TERMINAL_EXPLAIN[archive.error_code] : undefined;
   const accepted = archive.status === "accepted";
   // waiting_escalate 是"暂停待人工决策"而非致命失败：用琥珀色与 ⏸ 区分，
@@ -577,6 +598,39 @@ function TerminalOutcome({ archive, zh }: { archive: AgentRunDetail; zh: boolean
             <div>{zh ? "原因与建议见上方「待人工决策原因」与技术详情。" : "See the decision note and technical details above."}</div>
           )}
           {archive.error_code ? <div className="mono" style={{ marginTop: 4 }}>code: {archive.error_code} · {archive.status}</div> : null}
+          {resolved ? (
+            <div style={{ marginTop: 4 }}>
+              {resolved.decision === "accept"
+                ? (zh ? "✓ 已人工采纳验收结论" : "✓ Accepted by human decision")
+                : (zh ? "✕ 已人工驳回（确认评审意见，任务终止）" : "✕ Rejected by human decision")}
+              {resolved.note ? ` · ${resolved.note}` : ""}
+              {resolved.at ? ` · ${formatDecisionTime(resolved.at, zh)}` : ""}
+            </div>
+          ) : null}
+          {escalated && !resolved ? (
+            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <input
+                className="v2-select"
+                style={{ flex: 1, minWidth: 180 }}
+                aria-label={zh ? "决策备注（可选）" : "decision note"}
+                placeholder={zh ? "决策备注（可选，随档案留痕）" : "note (archived)"}
+                value={decisionNote}
+                onChange={(e) => onNoteChange(e.target.value)}
+              />
+              <button
+                type="button" className="v2-btn primary sm" disabled={deciding !== null}
+                title={zh ? "人工确认指标可信：验收通过（采纳最后轮次冠军实测指标）" : "Accept the round champion metrics"}
+                onClick={() => onDecide("accept")}
+              >{deciding === "accept" ? (zh ? "提交中…" : "…") : (zh ? "✓ 人工采纳" : "Accept")}</button>
+              <button
+                type="button" className="v2-btn sm" disabled={deciding !== null}
+                style={{ borderColor: "rgba(230,111,117,.55)", color: "var(--v2-red)" }}
+                title={zh ? "确认评审意见：任务终止，可调整引导后重新提交" : "Confirm review concerns and end the run"}
+                onClick={() => onDecide("reject")}
+              >{deciding === "reject" ? (zh ? "提交中…" : "…") : (zh ? "✕ 驳回" : "Reject")}</button>
+              {decisionError ? <span style={{ color: "var(--v2-red)" }}>{decisionError}</span> : null}
+            </div>
+          ) : null}
         </div>
       ) : (
         <div className="body" style={{ marginTop: 4 }}>

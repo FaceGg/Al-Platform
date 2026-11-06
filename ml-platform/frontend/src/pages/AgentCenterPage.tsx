@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button, Popconfirm, Tooltip, message } from "antd";
 import { DeleteOutlined, EyeOutlined, ReloadOutlined } from "@ant-design/icons";
@@ -98,6 +98,37 @@ export default function AgentCenterPage() {
   const [agentRunsError, setAgentRunsError] = useState("");
   const [recipes, setRecipes] = useState<PipelineRecipeItem[]>([]);
   const [recipesError, setRecipesError] = useState("");
+  // 智能体 S3 训练（轻量训练器）不是 AutoML 任务——从运行列表合成行，
+  // 让「AutoML」视图能看到智能体触发的每次建模（此前完全不可见，用户报障）
+  const agentTrainingRows = useMemo(() => {
+    const rows: Array<Record<string, unknown>> = [];
+    for (const run of agentRuns) {
+      if ((run.round_count ?? 0) < 1) continue;
+      rows.push({
+        id: `${run.id}#s3`,
+        name: `智能体S3训练 · ${run.project_name || run.id.slice(0, 8)} · 第${run.round_count}轮`,
+        status: run.status,
+        updated_at: run.updated_at,
+        created_at: run.created_at,
+        agentRunId: run.id,
+        agent: true,
+      });
+    }
+    return rows;
+  }, [agentRuns]);
+  const modelingRows = useMemo(() => {
+    type ModelingRow = {
+      id: unknown; name?: unknown; task_name?: unknown; status?: unknown; state?: unknown;
+      progress?: unknown; updated_at?: unknown; created_at?: unknown;
+      agent: boolean; agentRunId?: string;
+    };
+    const combined = [
+      ...jobs.map((job) => ({ ...job, agent: false, agentRunId: undefined })),
+      ...agentTrainingRows.map((row) => ({ ...row, agent: true })),
+    ] as ModelingRow[];
+    return combined.sort((left, right) =>
+      String(right.updated_at || "").localeCompare(String(left.updated_at || "")));
+  }, [jobs, agentTrainingRows]);
 
   const loadJobs = () => {
     setLoading(true);
@@ -164,22 +195,27 @@ export default function AgentCenterPage() {
               </tr></thead>
               <tbody>
                 {error ? <tr><td colSpan={5} className="v2-empty">{error}</td></tr> : null}
-                {!error && jobs.length === 0 ? (
+                {!error && modelingRows.length === 0 ? (
                   <tr><td colSpan={5} className="v2-empty">{zh
                     ? "暂无任务 —— 点击右上「新建智能体建模任务」，四步向导即可启动全自动迭代"
                     : "No jobs yet — start the wizard to launch a fully automated run"}</td></tr>
                 ) : null}
-                {jobs.map((job) => {
+                {modelingRows.map((job) => {
                   const status = String(job.status ?? job.state ?? "-");
                   const progress = typeof job.progress === "number" ? Math.round(job.progress) : null;
+                  const isAgent = job.agent;
+                  const targetId = isAgent ? String(job.agentRunId) : String(job.id);
                   return (
                     <tr key={String(job.id)}>
-                      <td className="tt">{job.name ?? job.task_name ?? String(job.id)}</td>
+                      <td className="tt">
+                        {isAgent ? <span className="v2-badge v2-bp" style={{ marginRight: 6 }}>智能体</span> : null}
+                        {String(job.name ?? job.task_name ?? job.id)}
+                      </td>
                       <td><span className={`v2-badge ${statusBadge(status)}`}>{status}</span></td>
                       <td>{progress != null ? `${progress}%` : "-"}</td>
-                      <td>{relativeTime(job.updated_at ?? job.created_at, zh)}</td>
+                      <td>{relativeTime((job.updated_at ?? job.created_at) as string | null | undefined, zh)}</td>
                       <td>
-                        <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/automl/task/${job.id}`)}>
+                        <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(isAgent ? `/agent/task/${targetId}` : `/automl/task/${targetId}`)}>
                           {zh ? "详情" : "Details"}
                         </Button>
                       </td>

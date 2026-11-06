@@ -111,8 +111,14 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
     非挂死，是无限时慢算）。分层抽样 2 万行 + 类别编码截断 top 200。
     """
     import pandas as pd
-    from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
+    from sklearn.ensemble import (
+        ExtraTreesClassifier,
+        GradientBoostingClassifier,
+        HistGradientBoostingClassifier,
+        RandomForestClassifier,
+    )
     from sklearn.linear_model import LogisticRegression
+    from sklearn.neural_network import MLPClassifier
     from sklearn.model_selection import train_test_split
     from sklearn.preprocessing import LabelEncoder
 
@@ -144,14 +150,66 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
     )
     # S4 方差门禁的噪声底输入：召回粒度 = 1/少数类测试样本数。
     minority_test_count = int((y_test == minority).sum())
-    families = {
+    # 算法族全集：向导白名单（目录 8 族）按勾选硬约束（用户要求"必须使用勾选的"，
+    # 真机 43e908e7：勾了 8 族却出现未勾选的 logistic）。logistic 是智能体内置
+    # 轻量族（无目录对应项），仅在全族模式（白名单为空）时参与；白名单非空时
+    # 只训练勾选族——缺库依赖/单族失败按既有 try/except 跳过，不拖垮 S3。
+    families: dict = {
         "logistic": LogisticRegression(max_iter=500, class_weight="balanced"),
         "random_forest": RandomForestClassifier(
             n_estimators=120, min_samples_leaf=2, class_weight="balanced",
             random_state=7, n_jobs=-1,
         ),
         "hist_gb": HistGradientBoostingClassifier(max_iter=120, random_state=7),
+        "gbdt": GradientBoostingClassifier(random_state=7),
+        "extra_trees": ExtraTreesClassifier(
+            n_estimators=120, min_samples_leaf=2, class_weight="balanced",
+            random_state=7, n_jobs=-1,
+        ),
+        "mlp": MLPClassifier(
+            hidden_layer_sizes=(64,), max_iter=150, early_stopping=True, random_state=7,
+        ),
     }
+    try:
+        from lightgbm import LGBMClassifier
+
+        families["lightgbm"] = LGBMClassifier(
+            n_estimators=150, class_weight="balanced", random_state=7, verbosity=-1,
+        )
+    except ImportError:
+        pass
+    try:
+        from xgboost import XGBClassifier
+
+        families["xgboost"] = XGBClassifier(
+            n_estimators=150, max_depth=5, random_state=7,
+            eval_metric="logloss", verbosity=0,
+        )
+    except ImportError:
+        pass
+    try:
+        from catboost import CatBoostClassifier
+
+        families["catboost"] = CatBoostClassifier(
+            iterations=200, depth=6, auto_class_weights="Balanced",
+            random_seed=7, verbose=False, allow_writing_files=False,
+        )
+    except ImportError:
+        pass
+    whitelist = [str(item) for item in (hints or {}).get("algorithm_whitelist") or []]
+    catalog_to_trainer = {
+        "random_forest": "random_forest",
+        "hist_gradient_boosting": "hist_gb",
+        "gbdt": "gbdt",
+        "extra_trees": "extra_trees",
+        "mlp": "mlp",
+        "lightgbm": "lightgbm",
+        "xgboost": "xgboost",
+        "catboost": "catboost",
+    }
+    if whitelist:
+        wanted = {catalog_to_trainer[item] for item in whitelist if item in catalog_to_trainer}
+        families = {name: model for name, model in families.items() if name in wanted}
     scored = []
     for name, model in families.items():
         try:

@@ -618,15 +618,20 @@ class AgentRunner:
             )
             if target_excluded:
                 feature_df = feature_df.drop(columns=[target])
-            # 集成学习配置（guidance.modeling.ensemble）经 hints 传入训练器；
-            # 未启用时保持 {} 与既有训练器签名兼容。
-            ensemble_cfg = {}
+            # 集成学习配置（guidance.modeling.ensemble）与算法白名单（硬约束
+            # 智能体训练族，用户要求"必须使用勾选的"）经 hints 传入训练器；
+            # 均未启用时保持 {} 与既有训练器签名兼容。
+            modeling_cfg = {}
             if isinstance(self.guidance, dict):
-                ensemble_cfg = ((self.guidance.get("modeling") or {}).get("ensemble") or {})
-            trainer_result = self.trainer(
-                feature_df, y,
-                {"ensemble": ensemble_cfg} if ensemble_cfg.get("enabled") else {},
-            )
+                modeling_cfg = dict(self.guidance.get("modeling") or {})
+            ensemble_cfg = dict(modeling_cfg.get("ensemble") or {})
+            hints_payload: dict = {}
+            if ensemble_cfg.get("enabled"):
+                hints_payload["ensemble"] = ensemble_cfg
+            whitelist = [str(x) for x in modeling_cfg.get("algorithm_whitelist") or []]
+            if whitelist:
+                hints_payload["algorithm_whitelist"] = whitelist
+            trainer_result = self.trainer(feature_df, y, hints_payload)
             s3_digest = self._s3_digest(trainer_result)
             if target_excluded:
                 # 留痕：评审与排障能看到"特征表里的标签列已被平台剥离"。
