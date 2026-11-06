@@ -60,6 +60,24 @@ const hostOf = (url: string): string => {
   }
 }
 
+// 推理参数映射模板：按配置的推理等级生成三元链（对齐 ZCode 的映射表达式
+// 形态：reasoningLevel == "<level>" ? { "thinking": { "type": ... } } : ...）
+export function buildReasoningMapping(levels: string[]): string {
+  const clean = (levels ?? []).map((level) => String(level).trim()).filter(Boolean)
+  if (!clean.length) return ''
+  const lines: string[] = []
+  clean.forEach((level, index) => {
+    lines.push(`${index === 0 ? '' : ': '}reasoningLevel == "${level}"`)
+    lines.push('  ? {')
+    lines.push('      "thinking": {')
+    lines.push(`        "type": "${level}"`)
+    lines.push('      }')
+    lines.push('    }')
+  })
+  lines.push(': {}')
+  return lines.join('\n')
+}
+
 // 供应商条目：已知供应商按域名聚合（多个档案 = 该供应商的多个模型）；
 // 未匹配模板的按域名归入「自定义供应商」。
 interface ProviderEntry {
@@ -509,6 +527,11 @@ export default function LLMGatewayPage() {
       reasoning_mapping: String(cfg.reasoning_mapping ?? ''),
       smart_config: cfg.smart_config !== false,
     })
+    // 已配推理等级但映射为空：自动生成映射模板（不覆盖已保存的手写映射）
+    const savedLevels = Array.isArray(cfg.reasoning_levels) ? (cfg.reasoning_levels as string[]) : []
+    if (savedLevels.length && !String(cfg.reasoning_mapping ?? '').trim()) {
+      modelForm.setFieldValue('reasoning_mapping', buildReasoningMapping(savedLevels))
+    }
     setModelCfgTarget(profile)
     setModelCfgMode('edit')
     setModelCfgOpen(true)
@@ -1037,10 +1060,23 @@ export default function LLMGatewayPage() {
                     />
                   </Form.Item>
                   <Form.Item label={<span>{zh ? '推理等级（从低到高）' : 'Reasoning levels (low to high)'} <Tooltip title={zh ? '点「+」添加等级标签，按从低到高排序' : 'Add level tags in ascending order'}><QuestionCircleOutlined style={{ color: 'var(--v2-dim, #999)' }} /></Tooltip></span>} name="reasoning_levels">
-                    <Select mode="tags" open={false} placeholder="+" style={{ width: 120 }} tokenSeparators={[',']} />
+                    <Select
+                      mode="tags" open={false} placeholder="+" style={{ width: 200 }} tokenSeparators={[',']}
+                      onChange={(levels: string[]) => {
+                        // 等级变化且映射为空（未手写）时自动生成映射模板
+                        if (!String(modelForm.getFieldValue('reasoning_mapping') || '').trim()) {
+                          modelForm.setFieldValue('reasoning_mapping', buildReasoningMapping(levels ?? []))
+                        }
+                      }}
+                    />
                   </Form.Item>
-                  <Form.Item label={<span>{zh ? '推理参数映射' : 'Reasoning param mapping'} <Tooltip title={zh ? '推理等级到请求参数的映射表达式' : 'Mapping expression from reasoning level to params'}><QuestionCircleOutlined style={{ color: 'var(--v2-dim, #999)' }} /></Tooltip></span>} name="reasoning_mapping">
-                    <Input.TextArea rows={4} placeholder={'reasoningLevel == "disabled"\n  ? { ... }'} />
+                  <Form.Item label={<span>{zh ? '推理参数映射' : 'Reasoning param mapping'} <Tooltip title={zh ? '推理等级到请求参数的映射表达式（三元链）；可手写，等级变化且为空时自动生成模板' : 'Ternary chain mapping levels to request params'}><QuestionCircleOutlined style={{ color: 'var(--v2-dim, #999)' }} /></Tooltip></span>} name="reasoning_mapping">
+                    <Input.TextArea
+                      rows={9}
+                      className="codebox"
+                      style={{ fontFamily: 'JetBrains Mono, Consolas, monospace', fontSize: 12.5 }}
+                      placeholder={'reasoningLevel == "disabled"\n  ? {\n      "thinking": {\n        "type": "disabled"\n      }\n    }\n  : {}'}
+                    />
                   </Form.Item>
                 </>
               ),

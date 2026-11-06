@@ -160,3 +160,20 @@ describe("LLMGatewayPage", () => {
     expect(payload.is_default).toBe(true);
   });
 });
+
+describe("buildReasoningMapping", () => {
+  it("builds a ternary chain matching the ZCode expression shape", async () => {
+    const { buildReasoningMapping } = await import("./LLMGatewayPage");
+    const mapping = buildReasoningMapping(["disabled", "low"]);
+    expect(mapping).toContain('reasoningLevel == "disabled"');
+    expect(mapping).toContain('"thinking": {');
+    expect(mapping).toContain('"type": "disabled"');
+    expect(mapping).toContain(': reasoningLevel == "low"');
+    expect(mapping.trimEnd().endsWith(": {}")).toBe(true);
+  });
+
+  it("returns empty for no levels", async () => {
+    const { buildReasoningMapping } = await import("./LLMGatewayPage");
+    expect(buildReasoningMapping([])).toBe("");
+  });
+});
