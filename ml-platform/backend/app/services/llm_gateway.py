@@ -39,11 +39,24 @@ class LLMProfileNotFoundError(LookupError):
     """Explicit profile_id does not resolve to an existing profile."""
 
 
+def llm_base_url(api_url: str) -> str:
+    """剥掉已知协议后缀，存库/展示用裸 base（对齐 ZCode 模型设置习惯：
+    Base URL 存 https://api.deepseek.com/anthropic，协议路径调用时内部拼接）。
+    无已知后缀则原样返回（含去尾斜杠）。"""
+    url = (api_url or "").strip()
+    if not url:
+        return url
+    base = url.rstrip("/")
+    for suffix in ("/v1/messages", "/chat/completions", "/responses"):
+        if base.endswith(suffix):
+            return base[: -len(suffix)]
+    return base
+
+
 def normalize_llm_endpoint(api_url: str, provider: str) -> str:
-    """按 API 格式补全端点后缀：平台合同是完整端点 URL，但用户按供应商文档
-    习惯常填裸 base（真机：DeepSeek 存 https://api.deepseek.com/anthropic/
-    → 探测/聊天 POST 到 /anthropic/ 全部 404）。已带任一已知后缀则原样返回
-    （换格式时避免把旧完整端点二次加尾巴）。"""
+    """按 API 格式补全端点后缀（调用时内部拼接）：裸 base 与完整端点都接受，
+    返回可直接 POST 的完整端点。已带任一已知后缀则原样返回（换格式时避免
+    把旧完整端点二次加尾巴）。"""
     url = (api_url or "").strip()
     if not url:
         return url

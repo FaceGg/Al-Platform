@@ -107,6 +107,17 @@ class TestLLMProfilesAPI(unittest.TestCase):
         fetched = client.get(f"/api/llm-profiles/{body['id']}", headers=self.h)
         self.assertNotIn(secret, fetched.text)
 
+    def test_create_strips_protocol_suffix_to_bare_base(self):
+        """存库用裸 base（ZCode 惯例）：完整端点剥掉协议后缀存储，调用侧拼接。"""
+        response = self._create(name="bare-base", url=_LLM_URL)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["api_url"], "https://api.example-llm.com/v1")
+
+    def test_create_accepts_bare_base_unchanged(self):
+        response = self._create(name="bare-base-anthropic", url="https://api.deepseek.com/anthropic", extra={"provider": "anthropic"})
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["api_url"], "https://api.deepseek.com/anthropic")
+
     def test_api_url_validation_rejects_non_https_and_private_targets(self):
         bad_urls = [
             "http://api.example-llm.com/v1/chat/completions",

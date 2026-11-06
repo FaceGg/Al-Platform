@@ -20,6 +20,7 @@ from app.services.llm_gateway import (  # noqa: E402
     LLMApiUrlError,
     _build_llm_request,
     _parse_llm_stream_event,
+    llm_base_url,
     list_upstream_models,
     normalize_llm_endpoint,
 )
@@ -183,6 +184,17 @@ class TestAnthropicProbeHeaders(unittest.TestCase):
 
 
 class TestEndpointNormalization(unittest.TestCase):
+    def test_llm_base_url_strips_known_suffixes(self):
+        """存库/展示用裸 base：完整端点剥后缀，裸 base 与其它路径原样保留。"""
+        cases = [
+            ("https://api.deepseek.com/anthropic/v1/messages", "https://api.deepseek.com/anthropic"),
+            ("https://api.example.com/v1/chat/completions", "https://api.example.com/v1"),
+            ("https://api.example.com/v1/responses", "https://api.example.com/v1"),
+            ("https://api.deepseek.com/anthropic/", "https://api.deepseek.com/anthropic"),
+            ("https://gateway.example.com/custom/path", "https://gateway.example.com/custom/path"),
+        ]
+        for api_url, expected in cases:
+            self.assertEqual(llm_base_url(api_url), expected)
     """裸 base 按格式补全端点（真机：DeepSeek 存 /anthropic/ → 探测/聊天 404）。"""
 
     def test_bare_bases_get_format_suffix(self):

@@ -27,8 +27,8 @@ from app.schemas.llm_profile import (
 from app.services.llm_gateway import (
     LLMApiUrlError,
     list_upstream_models,
+    llm_base_url,
     mask_llm_api_key,
-    normalize_llm_endpoint,
     profile_api_key,
     test_connectivity,
 )
@@ -218,8 +218,9 @@ def create_profile(
 ):
     try:
         profile_id = uuid4()
-        # 端点规范化：裸 base 按格式补全后缀（用户按供应商文档习惯常填 base）
-        normalized_url = normalize_llm_endpoint(payload.api_url, payload.provider)
+        # 存库用裸 base（对齐供应商文档/ZCode 惯例）：协议路径由调用侧
+        # normalize_llm_endpoint 内部拼接（探测/聊天/拉模型均已接入）
+        normalized_url = llm_base_url(payload.api_url)
         profile = LLMProfile(
             id=profile_id,
             name=payload.name,
@@ -311,9 +312,9 @@ def update_profile(
         if value is not None:
             setattr(profile, field, value)
             changes[field] = value
-    # 端点规范化：provider 或 api_url 变更后按格式补全后缀（裸 base 可用）
+    # 存库用裸 base：provider 或 api_url 变更后剥掉协议后缀（调用侧内部拼接）
     if "provider" in changes or "api_url" in changes:
-        profile.api_url = normalize_llm_endpoint(profile.api_url, profile.provider or "openai_compatible")
+        profile.api_url = llm_base_url(profile.api_url)
         changes["api_url"] = profile.api_url
     if payload.api_key:
         profile.api_key_encrypted = encrypt_llm_api_key(payload.api_key, _master_key())
