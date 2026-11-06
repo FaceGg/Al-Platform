@@ -301,6 +301,57 @@ class TestRecipeListing(AgentCenterHarness, unittest.TestCase):
         self.assertEqual(response.status_code, 401)
 
 
+class TestRecipeDetailAndDelete(AgentCenterHarness, unittest.TestCase):
+    def _seed(self, name: str, created_by=None) -> str:
+        project_id, _ = self._project()
+        with SessionLocal() as db:
+            recipe = create_recipe(
+                db,
+                project_id=uuid.UUID(project_id),
+                name=name,
+                domain="tightening",
+                target_column="DECIDE",
+                content={
+                    "features": {"keep": ["TORQUE_DEVIATION"]},
+                    "feature_script": "def transform(df):\n    return df",
+                    "acceptance_gates": {"recall_minority": 0.9},
+                    "baseline_metrics": {"recall_minority": 0.93},
+                },
+                change_note="验收通过固化",
+                created_by=uuid.UUID(created_by) if created_by else None,
+            )
+            return str(recipe.id)
+
+    def test_detail_returns_content_and_versions(self):
+        recipe_id = self._seed("recipe-detail")
+        response = client.get(f"/api/agent/recipes/{recipe_id}", headers=self.h)
+        self.assertEqual(response.status_code, 200)
+        detail = response.json()
+        self.assertEqual(detail["name"], "recipe-detail")
+        # 详情页展示用：当前版本完整内容（列表接口刻意不暴露 content，详情必须暴露）
+        self.assertEqual(detail["content"]["acceptance_gates"]["recall_minority"], 0.9)
+        self.assertIn("def transform", detail["content"]["feature_script"])
+        self.assertEqual(len(detail["versions"]), 1)
+        self.assertEqual(detail["versions"][0]["status"], "current")
+        self.assertEqual(detail["versions"][0]["baseline_metrics"]["recall_minority"], 0.93)
+
+    def test_detail_404_for_unknown_id(self):
+        response = client.get(f"/api/agent/recipes/{uuid4()}", headers=self.h)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"]["code"], "AGENT_RECIPE_NOT_FOUND")
+
+    def test_delete_removes_recipe_and_all_versions(self):
+        recipe_id = self._seed("recipe-del")
+        response = client.delete(f"/api/agent/recipes/{recipe_id}", headers=self.h)
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(
+            client.get(f"/api/agent/recipes/{recipe_id}", headers=self.h).status_code, 404,
+        )
+        with SessionLocal() as db:
+            self.assertEqual(db.query(PipelineRecipeVersion).count(), 0)
+            self.assertIsNone(db.get(PipelineRecipe, uuid.UUID(recipe_id)))
+
+
 class TestDeleteAgentRun(AgentCenterHarness, unittest.TestCase):
     def _seed_run(self, status, created_by=None):
         with SessionLocal() as db:

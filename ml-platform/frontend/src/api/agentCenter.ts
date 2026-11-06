@@ -214,3 +214,32 @@ export async function listPipelineRecipes(limit = 100): Promise<PipelineRecipeIt
   const response = await apiClient.get("/agent/recipes", { params: { limit } });
   return Array.isArray(response.data) ? response.data : [];
 }
+
+export interface RecipeVersionDetail {
+  version: number;
+  status: string;
+  change_note: string | null;
+  created_at: string | null;
+  baseline_metrics: Record<string, number>;
+}
+
+export interface RecipeDetail {
+  id: string;
+  name: string;
+  domain: string | null;
+  target_column: string | null;
+  current_version: number;
+  created_at: string | null;
+  updated_at: string | null;
+  content: Record<string, unknown>;
+  versions: RecipeVersionDetail[];
+}
+
+export async function getRecipeDetail(recipeId: string): Promise<RecipeDetail> {
+  const response = await apiClient.get(`/agent/recipes/${recipeId}`);
+  return response.data;
+}
+
+export async function deleteRecipe(recipeId: string): Promise<void> {
+  await apiClient.delete(`/agent/recipes/${recipeId}`);
+}

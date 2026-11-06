@@ -218,6 +218,25 @@ export default function AgentCenterPage() {
                         <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(isAgent ? `/agent/task/${targetId}` : `/automl/task/${targetId}`)}>
                           {zh ? "详情" : "Details"}
                         </Button>
+                        {isAgent && !["pending", "running"].includes(status) ? (
+                          <Popconfirm
+                            title={zh ? "删除该智能体任务？" : "Delete this agent run?"}
+                            description={zh ? "将删除整条运行（含全部轮次档案与 S3 训练记录），不可恢复。" : "The whole run (all rounds and S3 records) will be removed."}
+                            okText={zh ? "删除" : "Delete"}
+                            cancelText={zh ? "取消" : "Cancel"}
+                            okButtonProps={{ danger: true }}
+                            onConfirm={() => {
+                              deleteAgentRun(targetId).then(() => {
+                                message.success(zh ? "已删除" : "Deleted");
+                                loadAgentData();
+                              }).catch(() => message.error(zh ? "删除失败（运行中任务不可删）" : "Delete failed"));
+                            }}
+                          >
+                            <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+                              {zh ? "删除" : "Delete"}
+                            </Button>
+                          </Popconfirm>
+                        ) : null}
                       </td>
                     </tr>
                   );

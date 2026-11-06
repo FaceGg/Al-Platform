@@ -449,3 +449,64 @@ def list_pipeline_recipes(
         )
         for recipe, name, version_status, change_note in rows
     ]
+
+
+@router.get("/recipes/{recipe_id}")
+def get_recipe_detail(
+    recipe_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """配方详情：配方字段 + 全部版本 + 当前版本完整内容（特征脚本/门禁/重训配置）。"""
+    recipe = db.get(PipelineRecipe, recipe_id)
+    if recipe is None:
+        raise HTTPException(404, detail={"code": "AGENT_RECIPE_NOT_FOUND"})
+    versions = (
+        db.query(PipelineRecipeVersion)
+        .filter(PipelineRecipeVersion.recipe_id == recipe.id)
+        .order_by(PipelineRecipeVersion.version.desc())
+        .all()
+    )
+    current = next((item for item in versions if item.status == "current"), None)
+    return {
+        "id": str(recipe.id),
+        "name": recipe.name,
+        "domain": recipe.domain,
+        "target_column": recipe.target_column,
+        "current_version": recipe.current_version,
+        "created_at": _iso(recipe.created_at),
+        "updated_at": _iso(recipe.updated_at),
+        "content": dict(current.content_json or {}) if current is not None else {},
+        "versions": [
+            {
+                "version": item.version,
+                "status": item.status,
+                "change_note": item.change_note,
+                "created_at": _iso(item.created_at),
+                "baseline_metrics": (item.content_json or {}).get("baseline_metrics", {}),
+            }
+            for item in versions
+        ],
+    }
+
+
+@router.delete("/recipes/{recipe_id}", status_code=204)
+def delete_recipe(
+    recipe_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """删除配方及其全部版本。
+
+    配方无外键引用（服务化链路存内容副本而非引用），删除不影响既有部署；
+    权限：admin 或创建者。"""
+    recipe = db.get(PipelineRecipe, recipe_id)
+    if recipe is None:
+        raise HTTPException(404, detail={"code": "AGENT_RECIPE_NOT_FOUND"})
+    if current_user.role != "admin" and recipe.created_by != current_user.id:
+        raise HTTPException(403, detail={"code": "AGENT_RECIPE_FORBIDDEN"})
+    db.query(PipelineRecipeVersion).filter(
+        PipelineRecipeVersion.recipe_id == recipe.id,
+    ).delete(synchronize_session=False)
+    db.delete(recipe)
+    db.commit()
