@@ -1355,7 +1355,11 @@ class DemoLoopService:
         # 每个完成的任务只换一次模：上游 refresh_retrain_status 依据
         # retrain_status 迁移保证调用次数；swapped_model_version_id 仅作
         # 前端换模水印，每轮覆盖为新版本，不能当 once-ever 守卫。
-        # agent 重放轮：换模候选过本轮固化配方的验收门禁（一票否决兜底）。
+        # agent 重放轮不传配方门禁：固化 gates 是智能体轻量口径
+        # （recall_minority），引擎候选输出 accuracy/auc/f1 无该键——
+        # missing 一票否决会把换模永久拦死（E2E 实证：8 个 f1 0.98+ 候选
+        # 全被 missing-veto）。验收把关由重放 run 的 S4 硬门禁承担；
+        # 配方门禁键与引擎指标键映射对齐留独立批次。
         recipe_id = None
         if getattr(config, "retrain_agent_run_id", None) is not None:
             agent_run = self.db.get(AgentRun, config.retrain_agent_run_id)
@@ -1367,7 +1371,6 @@ class DemoLoopService:
             job=job,
             actor_id=actor_id,
             model_name=f"{config.name}-自动模型",
-            recipe_id=recipe_id,
         )
         from app.services.agent.loop_retrain import finish_agent_cycle
 

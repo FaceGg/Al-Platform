@@ -612,8 +612,9 @@ class AgentLoopRetrain(unittest.TestCase):
                 service = DemoLoopService(db)
                 service._swap_to_best_model(config, job, self.user_id)
             swap.assert_called_once()
-            self.assertEqual(
-                swap.call_args.kwargs.get("recipe_id"), str(recipe.id))
+            # 换模不传配方门禁：引擎候选无 recall_minority 键，missing-veto
+            # 会永久拦死换模（E2E 实证）——验收把关在重放 run 的 S4 门禁。
+            self.assertIsNone(swap.call_args.kwargs.get("recipe_id"))
             db.commit()
             db.refresh(config)
             self.assertEqual(int(config.retrain_trained_baseline_count), 900)
