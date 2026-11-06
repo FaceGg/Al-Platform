@@ -444,7 +444,14 @@ def complete_retrain_swap(
     candidates = registry.list_registerable_candidates(db, job.id)
     if not candidates:
         return None
-    best = max(candidates, key=candidate_score)
+    # 换模优先采用任务冠军（metrics.best_candidate）：它已编码引擎的家族排序
+    # 与集成采纳决定（采纳时为 "ensemble"），与 AutoML 详情页的最佳模型一致；
+    # 冠军不可注册时才退回按指标取分。此前单输出候选指标为空、恒选目录第一个族。
+    champion_id = str((job.metrics or {}).get("best_candidate") or "")
+    best = next(
+        (row for row in candidates if champion_id and str(row.get("candidate_id")) == champion_id),
+        None,
+    ) or max(candidates, key=candidate_score)
     if recipe_id is not None:
         from app.models.recipe import PipelineRecipeVersion
         from app.services.agent.hard_gates import evaluate_hard_gates

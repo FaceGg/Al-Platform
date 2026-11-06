@@ -59,6 +59,10 @@ class DemoLoopConfig(Base):
     retrain_dataset_artifact_ids = Column(JSON, nullable=True, default=list)
     retrain_target_column = Column(String(128), nullable=False, default="")
     retrain_max_trials = Column(Integer, nullable=False, default=10)
+    # 闭环重训的终选层集成（多模型加权投票）：开启后重训任务按主指标取前 K 名
+    # 家族 soft-voting，不低于单模型冠军才成为任务冠军并参与换模（仅单输出分类）。
+    retrain_ensemble_enabled = Column(Boolean, nullable=False, default=False)
+    retrain_ensemble_top_k = Column(Integer, nullable=False, default=3)
     # Artifact that accumulates the error rows (kept without FK: it is created lazily).
     error_artifact_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     # 按比例同步收集的正确预测行（独立数据集，不与报错数据混写）

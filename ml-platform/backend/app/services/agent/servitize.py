@@ -139,6 +139,14 @@ def servitize_recipe(
                 "target_column", ""
             ),
             "retrain_enabled": bool(recipe_content.get("retrain_enabled", True)),
+            # 配方固化的集成选项（向导第三步）→ 闭环重训下发终选层集成；
+            # 旧配方无此键 = 不开启，行为不变。
+            "retrain_ensemble_enabled": bool(
+                (recipe_content.get("retrain_ensemble") or {}).get("enabled")
+            ),
+            "retrain_ensemble_top_k": int(
+                (recipe_content.get("retrain_ensemble") or {}).get("top_k") or 3
+            ),
         }
         loop_service = DemoLoopService(db)
         # One servitize entry per deployment (platform unique constraint):

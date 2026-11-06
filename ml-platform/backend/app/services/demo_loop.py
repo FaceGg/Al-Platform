@@ -341,6 +341,11 @@ class DemoLoopService:
             config.retrain_threshold_rows = max(0, int(data["retrain_threshold_rows"] or 0))
         if "retrain_max_trials" in data:
             config.retrain_max_trials = max(5, int(data["retrain_max_trials"] or 10))
+        if "retrain_ensemble_enabled" in data:
+            config.retrain_ensemble_enabled = bool(data["retrain_ensemble_enabled"])
+        if "retrain_ensemble_top_k" in data:
+            # 与引擎/训练 API 同一范围（2-5），越界钳制而非报错
+            config.retrain_ensemble_top_k = max(2, min(5, int(data["retrain_ensemble_top_k"] or 3)))
         if "retrain_target_column" in data:
             config.retrain_target_column = str(data["retrain_target_column"] or "").strip()[:128]
         if "collect_correct_enabled" in data:
@@ -1137,6 +1142,12 @@ class DemoLoopService:
             dataset_artifact_ids=dataset_ids,
             target_column=target_column,
             max_trials=config.retrain_max_trials,
+            # 终选层集成随重训下发：采纳后成为任务冠军，换模即部署集成体
+            ensemble=(
+                {"enabled": True, "top_k": int(config.retrain_ensemble_top_k or 3)}
+                if getattr(config, "retrain_ensemble_enabled", False)
+                else None
+            ),
         )
         config.retrain_job_id = job.id
         config.retrain_status = "queued"

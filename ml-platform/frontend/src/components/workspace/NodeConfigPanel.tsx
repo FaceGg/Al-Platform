@@ -321,6 +321,8 @@ const commonParamLabels: Record<string, { zh: string; en?: string }> = {
   retrain_dataset_artifact_id: { zh: "重训数据集", en: "Retrain Dataset" },
   retrain_target_column: { zh: "重训目标列", en: "Retrain Target Column" },
   retrain_max_trials: { zh: "搜索试验次数", en: "Max Trials" },
+  retrain_ensemble_enabled: { zh: "重训集成学习（多模型加权投票）", en: "Retrain Ensemble (weighted voting)" },
+  retrain_ensemble_top_k: { zh: "集成成员数（前 K 名）", en: "Ensemble Members (top-K)" },
   retrain_threshold_rows: { zh: "重训触发行数", en: "Retrain Threshold Rows" },
   threshold_rows: { zh: "阈值行数", en: "Threshold Rows" },
   error_dataset_artifact_id: { zh: "报错数据集（累计计数）", en: "Error Dataset (counter)" },

@@ -83,6 +83,7 @@ def _fixation_content(run: AgentRun, memory: dict) -> dict:
     gates = dict(((run.guidance_json or {}).get("evaluation") or {}).get(
         "metric_gates", {}
     ))
+    ensemble = dict(((run.guidance_json or {}).get("modeling") or {}).get("ensemble") or {})
     return {
         "domain": memory.get("last_domain") or "",
         "inputs": {"target_column": run.target_column},
@@ -91,6 +92,12 @@ def _fixation_content(run: AgentRun, memory: dict) -> dict:
             "param_hints", {}
         ),
         "acceptance_gates": gates or {"recall_minority": 0.90},
+        # 向导第三步的集成选项随配方固化 → 服务化后闭环重训沿用（集成走到线上的最后一环）
+        "retrain_ensemble": (
+            {"enabled": True, "top_k": int(ensemble.get("top_k") or 3)}
+            if ensemble.get("enabled")
+            else {"enabled": False}
+        ),
         "baseline_metrics": (run.result_json or {}).get("metrics", {}),
         "analysis_digest": "run %s" % str(run.id)[:8],
         "optimization_report": (run.result_json or {}).get("optimization_report"),

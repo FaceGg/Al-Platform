@@ -308,6 +308,10 @@ class RetrainThresholdOperator(BaseOperator):
         ParamSpec("retrain_target_column", "str", "", "Retrain Target Column", required=True),
         ParamSpec("threshold_rows", "int", 12, "Threshold Rows", range_min=1),
         ParamSpec("retrain_max_trials", "int", 10, "Max Trials", range_min=5),
+        # 编排闭环重训的终选层集成（多模型加权投票）：与闭环自动化配置同义，
+        # 不低于单模型冠军才成为任务冠军并参与换模（仅单输出分类）。
+        ParamSpec("retrain_ensemble_enabled", "boolean", False, "Retrain Ensemble (weighted voting)"),
+        ParamSpec("retrain_ensemble_top_k", "int", 3, "Ensemble Members (top-K)", range_min=2, range_max=5),
         ParamSpec("swap_deployment_id", "str", "", "Deployment ID to swap after completion"),
     ]
 
@@ -385,6 +389,13 @@ class RetrainThresholdOperator(BaseOperator):
             # 绑定表以 experiment_id 为主键，且重训幂等指纹含实验名；图重新
             # 发布后 total 会重置，实验名必须带周期 token 防止冲突与重放。
             cycle = uuid.uuid4().hex[:8]
+            # 画布参数可能以字符串形态到达（"true"/"3"），统一宽松解析；top_k 钳制 2-5
+            ensemble_flag = params.get("retrain_ensemble_enabled")
+            ensemble_enabled = ensemble_flag is True or str(ensemble_flag).strip().lower() in {"true", "1", "yes"}
+            try:
+                ensemble_top_k = max(2, min(5, int(params.get("retrain_ensemble_top_k") or 3)))
+            except (TypeError, ValueError):
+                ensemble_top_k = 3
             job = trigger_retrain_job(
                 db,
                 project_id=context.project_id,
@@ -394,6 +405,7 @@ class RetrainThresholdOperator(BaseOperator):
                 dataset_artifact_id=params.get("retrain_dataset_artifact_id") or artifact.id,
                 target_column=target_column,
                 max_trials=int(params.get("retrain_max_trials") or 10),
+                ensemble={"enabled": True, "top_k": ensemble_top_k} if ensemble_enabled else None,
             )
             meta["retrain_job_id"] = str(job.id)
             meta["cycle_base"] = total

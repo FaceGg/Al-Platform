@@ -131,6 +131,8 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
         retrain_enabled: cfg.retrain_enabled, retrain_threshold_rows: cfg.retrain_threshold_rows,
         retrain_dataset_artifact_ids: [...retrainIds],
         retrain_target_column: defaultTarget, retrain_max_trials: cfg.retrain_max_trials,
+        retrain_ensemble_enabled: !!cfg.retrain_ensemble_enabled,
+        retrain_ensemble_top_k: cfg.retrain_ensemble_top_k || 3,
         collect_correct_enabled: cfg.collect_correct_enabled,
         correct_sample_ratio: cfg.correct_sample_ratio || "1:1",
         field_descriptions: cfg.field_descriptions || {},
@@ -142,7 +144,8 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
         feature_script: undefined,
         alert_threshold_rows: 1, require_review: false, review_annotator_ids: [],
         retrain_enabled: false, retrain_threshold_rows: 20, retrain_dataset_artifact_ids: [],
-        retrain_max_trials: 10, ...(editor.defaults || {}),
+        retrain_max_trials: 10, retrain_ensemble_enabled: false, retrain_ensemble_top_k: 3,
+        ...(editor.defaults || {}),
         collect_correct_enabled: false, correct_sample_ratio: "1:1", field_descriptions: {},
       });
     }
@@ -391,6 +394,25 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
               </Form.Item>
               <Form.Item name="retrain_max_trials" label={tr.retrain_trials || "搜索试验次数"} initialValue={10}>
                 <InputNumber min={5} max={200} style={{ width: "100%" }} />
+              </Form.Item>
+              <Form.Item
+                name="retrain_ensemble_enabled"
+                label="集成学习（多模型加权投票）"
+                valuePropName="checked"
+                initialValue={false}
+                tooltip="重训时按主指标取前 K 名模型做 soft-voting；不低于单模型冠军才成为任务冠军并参与换模（仅单输出分类）"
+              >
+                <Switch aria-label="重训集成学习" />
+              </Form.Item>
+              <Form.Item noStyle shouldUpdate={(prev, cur) => prev.retrain_ensemble_enabled !== cur.retrain_ensemble_enabled}>
+                {({ getFieldValue }) => getFieldValue("retrain_ensemble_enabled") ? (
+                  <Form.Item name="retrain_ensemble_top_k" label="集成成员数" initialValue={3}>
+                    <Select
+                      aria-label="重训集成成员数"
+                      options={[2, 3, 4, 5].map((k) => ({ value: k, label: `前 ${k} 名` }))}
+                    />
+                  </Form.Item>
+                ) : null}
               </Form.Item>
             </>
           ) : null}

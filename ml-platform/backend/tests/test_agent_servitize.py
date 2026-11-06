@@ -172,6 +172,25 @@ class TestServitize(unittest.TestCase):
         self.assertEqual(loop.feature_engineering_mode, "script")
         # A draft loop has seen zero traffic.
         self.assertEqual(int(loop.total_count or 0), 0)
+        # 旧配方无 retrain_ensemble 键：闭环重训集成默认关闭（行为不变）
+        self.assertFalse(loop.retrain_ensemble_enabled)
+
+    def test_recipe_ensemble_choice_flows_into_loop_retrain(self):
+        """向导第三步的集成选项随配方固化 → 服务化闭环重训沿用。"""
+        content = dict(_RECIPE_CONTENT, retrain_ensemble={"enabled": True, "top_k": 4})
+        with SessionLocal() as db:
+            draft = servitize_recipe(
+                db,
+                project_id=self.project_id,
+                actor_id=self.admin_id,
+                deployment_id=self.deployment_id,
+                recipe_content=content,
+                model_api_name="s5-ens-%s" % uuid4().hex[:6],
+            )
+        with SessionLocal() as db:
+            loop = db.get(DemoLoopConfig, uuid.UUID(draft.loop_config_id))
+        self.assertTrue(loop.retrain_ensemble_enabled)
+        self.assertEqual(loop.retrain_ensemble_top_k, 4)
 
     def test_smoke_is_dry_run_with_zero_backflow(self):
         draft = self.servitize(model_api_name="s5-smoke-%s" % uuid4().hex[:6])

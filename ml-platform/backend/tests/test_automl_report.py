@@ -91,6 +91,48 @@ class AutoMLReportTests(unittest.TestCase):
         np.testing.assert_allclose(first_values, second_values)
         np.testing.assert_allclose(first_weights, second_weights)
 
+    def test_voting_ensemble_importance_normalizes_members_then_applies_vote_weights(self):
+        """集成冠军：成员重要性量纲各异（如 LightGBM 分裂次数 vs CatBoost 总和 100）
+        时先归一再按投票权重加权，与任务页（引擎）同算法；无重要性成员跳过。
+        此前按 estimators_ 简单平均，量纲大的成员主导，报告与任务页数字对不上。"""
+        from sklearn.base import BaseEstimator, ClassifierMixin
+        from sklearn.ensemble import VotingClassifier
+
+        class FixedImportance(ClassifierMixin, BaseEstimator):
+            def __init__(self, scale=1.0, hot=0):
+                self.scale = scale
+                self.hot = hot
+
+            def fit(self, X, y):
+                self.classes_ = np.unique(y)
+                vector = np.zeros(np.asarray(X).shape[1])
+                vector[self.hot] = self.scale
+                self.feature_importances_ = vector
+                return self
+
+            def predict_proba(self, X):
+                return np.tile([0.5, 0.5], (len(X), 1))
+
+        class NoImportance(ClassifierMixin, BaseEstimator):
+            def fit(self, X, y):
+                self.classes_ = np.unique(y)
+                return self
+
+            def predict_proba(self, X):
+                return np.tile([0.5, 0.5], (len(X), 1))
+
+        features = pd.DataFrame({"a": [0.0, 1.0, 2.0, 3.0], "b": [1.0, 0.0, 1.0, 0.0]})
+        target = pd.Series([0, 1, 0, 1])
+        vote = VotingClassifier([
+            ("big_scale", FixedImportance(scale=1000.0, hot=0)),
+            ("small_scale", FixedImportance(scale=1.0, hot=1)),
+            ("no_importance", NoImportance()),
+        ], voting="soft", weights=[0.25, 0.75, 0.5]).fit(features, target)
+        _, values, weights = _importance(vote, features, target, "classification")
+        # 归一后 big=[1,0]、small=[0,1]，按 0.25:0.75 加权；简单平均会得到 ≈[0.999, 0.001]
+        np.testing.assert_allclose(values, [0.25, 0.75])
+        self.assertAlmostEqual(float(weights.sum()), 1.0)
+
     def test_large_dataset_report_completes_with_sampled_silhouette(self):
         # 超过 REPORT_SAMPLE_ROWS 的数据集走确定性抽样轮廓系数——此前全量
         # silhouette 为 O(n²)，7 万行数据集上报告请求实际挂死无响应。

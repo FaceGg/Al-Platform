@@ -44,6 +44,41 @@ class TestOverrideInstaller(unittest.TestCase):
         self.op = OperatorRegistry.get("apply_model")
         self.assertIsNotNone(self.op)
 
+    def test_ensemble_package_predicts_through_apply_model(self):
+        """应用编排使用集成体：AutoML 终选层集成工件（VotingClassifier + 字典形
+        feature_schema，与引擎落盘同形）经「应用模型」算子推理，结果与投票器
+        predict 一致——编排侧消费集成无需改动。"""
+        import numpy as np
+        from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+        from sklearn.linear_model import LogisticRegression
+
+        rng = np.random.RandomState(0)
+        features = np.vstack([rng.normal(0, 1, (30, 2)), rng.normal(3, 1, (30, 2))])
+        target = np.array([0] * 30 + [1] * 30)
+        vote = VotingClassifier([
+            ("random_forest", RandomForestClassifier(n_estimators=5, random_state=0)),
+            ("logistic", LogisticRegression()),
+        ], voting="soft", weights=[0.6, 0.4]).fit(features, target)
+        buf = io.BytesIO()
+        joblib.dump({
+            "model": vote,
+            "feature_schema": [
+                {"name": "current", "dtype": "float64"},
+                {"name": "force", "dtype": "float64"},
+            ],
+            "target_schema": {"name": "fault", "dtype": "int64", "task": "classification"},
+            "ensemble": {"enabled": True, "adopted": True, "voting": "soft"},
+        }, buf)
+        records = [{"current": float(a), "force": float(b)} for a, b in features[:8]]
+        result = self.op.execute(
+            context=None,
+            inputs={"model": buf.getvalue(), "data": records},
+            params={},
+        )
+        rows = result.outputs["data"]
+        predicted = [int(row["prediction"]) for row in rows]
+        self.assertEqual(predicted, [int(value) for value in vote.predict(features[:8])])
+
     def test_predict_failure_names_expected_features(self):
         # A pytorch-free sklearn model trained on named columns raises a
         # feature-name error for unknown columns; the override must surface it

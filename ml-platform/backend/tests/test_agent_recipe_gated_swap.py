@@ -133,3 +133,43 @@ class TestCompleteRetrainSwapRecipePath(unittest.TestCase):
                 except AssertionError:
                     pass
         register.assert_called_once()
+
+    def _swap_choice(self, metrics):
+        """返回换模实际注册的候选 id（注册桩抛错即停，只断言选谁）。"""
+        from app.services import closed_loop_actions
+
+        job = mock.Mock()
+        job.id = uuid4()
+        job.status = "completed"
+        job.metrics = metrics
+        candidates = [
+            {"candidate_id": "lightgbm", "name": "LightGBM", "metrics": {}, "model_artifact_id": str(uuid4())},
+            {"candidate_id": "catboost", "name": "CatBoost", "metrics": {"auc": 0.999}, "model_artifact_id": str(uuid4())},
+            {"candidate_id": "ensemble", "name": "集成加权投票", "metrics": {"auc": 0.998}, "model_artifact_id": str(uuid4())},
+        ]
+        with SessionLocal() as db:
+            with mock.patch.object(
+                closed_loop_actions.ModelRegistryService,
+                "list_registerable_candidates",
+                return_value=candidates,
+            ), mock.patch.object(
+                closed_loop_actions.ModelRegistryService,
+                "register_automl_candidate",
+                side_effect=AssertionError("stop after selection"),
+            ) as register:
+                try:
+                    closed_loop_actions.complete_retrain_swap(
+                        db, deployment_id=None, job=job,
+                        actor_id=str(uuid4()), model_name="champion-model",
+                    )
+                except AssertionError:
+                    pass
+        return register.call_args.kwargs["candidate_id"]
+
+    def test_swap_prefers_job_champion_including_adopted_ensemble(self):
+        """换模优先采用任务冠军：被采纳的集成即便取分略低也应被换上。"""
+        self.assertEqual(self._swap_choice({"best_candidate": "ensemble"}), "ensemble")
+
+    def test_swap_falls_back_to_metric_score_without_champion(self):
+        """无冠军信息时退回按指标取分（AUC 最高的 catboost）。"""
+        self.assertEqual(self._swap_choice({}), "catboost")

@@ -18,6 +18,7 @@ import pandas as pd
 from openpyxl.drawing.image import Image as ExcelImage
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
+from sklearn.ensemble import VotingClassifier, VotingRegressor
 from sklearn.inspection import permutation_importance
 from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
@@ -110,9 +111,52 @@ def _tabular(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _member_importance(estimator) -> np.ndarray | None:
+    """单个成员的原生重要性向量（取绝对值，多维系数按列均值）；无则 None。"""
+    steps = getattr(estimator, "steps", None)
+    if steps:
+        estimator = steps[-1][1]
+    values = getattr(estimator, "feature_importances_", None)
+    if values is None and hasattr(estimator, "coef_"):
+        values = np.asarray(estimator.coef_)
+    if values is None:
+        return None
+    values = np.asarray(values, dtype=float)
+    if values.ndim > 1:
+        values = np.mean(np.abs(values), axis=0)
+    return np.abs(values).reshape(-1)
+
+
+def _voting_importance(model, width: int) -> np.ndarray | None:
+    """加权投票集成的重要性：各成员先归一化再按投票权重加权平均。
+
+    与引擎 _ensemble_feature_importance 同算法、同口径（引擎用搜索阶段成员，
+    报告用投票器内同参数同数据重训的成员）。成员原生重要性量纲各异——
+    LightGBM 默认是分裂次数、CatBoost 总和为 100——不归一直接平均会被量纲
+    大的成员主导；无重要性的成员（如 HGB）跳过，权重只在贡献者内归一。"""
+    members = list(getattr(model, "estimators_", None) or [])
+    raw_weights = getattr(model, "weights", None)
+    weights = [float(value) for value in raw_weights] if raw_weights is not None else [1.0] * len(members)
+    merged = np.zeros(width, dtype=float)
+    norm = 0.0
+    for member, weight in zip(members, weights):
+        vector = _member_importance(member)
+        if vector is None or len(vector) != width or weight <= 0:
+            continue
+        total = float(vector.sum())
+        if not np.isfinite(total) or total <= 0:
+            continue
+        merged += weight * (vector / total)
+        norm += weight
+    return merged / norm if norm > 0 else None
+
+
 def _importance(model, features: pd.DataFrame, target: pd.Series, task: str):
     names = [str(column) for column in features.columns]
     values = getattr(model, "feature_importances_", None)
+    if values is None and isinstance(model, (VotingClassifier, VotingRegressor)):
+        # 集成冠军：异构成员按投票权重、先归一再加权（不走下方同构 bagging 的简单平均）
+        values = _voting_importance(model, len(names))
     if values is None and hasattr(model, "estimators_"):
         vectors = []
         for estimator in model.estimators_:

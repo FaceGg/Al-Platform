@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Body, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -39,6 +39,8 @@ class DemoLoopConfigUpdate(BaseModel):
     retrain_dataset_artifact_ids: list[str] | None = None
     retrain_target_column: str | None = None
     retrain_max_trials: int | None = None
+    retrain_ensemble_enabled: bool | None = None
+    retrain_ensemble_top_k: int | None = Field(default=None, ge=2, le=5)
     collect_correct_enabled: bool | None = None
     correct_sample_ratio: str | None = None
     field_descriptions: dict | None = None
@@ -125,6 +127,8 @@ def _config_view(db: Session, config: DemoLoopConfig) -> dict:
         "retrain_dataset_artifact_ids": [str(item) for item in dataset_ids],
         "retrain_target_column": config.retrain_target_column,
         "retrain_max_trials": config.retrain_max_trials,
+        "retrain_ensemble_enabled": bool(getattr(config, "retrain_ensemble_enabled", False)),
+        "retrain_ensemble_top_k": int(getattr(config, "retrain_ensemble_top_k", 3) or 3),
         "collect_correct_enabled": bool(config.collect_correct_enabled),
         "correct_sample_ratio": config.correct_sample_ratio or "1:1",
         "field_descriptions": config.field_descriptions or {},
