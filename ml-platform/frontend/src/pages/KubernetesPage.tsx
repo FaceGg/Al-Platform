@@ -276,7 +276,7 @@ export default function KubernetesPage() {
 
   return (
     <AppLayout>
-      <V2PageFrame title="K8s 集群" testId="v2-kubernetes">
+      <V2PageFrame section="infra" navKey="kubernetes" testId="v2-kubernetes">
       <div>
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
           <Space wrap style={{ justifyContent: "space-between", width: "100%" }}>

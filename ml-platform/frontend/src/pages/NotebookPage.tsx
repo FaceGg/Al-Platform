@@ -165,7 +165,7 @@ export default function NotebookPage() {
 
   return (
     <AppLayout>
-      <V2PageFrame title="Notebook 会话" testId="v2-notebooks">
+      <V2PageFrame section="infra" navKey="notebooks" testId="v2-notebooks">
       <div style={{ padding: 24 }}>
         <Space style={{ marginBottom: 16 }}>
           <Typography.Title level={4} style={{ margin: 0 }}>

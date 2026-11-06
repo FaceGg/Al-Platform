@@ -1737,7 +1737,7 @@ describe("DataAnnotationPage", () => {
     );
 
     const list = await screen.findByRole("region", { name: "数据标注任务列表" });
-    expect(screen.getByRole("heading", { name: "标注任务" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "算法平台 / 数据标注" })).toBeInTheDocument();
     expect(list.closest(".table-surface")).toBeInTheDocument();
     expect(within(list).getByRole("button", { name: "删除标注任务 run-1" })).toBeEnabled();
     expect(within(list).getByRole("button", { name: "删除标注任务 run-manual" })).toBeEnabled();

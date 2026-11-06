@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ReloadOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
 import { formatLocalTime } from "../utils/time";
@@ -26,15 +27,16 @@ export default function AuditLogPage() {
 
   return (
     <AppLayout>
-      <div className="v2-pagehead">
-        <div>
-          <h2 className="v2-pt">{zh ? "审计日志" : "Audit Log"}</h2>
-          <p className="v2-pdesc">{zh ? "平台全部操作审计记录：谁在何时对什么做了什么。" : "Platform-wide audit trail."}</p>
-        </div>
-        <button type="button" className="v2-btn" onClick={load}>
-          <ReloadOutlined spin={loading} /> {zh ? "刷新" : "Refresh"}
-        </button>
-      </div>
+      <PageHeading
+        section="admin"
+        navKey="audit"
+        desc={zh ? "平台全部操作审计记录：谁在何时对什么做了什么。" : "Platform-wide audit trail."}
+        actions={(
+          <button type="button" className="v2-btn" onClick={load}>
+            <ReloadOutlined spin={loading} /> {zh ? "刷新" : "Refresh"}
+          </button>
+        )}
+      />
       <div className="v2-panel">
         {events.length === 0 ? (
           <div className="v2-empty">{zh ? "暂无审计记录" : "No audit events"}</div>

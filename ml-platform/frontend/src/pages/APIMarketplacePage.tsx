@@ -2,12 +2,13 @@ import { useState, useEffect } from "react";
 import { Alert, Card, Table, Tag, Button, Space, Typography, Modal, Descriptions, message, Select, Input, Form, Row, Col, Statistic } from "antd";
 import { PlayCircleOutlined, EyeOutlined, SendOutlined, CopyOutlined, PlusOutlined, EditOutlined, KeyOutlined, PauseCircleOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import apiClient, { apiGet, apiPost, apiPut, apiDelete, formatApiError } from "../api/client";
 import { useI18n } from "../i18n";
 import { notifyDashboardStatsChanged } from "../events/dashboardStats";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 const { TextArea } = Input;
 const stColor: Record<string, string> = { published: "green", offline: "red", failed: "orange" };
 
@@ -280,7 +281,12 @@ export default function APIMarketplacePage() {
 
   return (
     <AppLayout>
-      <Card><Space style={{ width: "100%", justifyContent: "space-between", marginBottom: 16 }}><Title level={4} style={{ margin: 0 }}>{tr.title}</Title><Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor()}>{tr.create || "新建 API"}</Button></Space>
+      <PageHeading
+        section="algo"
+        navKey="api_market"
+        actions={<Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor()}>{tr.create || "新建 API"}</Button>}
+      />
+      <Card>
         <Row gutter={16} style={{ marginBottom: 20 }}>
           <Col xs={12} md={6}><Statistic title={tr.stat_total} value={stats.total_apis} /></Col>
           <Col xs={12} md={6}><Statistic title={tr.stat_published} value={stats.published} valueStyle={{ color: "#389e0d" }} /></Col>

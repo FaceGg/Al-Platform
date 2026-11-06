@@ -6,11 +6,12 @@ import {
   EditOutlined, DeleteOutlined, CloudDownloadOutlined,
 } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import ChatToolsPanel from "../components/ChatToolsPanel";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
 
-const { Text, Title } = Typography;
+const { Text } = Typography;
 
 interface ChatSource { index: number; chunk_id: string; doc_id: string; filename: string; score: number; }
 interface ChatMsg { role: "user" | "assistant" | "system"; content: string; time: string; sources?: ChatSource[]; }
@@ -247,9 +248,11 @@ export default function AIChatPage() {
 
   return (
     <AppLayout>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0 }}><RobotOutlined /> {t.ai_chat.title}</Title>
-        <Space>
+      <PageHeading
+        section="agent"
+        navKey="chat"
+        actions={(
+          <>
           {boundKb && <Tag color="purple">{`${text.kbBound}: ${boundKb.name}`}</Tag>}
           <Button icon={<PlusOutlined />} onClick={newChat}>{text.newChat}</Button>
           <Dropdown
@@ -282,8 +285,9 @@ export default function AIChatPage() {
             <Button icon={<DownOutlined />}>{text.sessions}</Button>
           </Dropdown>
           <Button icon={<SettingOutlined />} onClick={() => { fetchKbs(); setSettingsOpen(true); }}>{text.settings}</Button>
-        </Space>
-      </div>
+          </>
+        )}
+      />
       <Card styles={{ body: { height: "calc(100vh - 260px)", display: "flex", flexDirection: "column", padding: 0 } }}>
         <div ref={listRef} style={{ flex: 1, overflowY: "auto", padding: 16 }}>
           {messages.length === 0 && <Empty description={text.start} style={{ marginTop: 100 }} />}

@@ -165,7 +165,7 @@ export default function ClusterGovernancePage() {
 
   return (
     <AppLayout>
-      <V2PageFrame title="集群治理" testId="v2-cluster-governance">
+      <V2PageFrame section="infra" navKey="cluster_governance" testId="v2-cluster-governance">
       <div style={{ padding: 24, display: "grid", gap: 16 }}>
         <Space>
           <Typography.Title level={4} style={{ margin: 0 }}>

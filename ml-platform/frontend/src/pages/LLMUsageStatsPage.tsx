@@ -4,6 +4,7 @@ import { RestOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient from "../api/client";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import { useI18n } from "../i18n";
 
 /** 系统管理 → Tokens 使用统计：聚合网关 egress 审计（仿对话式「使用统计」布局）。 */
@@ -85,32 +86,32 @@ export default function LLMUsageStatsPage() {
 
   return (
     <AppLayout>
-      <div className="v2-crumb">{zh ? "系统管理 / " : "Administration / "}<b>{zh ? "Tokens 使用统计" : "Token usage"}</b></div>
-      <div className="v2-pagehead">
-        <div>
-          <h2>{zh ? "Tokens 使用统计" : "Token usage"}</h2>
-          <div className="v2-pdesc">{zh
-            ? "大模型网关调用的用量聚合：tokens、调用次数、延迟与趋势（数据来自平台审计）。"
-            : "Aggregated LLM gateway usage from the platform audit trail."}</div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <Segmented
-            value={days}
-            onChange={(v) => setDays(v as number)}
-            options={[
-              { value: 1, label: zh ? "今天" : "Today" },
-              { value: 7, label: zh ? "近 7 天" : "7d" },
-              { value: 30, label: zh ? "近 30 天" : "30d" },
-            ]}
-          />
-          <Popconfirm
-            title={zh ? "重置统计？历史数据将不再计入，从现在重新统计。" : "Reset statistics?"}
-            onConfirm={() => void resetStats()}
-          >
-            <Button icon={<RestOutlined />}>{zh ? "重置" : "Reset"}</Button>
-          </Popconfirm>
-        </div>
-      </div>
+      <PageHeading
+        section="admin"
+        navKey="llm_usage"
+        desc={zh
+          ? "大模型网关调用的用量聚合：tokens、调用次数、延迟与趋势（数据来自平台审计）。"
+          : "Aggregated LLM gateway usage from the platform audit trail."}
+        actions={(
+          <>
+            <Segmented
+              value={days}
+              onChange={(v) => setDays(v as number)}
+              options={[
+                { value: 1, label: zh ? "今天" : "Today" },
+                { value: 7, label: zh ? "近 7 天" : "7d" },
+                { value: 30, label: zh ? "近 30 天" : "30d" },
+              ]}
+            />
+            <Popconfirm
+              title={zh ? "重置统计？历史数据将不再计入，从现在重新统计。" : "Reset statistics?"}
+              onConfirm={() => void resetStats()}
+            >
+              <Button icon={<RestOutlined />}>{zh ? "重置" : "Reset"}</Button>
+            </Popconfirm>
+          </>
+        )}
+      />
 
       <Spin spinning={loading}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginBottom: 14 }}>

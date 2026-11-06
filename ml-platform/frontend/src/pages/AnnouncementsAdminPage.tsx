@@ -3,6 +3,7 @@ import { App as AntApp, Button, Form, Input, Modal, Popconfirm, Space, Switch, T
 import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import apiClient from '../api/client'
 import AppLayout from '../components/AppLayout'
+import PageHeading from '../components/PageHeading'
 import { useI18n } from '../i18n'
 import { formatLocalTime } from '../utils/time'
 
@@ -87,25 +88,23 @@ export default function AnnouncementsAdminPage() {
 
   return (
     <AppLayout>
-      <div className="v2-crumb">{zh ? '系统管理 / ' : 'Administration / '}<b>{zh ? '公告管理' : 'Notices'}</b></div>
-      <div className="v2-pagehead">
-        <div>
-          <h2>{zh ? '公告管理' : 'Notice Management'}</h2>
-          <div className="v2-pdesc">
-            {zh
-              ? '维护门户首页「平台公告」面板：新增、编辑、置顶与删除公告。'
-              : 'Maintain the portal notices panel: publish, edit, pin and delete notices.'}
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 9 }}>
-          <button type="button" className="v2-btn" onClick={load}>
-            <ReloadOutlined spin={loading} /> {zh ? '刷新' : 'Refresh'}
-          </button>
-          <button type="button" className="v2-btn primary" onClick={openCreate}>
-            <PlusOutlined /> {zh ? '发布公告' : 'New Notice'}
-          </button>
-        </div>
-      </div>
+      <PageHeading
+        section="admin"
+        navKey="announcements"
+        desc={zh
+          ? '维护门户首页「平台公告」面板：新增、编辑、置顶与删除公告。'
+          : 'Maintain the portal notices panel: publish, edit, pin and delete notices.'}
+        actions={(
+          <>
+            <button type="button" className="v2-btn" onClick={load}>
+              <ReloadOutlined spin={loading} /> {zh ? '刷新' : 'Refresh'}
+            </button>
+            <button type="button" className="v2-btn primary" onClick={openCreate}>
+              <PlusOutlined /> {zh ? '发布公告' : 'New Notice'}
+            </button>
+          </>
+        )}
+      />
 
       <div className="v2-panel">
         <Table<Announcement>

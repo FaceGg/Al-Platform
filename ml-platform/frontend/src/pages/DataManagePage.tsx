@@ -288,7 +288,7 @@ export default function DataManagePage() {
 
   return (
     <AppLayout>
-      <V2PageFrame title={t.data.title} testId="v2-data-manage">
+      <V2PageFrame section="algo" navKey="data" testId="v2-data-manage">
       <div className="page-shell fade-in">
         <div className="page-header">
           <div className="page-header-copy" />

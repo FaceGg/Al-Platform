@@ -5,6 +5,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import * as echarts from "echarts";
 
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
 import LegacyRunsTable from "../components/annotation/LegacyRunsTable";
@@ -2289,19 +2290,20 @@ export default function DataAnnotationPage() {
 
   const tasksView = (
     <>
-      <div className="page-header data-annotation__tasks-header">
-        <div className="page-header-copy">
-          <h2 className="page-title">{copy.title}</h2>
-        </div>
-        <div className="data-annotation__task-actions">
-          <select aria-label={copy.project} value={projectId} onChange={(event) => setProjectId(event.target.value)} disabled={loadingProjects}>
-            <option value="">{lang === "zh" ? "全部项目" : "All projects"}</option>
-            {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-          </select>
-          <Button onClick={() => openSetup("manual")}>{copy.manualTask}</Button>
-          <Button type="primary" onClick={() => openSetup("automatic")}>{copy.automaticTask}</Button>
-        </div>
-      </div>
+      <PageHeading
+        section="algo"
+        navKey="data_annotation"
+        actions={(
+          <div className="data-annotation__task-actions">
+            <select aria-label={copy.project} value={projectId} onChange={(event) => setProjectId(event.target.value)} disabled={loadingProjects}>
+              <option value="">{lang === "zh" ? "全部项目" : "All projects"}</option>
+              {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select>
+            <Button onClick={() => openSetup("manual")}>{copy.manualTask}</Button>
+            <Button type="primary" onClick={() => openSetup("automatic")}>{copy.automaticTask}</Button>
+          </div>
+        )}
+      />
       <div className="data-annotation__stats" role="region" aria-label={lang === "zh" ? "任务统计" : "Task statistics"}>
         <div className="data-annotation__stat data-annotation__stat--blue">
           <div>

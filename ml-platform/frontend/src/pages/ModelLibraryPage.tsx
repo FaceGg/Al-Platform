@@ -570,7 +570,7 @@ export default function ModelLibraryPage() {
   ];
 
   return <AppLayout>
-    <V2PageFrame title={copy.title} desc={copy.selectHint} testId="v2-model-library">
+    <V2PageFrame section="algo" navKey="models" desc={copy.selectHint} testId="v2-model-library">
     <section style={{ maxWidth: 1440, margin: "0 auto" }}>
       <Space direction="vertical" size={20} style={{ width: "100%" }}>
         <div>

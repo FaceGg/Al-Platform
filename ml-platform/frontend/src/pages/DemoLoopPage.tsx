@@ -3,12 +3,13 @@ import {
   Button, Card, message, Modal, Popconfirm, Select, Space, Table, Tag, Typography,
 } from "antd";
 import {
-  ArrowRightOutlined, BookOutlined, DeleteOutlined, DeploymentUnitOutlined, EditOutlined,
+  ArrowRightOutlined, BookOutlined, DeleteOutlined, EditOutlined,
   PlusOutlined, ReloadOutlined, TeamOutlined,
 } from "@ant-design/icons";
 import { marked } from "marked";
 import { useNavigate } from "react-router-dom";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import LoopConfigModal, { type FieldDescTask, type LoopEditorState } from "../components/loop/LoopConfigModal";
 import { formatApiError } from "../api/client";
 import { listAnnotationTasks } from "../api/annotationTasks";
@@ -22,7 +23,7 @@ import { parseBackendTime } from "../utils/time";
 // 更新后执行 npm run sync:manual 同步本快照（docs 原件供 GitHub 浏览）。
 import manualRaw from "../content/闭环操作手册.md?raw";
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 export default function DemoLoopPage() {
   const { t } = useI18n();
@@ -116,32 +117,33 @@ export default function DemoLoopPage() {
         .loop-manual-md blockquote { margin: 8px 0; padding: 4px 12px; border-left: 3px solid rgba(128,128,128,.4); color: inherit; opacity: .85; }
         .loop-manual-md li { margin: 3px 0; }
       `}</style>
-      <Card style={{ marginBottom: 16 }}>
-        <Space wrap size="large">
-          <Title level={3} style={{ margin: 0 }}>
-            <DeploymentUnitOutlined /> {tr.title || "推理-回流-重训 自动化闭环"}
-          </Title>
-          <span>
-            <Text type="secondary">{tr.project || "项目"}</Text>
-            <Select
-              style={{ minWidth: 220, marginLeft: 8 }}
-              value={projectId || undefined}
-              onChange={(value) => setProjectId(value)}
-              options={projects.map((item) => ({ value: item.id, label: item.name }))}
-              placeholder={tr.choose_project || "选择项目"}
-            />
-          </span>
-          <Button icon={<ReloadOutlined />} onClick={() => loadProjectData(projectId)}>
-            {tr.refresh || "刷新"}
-          </Button>
-          <Button icon={<BookOutlined />} onClick={() => setManualOpen(true)}>
-            {tr.manual || "操作手册"}
-          </Button>
-          <Button onClick={() => window.open("/demo-showcase.html", "_blank")}>
-            {tr.showcase || "运行监控大屏"}
-          </Button>
-        </Space>
-      </Card>
+      <PageHeading
+        section="algo"
+        navKey="demo_loop"
+        actions={(
+          <>
+            <span>
+              <Text type="secondary">{tr.project || "项目"}</Text>
+              <Select
+                style={{ minWidth: 220, marginLeft: 8 }}
+                value={projectId || undefined}
+                onChange={(value) => setProjectId(value)}
+                options={projects.map((item) => ({ value: item.id, label: item.name }))}
+                placeholder={tr.choose_project || "选择项目"}
+              />
+            </span>
+            <Button icon={<ReloadOutlined />} onClick={() => loadProjectData(projectId)}>
+              {tr.refresh || "刷新"}
+            </Button>
+            <Button icon={<BookOutlined />} onClick={() => setManualOpen(true)}>
+              {tr.manual || "操作手册"}
+            </Button>
+            <Button onClick={() => window.open("/demo-showcase.html", "_blank")}>
+              {tr.showcase || "运行监控大屏"}
+            </Button>
+          </>
+        )}
+      />
 
       <Card
         title={<><TeamOutlined /> {tr.loops_title || "闭环任务"}</>}

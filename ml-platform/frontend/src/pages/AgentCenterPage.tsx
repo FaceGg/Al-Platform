@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button, Popconfirm, Tooltip, message } from "antd";
 import { DeleteOutlined, EyeOutlined, ReloadOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import RecipeRow from "../components/RecipeRow";
 import KnowledgeCenterContent from "../components/KnowledgeCenterContent";
 import apiClient from "../api/client";
@@ -125,11 +126,7 @@ export default function AgentCenterPage() {
 
   return (
     <AppLayout>
-      <div className="v2-pagehead">
-        <div>
-          <h2>{zh ? PAGE_TITLES[tab].zh : PAGE_TITLES[tab].en}</h2>
-        </div>
-      </div>
+      <PageHeading section="agent" title={zh ? PAGE_TITLES[tab].zh : PAGE_TITLES[tab].en} />
 
       {tab === "wizard" && (
         <AgentModelingWizard onSubmitted={() => { loadAgentData(); }} />

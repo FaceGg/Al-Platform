@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ReloadOutlined, PlusOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import apiClient from "../api/client";
 import { listClusters, listClusterNodes, type ClusterInfo, type NodeCapability } from "../api/kubernetes";
 import { listJobRuns, type JobRun } from "../api/kubernetesJobs";
@@ -72,21 +73,21 @@ export default function InfraOverviewPage() {
 
   return (
     <AppLayout>
-      <div className="v2-crumb">{zh ? "基础设施 / " : "Infrastructure / "}<b>{zh ? "集群总览" : "Overview"}</b></div>
-      <div className="v2-pagehead">
-        <div>
-          <h2>{zh ? "集群总览" : "Cluster overview"}</h2>
-          <div className="v2-pdesc">{zh
-            ? "运行时能力独立成中心；算法平台与智能体提交的训练全部调度到这里。"
-            : "Runtime as its own center; every training job from the platform lands here."}</div>
-        </div>
-        <div style={{ display: "flex", gap: 9 }}>
-          <button type="button" className="v2-btn" onClick={load}><ReloadOutlined spin={loading} />{zh ? "刷新" : "Refresh"}</button>
-          <button type="button" className="v2-btn primary" onClick={() => navigate("/kubernetes")}>
-            <PlusOutlined />{zh ? "接入集群" : "Connect cluster"}
-          </button>
-        </div>
-      </div>
+      <PageHeading
+        section="infra"
+        title={zh ? "集群总览" : "Cluster overview"}
+        desc={zh
+          ? "运行时能力独立成中心；算法平台与智能体提交的训练全部调度到这里。"
+          : "Runtime as its own center; every training job from the platform lands here."}
+        actions={(
+          <>
+            <button type="button" className="v2-btn" onClick={load}><ReloadOutlined spin={loading} />{zh ? "刷新" : "Refresh"}</button>
+            <button type="button" className="v2-btn primary" onClick={() => navigate("/kubernetes")}>
+              <PlusOutlined />{zh ? "接入集群" : "Connect cluster"}
+            </button>
+          </>
+        )}
+      />
 
       <div className="v2-kpis">
         {kpis.map((k) => (

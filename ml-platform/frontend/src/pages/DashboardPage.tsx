@@ -7,6 +7,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import ReactECharts from "echarts-for-react";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import { apiGet } from "../api/client";
 import { useI18n } from "../i18n";
 import { useTheme } from "../stores/themeContext";
@@ -178,20 +179,21 @@ export default function DashboardPage() {
 
   return (
     <AppLayout>
-      <div className="page-header">
-        <div>
-          <Title level={3} style={{ margin: 0 }}>{text.title}</Title>
-          <Text type="secondary" style={{ fontSize: 13 }}>{text.subtitle}</Text>
-        </div>
-        <Space>
-          <Tag color="blue" style={{ padding: "3px 12px" }}>
-            <AppstoreOutlined /> {assets.total_algorithms ?? 0} {text.algorithms}
-          </Tag>
-          <Button type="primary" icon={<ArrowRightOutlined />} onClick={() => navigate("/projects")}>
-            {text.enterProjects}
-          </Button>
-        </Space>
-      </div>
+      <PageHeading
+        section="algo"
+        title={text.title}
+        desc={text.subtitle}
+        actions={(
+          <>
+            <Tag color="blue" style={{ padding: "3px 12px" }}>
+              <AppstoreOutlined /> {assets.total_algorithms ?? 0} {text.algorithms}
+            </Tag>
+            <Button type="primary" icon={<ArrowRightOutlined />} onClick={() => navigate("/projects")}>
+              {text.enterProjects}
+            </Button>
+          </>
+        )}
+      />
 
       <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
         {statCards.map((card) => (

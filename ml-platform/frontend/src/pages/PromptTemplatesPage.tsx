@@ -3,6 +3,7 @@ import { Button, Card, Input, message, Modal, Popconfirm, Select, Space, Table, 
 import { CopyOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import { useI18n } from "../i18n";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import {
   PROMPT_STAGES,
   type PromptTemplate,
@@ -115,10 +116,11 @@ export default function PromptTemplatesPage() {
 
   return (
     <AppLayout>
-      <Card
-        title={text.title}
-        extra={
-          <Space>
+      <PageHeading
+        section="agent"
+        navKey="prompt_templates"
+        actions={(
+          <>
             <Select
               allowClear
               placeholder={text.colStage}
@@ -133,9 +135,10 @@ export default function PromptTemplatesPage() {
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
               {text.create}
             </Button>
-          </Space>
-        }
-      >
+          </>
+        )}
+      />
+      <Card>
         <Table rowKey="id" columns={columns as never} dataSource={items} loading={loading} pagination={{ pageSize: 10 }} />
       </Card>
       <Modal

@@ -103,7 +103,7 @@ export default function ImageCatalogPage() {
 
   return (
     <AppLayout>
-      <V2PageFrame title="镜像目录" testId="v2-images">
+      <V2PageFrame section="infra" navKey="images" testId="v2-images">
       <div style={{ padding: 24 }}>
         <Space style={{ marginBottom: 16 }}>
           <Typography.Title level={4} style={{ margin: 0 }}>

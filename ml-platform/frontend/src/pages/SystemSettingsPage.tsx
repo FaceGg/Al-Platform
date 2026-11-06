@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ReloadOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
 
@@ -65,15 +66,16 @@ export default function SystemSettingsPage() {
 
   return (
     <AppLayout>
-      <div className="v2-pagehead">
-        <div>
-          <h2 className="v2-pt">{zh ? "平台状态" : "Platform Status"}</h2>
-          <p className="v2-pdesc">{zh ? "平台组件健康状态与运行配置。" : "Component health and runtime configuration."}</p>
-        </div>
-        <button type="button" className="v2-btn" onClick={load}>
-          <ReloadOutlined spin={loading} /> {zh ? "刷新" : "Refresh"}
-        </button>
-      </div>
+      <PageHeading
+        section="admin"
+        navKey="settings"
+        desc={zh ? "平台组件健康状态与运行配置。" : "Component health and runtime configuration."}
+        actions={(
+          <button type="button" className="v2-btn" onClick={load}>
+            <ReloadOutlined spin={loading} /> {zh ? "刷新" : "Refresh"}
+          </button>
+        )}
+      />
       <div className="v2-panel">
         <h4><span className="bar" />{zh ? "组件健康" : "Component health"}</h4>
         <table className="v2-table">

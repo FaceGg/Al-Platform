@@ -53,13 +53,14 @@ import {
   type TrainingJob,
 } from "../api/training";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
 import { useI18n } from "../i18n";
 import { notifyDashboardStatsChanged } from "../events/dashboardStats";
 import { taskStatusColor, taskStatusLabel } from "../utils/taskStatus";
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 const TERMINAL_TRAINING_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
@@ -411,25 +412,28 @@ export default function TrainingJobsPage() {
   ];
 
   return <AppLayout>
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
-      <Title level={4} style={{ margin: 0 }}>{labels.title}</Title>
-      <Space wrap>
-        <Select
-          aria-label={labels.project}
-          value={activeTab === "jobs" ? jobProjectId || "" : experimentProjectId || ""}
-          style={{ minWidth: 220 }}
-          options={[
-            { value: "", label: labels.all_projects || "All projects" },
-            ...projects.map((project) => ({ value: project.id, label: project.name })),
-          ]}
-          onChange={(value) => activeTab === "jobs" ? setJobProjectId(value || undefined) : setExperimentProjectId(value || undefined)}
-        />
-        <Button icon={<ReloadOutlined />} loading={activeTab === "jobs" && refreshingJobs} onClick={refresh}>{t.common.refresh}</Button>
-        {activeTab === "experiments"
-          ? <Button aria-label={labels.new_experiment} type="primary" icon={<PlusOutlined />} disabled={!projectId} onClick={() => setCreateExperimentOpen(true)}>{labels.new_experiment}</Button>
-          : <Button aria-label={labels.new_job} type="primary" icon={<PlusOutlined />} onClick={() => setCreateTrainingOpen(true)}>{labels.new_job}</Button>}
-      </Space>
-    </div>
+    <PageHeading
+      section="algo"
+      navKey="training"
+      actions={(
+        <>
+          <Select
+            aria-label={labels.project}
+            value={activeTab === "jobs" ? jobProjectId || "" : experimentProjectId || ""}
+            style={{ minWidth: 220 }}
+            options={[
+              { value: "", label: labels.all_projects || "All projects" },
+              ...projects.map((project) => ({ value: project.id, label: project.name })),
+            ]}
+            onChange={(value) => activeTab === "jobs" ? setJobProjectId(value || undefined) : setExperimentProjectId(value || undefined)}
+          />
+          <Button icon={<ReloadOutlined />} loading={activeTab === "jobs" && refreshingJobs} onClick={refresh}>{t.common.refresh}</Button>
+          {activeTab === "experiments"
+            ? <Button aria-label={labels.new_experiment} type="primary" icon={<PlusOutlined />} disabled={!projectId} onClick={() => setCreateExperimentOpen(true)}>{labels.new_experiment}</Button>
+            : <Button aria-label={labels.new_job} type="primary" icon={<PlusOutlined />} onClick={() => setCreateTrainingOpen(true)}>{labels.new_job}</Button>}
+        </>
+      )}
+    />
 
     <Tabs activeKey={activeTab} onChange={setActiveTab} items={[
       {

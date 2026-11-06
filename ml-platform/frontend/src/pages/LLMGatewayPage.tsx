@@ -3,6 +3,7 @@ import { AutoComplete, Button, Collapse, Modal, Form, Input, InputNumber, messag
 import { PlusOutlined, ReloadOutlined, ApiOutlined, EditOutlined, DeleteOutlined, CloudDownloadOutlined } from '@ant-design/icons'
 import { useI18n } from '../i18n'
 import AppLayout from '../components/AppLayout'
+import PageHeading from '../components/PageHeading'
 import {
   LLMProfile,
   LLMProfilePayload,
@@ -211,23 +212,23 @@ export default function LLMGatewayPage() {
 
   return (
     <AppLayout>
-      <div className="v2-crumb">{lang === 'zh' ? '系统管理 / ' : 'Administration / '}<b>{text.title}</b></div>
-      <div className="v2-pagehead">
-        <div>
-          <h2>{text.title}</h2>
-          <div className="v2-pdesc">{lang === 'zh'
-            ? '集中配置平台可用的大模型档案：AI 对话、智能体分析/写码/评审与知识库向量化各自选用；密钥只写不读。'
-            : 'Central registry of LLM profiles for chat, agent analysis/codegen/review and embeddings; keys are write-only.'}</div>
-        </div>
-        <div style={{ display: 'flex', gap: 9 }}>
-          <button type="button" className="v2-btn" onClick={load}>
-            <ReloadOutlined spin={loading} />{text.refresh}
-          </button>
-          <button type="button" className="v2-btn primary" onClick={openCreate}>
-            <PlusOutlined />{text.create}
-          </button>
-        </div>
-      </div>
+      <PageHeading
+        section="admin"
+        navKey="llm_gateway"
+        desc={lang === 'zh'
+          ? '集中配置平台可用的大模型档案：AI 对话、智能体分析/写码/评审与知识库向量化各自选用；密钥只写不读。'
+          : 'Central registry of LLM profiles for chat, agent analysis/codegen/review and embeddings; keys are write-only.'}
+        actions={(
+          <>
+            <button type="button" className="v2-btn" onClick={load}>
+              <ReloadOutlined spin={loading} />{text.refresh}
+            </button>
+            <button type="button" className="v2-btn primary" onClick={openCreate}>
+              <PlusOutlined />{text.create}
+            </button>
+          </>
+        )}
+      />
 
       <div className="v2-panel">
         <table className="v2-table">

@@ -78,7 +78,10 @@ describe("DemoLoopPage (task list)", () => {
   it("renders the task list without the inference/status panels", async () => {
     render(<MemoryRouter><DemoLoopPage /></MemoryRouter>);
     await waitFor(() => expect(demoLoopApi.fetchDemoLoops).toHaveBeenCalledWith("p1"));
-    expect(screen.getByText("自动化闭环")).toBeInTheDocument();
+    // 统一页头「板块/菜单名」（曾缺失：闭环自动化页无标准标题）
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("算法平台/自动化闭环");
+    // 任务行名与菜单名同为「自动化闭环」，行查找限定在表格内
+    expect(within(await screen.findByRole("table")).getByText("自动化闭环")).toBeInTheDocument();
     // 列表页不显示逐行推理与闭环状态（在详情页）
     expect(screen.queryByText(/逐行推理调用/)).not.toBeInTheDocument();
     expect(screen.queryByText(/闭环状态/)).not.toBeInTheDocument();
@@ -87,7 +90,7 @@ describe("DemoLoopPage (task list)", () => {
 
   it("navigates to the detail page when a row is clicked", async () => {
     render(<MemoryRouter><DemoLoopPage /></MemoryRouter>);
-    await waitFor(() => expect(screen.getByText("自动化闭环")).toBeInTheDocument());
+    await waitFor(() => expect(within(screen.getByRole("table")).getByText("自动化闭环")).toBeInTheDocument());
     // MemoryRouter 内 navigate 生效即跳转（此处仅验证行可点击不报错 + 详情按钮存在）
     expect(screen.getByRole("button", { name: /详情/ })).toBeInTheDocument();
   });

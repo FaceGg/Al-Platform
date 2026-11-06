@@ -70,7 +70,7 @@ describe("APIMarketplacePage", () => {
     render(<MemoryRouter><APIMarketplacePage /></MemoryRouter>);
     await waitFor(() => expect(apiGet).toHaveBeenCalledWith("/platform/apis"));
     await waitFor(() => expect(apiGet).toHaveBeenCalledWith("/platform/apis/stats"));
-    expect(screen.getByText("API 市场")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("算法平台/API市场");
   });
 
   it("renders live API totals from the stats endpoint", async () => {

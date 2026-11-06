@@ -195,7 +195,7 @@ export default function JobRunsPage() {
 
   return (
     <AppLayout>
-      <V2PageFrame title="作业运行" testId="v2-job-runs">
+      <V2PageFrame section="infra" navKey="job_runs" testId="v2-job-runs">
       <div style={{ padding: 24 }}>
         <Space style={{ marginBottom: 16 }}>
           <Typography.Title level={4} style={{ margin: 0 }}>

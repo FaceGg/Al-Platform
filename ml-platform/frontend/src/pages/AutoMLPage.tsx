@@ -738,7 +738,7 @@ export default function AutoMLPage() {
 
   return (
     <AppLayout>
-      <V2PageFrame title={t.automl?.title || "AutoML"} testId="v2-automl">
+      <V2PageFrame section="algo" navKey="automl" testId="v2-automl">
       <Card title="建模任务" style={{ marginBottom: 16 }} extra={(
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => void refreshModelingTasks()} loading={loadingModelingTasks}>刷新</Button>

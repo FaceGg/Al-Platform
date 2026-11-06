@@ -6,6 +6,7 @@ import {
 import { PlusOutlined, DeleteOutlined, ReloadOutlined, ThunderboltOutlined, AimOutlined } from "@ant-design/icons";
 import apiClient from "../api/client";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import { useI18n } from "../i18n";
 
 const { Text } = Typography;
@@ -322,24 +323,27 @@ export default function KnowledgeGraphPage() {
 
   return (
     <AppLayout>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-        <h3>{t.knowledge.graph}</h3>
-        <Space>
-          <Select
-            placeholder={t.knowledge.title}
-            style={{ width: 200 }}
-            value={selectedKb}
-            onChange={(v) => { setSelectedKb(v); setFocusId(null); }}
-            options={bases.map((b: any) => ({ value: b.id, label: b.name }))}
-          />
-          <Button icon={<ReloadOutlined />} onClick={loadGraph} loading={loading}>
-            {t.monitor.refresh}
-          </Button>
-          <Button icon={<ThunderboltOutlined />} onClick={extractGraph} disabled={!selectedKb} loading={extracting}>
-            {graphText.extract}
-          </Button>
-        </Space>
-      </div>
+      <PageHeading
+        section="agent"
+        title={t.knowledge.graph}
+        actions={(
+          <>
+            <Select
+              placeholder={t.knowledge.title}
+              style={{ width: 200 }}
+              value={selectedKb}
+              onChange={(v) => { setSelectedKb(v); setFocusId(null); }}
+              options={bases.map((b: any) => ({ value: b.id, label: b.name }))}
+            />
+            <Button icon={<ReloadOutlined />} onClick={loadGraph} loading={loading}>
+              {t.monitor.refresh}
+            </Button>
+            <Button icon={<ThunderboltOutlined />} onClick={extractGraph} disabled={!selectedKb} loading={extracting}>
+              {graphText.extract}
+            </Button>
+          </>
+        )}
+      />
       <div style={{ marginBottom: 12 }}>
         <Space wrap>
           <AutoComplete

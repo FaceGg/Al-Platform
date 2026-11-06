@@ -241,7 +241,7 @@ export default function UserManagementPage() {
 
   return (
     <AppLayout>
-      <V2PageFrame title="用户管理" testId="v2-users">
+      <V2PageFrame section="admin" navKey="users" testId="v2-users">
       {currentUserRole === 'admin' && (
         <Card
           title="标注员账号审核"

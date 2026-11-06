@@ -3,12 +3,13 @@ import { Alert, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, T
 import { ApiOutlined, CloudUploadOutlined, CopyOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import AppLayout from "../components/AppLayout";
+import PageHeading from "../components/PageHeading";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import apiClient, { apiGet, apiPost, formatApiError } from "../api/client";
 import { formatLocalTime } from "../utils/time";
 import { useI18n } from "../i18n";
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 interface WorkflowTemplateItem {
   id: string;
@@ -166,43 +167,44 @@ export default function OrchestrationPage() {
 
   return (
     <AppLayout>
-      <Card style={{ marginBottom: 16 }}>
-        <Space wrap size="large" align="center">
-          <Title level={3} style={{ margin: 0 }}>
-            <ApiOutlined /> {tr.title || "应用编排 · 服务图"}
-          </Title>
-          <span>
-            <Text type="secondary">{tr.project || "项目"}</Text>
-            <Select
-              style={{ minWidth: 220, marginLeft: 8 }}
-              value={projectId || undefined}
-              onChange={(value) => setProjectId(value)}
-              options={projects.map((p) => ({ value: p.id, label: p.name }))}
-              placeholder={tr.choose_project || "选择项目"}
-            />
-          </span>
-          <Button icon={<ReloadOutlined />} disabled={!projectId}
-            onClick={() => loadWorkflows(projectId)}>
-            {tr.refresh || "刷新"}
-          </Button>
-          <Button icon={<CloudUploadOutlined />} onClick={() => navigate("/api-marketplace")}>
-            {tr.go_market || "前往 API 市场"}
-          </Button>
-          <Button icon={<PlusOutlined />} type="primary" disabled={!projectId}
-            onClick={() => { form.resetFields(); setModalOpen(true); }}>
-            {tr.new_workflow || "新建服务图"}
-          </Button>
-        </Space>
-        <Alert
-          style={{ marginTop: 14 }}
-          type="info"
-          showIcon
-          message={
-            "服务图搭好后点「发布为 API」即可在 API 市场逐行调用。闭环算子（追加报错数据集 / 告警通知管理员 / 重训阈值判断）"
-            + "与推理算子（冻结模型 / 应用模型 / 条件分支）均可在画布左侧算子面板拖入；搭好的图可在画布顶部「保存为模板」复用。"
-          }
-        />
-      </Card>
+      <PageHeading
+        section="algo"
+        navKey="orchestration"
+        actions={(
+          <>
+            <span>
+              <Text type="secondary">{tr.project || "项目"}</Text>
+              <Select
+                style={{ minWidth: 220, marginLeft: 8 }}
+                value={projectId || undefined}
+                onChange={(value) => setProjectId(value)}
+                options={projects.map((p) => ({ value: p.id, label: p.name }))}
+                placeholder={tr.choose_project || "选择项目"}
+              />
+            </span>
+            <Button icon={<ReloadOutlined />} disabled={!projectId}
+              onClick={() => loadWorkflows(projectId)}>
+              {tr.refresh || "刷新"}
+            </Button>
+            <Button icon={<CloudUploadOutlined />} onClick={() => navigate("/api-marketplace")}>
+              {tr.go_market || "前往 API 市场"}
+            </Button>
+            <Button icon={<PlusOutlined />} type="primary" disabled={!projectId}
+              onClick={() => { form.resetFields(); setModalOpen(true); }}>
+              {tr.new_workflow || "新建服务图"}
+            </Button>
+          </>
+        )}
+      />
+      <Alert
+        style={{ marginBottom: 16 }}
+        type="info"
+        showIcon
+        message={
+          "服务图搭好后点「发布为 API」即可在 API 市场逐行调用。闭环算子（追加报错数据集 / 告警通知管理员 / 重训阈值判断）"
+          + "与推理算子（冻结模型 / 应用模型 / 条件分支）均可在画布左侧算子面板拖入；搭好的图可在画布顶部「保存为模板」复用。"
+        }
+      />
 
       <Card
         title="服务图模板"

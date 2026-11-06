@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { App as AntApp, Button, Table, Modal, Form, Input, Space } from 'antd'
+import { App as AntApp, Button, Table, Modal, Form, Input } from 'antd'
 import { DeleteOutlined, EyeOutlined, PlusOutlined } from '@ant-design/icons'
 import { Link, useNavigate } from 'react-router-dom'
 import apiClient from '../api/client'
 import AppLayout from '../components/AppLayout'
+import PageHeading from '../components/PageHeading'
 import DeleteConfirmation from '../components/DeleteConfirmation'
 import TableRowAction from '../components/TableRowAction'
 import TypeToDeleteModal from '../components/TypeToDeleteModal'
@@ -103,19 +104,20 @@ export default function ProjectListPage() {
   return (
     <AppLayout>
       <div className="page-shell fade-in">
-        <div className="page-header">
-          <div className="page-header-copy">
-            <h3 className="page-title">项目列表</h3>
-          </div>
-          <Space className="page-actions" wrap>
-            {selectedRowKeys.length > 0 && (
-              <DeleteConfirmation label="批量删除项目" selectedCount={selectedRowKeys.length} onConfirm={() => setPendingBatch(selectedRowKeys.length)}>
-                <Button danger icon={<DeleteOutlined />}>批量删除 ({`${selectedRowKeys.length}`})</Button>
-              </DeleteConfirmation>
-            )}
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>新建项目</Button>
-          </Space>
-        </div>
+        <PageHeading
+          section="algo"
+          navKey="projects"
+          actions={(
+            <>
+              {selectedRowKeys.length > 0 && (
+                <DeleteConfirmation label="批量删除项目" selectedCount={selectedRowKeys.length} onConfirm={() => setPendingBatch(selectedRowKeys.length)}>
+                  <Button danger icon={<DeleteOutlined />}>批量删除 ({`${selectedRowKeys.length}`})</Button>
+                </DeleteConfirmation>
+              )}
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>新建项目</Button>
+            </>
+          )}
+        />
         <div className="table-surface">
           <Table rowKey="id" rowSelection={rowSelection} dataSource={projects} columns={columns} pagination={{ pageSize: 20 }} />
         </div>

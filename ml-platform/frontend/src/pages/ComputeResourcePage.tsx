@@ -198,7 +198,7 @@ export default function ComputeResourcePage() {
 
   return (
     <AppLayout>
-      <V2PageFrame title="计算资源管理" testId="v2-compute">
+      <V2PageFrame section="infra" navKey="compute" testId="v2-compute">
       <Card title={null}
         extra={<Button icon={<ReloadOutlined />} onClick={() => { fetchNodes(); fetchDevices(); }}>刷新</Button>}>
         <Tabs

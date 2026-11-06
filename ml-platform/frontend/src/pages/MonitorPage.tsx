@@ -361,7 +361,7 @@ export default function MonitorPage() {
 
   if (loading) {
     return <AppLayout>
-      <V2PageFrame title="资源监控" testId="v2-monitor">
+      <V2PageFrame section="infra" navKey="monitor" testId="v2-monitor">
       <div className="monitor-page page-shell fade-in" style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: 300 }}>
         <Spin size="large" />
       </div>
@@ -370,7 +370,7 @@ export default function MonitorPage() {
   }
 
   return <AppLayout>
-    <V2PageFrame title="资源监控" testId="v2-monitor">
+    <V2PageFrame section="infra" navKey="monitor" testId="v2-monitor">
     <section className="monitor-page page-shell fade-in">
       <div className="page-header page-header--stacked">
         <div className="page-header-copy" />
