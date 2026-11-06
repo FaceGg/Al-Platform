@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
 vi.mock("../api/llmProfiles", () => mocks);
 vi.mock("../api/client", () => ({
-  default: {},
+  default: { post: vi.fn().mockResolvedValue({ data: { models: [] } }) },
   formatApiError: (_error: unknown, fallback: string) => fallback,
 }));
 vi.mock("../i18n", () => ({
@@ -151,10 +151,14 @@ describe("LLMGatewayPage", () => {
       </AntApp>
     );
     await screen.findByText("glm-default");
+    // 模型行「…」菜单 → 删除 → Modal.confirm 确认
     const row = screen.getByText("glm-default").closest("div") as HTMLElement;
-    fireEvent.click(within(row).getByRole("button", { name: "删除" }));
-    await screen.findByText("确认删除该档案？");
-    const confirmOk = await screen.findByRole("button", { name: /^(OK|确\s*定)$/ });
+    fireEvent.click(within(row).getByRole("button", { name: "更多操作" }));
+    const menuItem = await screen.findByRole("menuitem", { name: /删除/ });
+    fireEvent.click(menuItem);
+    await screen.findByText(/将删除档案/);
+    // antd 对两字中文按钮自动插空格：可访问名为「删 除」
+    const confirmOk = await screen.findByRole("button", { name: /^(删\s*除|OK)$/ });
     fireEvent.click(confirmOk);
     await waitFor(() => expect(mocks.deleteLlmProfile).toHaveBeenCalledWith("profile-1"));
   });

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AutoComplete, Button, Collapse, Dropdown, Form, Input, InputNumber, message, Modal, Popconfirm, Select, Space, Switch } from 'antd'
+import { AutoComplete, Button, Collapse, Dropdown, Form, Input, InputNumber, message, Modal, Select, Space, Switch } from 'antd'
 import { ApiOutlined, CloudDownloadOutlined, DeleteOutlined, EditOutlined, MoreOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useI18n } from '../i18n'
 import AppLayout from '../components/AppLayout'
@@ -35,21 +35,21 @@ interface ProviderTemplate {
 }
 
 const PROVIDER_TEMPLATES: ProviderTemplate[] = [
-  // —— 国内（文档默认配置）——
-  { name: 'DeepSeek', short: 'DS', color: '#4D6BFE', api_url: 'https://api.deepseek.com/anthropic/v1/messages', model_id: 'deepseek-chat', provider: 'anthropic', group: 'domestic', key_url: 'https://platform.deepseek.com/api_keys' },
-  { name: '智谱 GLM', short: '智', color: '#3859FF', api_url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model_id: 'glm-4.6', provider: 'openai_compatible', group: 'domestic', key_url: 'https://open.bigmodel.cn/usercenter/apikeys' },
-  { name: 'Kimi（月之暗面）', short: 'K', color: '#171D26', api_url: 'https://api.moonshot.cn/anthropic/v1/messages', model_id: 'kimi-k2-0905-preview', provider: 'anthropic', group: 'domestic', key_url: 'https://platform.moonshot.cn/console/api-keys' },
-  { name: '阿里云百炼', short: '百', color: '#FF6A00', api_url: 'https://dashscope.aliyuncs.com/apps/anthropic/v1/messages', model_id: '', provider: 'anthropic', group: 'domestic', key_url: 'https://bailian.console.aliyun.com/' },
-  { name: '火山方舟（豆包）', short: '火', color: '#1664FF', api_url: 'https://ark.cn-beijing.volces.com/api/compatible/v1/messages', model_id: '', provider: 'anthropic', group: 'domestic', key_url: 'https://console.volcengine.com/ark/' },
-  { name: '硅基流动', short: '硅', color: '#7C3AED', api_url: 'https://api.siliconflow.cn/v1/chat/completions', model_id: 'deepseek-ai/DeepSeek-V3', provider: 'openai_compatible', group: 'domestic', key_url: 'https://cloud.siliconflow.cn/account/ak' },
-  { name: '腾讯 TokenHub', short: '腾', color: '#0052D9', api_url: 'https://tokenhub.tencentmaas.com/v1/chat/completions', model_id: '', provider: 'openai_compatible', group: 'domestic' },
-  { name: 'MiniMax', short: 'M', color: '#F23F5D', api_url: 'https://api.minimaxi.com/anthropic/v1/messages', model_id: 'MiniMax-M2', provider: 'anthropic', group: 'domestic', key_url: 'https://platform.minimaxi.com/' },
-  { name: 'Xiaomi MiMo', short: 'Mi', color: '#FF6900', api_url: 'https://api.xiaomimimo.com/anthropic/v1/messages', model_id: '', provider: 'anthropic', group: 'domestic' },
+  // —— 国内（Base URL 填裸 base，协议路径调用时内部拼接；文档默认配置）——
+  { name: 'DeepSeek', short: 'DS', color: '#4D6BFE', api_url: 'https://api.deepseek.com/anthropic', model_id: 'deepseek-chat', provider: 'anthropic', group: 'domestic', key_url: 'https://platform.deepseek.com/api_keys' },
+  { name: '智谱 GLM', short: '智', color: '#3859FF', api_url: 'https://open.bigmodel.cn/api/paas/v4', model_id: 'glm-4.6', provider: 'openai_compatible', group: 'domestic', key_url: 'https://open.bigmodel.cn/usercenter/apikeys' },
+  { name: 'Kimi（月之暗面）', short: 'K', color: '#171D26', api_url: 'https://api.moonshot.cn/anthropic', model_id: 'kimi-k2-0905-preview', provider: 'anthropic', group: 'domestic', key_url: 'https://platform.moonshot.cn/console/api-keys' },
+  { name: '阿里云百炼', short: '百', color: '#FF6A00', api_url: 'https://dashscope.aliyuncs.com/apps/anthropic', model_id: '', provider: 'anthropic', group: 'domestic', key_url: 'https://bailian.console.aliyun.com/' },
+  { name: '火山方舟（豆包）', short: '火', color: '#1664FF', api_url: 'https://ark.cn-beijing.volces.com/api/compatible', model_id: '', provider: 'anthropic', group: 'domestic', key_url: 'https://console.volcengine.com/ark/' },
+  { name: '硅基流动', short: '硅', color: '#7C3AED', api_url: 'https://api.siliconflow.cn/v1', model_id: 'deepseek-ai/DeepSeek-V3', provider: 'openai_compatible', group: 'domestic', key_url: 'https://cloud.siliconflow.cn/account/ak' },
+  { name: '腾讯 TokenHub', short: '腾', color: '#0052D9', api_url: 'https://tokenhub.tencentmaas.com/v1', model_id: '', provider: 'openai_compatible', group: 'domestic', key_url: 'https://tokenhub.tencentmaas.com/' },
+  { name: 'MiniMax', short: 'M', color: '#F23F5D', api_url: 'https://api.minimaxi.com/anthropic', model_id: 'MiniMax-M2', provider: 'anthropic', group: 'domestic', key_url: 'https://platform.minimaxi.com/' },
+  { name: 'Xiaomi MiMo', short: 'Mi', color: '#FF6900', api_url: 'https://api.xiaomimimo.com/v1', model_id: '', provider: 'openai_compatible', group: 'domestic', key_url: 'https://xiaomimimo.com/' },
   // —— 国外（文档默认配置）——
-  { name: 'OpenAI', short: 'AI', color: '#10A37F', api_url: 'https://api.openai.com/v1/responses', model_id: 'gpt-4o', provider: 'responses', group: 'international', key_url: 'https://platform.openai.com/api-keys' },
-  { name: 'OpenRouter', short: 'OR', color: '#8B5CF6', api_url: 'https://openrouter.ai/api/v1/messages', model_id: '', provider: 'anthropic', group: 'international', key_url: 'https://openrouter.ai/settings/keys' },
-  { name: 'xAI（Grok）', short: '𝕏', color: '#111111', api_url: 'https://api.x.ai/v1/responses', model_id: 'grok-4', provider: 'responses', group: 'international', key_url: 'https://console.x.ai/' },
-  { name: 'Anthropic', short: 'Cl', color: '#D97757', api_url: 'https://api.anthropic.com/v1/messages', model_id: 'claude-sonnet-4-5', provider: 'anthropic', group: 'international', key_url: 'https://console.anthropic.com/settings/keys' },
+  { name: 'OpenAI', short: 'AI', color: '#10A37F', api_url: 'https://api.openai.com/v1', model_id: 'gpt-4o', provider: 'responses', group: 'international', key_url: 'https://platform.openai.com/api-keys' },
+  { name: 'OpenRouter', short: 'OR', color: '#8B5CF6', api_url: 'https://openrouter.ai/api/v1', model_id: '', provider: 'anthropic', group: 'international', key_url: 'https://openrouter.ai/settings/keys' },
+  { name: 'xAI（Grok）', short: '𝕏', color: '#111111', api_url: 'https://api.x.ai/v1', model_id: 'grok-4', provider: 'responses', group: 'international', key_url: 'https://console.x.ai/' },
+  { name: 'Anthropic', short: 'Cl', color: '#D97757', api_url: 'https://api.anthropic.com/v1', model_id: 'claude-sonnet-4-5', provider: 'anthropic', group: 'international', key_url: 'https://console.anthropic.com/settings/keys' },
 ]
 
 const hostOf = (url: string): string => {
@@ -219,7 +219,8 @@ export default function LLMGatewayPage() {
     setModalOpen(true)
   }
 
-  // 「获取」：经后端代理拉上游模型目录（浏览器直连跨域且 Key 不落前端日志）
+  // 「获取」：经后端代理拉上游模型目录（浏览器直连跨域且 Key 不落前端日志）。
+  // 表单里 Base URL 与 API Key 齐备后 blur 自动触发，无需手动点按钮。
   const fetchModels = async () => {
     const api_url = form.getFieldValue('api_url')
     const provider = form.getFieldValue('provider')
@@ -228,6 +229,7 @@ export default function LLMGatewayPage() {
       message.warning(zh ? '请先填写 Base URL' : 'Fill the Base URL first')
       return
     }
+    if (fetchingModels) return
     setFetchingModels(true)
     try {
       const res = await apiClient.post('/llm-profiles/list-models', {
@@ -249,6 +251,13 @@ export default function LLMGatewayPage() {
     } finally {
       setFetchingModels(false)
     }
+  }
+
+  // Base URL / API Key 填写完成（blur）且两者齐备时自动拉取模型目录
+  const maybeAutoFetch = (field: 'api_url' | 'api_key') => (event: React.FocusEvent<HTMLInputElement>) => {
+    const value = event.target.value?.trim()
+    const other = form.getFieldValue(field === 'api_url' ? 'api_key' : 'api_url')
+    if (value && other) void fetchModels()
   }
 
   const openEdit = (profile: LLMProfile) => {
@@ -390,6 +399,71 @@ export default function LLMGatewayPage() {
     setManualKey('')
     load()
   }
+
+  // 模型级操作（…菜单）：重命名（改档案名）/ 删除（删该模型档案）
+  const [renaming, setRenaming] = useState<LLMProfile | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [savingRename, setSavingRename] = useState(false)
+
+  const submitRename = async () => {
+    const name = renameValue.trim()
+    if (!renaming || !name) return
+    setSavingRename(true)
+    try {
+      await updateLlmProfile(renaming.id, payloadOf(renaming, { name }))
+      message.success(zh ? '已重命名' : 'Renamed')
+      setRenaming(null)
+      load()
+    } catch (error) {
+      message.error(formatApiError(error, zh ? '重命名失败' : 'Rename failed'))
+    } finally {
+      setSavingRename(false)
+    }
+  }
+
+  const removeModel = async (profile: LLMProfile) => {
+    try {
+      await deleteLlmProfile(profile.id)
+      message.success(text.deleteOk)
+      load()
+    } catch (error) {
+      message.error(formatApiError(error, text.deleteFailed))
+    }
+  }
+
+  const modelMenu = (profile: LLMProfile) => ({
+    items: [
+      {
+        key: 'rename',
+        icon: <EditOutlined />,
+        label: zh ? '重命名' : 'Rename',
+      },
+      {
+        key: 'delete',
+        icon: <DeleteOutlined />,
+        label: zh ? '删除' : 'Delete',
+        danger: true,
+      },
+    ],
+    onClick: ({ key }: { key: string }) => {
+      if (key === 'rename') {
+        setRenameValue(profile.name)
+        setRenaming(profile)
+      }
+      if (key === 'delete') {
+        Modal.confirm({
+          title: zh ? '删除模型？' : 'Delete model?',
+          content: zh
+            ? `将删除档案「${profile.name}」（${profile.model_id}），不可恢复。`
+            : `Profile "${profile.name}" (${profile.model_id}) will be removed.`,
+          okText: zh ? '删除' : 'Delete',
+          okButtonProps: { danger: true },
+          cancelText: zh ? '取消' : 'Cancel',
+          onOk: () => removeModel(profile),
+        })
+      }
+    },
+  })
 
   const providerMenu = selected && selected.profiles.length ? {
     items: [
@@ -604,22 +678,14 @@ export default function LLMGatewayPage() {
                               title={text.probe} aria-label={text.probe}
                               onClick={() => void runProbe(profile)}
                             />
-                            <Button
-                              type="text" size="small" icon={<EditOutlined />}
-                              title={text.edit} aria-label={text.edit}
-                              onClick={() => openEdit(profile)}
-                            />
-                            <Popconfirm
-                              title={text.deleteConfirm}
-                              onConfirm={() => void remove(profile)}
-                            >
-                              <Button type="text" size="small" danger icon={<DeleteOutlined />} title={text.delete} aria-label={text.delete} />
-                            </Popconfirm>
                             <Switch
                               size="small"
                               checked={profile.is_default}
                               onChange={(next) => void setDefaultProfile(profile, next)}
                             />
+                            <Dropdown menu={modelMenu(profile)} trigger={['click']}>
+                              <Button type="text" size="small" icon={<MoreOutlined />} aria-label={zh ? '更多操作' : 'More'} />
+                            </Dropdown>
                           </span>
                         </div>
                       ))}
@@ -708,14 +774,14 @@ export default function LLMGatewayPage() {
             label="Base URL"
             rules={[{ required: true }, { pattern: /^https:\/\//, message: text.httpsOnly }]}
           >
-            <Input placeholder="https://api.example.com/v1/chat/completions" />
+            <Input placeholder="https://api.example.com/v1" onBlur={maybeAutoFetch('api_url')} />
           </Form.Item>
           <Form.Item
             name="api_key"
             label={text.colKey}
             extra={editing ? text.keyKeepBlank : text.keyWriteOnly}
           >
-            <Input.Password autoComplete="new-password" placeholder={zh ? '输入 API Key' : 'API Key'} />
+            <Input.Password autoComplete="new-password" placeholder={zh ? '输入 API Key' : 'API Key'} onBlur={maybeAutoFetch('api_key')} />
           </Form.Item>
           <Form.Item label={zh ? '模型' : 'Model'} required style={{ marginBottom: 12 }}>
             <Space.Compact style={{ width: '100%' }}>
@@ -769,6 +835,24 @@ export default function LLMGatewayPage() {
             }]}
           />
         </Form>
+      </Modal>
+      <Modal
+        title={zh ? '重命名模型档案' : 'Rename profile'}
+        open={renaming !== null}
+        onOk={submitRename}
+        onCancel={() => setRenaming(null)}
+        confirmLoading={savingRename}
+        okText={zh ? '保存' : 'Save'}
+        cancelText={zh ? '取消' : 'Cancel'}
+        width={420}
+        destroyOnClose
+      >
+        <Input
+          value={renameValue}
+          placeholder={zh ? '档案名称' : 'Profile name'}
+          onChange={(e) => setRenameValue(e.target.value)}
+          onPressEnter={submitRename}
+        />
       </Modal>
     </AppLayout>
   )
