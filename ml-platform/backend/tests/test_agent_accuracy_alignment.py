@@ -48,5 +48,52 @@ class TestLightTrainerAccuracyAlignment(unittest.TestCase):
         self.assertGreater(result["metrics"]["accuracy"], 0.9)
 
 
+class TestLightTrainerEnsemble(unittest.TestCase):
+    """集成学习（多模型加权投票）：guidance.modeling.ensemble 经 hints 传入。
+
+    合同：启用后产出 ensemble 摘要（成员+权重+是否采纳）；冠军指标不低于
+    最佳单模型（采纳条件 recall>=最佳单模型，持平取集成）；未启用时结果
+    形状与旧版完全一致（无 ensemble 键）。
+    """
+
+    def _make_frame(self) -> pd.DataFrame:
+        rng = np.random.RandomState(7)
+        frame = pd.DataFrame({
+            "feat_a": np.concatenate([rng.normal(10, 1, 600), rng.normal(-10, 1, 200)]),
+            "feat_b": np.concatenate([rng.normal(5, 1, 600), rng.normal(-5, 1, 200)]),
+            "target": [1] * 600 + [0] * 200,
+        })
+        return frame.sample(frac=1.0, random_state=7).reset_index(drop=True)
+
+    def test_ensemble_disabled_keeps_legacy_shape(self):
+        result = lightweight_trainer(self._make_frame(), self._make_frame()["target"], hints={})
+        self.assertNotIn("ensemble", result)
+        self.assertIn("recall_minority", result["metrics"])
+
+    def test_ensemble_enabled_reports_members_and_never_loses_recall(self):
+        frame = self._make_frame()
+        result = lightweight_trainer(frame, frame["target"], hints={
+            "ensemble": {"enabled": True, "top_k": 3},
+        })
+        ensemble = result["ensemble"]
+        self.assertTrue(ensemble["enabled"])
+        self.assertIn(ensemble["adopted"], (True, False))
+        # 候选家族全部成功时成员=3，权重按召回比例归一
+        self.assertEqual(len(ensemble["members"]), 3)
+        self.assertAlmostEqual(sum(m["weight"] for m in ensemble["members"]), 1.0, places=2)
+        # 冠军（集成或最佳单模型）recall >= 任何单模型候选
+        best_single = max(item["recall_minority"] for item in result["topk_metrics"])
+        self.assertGreaterEqual(result["metrics"]["recall_minority"], best_single)
+        # 集成成员重要性加权平均产出非零重要性（RF 有 feature_importances_）
+        self.assertTrue(result["importance"])
+
+    def test_ensemble_top_k_limits_members(self):
+        frame = self._make_frame()
+        result = lightweight_trainer(frame, frame["target"], hints={
+            "ensemble": {"enabled": True, "top_k": 2},
+        })
+        self.assertEqual(len(result["ensemble"]["members"]), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

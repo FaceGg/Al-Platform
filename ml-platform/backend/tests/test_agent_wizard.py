@@ -93,6 +93,20 @@ class TestGuidanceContract(unittest.TestCase):
         self.assertEqual(guidance.feature.data_shape, "mixed")
         self.assertFalse(guidance.is_empty())
 
+    def test_ensemble_contract_and_empty_detection(self):
+        """集成学习合同：缺省关闭且不算非空引导；启用计入 is_empty；
+        top_k 越界拒收（2-5）。"""
+        guidance = UserGuidance()
+        self.assertFalse(guidance.modeling.ensemble.enabled)
+        self.assertTrue(UserGuidance(modeling={"prompts": ["x"]}).modeling.ensemble.enabled is False)
+        enabled = UserGuidance(modeling={"ensemble": {"enabled": True, "top_k": 2}})
+        self.assertEqual(enabled.modeling.ensemble.top_k, 2)
+        self.assertFalse(enabled.is_empty())
+        with self.assertRaises(ValidationError):
+            UserGuidance(modeling={"ensemble": {"enabled": True, "top_k": 1}})
+        with self.assertRaises(ValidationError):
+            UserGuidance(modeling={"ensemble": {"enabled": True, "top_k": 6}})
+
     def test_pause_stages_intersected_with_legal_positions(self):
         guidance = UserGuidance(pause_at_stages=["s1", "s3", "s9"])
         self.assertEqual(pause_plan(guidance), {"s1", "s3"})

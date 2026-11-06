@@ -293,6 +293,14 @@ function buildStreamLines(archive: AgentRunDetail, zh: boolean): StreamLine[] {
       if (s3.target_excluded_from_features) {
         push(sid, "text", `${zh ? "标签列已从特征矩阵剥离：" : "Target excluded from features: "}${s3.target_excluded_from_features}`, "dim");
       }
+      // 集成学习留痕：成员与权重、是否被采纳为冠军
+      if (s3.ensemble?.members?.length) {
+        push(sid, "text",
+          `[${zh ? "集成" : "Ensemble"}] soft-voting ${s3.ensemble.adopted
+            ? (zh ? "已采用" : "adopted")
+            : (zh ? "未采用" : "not adopted")} · ${(s3.ensemble.members ?? []).map((m) => `${m.name}(${m.weight})`).join("、")}${s3.ensemble.reason ? ` · ${s3.ensemble.reason}` : ""}`,
+          s3.ensemble.adopted ? "ok" : "dim");
+      }
     }
     const s4 = round.s4;
     if (s4) {

@@ -16,7 +16,28 @@ import { useI18n } from "../i18n";
  * UserGuidance（第四契约）并创建 pending AgentRun。
  */
 type StepId = 1 | 2 | 3 | 4 | 5;
-type ColumnShape = "tabular" | "waveform";
+type ColumnShape = "tabular" | "waveform" | "unknown";
+
+// pandas dtype 词汇 → 用户可读标签（第二步「数据类型」列，按预览自动分析）。
+function friendlyDtype(dtype: string | undefined, samples: unknown[]): string {
+  if (dtype) {
+    const d = dtype.toLowerCase();
+    if (d.startsWith("int") || d.startsWith("uint")) return "int";
+    if (d.startsWith("float") || d === "double" || d === "decimal") return "float";
+    if (d === "bool" || d === "boolean") return "bool";
+    if (d.startsWith("datetime") || d.startsWith("timestamp") || d === "date") return "日期";
+    if (d === "object" || d === "string") return "string";
+  }
+  // dtypes 缺失时按行样例推断（预览行已是 JSON 原生类型）
+  const values = samples.filter((value) => value !== null && value !== undefined);
+  if (!values.length) return "未知";
+  if (values.every((value) => typeof value === "boolean")) return "bool";
+  if (values.every((value) => typeof value === "number" && Number.isInteger(value))) return "int";
+  if (values.every((value) => typeof value === "number")) return "float";
+  if (values.every((value) => typeof value === "string" && /^\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(value))) return "日期";
+  if (values.every((value) => typeof value === "string")) return "string";
+  return "未知";
+}
 
 const ANALYSIS_PROMPT_CHIPS = [
   { label: "聚焦扭矩-目标偏差", prompt: "聚焦扭矩与目标设定值的偏差通道" },
@@ -70,14 +91,23 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   // 字符，波形编码指纹；VIN/编号类短 ID 不误判）判为波形，其余表格。
   // shapeOverrides 只记用户手改，列清单变化不覆盖已选值。
   const [autoShapes, setAutoShapes] = useState<Record<string, ColumnShape>>({});
+  // 第二步「数据类型」列：pandas dtype 映射的友好标签（int/float/string/日期/bool），预览自动分析
+  const [columnDtypes, setColumnDtypes] = useState<Record<string, string>>({});
   const [shapeOverrides, setShapeOverrides] = useState<Record<string, ColumnShape>>({});
   const [columnFilter, setColumnFilter] = useState("");
   const [columnDirectives, setColumnDirectives] = useState<Record<string, "keep" | "drop" | "">>({});
   const [featurePrompt, setFeaturePrompt] = useState("");
 
   // Step 3
-  const [algorithmWhitelist, setAlgorithmWhitelist] = useState<Record<string, boolean>>({});
+  // 白名单默认全勾（用户指示 2026-11-06）：默认即全算法族搜索，用户取消
+  // 勾选来收窄；全不选仍等价于全族（payload 语义不变）。
+  const [algorithmWhitelist, setAlgorithmWhitelist] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(AUTOML_ALGORITHM_OPTIONS.map((alg) => [alg.value, true])),
+  );
   const [paramHints, setParamHints] = useState({ trials: "", budget_seconds: "", cv_folds: "" });
+  // 集成学习（多模型加权投票）：启用后 S3 取主指标前 K 名候选 soft-voting
+  const [ensembleEnabled, setEnsembleEnabled] = useState(false);
+  const [ensembleTopK, setEnsembleTopK] = useState("3");
   const [modelingPrompt, setModelingPrompt] = useState("");
 
   // Step 4
@@ -169,31 +199,37 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   }, [projectId]);
 
   useEffect(() => {
-    setColumns([]); setSelectedColumns({}); setColumnNotes({}); setColumnDirectives({}); setShapeOverrides({}); setAutoShapes({}); setTargetColumn("");
+    setColumns([]); setSelectedColumns({}); setColumnNotes({}); setColumnDirectives({}); setShapeOverrides({}); setAutoShapes({}); setColumnDtypes({}); setTargetColumn("");
     if (!datasetId) return;
     getDatasetPreview(datasetId).then((data) => {
       const cols: string[] = Array.isArray(data.columns)
         ? data.columns.filter((c: unknown): c is string => typeof c === "string")
         : [];
       setColumns(cols);
-      // 列级数据类型自动识别（按"这类列"的结构特征，不写死列名）：
+      // 列级数据分类自动识别（按"这类列"的结构特征，不写死列名）：
       // 列名含 wave/波形；或字符串列的样例单元格出现 ≥100 字符的长编码串
       // （波形编码的指纹——cvei/cvev/cver/cvep 此类；VIN/工位号等短 ID
-      // 不误判）。样例不足时退列名规则，再退表格。
+      // 不误判）。预览行与 dtypes 都拿不到信息时记 unknown（提交时跳过）。
       const rows: Array<Record<string, unknown>> = Array.isArray(data.preview) ? data.preview : [];
       const dtypes: Record<string, string> = (data.dtypes ?? {}) as Record<string, string>;
       const shapes: Record<string, ColumnShape> = {};
+      const dtypeLabels: Record<string, string> = {};
       for (const col of cols) {
         const samples = rows
           .map((row) => row?.[col])
-          .filter((value): value is string => typeof value === "string" && value.length > 0);
-        const isStringType = (dtypes[col] ?? "object") === "object" || samples.length > 0;
-        const maxLen = samples.reduce((max, value) => Math.max(max, value.length), 0);
-        shapes[col] = /wave|波形/i.test(col) || (isStringType && maxLen >= 100)
-          ? "waveform"
-          : "tabular";
+          .filter((value) => value !== null && value !== undefined);
+        const stringSamples = samples.filter((value): value is string => typeof value === "string" && value.length > 0);
+        const hasEvidence = samples.length > 0 || dtypes[col] !== undefined || /wave|波形/i.test(col);
+        const isStringType = (dtypes[col] ?? "object") === "object" || stringSamples.length > 0;
+        const maxLen = stringSamples.reduce((max, value) => Math.max(max, value.length), 0);
+        shapes[col] = !hasEvidence ? "unknown"
+          : /wave|波形/i.test(col) || (isStringType && maxLen >= 100)
+            ? "waveform"
+            : "tabular";
+        dtypeLabels[col] = friendlyDtype(dtypes[col], samples);
       }
       setAutoShapes(shapes);
+      setColumnDtypes(dtypeLabels);
       setTargetColumn(cols.includes("DECIDE(判定（最终判定）（0-不合格，1-合格）)")
         ? "DECIDE(判定（最终判定）（0-不合格，1-合格）)"
         : cols.includes("label") ? "label" : cols.includes("fault") ? "fault" : "");
@@ -208,11 +244,11 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   );
 
   const stepStatus = (n: StepId) => (n === step ? "on" : n < step ? "done" : "");
-  // 列数据类型三级取值：手改 > 预览结构识别 > 列名兜底（预览失败时
-  // 名字含 wave/波形 仍可判波形，不写死具体列名——波形列下次可能换名）。
+  // 数据分类三级取值：手改 > 预览结构识别 > 列名兜底（预览失败时名字含
+  // wave/波形 判波形，其余 unknown——不写死具体列名，波形列下次可能换名）。
   const shapeOf = (column: string): ColumnShape =>
     shapeOverrides[column] ?? autoShapes[column]
-    ?? (/wave|波形/i.test(column) ? "waveform" : "tabular");
+    ?? (/wave|波形/i.test(column) ? "waveform" : "unknown");
   // 第二步列清单 = 全部非目标列（30 列上限已退役）；筛选项只影响显示，
   // 载荷始终带全量，避免"搜索态下提交漏列"。
   const directiveColumns = columns.filter(
@@ -257,6 +293,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
             column_shapes: Object.fromEntries(
               columns.filter((c) => c !== targetColumn)
                 .map((c) => [c, shapeOf(c)])
+                .filter(([, shape]) => shape !== "unknown")
             ),
             must_keep: Object.entries(columnDirectives).filter(([, v]) => v === "keep").map(([c]) => c),
             suggest_drop: Object.entries(columnDirectives).filter(([, v]) => v === "drop").map(([c]) => ({ column: c })),
@@ -265,6 +302,10 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           modeling: {
             algorithm_whitelist: whitelist,
             param_hints: hints,
+            ensemble: {
+              enabled: ensembleEnabled,
+              top_k: Math.max(2, Math.min(5, Number(ensembleTopK) || 3)),
+            },
             prompts: modelingPrompt.trim() ? [modelingPrompt.trim()] : [],
           },
           evaluation: {
@@ -355,36 +396,46 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           <div className="v2-panel">
             <h4><span className="bar" />{zh ? "选择数据并说明（勾选列 + 行内备注，帮助大模型理解业务语义）" : "Columns + inline notes"}
               <span className="more">{zh ? `已选 ${Object.values(selectedColumns).filter(Boolean).length} / ${columns.length} 列` : ""}</span></h4>
-            <table className="v2-table">
-              <thead><tr>
-                <th></th><th>{zh ? "列名" : "Column"}</th>
-                <th>{zh ? "缺失率" : "Missing"}</th>
-                <th>{zh ? "互信息排名" : "MI rank"}</th>
-                <th>{zh ? "我的备注（直接进分析提示词）" : "My note (joins the analysis prompt)"}</th>
-              </tr></thead>
-              <tbody>
-                {columns.length === 0 ? (
-                  <tr><td colSpan={5} className="v2-empty">{projectId
-                    ? (zh ? "选择数据集后展示列清单" : "Pick a dataset to list columns")
-                    : (zh ? "先在上方选择项目与数据集" : "Choose a project and dataset above")}</td></tr>
-                ) : null}
-                {columns.map((column) => (
-                  <tr key={column}>
-                    <td><input type="checkbox" aria-label={`select ${column}`} checked={!!selectedColumns[column]}
-                      onChange={(e) => setSelectedColumns((cur) => ({ ...cur, [column]: e.target.checked }))} /></td>
-                    <td className="tt" style={{ color: column === targetColumn ? "var(--v2-gold)" : undefined }}>
-                      {column}{column === targetColumn ? (zh ? "（目标列）" : " (target)") : ""}
-                    </td>
-                    <td>{profileStats.missing[column] !== undefined
-                      ? `${(profileStats.missing[column] * 100).toFixed(1)}%` : "-"}</td>
-                    <td>{profileStats.miRank[column] ? `#${profileStats.miRank[column]}` : "—"}</td>
-                    <td><input className="v2-select" style={{ minWidth: 260, width: "90%" }} value={columnNotes[column] ?? ""}
-                      placeholder={zh ? "选中的列与备注会成为大模型的重点输入" : "note"}
-                      onChange={(e) => setColumnNotes((cur) => ({ ...cur, [column]: e.target.value }))} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div style={{ maxHeight: 560, overflowY: "auto", border: "1px solid var(--v2-line)", borderRadius: 8 }}>
+              <table className="v2-table" style={{ margin: 0 }}>
+                <thead><tr>
+                  <th><input type="checkbox" aria-label={zh ? "全选列" : "select all columns"}
+                    checked={columns.length > 0 && columns.every((c) => !!selectedColumns[c])}
+                    onChange={(e) => {
+                      // 全选/清空全量列（含目标列；行内备注不受影响）
+                      const next: Record<string, boolean> = {};
+                      if (e.target.checked) columns.forEach((c) => { next[c] = true; });
+                      setSelectedColumns(next);
+                    }} /></th>
+                  <th>{zh ? "列名" : "Column"}</th>
+                  <th>{zh ? "缺失率" : "Missing"}</th>
+                  <th>{zh ? "互信息排名" : "MI rank"}</th>
+                  <th>{zh ? "我的备注（直接进分析提示词）" : "My note (joins the analysis prompt)"}</th>
+                </tr></thead>
+                <tbody>
+                  {columns.length === 0 ? (
+                    <tr><td colSpan={5} className="v2-empty">{projectId
+                      ? (zh ? "选择数据集后展示列清单" : "Pick a dataset to list columns")
+                      : (zh ? "先在上方选择项目与数据集" : "Choose a project and dataset above")}</td></tr>
+                  ) : null}
+                  {columns.map((column) => (
+                    <tr key={column}>
+                      <td><input type="checkbox" aria-label={`select ${column}`} checked={!!selectedColumns[column]}
+                        onChange={(e) => setSelectedColumns((cur) => ({ ...cur, [column]: e.target.checked }))} /></td>
+                      <td className="tt" style={{ color: column === targetColumn ? "var(--v2-gold)" : undefined }}>
+                        {column}{column === targetColumn ? (zh ? "（目标列）" : " (target)") : ""}
+                      </td>
+                      <td>{profileStats.missing[column] !== undefined
+                        ? `${(profileStats.missing[column] * 100).toFixed(1)}%` : "-"}</td>
+                      <td>{profileStats.miRank[column] ? `#${profileStats.miRank[column]}` : "—"}</td>
+                      <td><input className="v2-select" style={{ minWidth: 260, width: "90%" }} value={columnNotes[column] ?? ""}
+                        placeholder={zh ? "选中的列与备注会成为大模型的重点输入" : "note"}
+                        onChange={(e) => setColumnNotes((cur) => ({ ...cur, [column]: e.target.value }))} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
           <div className="v2-panel">
             <h4><span className="bar" />{zh ? "分析提示词（可选）" : "Analysis prompt (optional)"}</h4>
@@ -419,26 +470,38 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
         <>
           <div className="v2-panel">
             <h4><span className="bar" />{zh ? "列级指令（可选）" : "Column directives (optional)"}
-              <span className="more">{zh ? `全部 ${columns.filter((c) => c !== targetColumn).length} 列 · 数据类型自动识别（波形列=长编码串，换名也能识别），可手动调整` : `all ${columns.filter((c) => c !== targetColumn).length} columns · auto-detected, editable`}</span></h4>
+              <span className="more">{zh ? `全部 ${columns.filter((c) => c !== targetColumn).length} 列 · 数据分类自动识别（波形列=长编码串，换名也能识别），可手动调整` : `all ${columns.filter((c) => c !== targetColumn).length} columns · auto-detected, editable`}</span></h4>
             <input className="v2-select" style={{ width: "100%", minWidth: 0, marginBottom: 8 }}
               aria-label={zh ? "筛选列" : "filter columns"}
               placeholder={zh ? "输入列名关键词筛选显示（不影响提交范围）" : "filter columns (display only)"}
               value={columnFilter}
               onChange={(e) => setColumnFilter(e.target.value)} />
-            <div style={{ maxHeight: 420, overflowY: "auto", border: "1px solid var(--v2-line)", borderRadius: 8 }}>
+            <div style={{ maxHeight: 560, overflowY: "auto", border: "1px solid var(--v2-line)", borderRadius: 8 }}>
               <table className="v2-table" style={{ margin: 0 }}>
-                <thead><tr><th>{zh ? "列" : "Column"}</th><th>{zh ? "数据类型" : "Data type"}</th><th>{zh ? "指令" : "Directive"}</th></tr></thead>
+                <thead><tr>
+                  <th>{zh ? "列" : "Column"}</th>
+                  <th>{zh ? "数据分类" : "Data class"}</th>
+                  <th>{zh ? "数据类型" : "Data type"}</th>
+                  <th>{zh ? "指令" : "Directive"}</th>
+                </tr></thead>
                 <tbody>
                   {directiveColumns.map((column) => (
                     <tr key={column}>
                       <td className="tt">{column}</td>
                       <td>
-                        <select className="v2-select" style={{ minWidth: 110 }} aria-label={`${zh ? "数据类型" : "data type"} ${column}`}
+                        <select className="v2-select" style={{ minWidth: 100 }} aria-label={`${zh ? "数据分类" : "data class"} ${column}`}
                           value={shapeOf(column)}
                           onChange={(e) => setShapeOverrides((cur) => ({ ...cur, [column]: e.target.value as ColumnShape }))}>
                           <option value="tabular">{zh ? "表格" : "Tabular"}</option>
                           <option value="waveform">{zh ? "波形" : "Waveform"}</option>
+                          <option value="unknown">{zh ? "未知" : "Unknown"}</option>
                         </select>
+                      </td>
+                      <td style={{ fontSize: 12.5, color: "var(--v2-dim)" }}>
+                        {/* 波形列的存储类型是编码字符串，附注处理含义更直观 */}
+                        {shapeOf(column) === "waveform" && (columnDtypes[column] ?? "string") === "string"
+                          ? (zh ? "string(波形编码)" : "string (waveform)")
+                          : (columnDtypes[column] ?? (zh ? "未知" : "unknown"))}
                       </td>
                       <td>
                         <select className="v2-select" style={{ minWidth: 150 }} value={columnDirectives[column] ?? ""}
@@ -451,7 +514,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
                     </tr>
                   ))}
                   {!directiveColumns.length ? (
-                    <tr><td colSpan={3}><div className="v2-empty">{zh ? "无匹配列" : "no matching columns"}</div></td></tr>
+                    <tr><td colSpan={4}><div className="v2-empty">{zh ? "无匹配列" : "no matching columns"}</div></td></tr>
                   ) : null}
                 </tbody>
               </table>
@@ -511,6 +574,29 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
                 <input className="v2-select" style={{ width: "100%", marginTop: 4 }} value={paramHints.cv_folds} placeholder="5"
                   onChange={(e) => setParamHints((cur) => ({ ...cur, cv_folds: e.target.value }))} /></label>
             </div>
+          </div>
+          <div className="v2-panel">
+            <h4><span className="bar" />{zh ? "集成学习（可选）" : "Ensemble (optional)"}
+              <span className="more">{zh ? "多模型加权投票：按验证集少数类召回自动加权 soft-voting，冠军取集成与最佳单模型更优者" : "weighted soft-voting of top-k candidates"}</span></h4>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, cursor: "pointer" }}>
+              <input type="checkbox" aria-label={zh ? "启用集成学习" : "enable ensemble"}
+                checked={ensembleEnabled}
+                onChange={(e) => setEnsembleEnabled(e.target.checked)} />
+              {zh ? "启用多模型加权投票集成训练" : "Enable weighted-voting ensemble training"}
+            </label>
+            {ensembleEnabled ? (
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginTop: 8 }}>
+                {zh ? "集成成员数（按主指标取前 K 名候选，不足 K 个时取全部）" : "Members (top-k candidates)"}
+                <select className="v2-select" style={{ width: 130 }} aria-label={zh ? "集成成员数" : "ensemble members"}
+                  value={ensembleTopK}
+                  onChange={(e) => setEnsembleTopK(e.target.value)}>
+                  <option value="2">{zh ? "前 2 名" : "top 2"}</option>
+                  <option value="3">{zh ? "前 3 名" : "top 3"}</option>
+                  <option value="4">{zh ? "前 4 名" : "top 4"}</option>
+                  <option value="5">{zh ? "前 5 名" : "top 5"}</option>
+                </select>
+              </label>
+            ) : null}
           </div>
           <div className="v2-panel">
             <h4><span className="bar" />{zh ? "建模提示词（可选）" : "Modeling prompt (optional)"}</h4>

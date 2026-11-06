@@ -51,7 +51,7 @@ export interface AgentRunDetail extends AgentRunItem {
         wide_table_note?: string;
       };
       s2?: { description?: string; generated_columns?: string[]; dropped_columns?: string[]; data_shape?: string; attempts?: number };
-      s3?: { metrics?: Record<string, number>; importance?: { feature?: string; importance?: number }[]; target_excluded_from_features?: string };
+      s3?: { metrics?: Record<string, number>; importance?: { feature?: string; importance?: number }[]; target_excluded_from_features?: string; ensemble?: { adopted?: boolean; voting?: string; reason?: string; members?: { name?: string; weight?: number }[]; metrics?: Record<string, number> } };
       s4?: { gates?: Record<string, number>; gate_passed?: boolean; gate_failures?: string[] };
       review?: { verdict?: string; surprises?: string[]; readiness?: string; hints?: string[] };
     }[];
@@ -107,7 +107,7 @@ export interface AgentRunCreatePayload {
       suggest_drop?: { column: string; reason?: string }[];
       prompts?: string[];
     };
-    modeling?: { algorithm_whitelist?: string[]; param_hints?: Record<string, number | string>; prompts?: string[] };
+    modeling?: { algorithm_whitelist?: string[]; param_hints?: Record<string, number | string>; ensemble?: { enabled?: boolean; top_k?: number }; prompts?: string[] };
     evaluation?: { custom_test_dataset_id?: string | null; metric_gates?: Record<string, number>; review_focus?: string[] };
     pause_at_stages?: string[];
     max_rounds?: number;

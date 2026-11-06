@@ -102,9 +102,19 @@ class GuidanceFeature(BaseModel):
     prompts: list[str] = Field(default_factory=list)
 
 
+class GuidanceEnsemble(BaseModel):
+    """集成学习（多模型加权投票）：S3 训练后取主指标前 K 名候选做
+    soft-voting，权重按验证集少数类召回比例自动分配；冠军取集成与
+    最佳单模型中 recall 更高者（持平取集成——多模型平均更稳）。"""
+
+    enabled: bool = Field(default=False)
+    top_k: int = Field(default=3, ge=2, le=5)
+
+
 class GuidanceModeling(BaseModel):
     algorithm_whitelist: list[str] = Field(default_factory=list)
     param_hints: dict = Field(default_factory=dict)
+    ensemble: GuidanceEnsemble = Field(default_factory=GuidanceEnsemble)
     prompts: list[str] = Field(default_factory=list)
 
 
@@ -139,6 +149,7 @@ class UserGuidance(BaseModel):
             or self.feature.prompts
             or self.modeling.algorithm_whitelist
             or self.modeling.param_hints
+            or self.modeling.ensemble.enabled
             or self.modeling.prompts
             or self.evaluation.custom_test_dataset_id
             or self.evaluation.metric_gates

@@ -60,6 +60,8 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     ]);
     datasetMocks.getDatasetPreview.mockReset().mockResolvedValue({
       columns: ["ACTUAL_TORQUE", "TARGET_TORQUE", "DECIDE(判定（最终判定）（0-不合格，1-合格）)"],
+      dtypes: { ACTUAL_TORQUE: "float64", TARGET_TORQUE: "float64", "DECIDE(判定（最终判定）（0-不合格，1-合格）)": "int64" },
+      preview: [],
     });
     agentCenterMocks.createAgentRun.mockReset().mockResolvedValue({ id: "run-1", status: "pending" });
   });
@@ -84,8 +86,11 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     // Step 2: 数据形态单选已退役；列级数据类型默认自动预填（本例全部表格）。
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
 
-    // Step 3: whitelist one algorithm.
+    // Step 3: 白名单默认全勾（用户指示）；点 LightGBM 取消勾选来收窄。
+    const lightgbmInput = (await screen.findByText("LightGBM")).closest("label")?.querySelector("input");
+    expect(lightgbmInput).toBeChecked();
     fireEvent.click(await screen.findByText("LightGBM"));
+    expect(lightgbmInput).not.toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
 
     // Step 4: gates default blank (不设门禁)；keep and launch.
@@ -111,8 +116,31 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
       TARGET_TORQUE: "tabular",
     });
     expect(payload.guidance.feature.data_shape).toBeUndefined();
-    expect(payload.guidance.modeling.algorithm_whitelist).toEqual(["lightgbm"]);
+    expect(payload.guidance.modeling.algorithm_whitelist).toEqual(["mlp"]);
+    expect(payload.guidance.modeling.ensemble).toEqual({ enabled: false, top_k: 3 });
     expect(payload.guidance.evaluation.metric_gates).toEqual({});
+  });
+
+  it("sends ensemble config when weighted-voting training is enabled", async () => {
+    renderWizard();
+    fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });
+    fireEvent.change(await screen.findByLabelText("选择数据集"), { target: { value: "d1" } });
+    await waitFor(() => expect(screen.getByLabelText("选择目标列").querySelectorAll("option").length).toBeGreaterThan(1));
+    for (let i = 0; i < 2; i += 1) {
+      fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
+    }
+    // 第三步启用集成学习并选前 2 名成员
+    fireEvent.click(await screen.findByLabelText("启用集成学习"));
+    fireEvent.change(screen.getByLabelText("集成成员数"), { target: { value: "2" } });
+    for (let i = 0; i < 2; i += 1) {
+      fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
+    }
+    fireEvent.click(await screen.findByRole("button", { name: /^rocket 启动智能体$/ }));
+    await waitFor(() => expect(agentCenterMocks.createAgentRun).toHaveBeenCalled());
+    const payload = agentCenterMocks.createAgentRun.mock.calls[0][0];
+    expect(payload.guidance.modeling.ensemble).toEqual({ enabled: true, top_k: 2 });
+    // 白名单默认全勾（未动过）→ 全部算法进白名单
+    expect(payload.guidance.modeling.algorithm_whitelist).toEqual(["lightgbm", "mlp"]);
   });
 
   it("auto-detects waveform columns structurally and honors manual override", async () => {
@@ -133,11 +161,17 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     // 长编码串列（名字不含"波形"）判波形；短 ID 列保持表格。
-    expect(await screen.findByLabelText("数据类型 current_curve")).toHaveValue("waveform");
-    expect(screen.getByLabelText("数据类型 vin")).toHaveValue("tabular");
-    expect(screen.getByLabelText("数据类型 num1")).toHaveValue("tabular");
+    expect(await screen.findByLabelText("数据分类 current_curve")).toHaveValue("waveform");
+    expect(screen.getByLabelText("数据分类 vin")).toHaveValue("tabular");
+    expect(screen.getByLabelText("数据分类 num1")).toHaveValue("tabular");
+    // 波形列的数据类型附注编码含义；短 ID 列是纯 string。
+    const rowText = (column: string) =>
+      screen.getByLabelText(`数据分类 ${column}`).closest("tr")?.textContent ?? "";
+    expect(rowText("current_curve")).toContain("波形编码");
+    expect(rowText("vin")).not.toContain("波形编码");
     // 用户手改波形列为表格：提交载荷以手改值为准。
-    fireEvent.change(screen.getByLabelText("数据类型 current_curve"), { target: { value: "tabular" } });
+    fireEvent.change(screen.getByLabelText("数据分类 current_curve"), { target: { value: "tabular" } });
+    expect(rowText("current_curve")).not.toContain("波形编码");
 
     for (let i = 0; i < 3; i += 1) {
       fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
@@ -154,7 +188,11 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
 
   it("shows all non-target columns without the 30-row cap and filters display only", async () => {
     const many = Array.from({ length: 40 }, (_, i) => `COL_${i + 1}`);
-    datasetMocks.getDatasetPreview.mockResolvedValue({ columns: [...many, "fault"], preview: [] });
+    datasetMocks.getDatasetPreview.mockResolvedValue({
+      columns: [...many, "fault"],
+      dtypes: Object.fromEntries([...many, "fault"].map((c) => [c, "float64"])),
+      preview: [],
+    });
     renderWizard();
     fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });
     fireEvent.change(await screen.findByLabelText("选择数据集"), { target: { value: "d1" } });
@@ -162,12 +200,12 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     // 30 列上限已退役：第 31-40 列同样渲染。
-    expect(await screen.findByLabelText("数据类型 COL_31")).toBeInTheDocument();
-    expect(screen.getByLabelText("数据类型 COL_40")).toBeInTheDocument();
-    // 筛选只影响显示：搜 COL_3 剩 COL_3/COL_30-COL_39（匹配子串），载荷仍全量。
+    expect(await screen.findByLabelText("数据分类 COL_31")).toBeInTheDocument();
+    expect(screen.getByLabelText("数据分类 COL_40")).toBeInTheDocument();
+    // 筛选只影响显示：搜 COL_31 精确命中，载荷仍全量。
     fireEvent.change(screen.getByLabelText("筛选列"), { target: { value: "COL_31" } });
-    expect(screen.queryByLabelText("数据类型 COL_1")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("数据类型 COL_31")).toBeInTheDocument();
+    expect(screen.queryByLabelText("数据分类 COL_1")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("数据分类 COL_31")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("筛选列"), { target: { value: "" } });
 
     for (let i = 0; i < 3; i += 1) {
@@ -178,6 +216,50 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     const payload = agentCenterMocks.createAgentRun.mock.calls[0][0];
     expect(Object.keys(payload.guidance.feature.column_shapes)).toHaveLength(40);
     expect(payload.guidance.feature.column_shapes["COL_40"]).toBe("tabular");
+  });
+
+  it("adds select-all to step 1, shows dtype column, and skips unknown classes in payload", async () => {
+    datasetMocks.getDatasetPreview.mockResolvedValue({
+      columns: ["num_int", "num_float", "ts", "mystery", "fault"],
+      // mystery 故意不给 dtype 也不给样例 → 数据类型/数据分类均「未知」
+      dtypes: { num_int: "int64", num_float: "float64", ts: "datetime64[ns]" },
+      preview: [{ num_int: 1, num_float: 1.5, ts: "2026-01-01 08:00:00" }],
+    });
+    renderWizard();
+    fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });
+    fireEvent.change(await screen.findByLabelText("选择数据集"), { target: { value: "d1" } });
+    await waitFor(() => expect(screen.getByLabelText("选择目标列").querySelectorAll("option").length).toBeGreaterThan(1));
+
+    // 第一步全选：点一次全勾，再点一次全清。
+    const selectAll = screen.getByLabelText("全选列");
+    fireEvent.click(selectAll);
+    expect(screen.getByLabelText("select num_int")).toBeChecked();
+    expect(screen.getByLabelText("select mystery")).toBeChecked();
+    fireEvent.click(selectAll);
+    expect(screen.getByLabelText("select num_int")).not.toBeChecked();
+
+    // 数据类型列按预览自动分析：int / float / 日期 / 未知。
+    fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
+    const rowText = (column: string) =>
+      screen.getByLabelText(`数据分类 ${column}`).closest("tr")?.textContent ?? "";
+    expect(await screen.findByLabelText("数据分类 num_int")).toBeInTheDocument();
+    expect(rowText("num_int")).toContain("int");
+    expect(rowText("num_float")).toContain("float");
+    expect(rowText("ts")).toContain("日期");
+    expect(rowText("mystery")).toContain("未知");
+
+    for (let i = 0; i < 3; i += 1) {
+      fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
+    }
+    fireEvent.click(await screen.findByRole("button", { name: /^rocket 启动智能体$/ }));
+    await waitFor(() => expect(agentCenterMocks.createAgentRun).toHaveBeenCalled());
+    const payload = agentCenterMocks.createAgentRun.mock.calls[0][0];
+    // 未知列不进 column_shapes（对 S2 无信息量），目标列排除。
+    expect(payload.guidance.feature.column_shapes).toEqual({
+      num_int: "tabular",
+      num_float: "tabular",
+      ts: "tabular",
+    });
   });
 
   it("expands step-by-step mode into the pause plan on submit", async () => {

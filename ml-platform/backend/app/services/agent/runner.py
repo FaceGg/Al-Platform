@@ -178,6 +178,11 @@ class AgentRunner:
             "metrics": metrics,
             "importance": importance,
             "minority_test_count": trainer_result.get("minority_test_count"),
+            **(
+                {"ensemble": trainer_result.get("ensemble")}
+                if trainer_result.get("ensemble") is not None
+                else {}
+            ),
         }
 
     def _escalate(self, error_code: str, detail: str | None = None) -> AgentRun:
@@ -613,7 +618,15 @@ class AgentRunner:
             )
             if target_excluded:
                 feature_df = feature_df.drop(columns=[target])
-            trainer_result = self.trainer(feature_df, y, {})
+            # 集成学习配置（guidance.modeling.ensemble）经 hints 传入训练器；
+            # 未启用时保持 {} 与既有训练器签名兼容。
+            ensemble_cfg = {}
+            if isinstance(self.guidance, dict):
+                ensemble_cfg = ((self.guidance.get("modeling") or {}).get("ensemble") or {})
+            trainer_result = self.trainer(
+                feature_df, y,
+                {"ensemble": ensemble_cfg} if ensemble_cfg.get("enabled") else {},
+            )
             s3_digest = self._s3_digest(trainer_result)
             if target_excluded:
                 # 留痕：评审与排障能看到"特征表里的标签列已被平台剥离"。
