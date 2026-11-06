@@ -321,7 +321,9 @@ def clone_profile(
                 name=attempt["name"],
                 provider=source.provider,
                 api_url=source.api_url,
-                api_key_encrypted=encrypt_llm_api_key(api_key, _master_key()),
+                # 直接复制源密文：Fernet 非确定性，重新加密会产生不同密文，
+                # 存量按密文归组的档案会被拆散（线上实测踩坑）
+                api_key_encrypted=source.api_key_encrypted,
                 model_id=payload.model_id,
                 temperature=source.temperature,
                 max_tokens=source.max_tokens,
