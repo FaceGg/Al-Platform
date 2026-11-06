@@ -63,6 +63,8 @@ class DemoLoopConfig(Base):
     # 家族 soft-voting，不低于单模型冠军才成为任务冠军并参与换模（仅单输出分类）。
     retrain_ensemble_enabled = Column(Boolean, nullable=False, default=False)
     retrain_ensemble_top_k = Column(Integer, nullable=False, default=3)
+    # 向导算法白名单（随配方固化/服务化带入）：非空时闭环重训按此缩小引擎搜索族
+    retrain_algorithm_ids = Column(JSON, nullable=True, default=list)
     # Artifact that accumulates the error rows (kept without FK: it is created lazily).
     error_artifact_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     # 按比例同步收集的正确预测行（独立数据集，不与报错数据混写）

@@ -313,6 +313,70 @@ def cancel_agent_run(
     return get_agent_run(run.id, db=db, current_user=current_user)
 
 
+class AgentRunDecision(BaseModel):
+    """升级态的人工决策：accept=采纳验收结论（确认指标可信），reject=确认评审
+    意见（接受任务终止，可调整引导后重提）。"""
+
+    decision: str = Field(pattern="^(accept|reject)$")
+    note: str | None = Field(default=None, max_length=2000)
+
+
+@router.post("/runs/{run_id}/decision", response_model=AgentRunDetail)
+def decide_agent_run(
+    run_id: str,
+    data: AgentRunDecision,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """waiting_escalate 的人工决策闭环。
+
+    此前「待人工决策」是死状态：resume 仅收 waiting_guidance，升级后既无
+    采纳也无驳回入口，用户只能重提任务。accept 将验收落为 accepted（指标
+    取最后轮次 S3 冠军实测值）；reject 落为 cancelled（保留档案与决策记录）。
+    两者均写 escalation.resolved 决策留痕（决策人/时间/备注）。"""
+    from datetime import datetime, timezone
+
+    run = db.get(AgentRun, uuid.UUID(run_id))
+    if run is None:
+        raise HTTPException(404, detail={"code": "AGENT_RUN_NOT_FOUND"})
+    if current_user.role != "admin" and run.created_by != current_user.id:
+        raise HTTPException(403, detail={"code": "AGENT_RUN_FORBIDDEN"})
+    if run.status != "waiting_escalate":
+        raise HTTPException(
+            409, detail={"code": "AGENT_RUN_NOT_ESCALATED", "status": run.status},
+        )
+    memory = dict(run.memory_json or {})
+    escalation = dict(memory.get("escalation") or {})
+    escalation["resolved"] = {
+        "decision": data.decision,
+        "note": (data.note or "").strip()[:2000] or None,
+        "actor": str(current_user.id),
+        "at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+    }
+    memory["escalation"] = escalation
+    if data.decision == "accept":
+        # 验收落态：指标取最后轮次 S3 冠军实测值（升级前的真实水平，非评审猜估）
+        last_metrics = {}
+        for entry in reversed(memory.get("rounds") or []):
+            if isinstance(entry.get("s3"), dict) and entry["s3"].get("metrics"):
+                last_metrics = entry["s3"]["metrics"]
+                break
+        run.status = "accepted"
+        run.current_stage = "done"
+        run.error_code = None
+        result = dict(run.result_json or {})
+        result.setdefault("token_used", run.token_used)
+        if last_metrics:
+            result["metrics"] = last_metrics
+        run.result_json = result
+    else:
+        run.status = "cancelled"
+    run.memory_json = memory
+    db.commit()
+    db.refresh(run)
+    return get_agent_run(run.id, db=db, current_user=current_user)
+
+
 # 活跃态不可删：执行线程仍在写 run 行，删除会产生孤儿写入与误导性报错。
 DELETABLE_RUN_STATUSES = frozenset(
     # 终态可删；pending/running 在跑（删除需先终止，避免执行线程写回

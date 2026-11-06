@@ -5,7 +5,10 @@
 ensemble → 引擎终选层集成 → 换模优先任务冠军（含被采纳的集成）。
 """
 
+import tempfile
 import unittest
+import joblib
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 from uuid import uuid4
@@ -43,6 +46,7 @@ class TestLoopEnsembleConfig(unittest.TestCase):
             retrain_target_column="fault", name="loop", error_count=7,
             project_id=uuid4(), retrain_max_trials=10,
             retrain_ensemble_enabled=enabled, retrain_ensemble_top_k=4,
+            retrain_algorithm_ids=["catboost", "lightgbm"],
             retrain_job_id=None, retrain_status=None,
         )
         fake_job = SimpleNamespace(id=uuid4(), params={"max_trials": 10})
@@ -52,7 +56,10 @@ class TestLoopEnsembleConfig(unittest.TestCase):
         return trigger.call_args.kwargs
 
     def test_retrain_forwards_ensemble_when_enabled(self):
-        self.assertEqual(self._trigger(enabled=True)["ensemble"], {"enabled": True, "top_k": 4})
+        kwargs = self._trigger(enabled=True)
+        self.assertEqual(kwargs["ensemble"], {"enabled": True, "top_k": 4})
+        # 向导算法白名单随重训下发（缩小引擎搜索族）
+        self.assertEqual(kwargs["algorithm_ids"], ["catboost", "lightgbm"])
 
     def test_retrain_omits_ensemble_when_disabled(self):
         self.assertIsNone(self._trigger(enabled=False)["ensemble"])
@@ -74,6 +81,100 @@ class TestRecipeEnsembleFixation(unittest.TestCase):
     def test_fixation_without_ensemble_is_disabled(self):
         content = _fixation_content(self._run({}), {"rounds": []})
         self.assertEqual(content["retrain_ensemble"], {"enabled": False})
+
+    def test_fixation_carries_algorithm_whitelist(self):
+        """向导算法白名单随配方固化（此前 guidance.modeling.algorithm_whitelist
+        无任何消费方，勾选形同虚设）。"""
+        content = _fixation_content(self._run({
+            "algorithm_whitelist": ["catboost", "lightgbm"],
+            "ensemble": {"enabled": True, "top_k": 3},
+        }), {"rounds": []})
+        self.assertEqual(content["retrain_algorithm_ids"], ["catboost", "lightgbm"])
+
+    def test_fixation_without_whitelist_is_empty(self):
+        content = _fixation_content(self._run({}), {"rounds": []})
+        self.assertEqual(content["retrain_algorithm_ids"], [])
+
+
+class TestServitizeAlgorithmWhitelist(unittest.TestCase):
+    """服务化：配方 retrain_algorithm_ids → 闭环配置字段（重训引擎搜索族）。"""
+
+    def test_recipe_whitelist_flows_into_loop_config(self):
+        import uuid as _uuid
+
+        import numpy as np
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sklearn.linear_model import LogisticRegression
+
+        from app.database import Base
+        from app.models.model_registry import InferenceDeployment, ModelVersion, RegisteredModel
+        from app.models.project import Project
+        from app.models.user import User
+        # 应用级 ArtifactService（存储根取测试配置）：servitize 冒烟经同根加载
+        from app.services.artifact_service import build_artifact_service
+        from app.services.agent.servitize import servitize_recipe
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, expire_on_commit=False)
+        with Session() as db:
+            user = User(username="sv-algo", password_hash="h")
+            db.add(user)
+            db.flush()
+            project = Project(name="sv-algo", owner_id=user.id)
+            db.add(project)
+            db.flush()
+            # 真实可预测的 joblib 模型工件：servitize 冒烟（dry-run predict）
+            # 走进程内回退路径加载它
+            service = build_artifact_service(db)
+            features = np.asarray([[0.0, 1.0], [5.0, -1.0]])
+            fitted = LogisticRegression(random_state=0).fit(features, [0, 1])
+            with tempfile.TemporaryDirectory() as tmp:
+                model_file = Path(tmp) / "m.joblib"
+                joblib.dump(fitted, model_file)
+                artifact = service.create_from_file(
+                    project.id, model_file, "m.joblib", "model",
+                    metadata={"source": "automl"}, commit=False,
+                )
+            model = RegisteredModel(project_id=project.id, name="m", created_by_id=user.id)
+            db.add(model)
+            db.flush()
+            version = ModelVersion(
+                registered_model_id=model.id, version_number=1,
+                source_kind="platform_joblib", source_model_library_id=artifact.id,
+                source_artifact_id=artifact.id,
+                onnx_artifact_id=artifact.id,
+                framework="sklearn",
+                approval_status="approved", created_by_id=user.id,
+                feature_schema=[
+                    {"name": "f1", "dtype": "float64"},
+                    {"name": "f2", "dtype": "float64"},
+                ],
+                output_schema={"target_columns": ["fault"]},
+            )
+            db.add(version)
+            db.flush()
+            deployment = InferenceDeployment(
+                project_id=project.id, name="dep", model_version_id=version.id,
+                desired_state="running", observed_state="running", created_by_id=user.id,
+            )
+            db.add(deployment)
+            db.commit()
+            draft = servitize_recipe(
+                db, project_id=project.id, actor_id=user.id,
+                deployment_id=deployment.id,
+                recipe_content={
+                    "target_semantics": {"0": "合格", "1": "不合格"},
+                    "feature_script": "def transform(df):" + chr(10) + "    return df",
+                    "smoke_row": {"f1": 5.0, "f2": -1.0},
+                    "retrain_algorithm_ids": ["catboost", "lightgbm"],
+                },
+                model_api_name="sv-algo-%s" % _uuid.uuid4().hex[:6],
+            )
+            loop = db.get(DemoLoopConfig, _uuid.UUID(draft.loop_config_id))
+            self.assertEqual(loop.retrain_algorithm_ids, ["catboost", "lightgbm"])
+        engine.dispose()
 
 
 class TestOrchestrationRetrainEnsemble(unittest.TestCase):

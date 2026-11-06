@@ -236,6 +236,7 @@ def trigger_retrain_job(
     dataset_artifact_id=None, dataset_artifact_ids=None, target_column: str,
     max_trials: int = 10,
     ensemble: dict | None = None,
+    algorithm_ids: list[str] | None = None,
 ) -> TrainingJob:
     """Create and dispatch one AutoML job on the given dataset(s)/target.
 
@@ -243,6 +244,7 @@ def trigger_retrain_job(
     target column but carry a ``prediction`` column (closed-loop reflow rows)
     are auto-labeled with that inference result. ``ensemble``（{"enabled",
     "top_k"}）转发给引擎终选层：部署换模模型本身可为加权投票集成体。
+    ``algorithm_ids``（向导算法白名单）缩小引擎搜索族；空 = 全族。
     """
     project_id = _as_uuid(project_id)
     actor_id = _as_uuid(actor_id)
@@ -354,7 +356,10 @@ def trigger_retrain_job(
     feature_columns = resolve_automl_feature_columns(
         frame, target_column, None, target_columns=[target_column],
     )
-    families = resolve_algorithm_families(list(AUTOML_FAMILY_IDS))
+    # 向导算法白名单缩小引擎搜索族（空/未配置 = 全族，行为不变）
+    families = resolve_algorithm_families(
+        [str(item) for item in (algorithm_ids or [])] or list(AUTOML_FAMILY_IDS),
+    )
     evaluation = normalize_evaluation_config(True, 3)
     controls = normalize_search_controls(strength="light", time_budget=600, class_weight=True)
     trials = max(int(max_trials or 10), len(families))

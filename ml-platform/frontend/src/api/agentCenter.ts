@@ -58,7 +58,7 @@ export interface AgentRunDetail extends AgentRunItem {
     gate_warnings?: string[];
     resume?: Record<string, unknown>;
     injected_experience?: Array<{ entry?: string; lesson?: string; action?: string; confidence?: number; origin?: string }>;
-    escalation?: { code?: string; detail?: string | null; round?: number };
+    escalation?: { code?: string; detail?: string | null; round?: number; resolved?: { decision?: string; note?: string | null; actor?: string; at?: string } };
   };
   guidance_json: {
     analysis?: { column_notes?: unknown[]; row_notes?: unknown[]; prompts?: string[]; suspect_focus?: string[] };

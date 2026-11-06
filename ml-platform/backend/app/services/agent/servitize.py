@@ -147,6 +147,10 @@ def servitize_recipe(
             "retrain_ensemble_top_k": int(
                 (recipe_content.get("retrain_ensemble") or {}).get("top_k") or 3
             ),
+            # 向导算法白名单 → 闭环重训引擎搜索族（空 = 全族）
+            "retrain_algorithm_ids": [
+                str(x) for x in (recipe_content.get("retrain_algorithm_ids") or [])
+            ],
         }
         loop_service = DemoLoopService(db)
         # One servitize entry per deployment (platform unique constraint):

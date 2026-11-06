@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { LoadingOutlined } from "@ant-design/icons";
 import OptReportPanel from "./OptReportPanel";
 import ServitizeActions from "./ServitizeActions";
-import { parseBackendTime } from "../utils/time";
+import { parseBackendTime, formatLocalTime } from "../utils/time";
 import apiClient from "../api/client";
 import { agentStatusLabel } from "../utils/agentStatus";
 import {
@@ -30,6 +30,10 @@ function relativeTime(iso?: string | null, zh = true): string {
   const hours = Math.round(minutes / 60);
   if (hours < 24) return zh ? `${hours} 小时前` : `${hours}h ago`;
   return zh ? `${Math.round(hours / 24)} 天前` : `${Math.round(hours / 24)}d ago`;
+}
+
+function formatDecisionTime(iso?: string | null, zh = true): string {
+  return formatLocalTime(iso, true);
 }
 
 interface Props {
@@ -111,6 +115,28 @@ export default function AgentRunArchivePanel({ runId, archive, archiveError, zh,
   const escalation = archive?.memory_json?.escalation;
   const activeStage = active && archive ? STAGE_LABELS[archive.current_stage] : null;
   const [cancelling, setCancelling] = useState(false);
+  const [deciding, setDeciding] = useState<"accept" | "reject" | null>(null);
+  const [decisionNote, setDecisionNote] = useState("");
+  const [decisionError, setDecisionError] = useState("");
+  const escalated = archive?.status === "waiting_escalate";
+  const resolved = escalation?.resolved;
+
+  const decide = async (decision: "accept" | "reject") => {
+    setDeciding(decision);
+    setDecisionError("");
+    try {
+      await apiClient.post(`/agent/runs/${runId}/decision`, {
+        decision, note: decisionNote.trim() || null,
+      });
+      setDecisionNote("");
+      onRefresh();
+    } catch (error: unknown) {
+      const detail = (error as { response?: { data?: { detail?: { message?: string; code?: string } } } })?.response?.data?.detail;
+      setDecisionError(detail?.message || detail?.code || (zh ? "决策提交失败" : "Decision failed"));
+    } finally {
+      setDeciding(null);
+    }
+  };
   return (
     <div style={{ marginTop: 12, border: "1px solid var(--v2-line)", borderRadius: 10, background: "var(--v2-bg)", padding: "12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
@@ -175,6 +201,39 @@ export default function AgentRunArchivePanel({ runId, archive, archiveError, zh,
           <div style={{ marginBottom: 10, padding: "8px 10px", border: "1px solid var(--v2-line)", borderRadius: 8, background: "rgba(230,111,117,.08)", fontSize: 12, lineHeight: 1.7 }}>
             <b style={{ color: "var(--v2-red)" }}>{zh ? "待人工决策原因" : "Why this needs a decision"}</b>
             <div style={{ color: "var(--v2-sub)", wordBreak: "break-all" }}>{escalation.detail}</div>
+            {resolved ? (
+              <div style={{ marginTop: 6, color: "var(--v2-txt)" }}>
+                {resolved.decision === "accept"
+                  ? (zh ? "✓ 已人工采纳验收结论" : "✓ Accepted by human decision")
+                  : (zh ? "✕ 已人工驳回（确认评审意见，任务终止）" : "✕ Rejected by human decision")}
+                {resolved.note ? ` · ${resolved.note}` : ""}
+                {resolved.at ? ` · ${formatDecisionTime(resolved.at, zh)}` : ""}
+              </div>
+            ) : null}
+            {escalated && !resolved ? (
+              <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <input
+                  className="v2-select"
+                  style={{ flex: 1, minWidth: 180 }}
+                  aria-label={zh ? "决策备注（可选）" : "decision note"}
+                  placeholder={zh ? "决策备注（可选，随档案留痕）" : "note (archived)"}
+                  value={decisionNote}
+                  onChange={(e) => setDecisionNote(e.target.value)}
+                />
+                <button
+                  type="button" className="v2-btn primary sm" disabled={deciding !== null}
+                  title={zh ? "人工确认指标可信：验收通过（采纳最后轮次冠军实测指标）" : "Accept the round champion metrics"}
+                  onClick={() => void decide("accept")}
+                >{deciding === "accept" ? (zh ? "提交中…" : "…") : (zh ? "✓ 人工采纳" : "Accept")}</button>
+                <button
+                  type="button" className="v2-btn sm" disabled={deciding !== null}
+                  style={{ borderColor: "rgba(230,111,117,.55)", color: "var(--v2-red)" }}
+                  title={zh ? "确认评审意见：任务终止，可调整引导后重新提交" : "Confirm review concerns and end the run"}
+                  onClick={() => void decide("reject")}
+                >{deciding === "reject" ? (zh ? "提交中…" : "…") : (zh ? "✕ 驳回" : "Reject")}</button>
+                {decisionError ? <span style={{ color: "var(--v2-red)" }}>{decisionError}</span> : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
         <AgentStream archive={archive} zh={zh} active={!!active} />

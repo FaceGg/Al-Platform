@@ -140,6 +140,88 @@ class TestAgentRunsListing(AgentCenterHarness, unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"]["code"], "AGENT_RUN_NOT_FOUND")
 
+    def test_escalated_run_decision_accept_and_reject(self):
+        """升级态人工决策闭环：accept 落 accepted（冠军实测指标回填）+ 决策留痕；
+        reject 落 cancelled；非升级态 409。"""
+        project_id, _ = self._project()
+        memory = {
+            "rounds": [
+                {"round": 1, "verdict": "escalate",
+                 "s3": {"metrics": {"recall_minority": 0.86, "f1": 0.88}}},
+                {"round": 2, "verdict": "escalate",
+                 "s3": {"metrics": {"recall_minority": 0.9, "f1": 0.95}}},
+            ],
+            "escalation": {"code": "AGENT_REVIEW_ESCALATE", "detail": "疑似泄漏", "round": 2},
+        }
+        with SessionLocal() as db:
+            run = AgentRun(
+                project_id=uuid.UUID(project_id), target_column="fault",
+                status="waiting_escalate", current_stage="s4", round_count=2,
+                token_used=1000, error_code="AGENT_REVIEW_ESCALATE",
+                memory_json=memory, result_json={"token_used": 1000},
+            )
+            db.add(run)
+            db.commit()
+            run_id = str(run.id)
+
+        # 非升级态（cancelled）决策 → 409
+        with SessionLocal() as db:
+            done = AgentRun(
+                project_id=uuid.UUID(project_id), target_column="fault",
+                status="cancelled", current_stage="s4", round_count=1,
+                token_used=10, error_code=None, memory_json={}, result_json={},
+            )
+            db.add(done)
+            db.commit()
+            done_id = str(done.id)
+        non_escalated = client.post(
+            f"/api/agent/runs/{done_id}/decision",
+            json={"decision": "accept"}, headers=self.h,
+        )
+        self.assertEqual(non_escalated.status_code, 409)
+
+        # reject 分支：落 cancelled + 决策留痕
+        rejected = client.post(
+            f"/api/agent/runs/{run_id}/decision",
+            json={"decision": "reject", "note": "泄漏点名属实"}, headers=self.h,
+        )
+        self.assertEqual(rejected.status_code, 200)
+        self.assertEqual(rejected.json()["status"], "cancelled")
+        resolved = rejected.json()["memory_json"]["escalation"]["resolved"]
+        self.assertEqual(resolved["decision"], "reject")
+        self.assertEqual(resolved["note"], "泄漏点名属实")
+
+        with SessionLocal() as db:
+            db.query(AgentRun).delete()
+            run = AgentRun(
+                project_id=uuid.UUID(project_id), target_column="fault",
+                status="waiting_escalate", current_stage="s4", round_count=2,
+                token_used=1000, error_code="AGENT_REVIEW_ESCALATE",
+                memory_json=memory, result_json={"token_used": 1000},
+            )
+            db.add(run)
+            db.commit()
+            run_id = str(run.id)
+        accepted = client.post(
+            f"/api/agent/runs/{run_id}/decision",
+            json={"decision": "accept"}, headers=self.h,
+        )
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(accepted.json()["status"], "accepted")
+        self.assertEqual(accepted.json()["error_code"], None)
+        # 指标取最后轮次冠军实测值（round 2），不是第一轮
+        self.assertEqual(accepted.json()["result_json"]["metrics"], {"recall_minority": 0.9, "f1": 0.95})
+        self.assertEqual(
+            accepted.json()["memory_json"]["escalation"]["resolved"]["decision"], "accept",
+        )
+
+        # 终态后再决策 → 409
+        again = client.post(
+            f"/api/agent/runs/{run_id}/decision",
+            json={"decision": "reject"}, headers=self.h,
+        )
+        self.assertEqual(again.status_code, 409)
+
 
 class TestCreateAgentRun(AgentCenterHarness, unittest.TestCase):
     def test_archives_wizard_submission_with_guidance_and_pause_plan(self):

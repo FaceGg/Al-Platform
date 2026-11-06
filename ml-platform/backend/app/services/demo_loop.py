@@ -346,6 +346,13 @@ class DemoLoopService:
         if "retrain_ensemble_top_k" in data:
             # 与引擎/训练 API 同一范围（2-5），越界钳制而非报错
             config.retrain_ensemble_top_k = max(2, min(5, int(data["retrain_ensemble_top_k"] or 3)))
+        if "retrain_algorithm_ids" in data:
+            ids = data.get("retrain_algorithm_ids")
+            if ids is not None and not isinstance(ids, list):
+                raise DemoLoopError("DEMO_LOOP_CONFIG_INVALID", "retrain_algorithm_ids 必须是字符串列表")
+            config.retrain_algorithm_ids = [
+                str(item).strip()[:64] for item in (ids or []) if str(item).strip()
+            ][:64]
         if "retrain_target_column" in data:
             config.retrain_target_column = str(data["retrain_target_column"] or "").strip()[:128]
         if "collect_correct_enabled" in data:
@@ -1148,6 +1155,8 @@ class DemoLoopService:
                 if getattr(config, "retrain_ensemble_enabled", False)
                 else None
             ),
+            # 向导算法白名单（空 = 全族）
+            algorithm_ids=list(getattr(config, "retrain_algorithm_ids", None) or []) or None,
         )
         config.retrain_job_id = job.id
         config.retrain_status = "queued"

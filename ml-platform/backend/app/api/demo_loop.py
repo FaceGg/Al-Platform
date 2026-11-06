@@ -41,6 +41,7 @@ class DemoLoopConfigUpdate(BaseModel):
     retrain_max_trials: int | None = None
     retrain_ensemble_enabled: bool | None = None
     retrain_ensemble_top_k: int | None = Field(default=None, ge=2, le=5)
+    retrain_algorithm_ids: list[str] | None = None
     collect_correct_enabled: bool | None = None
     correct_sample_ratio: str | None = None
     field_descriptions: dict | None = None
@@ -129,6 +130,7 @@ def _config_view(db: Session, config: DemoLoopConfig) -> dict:
         "retrain_max_trials": config.retrain_max_trials,
         "retrain_ensemble_enabled": bool(getattr(config, "retrain_ensemble_enabled", False)),
         "retrain_ensemble_top_k": int(getattr(config, "retrain_ensemble_top_k", 3) or 3),
+        "retrain_algorithm_ids": [str(item) for item in (getattr(config, "retrain_algorithm_ids", None) or [])],
         "collect_correct_enabled": bool(config.collect_correct_enabled),
         "correct_sample_ratio": config.correct_sample_ratio or "1:1",
         "field_descriptions": config.field_descriptions or {},
