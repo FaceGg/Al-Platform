@@ -219,6 +219,43 @@ def delta_check(
     return {"small": not reasons, "reasons": reasons}
 
 
+def _json_safe(value):
+    """冒烟行值清洗：NaN→None、numpy 标量→Python 标量、时间戳→ISO 串。"""
+    import math
+
+    import numpy as _np
+
+    if value is None:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    if _np is not None and isinstance(value, _np.generic):
+        return value.item()
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value
+
+
+def smoke_row_from_frame(frame, max_columns: int = 32) -> dict:
+    """数据帧首行 → S5 冒烟行（JSON-safe，列数截断防超大 payload）。
+
+    全 None 列剔除；列顺序按 frame 原序取前 max_columns 列。"""
+    if frame is None:
+        return {}
+    try:
+        if len(frame) == 0:
+            return {}
+    except TypeError:
+        return {}
+    row = frame.iloc[0]
+    out: dict = {}
+    for column in list(frame.columns)[:max_columns]:
+        value = _json_safe(row[column])
+        if value is not None:
+            out[str(column)] = value
+    return out
+
+
 def _columns_from_digest(content: dict) -> dict:
     """Fallback: minimal columns digest embedded directly in the recipe."""
     digest = content.get("analysis_digest_columns")
@@ -227,13 +264,15 @@ def _columns_from_digest(content: dict) -> dict:
     return {}
 
 
-def build_fixation_content(run, memory: dict) -> dict:
+def build_fixation_content(run, memory: dict, smoke_row: dict | None = None) -> dict:
     """验收通过的 run → 配方版本 content（固化/重放共用的唯一构造器）。
 
     从 API 层（agent_extras.fixate_recipe）下沉：闭环 agent 重训模式需要
     从配方版本重放 guidance 快照，构造器必须与服务侧共用，避免双处漂移。
     guidance 全量快照 + source_run_id 是 agent 重训的输入合同；缺失时触发
     端 fail-closed（DEMO_LOOP_AGENT_RECIPE_INVALID），不静默降级引擎模式。
+    smoke_row：S5 服务化 dry-run 冒烟行（此前有消费方无生产方，档案页
+    servitize 对任何固化配方都挂 RECORD_INVALID——本处补上生产方）。
     """
     rounds = memory.get("rounds", [])
     final_script = ""
@@ -267,6 +306,8 @@ def build_fixation_content(run, memory: dict) -> dict:
         # agent 重训重放输入：完整 UserGuidance 快照 + 源 run（LLM 档案/预算沿用）
         "guidance": dict(run.guidance_json or {}),
         "source_run_id": str(run.id),
+        # S5 服务化 dry-run 冒烟行（servitize_recipe 的 zero-backflow 冒烟输入）
+        "smoke_row": dict(smoke_row or {}),
         "baseline_metrics": (run.result_json or {}).get("metrics", {}),
         "analysis_digest": "run %s" % str(run.id)[:8],
         "optimization_report": (run.result_json or {}).get("optimization_report"),

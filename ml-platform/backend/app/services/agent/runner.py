@@ -253,10 +253,14 @@ class AgentRunner:
         note: dict = {}
         try:
             # 固化/重放唯一构造器（build_fixation_content）：含 feature_script/
-            # acceptance_gates/retrain_* 与 guidance 快照+source_run_id——
+            # acceptance_gates/retrain_* 与 guidance 快照+source_run_id+smoke_row——
             # 此前 inline content 缺 feature_script，档案页凭该配方续服务化时
             # script 模式校验必挂（闭环 agent 重训 E2E 实证）。
-            from app.services.agent.recipe import build_fixation_content, create_recipe
+            from app.services.agent.recipe import (
+                build_fixation_content,
+                create_recipe,
+                smoke_row_from_frame,
+            )
 
             result = dict(self.run.result_json or {})
             if not result.get("recipe_id"):
@@ -265,7 +269,10 @@ class AgentRunner:
                     self.db,
                     project_id=self.run.project_id,
                     name=name,
-                    content=build_fixation_content(self.run, self.memory),
+                    content=build_fixation_content(
+                        self.run, self.memory,
+                        smoke_row=smoke_row_from_frame(self.dataset_frame),
+                    ),
                     change_note="auto-fixated on acceptance (auto_servitize)",
                     created_by=self.actor,
                 )
