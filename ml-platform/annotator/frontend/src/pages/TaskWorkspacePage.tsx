@@ -16,6 +16,7 @@ import { Comment, createComment, listComments } from '../api/comments'
 import GuidelinePanel from '../components/GuidelinePanel'
 import SampleStream, { NumberedOption } from '../components/SampleStream'
 import ShortcutHelp from '../components/ShortcutHelp'
+import { rangeHint } from '../utils/labelConstraints'
 
 type Conflict = { revision: number; labels: Record<string, unknown> }
 type SaveState = 'clean' | 'dirty' | 'saving' | 'saved' | 'error' | 'conflict'
@@ -264,6 +265,17 @@ export default function TaskWorkspacePage({
   )
   const normalized = useMemo(() => normalizeDraft(schema, draft), [schema, draft])
   const canSave = Boolean(sample) && !locked && !batchSaving && !savingRef.current[sample?.sample_id ?? ''] && !normalized.error
+  // 逐列提示已填写值的类型/范围错误；留空不提示（必填缺失由保存门控负责，避免未填样本满屏报错）
+  const fieldErrors = useMemo(() => {
+    const errors: Record<string, string> = {}
+    for (const column of schema) {
+      const raw = draft[column.machine_key]
+      if (raw === undefined || raw === null || raw === '') continue
+      const { error: columnError } = parseValue(column, raw)
+      if (columnError) errors[column.machine_key] = columnError
+    }
+    return errors
+  }, [schema, draft])
   const batchColumn = schema.find(column => column.machine_key === batchField) ?? schema[0]
   const batchParsed = batchColumn ? parseValue(batchColumn, batchValue) : { error: '请选择标签列' }
   const numberedOptions = useMemo<NumberedOption[]>(
@@ -589,7 +601,8 @@ export default function TaskWorkspacePage({
   function toggleOption(column: LabelColumn, optionValue: string) {
     if (!sample || locked || batchSaving) return
     const current = draft[column.machine_key]
-    updateDraft(sample.sample_id, column.machine_key, current === optionValue ? '' : optionValue)
+    // 已保存的数值标签是 number、选项值是 string，须按字符串比较才能取消选中
+    updateDraft(sample.sample_id, column.machine_key, String(current ?? '') === optionValue ? '' : optionValue)
   }
 
   function chooseSample(index: number) {
@@ -872,6 +885,8 @@ export default function TaskWorkspacePage({
       void saveAndAdvance()
       return
     }
+    // 键盘 Tab 到枚举选项时 Enter/空格按按钮原生语义选中它（鼠标点选后选项已失焦，不走这里）
+    if (target instanceof HTMLElement && target.classList.contains('option-chip') && (event.key === 'Enter' || event.key === ' ')) return
     if (editable || !sample) return
     if ((event.ctrlKey || event.metaKey) && !event.altKey && (event.key === 'z' || event.key === 'Z')) {
       event.preventDefault()
@@ -1125,9 +1140,12 @@ export default function TaskWorkspacePage({
                     value={batchValue}
                     type={batchColumn?.value_type === 'string' ? 'text' : 'number'}
                     step={batchColumn?.value_type === 'float' ? 'any' : '1'}
+                    min={batchColumn?.min_value ?? undefined}
+                    max={batchColumn?.max_value ?? undefined}
                     onChange={(event) => setBatchValue(event.target.value)}
                   />
                 )}
+                {batchColumn && rangeHint(batchColumn) && <span className="muted">{rangeHint(batchColumn)}</span>}
               </label>
               <label className="check">
                 <input
@@ -1353,6 +1371,7 @@ export default function TaskWorkspacePage({
                 visibleColumns={task?.visible_columns ?? []}
                 numberedOptions={numberedOptions}
                 fieldDescriptions={task?.field_descriptions ?? {}}
+                fieldErrors={fieldErrors}
                 disabled={locked || batchSaving}
                 saveDisabled={!canSave}
                 saveState={saveStates[sample.sample_id]}

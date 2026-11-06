@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { LabelColumn, Sample } from '../api/tasks'
+import { rangeHint } from '../utils/labelConstraints'
 import WaveformChart from './WaveformChart'
 
 export type NumberedOption = { column: LabelColumn; value: string; index: number }
@@ -11,6 +12,7 @@ export default function SampleStream({
   visibleColumns,
   numberedOptions,
   fieldDescriptions = {},
+  fieldErrors = {},
   disabled,
   saveDisabled,
   saveState,
@@ -36,6 +38,8 @@ export default function SampleStream({
   numberedOptions: NumberedOption[]
   /** 字段解释：数据列名 → 描述；匹配上的字段在名称下方展示描述 */
   fieldDescriptions?: Record<string, string>
+  /** 标签列 machine_key → 当前填写值的类型/范围校验错误；有错误时不能保存 */
+  fieldErrors?: Record<string, string>
   disabled: boolean
   saveDisabled: boolean
   saveState?: string
@@ -54,10 +58,7 @@ export default function SampleStream({
   onOpenSamples: () => void
   onRestart: () => void
 }) {
-  const firstLabelRef = useRef<HTMLInputElement | HTMLSelectElement | null>(null)
-  const setFirstLabelRef = (element: HTMLElement | null) => {
-    firstLabelRef.current = element as HTMLInputElement | HTMLSelectElement | null
-  }
+  const firstLabelRef = useRef<HTMLInputElement | null>(null)
   const [jumpText, setJumpText] = useState('')
   const submitJump = () => {
     const trimmed = jumpText.trim()
@@ -157,6 +158,8 @@ export default function SampleStream({
         </div>
         <div className="stream-labels">
           <h3>{hasAutomaticResult ? '标注员修改（人工结果）' : '标签'}</h3>
+          {/* 枚举值常是 0/1 这样的数字，要和旁边的快捷键序号区分开 */}
+          {numberedOptions.length > 0 && <p className="muted">点击选项选择标签值；选项前的灰色序号是键盘快捷键，不是标签值</p>}
           {inferenceFields.length > 0 && (
             <div className="field-group automatic-labels" aria-label="模型推理输出">
               <h4>模型推理输出（参考）</h4>
@@ -174,47 +177,57 @@ export default function SampleStream({
             </div>
           )}
           {columns.map((column, index) => {
-            const value = draft[column.machine_key]
-            const chips = numberedOptions.filter(option => option.column.machine_key === column.machine_key)
-            const common = {
-              'aria-label': `${column.machine_key}-${sample.sample_id}`,
-              'data-label-input': 'true',
-              disabled,
-              value: String(value ?? ''),
-              onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-                onDraftChange(sample.sample_id, column.machine_key, event.target.value),
+            const value = String(draft[column.machine_key] ?? '')
+            const fieldLabel = `${column.machine_key}-${sample.sample_id}`
+            const fieldError = fieldErrors[column.machine_key]
+            if (column.enum_values?.length) {
+              // 枚举列平铺全部定义值，只能点选（点已选中的取消）；不用 <label> 包裹，否则点标题文字会误触第一个选项
+              return (
+                <div className="stream-label-field" key={column.machine_key}>
+                  {column.display_name ?? column.machine_key}
+                  <div className="option-chips" role="group" aria-label={fieldLabel} title="点击选择标签值；徽标数字为键盘快捷键">
+                    {column.enum_values.map(option => {
+                      const optionValue = String(option)
+                      const shortcut = numberedOptions.find(item => item.column.machine_key === column.machine_key && item.value === optionValue)
+                      return (
+                        <button
+                          type="button"
+                          key={optionValue}
+                          className={`option-chip${value === optionValue ? ' selected' : ''}`}
+                          aria-label={shortcut ? `快捷选项 ${shortcut.index} ${optionValue}` : optionValue}
+                          aria-pressed={value === optionValue}
+                          disabled={disabled}
+                          onClick={(event) => {
+                            onToggleOption(column, optionValue)
+                            // 鼠标点选后释放焦点，Enter/空格继续走「保存并下一条/跳过」全局快捷键
+                            if (event.detail > 0) event.currentTarget.blur()
+                          }}
+                        >{shortcut && <span className="badge">{shortcut.index}</span>}{optionValue}</button>
+                      )
+                    })}
+                  </div>
+                  {fieldError && <span className="error">{fieldError}</span>}
+                </div>
+              )
             }
-            const firstLabel = index === 0 ? setFirstLabelRef : undefined
+            const hint = rangeHint(column)
             return (
               <label key={column.machine_key}>
                 {column.display_name ?? column.machine_key}
-                {column.enum_values?.length ? (
-                  <select {...common} ref={firstLabel}>
-                    <option value="">请选择</option>
-                    {column.enum_values.map(option => <option key={String(option)} value={String(option)}>{String(option)}</option>)}
-                  </select>
-                ) : (
-                  <input
-                    {...common}
-                    ref={firstLabel}
-                    type={column.value_type === 'string' ? 'text' : 'number'}
-                    step={column.value_type === 'float' ? 'any' : '1'}
-                  />
-                )}
-                {chips.length > 0 && (
-                  <div className="option-chips" title="快捷选项：徽标数字为键盘快捷键，右侧为标签值">
-                    {chips.map(option => (
-                      <button
-                        type="button"
-                        key={option.value}
-                        className={`option-chip${String(value ?? '') === option.value ? ' selected' : ''}`}
-                        aria-label={`快捷选项 ${option.index} ${option.value}`}
-                        disabled={disabled}
-                        onClick={() => onToggleOption(column, option.value)}
-                      ><span className="badge">{option.index}</span>{option.value}</button>
-                    ))}
-                  </div>
-                )}
+                <input
+                  aria-label={fieldLabel}
+                  data-label-input="true"
+                  disabled={disabled}
+                  value={value}
+                  onChange={(event) => onDraftChange(sample.sample_id, column.machine_key, event.target.value)}
+                  ref={index === 0 ? firstLabelRef : undefined}
+                  type={column.value_type === 'string' ? 'text' : 'number'}
+                  step={column.value_type === 'float' ? 'any' : '1'}
+                  min={column.min_value ?? undefined}
+                  max={column.max_value ?? undefined}
+                />
+                {hint && <span className="muted">{hint}</span>}
+                {fieldError && <span className="error">{fieldError}</span>}
               </label>
             )
           })}
@@ -222,7 +235,8 @@ export default function SampleStream({
             <button type="button" disabled={saveDisabled} onClick={onSave}>保存标签</button>
             {saveState === 'saving' && <p className="muted">保存中...</p>}
             {saveState === 'saved' && <p className="success">已保存</p>}
-            {saveState === 'error' && <p className="error">保存失败，请重试</p>}
+            {/* 校验不通过时保存按钮已禁用、原因已提示，重试无济于事，此处只提示真正的保存失败 */}
+            {saveState === 'error' && !saveDisabled && <p className="error">保存失败，请重试</p>}
           </div>
         </div>
       </div>

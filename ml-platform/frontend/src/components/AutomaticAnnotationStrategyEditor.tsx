@@ -37,6 +37,55 @@ const operators: Array<[AutomaticRuleCondition["operator"], string]> = [
 
 const nullOperators = new Set<AutomaticRuleCondition["operator"]>(["is_null", "not_null"]);
 
+/** 把策略草稿里的文本值转成列类型并按「标签列定义」校验：枚举只能取定义值，范围包含上下限 */
+export function typedAutomaticValue(column: AnnotationOutputColumn, raw: string): { value?: string | number; error?: string } {
+  const text = raw.trim();
+  if (column.value_type === "string") {
+    if (!text) return { error: `${column.display_name} 不能为空` };
+    if (column.enum_values?.length && !column.enum_values.some((item) => String(item) === text)) return { error: `${column.display_name} 必须是已定义的枚举值` };
+    return { value: raw };
+  }
+  if (column.value_type === "int" && !/^[-+]?\d+$/.test(text)) return { error: `${column.display_name} 必须是整数` };
+  const numeric = Number(raw);
+  if (!text || !Number.isFinite(numeric)) return { error: `${column.display_name} 必须是有限浮点数` };
+  if (column.enum_values?.length && !column.enum_values.some((item) => Number(item) === numeric)) return { error: `${column.display_name} 必须是已定义的枚举值` };
+  if ((column.min_value != null && numeric < column.min_value) || (column.max_value != null && numeric > column.max_value)) {
+    return { error: `${column.display_name} 必须在 ${column.min_value ?? "-∞"} ~ ${column.max_value ?? "+∞"} 范围内` };
+  }
+  return { value: numeric };
+}
+
+/** 策略命中值输入：枚举列只能选定义值，范围列限定上下限，与标注员门户的约束一致 */
+function LabelValueInput({ id, label, column, value, onChange }: {
+  id: string;
+  label: string;
+  column: AnnotationOutputColumn;
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  if (column.enum_values?.length) {
+    const options = column.enum_values.map(String);
+    return <select id={id} aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
+      <option value="">请选择</option>
+      {options.map((option) => <option value={option} key={option}>{option}</option>)}
+      {/* 导入的历史策略可能带定义外的值：保留显示，保存时由校验报错，避免被静默清空 */}
+      {value && !options.includes(value) && <option value={value}>{value}（不在枚举值内）</option>}
+    </select>;
+  }
+  const hasRange = column.min_value != null || column.max_value != null;
+  return <input
+    id={id}
+    aria-label={label}
+    type={column.value_type === "string" ? "text" : "number"}
+    step={column.value_type === "float" ? "any" : "1"}
+    min={column.min_value}
+    max={column.max_value}
+    placeholder={hasRange ? `${column.min_value ?? "-∞"} ~ ${column.max_value ?? "+∞"}` : undefined}
+    value={value}
+    onChange={(event) => onChange(event.target.value)}
+  />;
+}
+
 function ruleId() {
   return createUuid();
 }
@@ -123,7 +172,7 @@ export default function AutomaticAnnotationStrategyEditor({ idPrefix, columns, s
         <div className="data-annotation__automatic-values" aria-label={`规则 ${ruleIndex + 1} 标签值`}>
           {columns.map((column) => <div className="data-annotation__setup-field" key={column.machine_key}>
             <label htmlFor={`${idPrefix}-rule-value-${rule.id}-${column.machine_key}`}>命中 · {column.display_name}</label>
-            <input id={`${idPrefix}-rule-value-${rule.id}-${column.machine_key}`} aria-label={`规则 ${ruleIndex + 1} 命中 ${column.display_name}`} type={column.value_type === "string" ? "text" : "number"} step={column.value_type === "float" ? "any" : "1"} value={rule.values[column.machine_key] || ""} onChange={(event) => updateRule(rule.id, { values: { ...rule.values, [column.machine_key]: event.target.value } })} />
+            <LabelValueInput id={`${idPrefix}-rule-value-${rule.id}-${column.machine_key}`} label={`规则 ${ruleIndex + 1} 命中 ${column.display_name}`} column={column} value={rule.values[column.machine_key] || ""} onChange={(next) => updateRule(rule.id, { values: { ...rule.values, [column.machine_key]: next } })} />
           </div>)}
         </div>
       </div>)}
@@ -135,7 +184,7 @@ export default function AutomaticAnnotationStrategyEditor({ idPrefix, columns, s
         {value.selectedClusters.includes(cluster.clusterId) && <div className="data-annotation__automatic-values">
           {columns.map((column) => <div className="data-annotation__setup-field" key={column.machine_key}>
             <label htmlFor={`${idPrefix}-cluster-${cluster.clusterId}-${column.machine_key}`}>簇 {cluster.clusterId} · {column.display_name}</label>
-            <input id={`${idPrefix}-cluster-${cluster.clusterId}-${column.machine_key}`} aria-label={`簇 ${cluster.clusterId} ${column.display_name}`} type={column.value_type === "string" ? "text" : "number"} step={column.value_type === "float" ? "any" : "1"} value={value.clusterLabels[cluster.clusterId]?.[column.machine_key] || ""} onChange={(event) => onChange({ ...value, clusterLabels: { ...value.clusterLabels, [cluster.clusterId]: { ...(value.clusterLabels[cluster.clusterId] || {}), [column.machine_key]: event.target.value } } })} />
+            <LabelValueInput id={`${idPrefix}-cluster-${cluster.clusterId}-${column.machine_key}`} label={`簇 ${cluster.clusterId} ${column.display_name}`} column={column} value={value.clusterLabels[cluster.clusterId]?.[column.machine_key] || ""} onChange={(next) => onChange({ ...value, clusterLabels: { ...value.clusterLabels, [cluster.clusterId]: { ...(value.clusterLabels[cluster.clusterId] || {}), [column.machine_key]: next } } })} />
           </div>)}
         </div>}
       </div>)}
@@ -156,13 +205,12 @@ export default function AutomaticAnnotationStrategyEditor({ idPrefix, columns, s
       {useOtherValues && <div className="data-annotation__automatic-values">
         {columns.map((column) => <div className="data-annotation__setup-field" key={column.machine_key}>
           <label htmlFor={`${idPrefix}-other-${column.machine_key}`}>其他 · {column.display_name}</label>
-          <input
+          <LabelValueInput
             id={`${idPrefix}-other-${column.machine_key}`}
-            aria-label={`其他兜底值 ${column.display_name}`}
-            type={column.value_type === "string" ? "text" : "number"}
-            step={column.value_type === "float" ? "any" : "1"}
+            label={`其他兜底值 ${column.display_name}`}
+            column={column}
             value={value.otherValues[column.machine_key] || ""}
-            onChange={(event) => onChange({ ...value, otherValues: { ...value.otherValues, [column.machine_key]: event.target.value } })}
+            onChange={(next) => onChange({ ...value, otherValues: { ...value.otherValues, [column.machine_key]: next } })}
           />
         </div>)}
       </div>}

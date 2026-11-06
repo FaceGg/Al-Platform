@@ -135,4 +135,77 @@ describe('SampleStream', () => {
     const noteField = screen.getByText('焊点').closest('.field-item') as HTMLElement
     expect(noteField.querySelector('.field-item-description')).toBeNull()
   })
+
+  it('lists every defined value as a clickable option and offers no free input for enum columns', () => {
+    const grade: LabelColumn = { machine_key: 'grade', display_name: '等级', value_type: 'int', required: true, enum_values: [0, 1, 2] }
+    // 只有前两个值分到数字快捷键，第三个同样要能点选
+    const props = renderStream({
+      columns: [grade],
+      draft: { grade: 1 },
+      numberedOptions: [{ column: grade, value: '0', index: 1 }, { column: grade, value: '1', index: 2 }],
+    })
+    const group = screen.getByRole('group', { name: 'grade-s-1' })
+    expect(within(group).getAllByRole('button').map(button => button.getAttribute('aria-label'))).toEqual(['快捷选项 1 0', '快捷选项 2 1', '2'])
+    expect(screen.getByRole('button', { name: '快捷选项 2 1' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '快捷选项 1 0' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'grade-s-1' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/允许范围/)).not.toBeInTheDocument()
+    expect(screen.getByText('点击选项选择标签值；选项前的灰色序号是键盘快捷键，不是标签值')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '2' }))
+    expect(props.onToggleOption).toHaveBeenCalledWith(grade, '2')
+    // 点标题文字不能误触选项
+    fireEvent.click(screen.getByText('等级'))
+    expect(props.onToggleOption).toHaveBeenCalledOnce()
+  })
+
+  it('releases focus after a mouse click on an option so Enter keeps saving', () => {
+    renderStream()
+    const option = screen.getByRole('button', { name: '快捷选项 2 B' })
+    option.focus()
+    // detail>0 才是鼠标点击；键盘激活（detail=0）保留焦点
+    fireEvent.click(option, { detail: 0 })
+    expect(document.activeElement).toBe(option)
+    fireEvent.click(option, { detail: 1 })
+    expect(document.activeElement).not.toBe(option)
+  })
+
+  it('shows the allowed range next to free-form numeric columns', () => {
+    renderStream({
+      columns: [
+        { machine_key: 'count', display_name: '数量', value_type: 'int', required: true, min_value: 0, max_value: 10 },
+        { machine_key: 'score', display_name: '分数', value_type: 'float', min_value: 0.5 },
+        { machine_key: 'free', display_name: '无约束', value_type: 'float', min_value: null, max_value: null } as unknown as LabelColumn,
+      ],
+      draft: {},
+      numberedOptions: [],
+    })
+    const count = screen.getByRole('spinbutton', { name: 'count-s-1' })
+    expect(count).toHaveAttribute('min', '0')
+    expect(count).toHaveAttribute('max', '10')
+    expect(screen.getByText('允许范围 0 ~ 10（含边界，整数）')).toBeVisible()
+    expect(screen.getByText('允许范围 0.5 ~ +∞（含边界，数值）')).toBeVisible()
+    expect(screen.getByRole('spinbutton', { name: 'free-s-1' })).not.toHaveAttribute('min')
+    expect(screen.getAllByText(/允许范围/)).toHaveLength(2)
+  })
+
+  it('shows validation errors under the field instead of a generic save failure', () => {
+    renderStream({
+      columns: [{ machine_key: 'count', display_name: '数量', value_type: 'int', min_value: 0, max_value: 10 }],
+      draft: { count: '15' },
+      numberedOptions: [],
+      saveDisabled: true,
+      saveState: 'error',
+      fieldErrors: { count: '整数高于最大值' },
+    })
+    expect(screen.getByText('整数高于最大值')).toBeVisible()
+    expect(screen.queryByText('保存失败，请重试')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '保存标签' })).toBeDisabled()
+  })
+
+  it('keeps the generic save failure when no field is invalid', () => {
+    renderStream({ saveState: 'error' })
+    expect(screen.getByText('保存失败，请重试')).toBeVisible()
+  })
 })

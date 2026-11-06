@@ -11,12 +11,14 @@ export type LabelColumnDraft = {
   max_value?: number;
   instruction?: string;
   /** UI 态：当前选择的约束方式；未设置时按已有约束值推导（回显已保存 schema 用） */
-  constraint_mode?: "enum" | "range" | "enum_range";
+  constraint_mode?: "enum" | "range";
   /** UI 态：由模型输出契约预填的默认列——可修改但不可删除（至少保留一个标签列） */
   isDefault?: boolean;
 };
 
-type ConstraintMode = "enum" | "range" | "enum_range";
+type ConstraintMode = "enum" | "range";
+
+const VALUE_TYPE_LABELS: Record<LabelColumnDraft["value_type"], string> = { string: "字符串", int: "整数", float: "浮点数" };
 
 type Props = {
   initialColumns?: LabelColumnDraft[];
@@ -37,6 +39,19 @@ export function createLabelColumn(index: number): LabelColumnDraft {
   };
 }
 
+/** 自动任务的默认标签列：按模型输出契约预填（可改不可删）；无契约时与手动任务一样从一个空白列开始 */
+export function defaultLabelColumns(columns: Array<Pick<LabelColumnDraft, "machine_key" | "display_name" | "value_type" | "enum_values">>): LabelColumnDraft[] {
+  if (!columns.length) return [createLabelColumn(1)];
+  return columns.map((column) => ({
+    machine_key: column.machine_key,
+    display_name: column.display_name,
+    value_type: column.value_type,
+    required: true,
+    isDefault: true,
+    ...(column.enum_values?.length ? { enum_values: column.enum_values } : {}),
+  }));
+}
+
 /** 机器键由标签名称生成：去除首尾空白、空白串转下划线；名称为空时保留占位键 */
 export function machineKeyFromName(raw: string, fallback: string): string {
   const key = raw.trim().replace(/\s+/g, "_");
@@ -54,10 +69,10 @@ function nextColumnIndex(columns: LabelColumnDraft[]): number {
 }
 
 function constraintMode(column: LabelColumnDraft): ConstraintMode {
-  // 约束方式必选且默认枚举值：无「无约束」选项，旧数据回显时兜底为枚举值
+  // 约束方式必选且默认枚举值：无「无约束」选项，回显已保存 schema 时按已有约束值推导
   if (column.constraint_mode) return column.constraint_mode;
-  const hasRange = column.min_value !== undefined || column.max_value !== undefined;
-  return hasRange ? "range" : "enum";
+  if (column.enum_values?.length) return "enum";
+  return column.min_value != null || column.max_value != null ? "range" : "enum";
 }
 
 /** 校验单个枚举值文本与所选类型匹配且非空 */
@@ -74,8 +89,6 @@ export default function LabelSchemaEditor({ initialColumns = [], initialPurpose 
   const [columns, setColumns] = useState<LabelColumnDraft[]>(initialColumns);
   const [purpose, setPurpose] = useState<"annotation" | "training" | "inference">(initialPurpose);
   const [error, setError] = useState("");
-  // 标注用途：标注员只能选择管理员定义的值，因此每列必须有可选值（枚举），不提供纯范围
-  const allowRangeOnly = purpose !== "annotation";
   const add = () => setColumns((items) => [...items, createLabelColumn(nextColumnIndex(items))]);
   const update = (index: number, patch: Partial<LabelColumnDraft>) => setColumns((items) => items.map((item, itemIndex) => {
     if (itemIndex !== index) return item;
@@ -100,22 +113,26 @@ export default function LabelSchemaEditor({ initialColumns = [], initialPurpose 
     }
     for (let index = 0; index < columns.length; index += 1) {
       const column = columns[index];
-      const resolved = constraintMode(column);
-      const mode: ConstraintMode = !allowRangeOnly && resolved === "range" ? "enum_range" : resolved;
+      const mode = constraintMode(column);
       const label = column.display_name.trim() || `第 ${index + 1} 列`;
-      if (mode === "enum" || mode === "enum_range") {
+      if (mode === "enum") {
         const values = (column.enum_values || []).map((value) => String(value));
         if (!values.length || values.some((value) => !validEnumValue(value, column.value_type))) {
-          setError(`「${label}」的枚举值不能为空，且必须与所选类型（${column.value_type === "int" ? "整数" : column.value_type === "float" ? "浮点数" : "字符串"}）匹配`);
+          setError(`「${label}」至少需要一个枚举值，且每个值都必须与所选类型（${VALUE_TYPE_LABELS[column.value_type]}）匹配`);
+          return;
+        }
+        const distinct = new Set(values.map((value) => column.value_type === "string" ? value.trim() : String(Number(value))));
+        if (distinct.size !== values.length) {
+          setError(`「${label}」的枚举值不能重复`);
           return;
         }
       }
-      if (mode === "range" || mode === "enum_range") {
+      if (mode === "range") {
         const { min_value, max_value } = column;
         if (min_value === undefined || min_value === null || max_value === undefined || max_value === null
           || !Number.isFinite(min_value) || !Number.isFinite(max_value)
           || (column.value_type === "int" && (!Number.isInteger(min_value) || !Number.isInteger(max_value)))) {
-          setError(`「${label}」的范围不能为空，且必须与所选类型（${column.value_type === "int" ? "整数" : "浮点数"}）匹配`);
+          setError(`「${label}」必须同时填写最小值和最大值，且与所选类型（${VALUE_TYPE_LABELS[column.value_type]}）匹配`);
           return;
         }
         if (min_value > max_value) {
@@ -126,8 +143,7 @@ export default function LabelSchemaEditor({ initialColumns = [], initialPurpose 
     }
     setError("");
     onSave(columns.map((column) => {
-      const resolved = constraintMode(column);
-      const mode: ConstraintMode = !allowRangeOnly && resolved === "range" ? "enum_range" : resolved;
+      const mode = constraintMode(column);
       const normalized: LabelColumnDraft = {
         machine_key: column.machine_key.trim(),
         display_name: column.display_name.trim(),
@@ -135,10 +151,10 @@ export default function LabelSchemaEditor({ initialColumns = [], initialPurpose 
         // 向导中标签列默认必填，不再提供选填开关；字符串长度由后端 65536 上限兜底，无需用户填写
         required: true,
       };
-      if (mode === "enum" || mode === "enum_range") {
+      if (mode === "enum") {
         normalized.enum_values = (column.enum_values || []).map((value) => column.value_type === "string" ? String(value).trim() : Number(value));
       }
-      if (mode === "range" || mode === "enum_range") {
+      if (mode === "range") {
         normalized.min_value = column.min_value;
         normalized.max_value = column.max_value;
       }
@@ -157,12 +173,11 @@ export default function LabelSchemaEditor({ initialColumns = [], initialPurpose 
     </div>
     {error && <p className="label-schema-editor__error" role="alert">{error}</p>}
     {columns.map((column, index) => {
-      // 标注用途下每列必须给出可选值集合，历史遗留的纯范围列按「枚举值且范围」回显并补齐枚举
-      const resolved = constraintMode(column);
-      const mode: ConstraintMode = !allowRangeOnly && resolved === "range" ? "enum_range" : resolved;
+      const mode = constraintMode(column);
       const enumValues = column.enum_values?.length ? column.enum_values.map(String) : [""];
       const removable = !column.isDefault && columns.length > 1;
-      return <div className="label-schema-editor__card" key={`${column.machine_key}-${index}`}>
+      // key 不能含 machine_key：它随标签名称逐字重新生成，进 key 会让整卡每次键入都重挂、输入框失焦
+      return <div className="label-schema-editor__card" key={index}>
       <div className="label-schema-editor__card-head">
         {/* 机器键随标签名称自动生成（空白转下划线），只读不可修改；与标签名称同行 */}
         <div className="label-schema-editor__identity">
@@ -176,8 +191,8 @@ export default function LabelSchemaEditor({ initialColumns = [], initialPurpose 
           <label>值类型</label>
           <select aria-label={`类型 ${index + 1}`} value={column.value_type} onChange={(event) => {
             const value_type = event.target.value as LabelColumnDraft["value_type"];
-            // 切换类型后清空约束值（类型不匹配的旧值失效），保留当前约束方式
-            update(index, { value_type, enum_values: [""], min_value: undefined, max_value: undefined });
+            // 切换类型后清空约束值（类型不匹配的旧值失效）；字符串列只有枚举约束，数值列间切换保留当前约束方式
+            update(index, { value_type, constraint_mode: value_type === "string" ? "enum" : mode, enum_values: [""], min_value: undefined, max_value: undefined });
           }}>
             <option value="string">字符串</option><option value="int">整数</option><option value="float">浮点数</option>
           </select>
@@ -188,21 +203,19 @@ export default function LabelSchemaEditor({ initialColumns = [], initialPurpose 
             const next = event.target.value as ConstraintMode;
             update(index, {
               constraint_mode: next,
-              enum_values: next === "enum" || next === "enum_range" ? (column.enum_values?.length ? column.enum_values : [""]) : [],
-              min_value: next === "range" || next === "enum_range" ? column.min_value : undefined,
-              max_value: next === "range" || next === "enum_range" ? column.max_value : undefined,
+              enum_values: next === "enum" ? (column.enum_values?.length ? column.enum_values : [""]) : [],
+              min_value: next === "range" ? column.min_value : undefined,
+              max_value: next === "range" ? column.max_value : undefined,
             });
           }}>
+            {/* 字符串只能枚举；整数、浮点数可选枚举或范围，两者互斥 */}
             <option value="enum">枚举值</option>
-            {/* 标注用途下标注员只能从管理员定义的值中选择，因此不提供纯范围：
-                数值列如需要边界，用「枚举值且范围」同时给出可选值与上下限 */}
-            {allowRangeOnly && column.value_type !== "string" && <option value="range">范围</option>}
-            {column.value_type !== "string" && <option value="enum_range">枚举值且范围</option>}
+            {column.value_type !== "string" && <option value="range">范围</option>}
           </select>
         </div>
       </div>
-      {(mode === "enum" || mode === "enum_range") && <div className="label-schema-editor__field">
-        <label>枚举值 <span className="label-schema-editor__hint">点击 + 逐个添加；值须与所选类型匹配，不能为空</span></label>
+      {mode === "enum" && <div className="label-schema-editor__field">
+        <label>枚举值 <span className="label-schema-editor__hint">点击 + 逐个添加，至少一个，值须与所选类型匹配；标注员只能点选这些值</span></label>
         <div className="label-schema-editor__enum" aria-label={`枚举值 ${index + 1}`}>
           {enumValues.map((value, valueIndex) => <div className="label-schema-editor__enum-row" key={valueIndex}>
             <input
@@ -217,7 +230,9 @@ export default function LabelSchemaEditor({ initialColumns = [], initialPurpose 
           <button type="button" className="ant-btn ant-btn-sm label-schema-editor__enum-add" aria-label={`添加枚举值 ${index + 1}`} onClick={() => update(index, { enum_values: [...enumValues, ""] })}>+</button>
         </div>
       </div>}
-      {(mode === "range" || mode === "enum_range") && column.value_type !== "string" && <div className="label-schema-editor__grid label-schema-editor__grid--half">
+      {mode === "range" && <div className="label-schema-editor__field">
+        <label>范围 <span className="label-schema-editor__hint">必须填写最小值和最大值，范围包含这两个值；标注员在范围内自行填写，保存时校验类型和范围</span></label>
+        <div className="label-schema-editor__grid label-schema-editor__grid--half">
         <div className="label-schema-editor__field">
           <label>最小值</label>
           <input aria-label={`最小值 ${index + 1}`} type="number" step={column.value_type === "float" ? "any" : "1"} value={column.min_value ?? ""} onChange={(event) => update(index, { min_value: event.target.value !== "" ? Number(event.target.value) : undefined })} placeholder="最小值" />
@@ -225,6 +240,7 @@ export default function LabelSchemaEditor({ initialColumns = [], initialPurpose 
         <div className="label-schema-editor__field">
           <label>最大值</label>
           <input aria-label={`最大值 ${index + 1}`} type="number" step={column.value_type === "float" ? "any" : "1"} value={column.max_value ?? ""} onChange={(event) => update(index, { max_value: event.target.value !== "" ? Number(event.target.value) : undefined })} placeholder="最大值" />
+        </div>
         </div>
       </div>}
       <div className="label-schema-editor__field">

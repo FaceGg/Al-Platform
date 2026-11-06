@@ -83,6 +83,25 @@ def test_schema_machine_key_allows_hyphen(api_context):
     assert fetched.json()["columns"][0]["machine_key"] == "label-1"
 
 
+def test_schema_api_persists_enum_and_range_constraints(api_context):
+    client, _, _, _, project = api_context
+    created = client.post("/api/annotations/label-schemas", json={
+        "project_id": str(project.id),
+        "name": "constraint-labels",
+        "columns": [
+            {"machine_key": "grade", "display_name": "Grade", "value_type": "int", "required": True, "enum_values": [0, 1]},
+            {"machine_key": "score", "display_name": "Score", "value_type": "float", "required": True, "min_value": 0.5, "max_value": 1.5},
+        ],
+    })
+    assert created.status_code == 201, created.text
+    read = client.get(f"/api/annotations/label-schemas/{created.json()['id']}")
+    columns = {column["machine_key"]: column for column in read.json()["columns"]}
+    assert columns["grade"]["enum_values"] == [0, 1]
+    assert columns["grade"]["min_value"] is None
+    assert columns["score"]["enum_values"] == []
+    assert (columns["score"]["min_value"], columns["score"]["max_value"]) == (0.5, 1.5)
+
+
 def test_generic_task_creation_freezes_schema_binding(api_context):
     client, db, owner, _, project = api_context
     created = client.post("/api/annotations/label-schemas", json=_schema_payload(project.id))

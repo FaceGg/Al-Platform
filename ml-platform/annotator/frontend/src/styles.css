@@ -1262,6 +1262,17 @@ textarea {
   margin-bottom: var(--space-2);
 }
 
+/* 枚举列：与 .stream-labels label 同样排版，但不是 <label>（内含多个按钮） */
+.stream-label-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
 .option-chips {
   display: flex;
   flex-wrap: wrap;

@@ -34,6 +34,11 @@ function openTab(name: string) {
   fireEvent.click(screen.getByRole('tab', { name }))
 }
 
+/** 枚举列当前选中的值；可选项的无障碍名为「快捷选项 序号 值」 */
+function chosenOption() {
+  return screen.queryByRole('button', { pressed: true })?.getAttribute('aria-label')?.split(' ').pop() ?? null
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((done) => { resolve = done })
@@ -481,7 +486,7 @@ describe('TaskWorkspacePage', () => {
     fireEvent.change(jump, { target: { value: '2' } })
     // 输入框内按数字 2 不触发标签快捷选项
     fireEvent.keyDown(jump, { key: '2' })
-    expect(screen.getByLabelText('category-s-1')).toHaveValue('A')
+    expect(chosenOption()).toBe('A')
     // Enter 在跳转框内是跳转而不是「保存并下一条」
     fireEvent.keyDown(jump, { key: 'Enter' })
     expect(tasks.saveLabels).not.toHaveBeenCalled()
@@ -503,8 +508,8 @@ describe('TaskWorkspacePage', () => {
     await openWorkspace()
     // 指南为默认展开的第一项
     expect(screen.getByText('Review each measurement.')).toBeVisible()
-    expect(screen.getByRole('combobox', { name: 'category-s-1' })).toBeVisible()
-    fireEvent.change(screen.getByLabelText('category-s-1'), { target: { value: 'B' } })
+    expect(screen.getByRole('group', { name: 'category-s-1' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '快捷选项 2 B' }))
     fireEvent.change(screen.getByLabelText('count-s-1'), { target: { value: '2' } })
     fireEvent.change(screen.getByLabelText('score-s-1'), { target: { value: '1.25' } })
     fireEvent.change(screen.getByLabelText('note-s-1'), { target: { value: 'ok' } })
@@ -512,6 +517,75 @@ describe('TaskWorkspacePage', () => {
     await waitFor(() => expect(tasks.saveLabels).toHaveBeenCalledWith(
       'task-1', 's-1', { category: 'B', count: 2, score: 1.25, note: 'ok' }, 3,
     ))
+  })
+
+  it('limits enum columns to defined values and validates free-form ranges before saving', async () => {
+    vi.mocked(tasks.getTask).mockResolvedValue({
+      ...task,
+      label_schema: { columns: [
+        { machine_key: 'category', display_name: 'Category', value_type: 'string', enum_values: ['A', 'B'], required: true },
+        { machine_key: 'grade', display_name: 'Grade', value_type: 'int', enum_values: [0, 1], required: true },
+        { machine_key: 'count', display_name: 'Count', value_type: 'int', min_value: 0, max_value: 10, required: true },
+      ] },
+    } as tasks.Task)
+    vi.mocked(tasks.listSamples).mockResolvedValue({ items: [{ ...firstSample, labels: {} }] })
+    await openWorkspace()
+    // 枚举列平铺定义值只能点选，范围列显示约束范围并自由填写
+    const grade = screen.getByRole('group', { name: 'grade-s-1' })
+    expect(within(grade).getAllByRole('button').map((option) => option.getAttribute('aria-label'))).toEqual(['快捷选项 3 0', '快捷选项 4 1'])
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    expect(screen.getByRole('spinbutton', { name: 'count-s-1' })).toBeVisible()
+    expect(screen.getByText('允许范围 0 ~ 10（含边界，整数）')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '快捷选项 1 A' }))
+    fireEvent.click(screen.getByRole('button', { name: '快捷选项 4 1' }))
+
+    // 超范围：输入框下方提示、不可保存，防抖自动保存也不发请求
+    fireEvent.change(screen.getByLabelText('count-s-1'), { target: { value: '15' } })
+    expect(screen.getByText('整数高于最大值')).toBeVisible()
+    expect(screen.getByRole('button', { name: '保存标签' })).toBeDisabled()
+    expect(await screen.findByText('Count: 整数高于最大值')).toBeVisible()
+    expect(screen.queryByText('保存失败，请重试')).not.toBeInTheDocument()
+    expect(tasks.saveLabels).not.toHaveBeenCalled()
+
+    // 类型不符同样拦截
+    fireEvent.change(screen.getByLabelText('count-s-1'), { target: { value: '1.5' } })
+    expect(screen.getByText('请输入十进制整数')).toBeVisible()
+    expect(screen.getByRole('button', { name: '保存标签' })).toBeDisabled()
+
+    // 低于最小值同样拦截
+    fireEvent.change(screen.getByLabelText('count-s-1'), { target: { value: '-1' } })
+    expect(screen.getByText('整数低于最小值')).toBeVisible()
+    expect(screen.getByRole('button', { name: '保存标签' })).toBeDisabled()
+
+    // 范围包含上下限，合法值按列类型保存
+    fireEvent.change(screen.getByLabelText('count-s-1'), { target: { value: '0' } })
+    expect(screen.queryByText('整数低于最小值')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '保存标签' })).toBeEnabled()
+    fireEvent.change(screen.getByLabelText('count-s-1'), { target: { value: '10' } })
+    expect(screen.queryByText('请输入十进制整数')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '保存标签' }))
+    await waitFor(() => expect(tasks.saveLabels).toHaveBeenCalledWith(
+      'task-1', 's-1', { category: 'A', grade: 1, count: 10 }, 3,
+    ))
+  })
+
+  it('shows the allowed range for the batch label value', async () => {
+    vi.mocked(tasks.getTask).mockResolvedValue({
+      ...task,
+      label_schema: { columns: [
+        ...task.label_schema.columns,
+        { machine_key: 'count', display_name: 'Count', value_type: 'int', min_value: 0, max_value: 10 },
+      ] },
+    } as tasks.Task)
+    await openWorkspace()
+    openTab('批量')
+    fireEvent.change(screen.getByLabelText('批量标签列'), { target: { value: 'count' } })
+    const batchInput = screen.getByLabelText('批量标签值')
+    expect(batchInput).toHaveAttribute('max', '10')
+    fireEvent.change(batchInput, { target: { value: '15' } })
+    const batchField = batchInput.closest('label') as HTMLElement
+    expect(within(batchField).getByText('允许范围 0 ~ 10（含边界，整数）')).toBeVisible()
+    expect(screen.getByText('整数高于最大值')).toBeVisible()
   })
 
   it.each(['1.5', '1e2', '-1'])('rejects invalid integer input %s', async (value) => {
@@ -769,24 +843,47 @@ describe('TaskWorkspacePage sample stream and shortcuts', () => {
     expect(screen.getByText('可选值：A、B')).toBeVisible()
   })
 
-  it('binds number keys to label options with visible badges and skips focused inputs', async () => {
+  it('binds number keys to label options with visible badges', async () => {
     await openEnumWorkspace()
     expect(screen.getByRole('button', { name: '快捷选项 1 A' })).toBeVisible()
     expect(screen.getByRole('button', { name: '快捷选项 2 B' })).toBeVisible()
-    expect(screen.getByLabelText('category-s-1')).toHaveValue('A')
+    expect(chosenOption()).toBe('A')
     fireEvent.keyDown(window, { key: '1' })
-    expect(screen.getByLabelText('category-s-1')).toHaveValue('')
+    expect(chosenOption()).toBeNull()
     fireEvent.keyDown(window, { key: '1' })
-    expect(screen.getByLabelText('category-s-1')).toHaveValue('A')
+    expect(chosenOption()).toBe('A')
     fireEvent.keyDown(window, { key: '2' })
-    expect(screen.getByLabelText('category-s-1')).toHaveValue('B')
-    screen.getByLabelText('category-s-1').focus()
-    fireEvent.keyDown(screen.getByLabelText('category-s-1'), { key: '1' })
-    expect(screen.getByLabelText('category-s-1')).toHaveValue('B')
+    expect(chosenOption()).toBe('B')
+  })
+
+  it('lets a keyboard-focused option handle Enter and Space natively', async () => {
+    await openEnumWorkspace()
+    const option = screen.getByRole('button', { name: '快捷选项 2 B' })
+    option.focus()
+    fireEvent.keyDown(option, { key: 'Enter' })
+    fireEvent.keyDown(option, { key: ' ' })
+    expect(tasks.saveLabels).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('category-s-1')).toBeVisible()
+  })
+
+  it('clears a saved numeric enum value when its option is toggled', async () => {
+    vi.mocked(tasks.getTask).mockResolvedValue({
+      ...task,
+      label_schema: { columns: [{ machine_key: 'category', display_name: 'Category', value_type: 'int', enum_values: [0, 1], required: true }] },
+    } as tasks.Task)
+    vi.mocked(tasks.listSamples).mockResolvedValue({ items: [{ ...firstSample, labels: { category: 0 } }] })
+    render(<TaskWorkspacePage taskId="task-1" />)
+    await screen.findByLabelText('category-s-1')
+    expect(chosenOption()).toBe('0')
+    // 已保存值是 number 0、选项值是字符串 "0"：点击已选中的选项应取消选中
+    fireEvent.click(screen.getByRole('button', { name: '快捷选项 1 0' }))
+    expect(chosenOption()).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '快捷选项 2 1' }))
+    expect(chosenOption()).toBe('1')
   })
 
   it('focuses the first label input and refocuses after navigating samples', async () => {
-    await openEnumWorkspace()
+    await openWorkspace()
     expect(document.activeElement).toBe(screen.getByLabelText('category-s-1'))
     fireEvent.click(screen.getByRole('button', { name: '下一条 →' }))
     expect(document.activeElement).toBe(screen.getByLabelText('category-s-2'))
@@ -795,7 +892,7 @@ describe('TaskWorkspacePage sample stream and shortcuts', () => {
   })
 
   it('Enter inside a label input saves and advances like the global shortcut', async () => {
-    await openEnumWorkspace()
+    await openWorkspace()
     vi.useFakeTimers()
     fireEvent.keyDown(screen.getByLabelText('category-s-1'), { key: 'Enter' })
     await act(async () => { await vi.advanceTimersByTimeAsync(1) })
@@ -806,14 +903,24 @@ describe('TaskWorkspacePage sample stream and shortcuts', () => {
   })
 
   it('Esc blurs the label input to restore global shortcuts', async () => {
-    await openEnumWorkspace()
-    const input = screen.getByLabelText('category-s-1')
+    vi.mocked(tasks.getTask).mockResolvedValue({
+      ...task,
+      label_schema: { columns: [
+        { machine_key: 'note', display_name: 'Note', value_type: 'string' },
+        { machine_key: 'category', display_name: 'Category', value_type: 'string', enum_values: ['A', 'B'], required: true },
+      ] },
+    } as tasks.Task)
+    render(<TaskWorkspacePage taskId="task-1" />)
+    const input = await screen.findByLabelText('note-s-1')
     expect(document.activeElement).toBe(input)
+    // 光标在标签框内时数字是输入内容，不触发快捷选项
+    fireEvent.keyDown(input, { key: '2' })
+    expect(chosenOption()).toBe('A')
     fireEvent.keyDown(input, { key: 'Escape' })
     expect(document.activeElement).not.toBe(input)
     // 光标移出标签框后数字快捷选项恢复生效
     fireEvent.keyDown(window, { key: '2' })
-    expect(screen.getByLabelText('category-s-1')).toHaveValue('B')
+    expect(chosenOption()).toBe('B')
   })
 
   it('Enter saves and auto-advances to the next sample after 600ms', async () => {
@@ -861,18 +968,18 @@ describe('TaskWorkspacePage sample stream and shortcuts', () => {
 
   it('Ctrl+Z undoes label changes step by step and ignores an empty stack', async () => {
     await openEnumWorkspace()
-    fireEvent.change(screen.getByLabelText('category-s-1'), { target: { value: 'B' } })
-    fireEvent.change(screen.getByLabelText('category-s-1'), { target: { value: 'A' } })
+    fireEvent.click(screen.getByRole('button', { name: '快捷选项 2 B' }))
+    fireEvent.click(screen.getByRole('button', { name: '快捷选项 1 A' }))
     fireEvent.keyDown(window, { key: 'z', ctrlKey: true })
-    expect(screen.getByLabelText('category-s-1')).toHaveValue('B')
+    expect(chosenOption()).toBe('B')
     fireEvent.keyDown(window, { key: 'z', ctrlKey: true })
-    expect(screen.getByLabelText('category-s-1')).toHaveValue('A')
+    expect(chosenOption()).toBe('A')
     fireEvent.keyDown(window, { key: 'z', ctrlKey: true })
-    expect(screen.getByLabelText('category-s-1')).toHaveValue('A')
+    expect(chosenOption()).toBe('A')
   })
 
   it('Ctrl+Z does not fire while typing in an input', async () => {
-    await openEnumWorkspace()
+    await openWorkspace()
     fireEvent.change(screen.getByLabelText('category-s-1'), { target: { value: 'B' } })
     fireEvent.keyDown(screen.getByLabelText('category-s-1'), { key: 'z', ctrlKey: true })
     expect(screen.getByLabelText('category-s-1')).toHaveValue('B')

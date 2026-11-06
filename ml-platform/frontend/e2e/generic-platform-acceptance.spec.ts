@@ -406,15 +406,17 @@ test("creates, configures, previews, and assigns a clustered automatic task", as
   // 聚类发现预览完成后，先保存标签 schema（策略编辑器解锁的前置条件）
   const schemaEditor = page.getByRole("region", { name: "标签 schema 编辑器" });
   await expect(schemaEditor).toBeVisible();
-  await schemaEditor.getByLabel("枚举值 1 值 1").fill("ok");
+  await schemaEditor.getByLabel("枚举值 1 值 1").fill("clustered");
+  await schemaEditor.getByRole("button", { name: "添加枚举值 1" }).click();
+  await schemaEditor.getByRole("textbox", { name: "枚举值 1 值 2", exact: true }).fill("other");
   await schemaEditor.getByRole("button", { name: "保存 schema" }).click();
 
   const strategyEditor = page.locator('[aria-label="自动标注策略配置"]');
   await expect(strategyEditor).toBeVisible();
   await strategyEditor.getByLabel("自动标注策略").selectOption("cluster");
   await strategyEditor.getByRole("checkbox", { name: "簇 0 · 3 个样本" }).check();
-  await strategyEditor.getByLabel("簇 0 质量").fill("clustered");
-  await strategyEditor.getByLabel("其他兜底值 质量").fill("other");
+  await strategyEditor.getByLabel("簇 0 质量").selectOption("clustered");
+  await strategyEditor.getByLabel("其他兜底值 质量").selectOption("other");
 
   await page.getByRole("button", { name: "保存策略并完成" }).click();
 

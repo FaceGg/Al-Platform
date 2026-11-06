@@ -14,6 +14,10 @@ export type AnnotationOutputColumn = {
   display_name: string;
   value_type: "string" | "int" | "float";
   required: boolean;
+  /** 列约束（枚举值、范围二选一）：自动标注策略的取值同样受其约束 */
+  enum_values?: Array<number | string>;
+  min_value?: number;
+  max_value?: number;
 };
 
 export type AnnotationModelVersion = {

@@ -236,7 +236,7 @@ def _assignment(db):
     )[0]
 
 
-def _secure_fixture(db, *, task_status="awaiting_annotation", sample_ids=("frozen-1",)):
+def _secure_fixture(db, *, task_status="awaiting_annotation", sample_ids=("frozen-1",), label_columns=None):
     admin = User(username=f"assignment-admin-{uuid.uuid4().hex}", password_hash="hash", role="admin")
     other = User(username=f"assignment-other-{uuid.uuid4().hex}", password_hash="hash", role="engineer")
     db.add_all([admin, other])
@@ -280,7 +280,10 @@ def _secure_fixture(db, *, task_status="awaiting_annotation", sample_ids=("froze
         sample_scope={"kind": "ids", "sample_ids": list(sample_ids)},
         task_snapshot={
             "sample_ids": list(sample_ids),
-            "label_schema": {"schema_id": str(schema.id), "columns": [{"machine_key": "label", "value_type": "string", "required": True}]},
+            "label_schema": {
+                "schema_id": str(schema.id),
+                "columns": label_columns or [{"machine_key": "label", "value_type": "string", "required": True}],
+            },
         },
     )
     db.add(task)
@@ -492,6 +495,39 @@ def test_partial_return_acceptance_does_not_complete_task_until_all_scope_is_acc
     accept_return_batch(db, second_return.return_batch_id, task.task_revision, admin)
     db.refresh(task)
     assert task.status == "completed"
+
+
+def test_label_write_enforces_frozen_enum_and_range_constraints(db):
+    admin, _other, subject, task = _secure_fixture(db, label_columns=[
+        {"machine_key": "grade", "value_type": "int", "required": True, "enum_values": [0, 1]},
+        {"machine_key": "count", "value_type": "int", "required": True, "min_value": 0, "max_value": 10},
+        {"machine_key": "score", "value_type": "float", "required": True, "min_value": 0.5, "max_value": 1.5},
+    ])
+    assignment = create_assignments(
+        db,
+        task_id=task.id,
+        annotator_ids=[subject],
+        sample_scope={"kind": "ids", "sample_ids": ["frozen-1"]},
+        actor=admin.id,
+    )[0]
+
+    for values, code in (
+        ({"grade": 2}, "LABEL_ENUM_INVALID"),
+        ({"grade": "x"}, "LABEL_VALUE_INVALID"),
+        ({"count": 11}, "LABEL_RANGE_INVALID"),
+        ({"count": -1}, "LABEL_RANGE_INVALID"),
+        ({"count": 1.5}, "LABEL_VALUE_INVALID"),
+        ({"count": "abc"}, "LABEL_VALUE_INVALID"),
+        ({"score": 1.6}, "LABEL_RANGE_INVALID"),
+        ({"score": "abc"}, "LABEL_VALUE_INVALID"),
+    ):
+        with pytest.raises(AssignmentError) as error:
+            save_labels(db, assignment.id, "frozen-1", values, 0, actor=admin.id)
+        assert error.value.code == code, values
+
+    result = save_labels(db, assignment.id, "frozen-1", {"grade": 1, "count": 10, "score": 0.5}, 0, actor=admin.id)
+    assert result.revision_no == 1
+    assert result.values == {"grade": 1, "count": 10, "score": 0.5}
 
 
 def test_label_write_appends_revision_and_synchronizes_overlapping_assignments(db):

@@ -9,10 +9,11 @@ import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
 import LegacyRunsTable from "../components/annotation/LegacyRunsTable";
 import TaskOperationsPanel from "../components/annotation/TaskOperationsPanel";
-import LabelSchemaEditor, { createLabelColumn, type LabelColumnDraft } from "../components/LabelSchemaEditor";
+import LabelSchemaEditor, { createLabelColumn, defaultLabelColumns, type LabelColumnDraft } from "../components/LabelSchemaEditor";
 import AutomaticAnnotationStrategyEditor, {
   createAutomaticStrategyDraft,
   createAutomaticRule,
+  typedAutomaticValue,
   type AutomaticRuleDraft,
   type AutomaticAnnotationSourceColumn,
   type AutomaticStrategyDraft,
@@ -241,28 +242,39 @@ function revisionConflictFromError(error: any, task: AnnotationTask): RevisionCo
   };
 }
 
+function labelColumnConstraints(item: Record<string, unknown>): Pick<AnnotationOutputColumn, "enum_values" | "min_value" | "max_value"> {
+  return {
+    enum_values: Array.isArray(item.enum_values) && item.enum_values.length ? item.enum_values as Array<number | string> : undefined,
+    min_value: typeof item.min_value === "number" ? item.min_value : undefined,
+    max_value: typeof item.max_value === "number" ? item.max_value : undefined,
+  };
+}
+
 function outputColumnsFromSnapshot(task: AnnotationTask): AnnotationOutputColumn[] {
   const configuration = task.task_snapshot?.configuration as Record<string, unknown> | undefined;
   const outputContract = configuration?.model_output_contract as { columns?: unknown } | undefined;
+  const schema = task.task_snapshot?.label_schema as { columns?: unknown } | undefined;
+  const frozenColumns = (Array.isArray(schema?.columns) ? schema.columns : []).filter((column): column is Record<string, unknown> => Boolean(column && typeof column === "object"));
   if (Array.isArray(outputContract?.columns)) {
     return outputContract.columns.filter((column): column is AnnotationOutputColumn => Boolean(
       column && typeof column === "object"
       && typeof (column as AnnotationOutputColumn).machine_key === "string"
       && typeof (column as AnnotationOutputColumn).display_name === "string"
       && ["string", "int", "float"].includes((column as AnnotationOutputColumn).value_type),
-    ));
+    )).map((column) => {
+      // 用户自定义的冻结标签列约束优先于模型合同声明的类别
+      const frozen = frozenColumns.find((item) => item.machine_key === column.machine_key);
+      return frozen ? { ...column, ...labelColumnConstraints(frozen) } : column;
+    });
   }
-  const schema = task.task_snapshot?.label_schema as { columns?: unknown } | undefined;
-  return Array.isArray(schema?.columns) ? schema.columns.flatMap((column) => {
-    if (!column || typeof column !== "object") return [];
-    const item = column as Record<string, unknown>;
+  return frozenColumns.flatMap((item) => {
     const machineKey = typeof item.machine_key === "string" ? item.machine_key : "";
     const displayName = typeof item.display_name === "string" ? item.display_name : machineKey;
     const valueType = item.value_type;
     return machineKey && ["string", "int", "float"].includes(String(valueType))
-      ? [{ machine_key: machineKey, display_name: displayName, value_type: valueType as AnnotationOutputColumn["value_type"], required: Boolean(item.required) }]
+      ? [{ machine_key: machineKey, display_name: displayName, value_type: valueType as AnnotationOutputColumn["value_type"], required: Boolean(item.required), ...labelColumnConstraints(item) }]
       : [];
-  }) : [];
+  });
 }
 
 function frozenLabelColumnCount(task: AnnotationTask): number {
@@ -332,15 +344,6 @@ function strategyDraftFromTask(task: AnnotationTask, columns: AnnotationOutputCo
     clusterLabels: Object.fromEntries(Object.entries(rawClusterLabels).map(([clusterId, values]) => [clusterId, Object.fromEntries(columns.map((column) => [column.machine_key, valueText(values?.[column.machine_key])]))])),
     rules: rules.length ? rules : [createAutomaticRule(columns)],
   };
-}
-
-function typedAutomaticValue(column: AnnotationOutputColumn, raw: string): { value?: string | number; error?: string } {
-  if (column.value_type === "string") return raw.trim() ? { value: raw } : { error: `${column.display_name} 不能为空` };
-  if (column.value_type === "int") {
-    return /^[-+]?\d+$/.test(raw.trim()) ? { value: Number(raw) } : { error: `${column.display_name} 必须是整数` };
-  }
-  const numeric = Number(raw);
-  return raw.trim() && Number.isFinite(numeric) ? { value: numeric } : { error: `${column.display_name} 必须是有限浮点数` };
 }
 
 function sourceColumnValueType(dtype: string): "int" | "float" | "boolean" | "string" {
@@ -502,7 +505,7 @@ export default function DataAnnotationPage() {
   const [editConfigTask, setEditConfigTask] = useState<AnnotationTask | null>(null);
   const [editConfigDraft, setEditConfigDraft] = useState<{ name: string; instructions: string; completionCriteria: string; dueAt: string; visibleColumns: string[] }>({ name: "", instructions: "", completionCriteria: "", dueAt: "", visibleColumns: [] });
   const [editConfigSaving, setEditConfigSaving] = useState(false);
-  const [genericManualSchema, setGenericManualSchema] = useState<{ id: string; columns: AnnotationOutputColumn[] } | null>(null);
+  const [genericManualSchema, setGenericManualSchema] = useState<{ id: string; columns: LabelColumnDraft[] } | null>(null);
   const [genericFieldDescriptions, setGenericFieldDescriptions] = useState<Record<string, string>>({});
   const [genericInstructions, setGenericInstructions] = useState("");
   const [genericModelVersionId, setGenericModelVersionId] = useState("");
@@ -519,13 +522,13 @@ export default function DataAnnotationPage() {
   const [genericFinalSamples, setGenericFinalSamples] = useState<Awaited<ReturnType<typeof listAnnotationPreviewSamples>> | null>(null);
   const [genericAutomaticDraft, setGenericAutomaticDraft] = useState<AutomaticStrategyDraft>(() => createAutomaticStrategyDraft([]));
   // 聚类预览后管理员可在向导第 2 步定义标签列；保存后优先于模型输出契约列参与策略配置
-  const [genericAutoSchema, setGenericAutoSchema] = useState<{ id: string; columns: AnnotationOutputColumn[] } | null>(null);
+  const [genericAutoSchema, setGenericAutoSchema] = useState<{ id: string; columns: LabelColumnDraft[] } | null>(null);
   const [genericSavedStrategies, setGenericSavedStrategies] = useState<SavedAnnotationStrategy[]>([]);
   const [genericStrategyName, setGenericStrategyName] = useState("");
   const [genericImportStrategyId, setGenericImportStrategyId] = useState("");
   const [genericStrategySaving, setGenericStrategySaving] = useState(false);
   const [automaticConfigTask, setAutomaticConfigTask] = useState<AnnotationTask | null>(null);
-  const [automaticConfigSchema, setAutomaticConfigSchema] = useState<{ id: string; columns: AnnotationOutputColumn[] } | null>(null);
+  const [automaticConfigSchema, setAutomaticConfigSchema] = useState<{ id: string; columns: LabelColumnDraft[] } | null>(null);
   const [automaticConfigDraft, setAutomaticConfigDraft] = useState<AutomaticStrategyDraft>(() => createAutomaticStrategyDraft([]));
   const [automaticConfigSaving, setAutomaticConfigSaving] = useState(false);
   const [genericCreating, setGenericCreating] = useState(false);
@@ -922,8 +925,9 @@ export default function DataAnnotationPage() {
       }
     })();
   }, {
+    // 只有终态才停轮：queued/running 也是有效状态，提前停轮会让向导永远卡在「生成中」
     enabled: Boolean(genericDiscoveryPreviewId) && Boolean(genericDiscoveryTask) && !genericFinalStage
-      && !genericDiscoveryTask?.preview?.status || false,
+      && !["completed", "ready", "failed", "cancelled"].includes(String(genericDiscoveryTask?.preview?.status)),
     intervalMs: 1000,
     signature: String(genericDiscoveryTask?.preview?.status ?? ""),
   });
@@ -1068,15 +1072,7 @@ export default function DataAnnotationPage() {
     if (!projectId || !automaticConfigTask) { message.error(lang === "zh" ? "请先选择项目" : "Select a project first"); return; }
     try {
       const schema = await createLabelSchema(projectId, `${automaticConfigTask.name}-labels`, columns, "annotation");
-      setAutomaticConfigSchema({
-        id: schema.id,
-        columns: columns.map((column) => ({
-          machine_key: column.machine_key,
-          display_name: column.display_name,
-          value_type: column.value_type,
-          required: column.required,
-        })),
-      });
+      setAutomaticConfigSchema({ id: schema.id, columns });
       message.success(lang === "zh" ? "自定义标签 schema 已保存" : "Custom label schema saved");
     } catch (error) {
       message.error(formatApiError(error, lang === "zh" ? "标签 schema 保存失败" : "Failed to save the label schema"));
@@ -1889,15 +1885,7 @@ export default function DataAnnotationPage() {
     if (!genericTaskName.trim()) { message.error(copy.nameRequired); return; }
     try {
       const schema = await createLabelSchema(projectId, schemaNameForTask(genericTaskName), columns, "annotation");
-      setGenericManualSchema({
-        id: schema.id,
-        columns: columns.map((column) => ({
-          machine_key: column.machine_key,
-          display_name: column.display_name,
-          value_type: column.value_type,
-          required: column.required,
-        })),
-      });
+      setGenericManualSchema({ id: schema.id, columns });
       message.success(lang === "zh" ? "标签列定义已保存，创建任务时将绑定这些标签列" : "Label columns saved; the task will bind them");
     } catch (error) {
       message.error(formatApiError(error, lang === "zh" ? "标签列定义保存失败" : "Failed to save the label columns"));
@@ -1909,15 +1897,7 @@ export default function DataAnnotationPage() {
     if (!genericTaskName.trim()) { message.error(copy.nameRequired); return; }
     try {
       const schema = await createLabelSchema(projectId, schemaNameForTask(genericTaskName), columns, "annotation");
-      setGenericAutoSchema({
-        id: schema.id,
-        columns: columns.map((column) => ({
-          machine_key: column.machine_key,
-          display_name: column.display_name,
-          value_type: column.value_type,
-          required: column.required,
-        })),
-      });
+      setGenericAutoSchema({ id: schema.id, columns });
       message.success(lang === "zh" ? "标签 schema 已保存，策略配置将使用这些标签列" : "Label schema saved; the strategy will use these label columns");
     } catch (error) {
       message.error(formatApiError(error, lang === "zh" ? "标签 schema 保存失败" : "Failed to save the label schema"));
@@ -2487,17 +2467,7 @@ export default function DataAnnotationPage() {
       >
         {automaticConfigTask && <>
           {frozenLabelColumnCount(automaticConfigTask) === 0 && <div className="data-annotation__setup-field" style={{ marginBottom: 12 }} aria-label="自定义标签 schema">
-            <LabelSchemaEditor initialColumns={automaticConfigSchema?.columns.map((column) => ({
-              machine_key: column.machine_key,
-              display_name: column.display_name,
-              value_type: column.value_type,
-              required: column.required,
-            })) || outputColumnsFromSnapshot(automaticConfigTask).map((column) => ({
-              machine_key: column.machine_key,
-              display_name: column.display_name,
-              value_type: column.value_type,
-              required: true,
-            }))} onSave={(columns) => { void saveAutomaticConfigSchema(columns); }} />
+            <LabelSchemaEditor showPurpose={false} initialColumns={automaticConfigSchema?.columns || defaultLabelColumns(outputColumnsFromSnapshot(automaticConfigTask))} onSave={(columns) => { void saveAutomaticConfigSchema(columns); }} />
             <small>{lang === "zh" ? "聚类已完成，请先定义并保存标签列，再配置标注策略。" : "Clustering is done; define and save the label columns before configuring the strategy."}</small>
           </div>}
           {clusterOptionsForTask(automaticConfigTask).length > 0 && <div className="data-annotation__setup-field" style={{ marginBottom: 12 }}>
@@ -2509,7 +2479,7 @@ export default function DataAnnotationPage() {
               />
               <AutomaticAnnotationStrategyEditor
                 idPrefix={`automatic-task-${automaticConfigTask.id}`}
-                columns={outputColumnsFromSnapshot(automaticConfigTask)}
+                columns={automaticConfigSchema?.columns || outputColumnsFromSnapshot(automaticConfigTask)}
                 sourceColumns={sourceColumnsFromSnapshot(automaticConfigTask)}
                 clusters={clusterOptionsForTask(automaticConfigTask)}
                 value={automaticConfigDraft}
@@ -2826,12 +2796,7 @@ export default function DataAnnotationPage() {
           <h3 id="generic-setup-labels" className="data-annotation__setup-section-title">{lang === "zh" ? "标签设置" : "Label settings"}</h3>
           <LabelSchemaEditor
             showPurpose={false}
-            initialColumns={genericManualSchema?.columns.map((column) => ({
-              machine_key: column.machine_key,
-              display_name: column.display_name,
-              value_type: column.value_type,
-              required: column.required,
-            })) ?? [createLabelColumn(1)]}
+            initialColumns={genericManualSchema?.columns ?? [createLabelColumn(1)]}
             onSave={(columns) => { void saveGenericManualSchema(columns); }}
           />
           {genericManualSchema
@@ -3026,20 +2991,7 @@ export default function DataAnnotationPage() {
                       <div className="data-annotation__setup-field" aria-label={lang === "zh" ? "标签与策略库" : "Labels and strategy library"}>
                         <LabelSchemaEditor
                           showPurpose={false}
-                          initialColumns={genericAutoSchema?.columns.map((column) => ({
-                            machine_key: column.machine_key,
-                            display_name: column.display_name,
-                            value_type: column.value_type,
-                            required: column.required,
-                          })) || selectedGenericOutputColumns.map((column) => ({
-                            // 默认标签列按模型输出契约预填机器键、名称与类型；机器键随后续
-                            // 标签名称编辑自动生成，且该列不可删除
-                            machine_key: column.machine_key,
-                            display_name: column.display_name,
-                            value_type: column.value_type,
-                            required: true,
-                            isDefault: true,
-                          }))}
+                          initialColumns={genericAutoSchema?.columns || defaultLabelColumns(selectedGenericOutputColumns)}
                           onSave={(columns) => { void saveGenericAutoSchema(columns); }}
                         />
                         {genericAutoSchema && <small>{lang === "zh" ? `已保存 schema（${genericAutoSchema.columns.length} 列），保存策略时将绑定这些标签列。` : `Saved schema (${genericAutoSchema.columns.length} columns); saving the strategy will bind these label columns.`}</small>}
