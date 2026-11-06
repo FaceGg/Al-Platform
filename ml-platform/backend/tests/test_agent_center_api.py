@@ -101,7 +101,7 @@ class TestAgentRunsListing(AgentCenterHarness, unittest.TestCase):
         self.assertEqual(response.status_code, 401)
 
     def test_run_detail_returns_full_archive_with_memory(self):
-        project_id, _ = self._project()
+        project_id, project_name = self._project()
         memory = {"rounds": [{
             "round": 1,
             "s2_attempts": [{"attempt": 1, "ok": True}],
@@ -131,6 +131,9 @@ class TestAgentRunsListing(AgentCenterHarness, unittest.TestCase):
         self.assertEqual(detail["memory_json"], memory)
         self.assertEqual(detail["result_json"], {"token_used": 9588})
         self.assertEqual(detail["error_code"], "AGENT_REVIEW_ESCALATE")
+        # 详情页「项目」字段：详情接口与列表同一口径解析项目名（此前硬编码 None 恒显示 "-"）
+        self.assertEqual(detail["project_id"], project_id)
+        self.assertEqual(detail["project_name"], project_name)
 
     def test_run_detail_404_for_unknown_id(self):
         response = client.get(f"/api/agent/runs/{uuid4()}", headers=self.h)

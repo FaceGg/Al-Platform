@@ -234,9 +234,15 @@ def get_agent_run(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    run = db.get(AgentRun, run_id)
-    if run is None:
+    row = (
+        db.query(AgentRun, Project.name)
+        .outerjoin(Project, AgentRun.project_id == Project.id)
+        .filter(AgentRun.id == run_id)
+        .first()
+    )
+    if row is None:
         raise HTTPException(status_code=404, detail={"code": "AGENT_RUN_NOT_FOUND"})
+    run, project_name = row
     llm_profile_name = None
     if run.llm_profile_id is not None:
         from app.models.llm_profile import LLMProfile
@@ -246,7 +252,7 @@ def get_agent_run(
     return AgentRunDetail(
         id=str(run.id),
         project_id=_uuid_or_none(run.project_id),
-        project_name=None,
+        project_name=project_name,
         target_column=run.target_column,
         status=run.status,
         current_stage=run.current_stage,

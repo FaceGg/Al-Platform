@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeftOutlined, ReloadOutlined } from "@ant-design/icons";
+import { ArrowLeftOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import AgentRunArchivePanel from "../components/AgentRunArchivePanel";
 import { getAgentRun, type AgentRunDetail } from "../api/agentCenter";
@@ -64,9 +64,6 @@ export default function AgentRunDetailPage() {
         <div style={{ display: "flex", gap: 9 }}>
           <button type="button" className="v2-btn" onClick={() => navigate("/agent?tab=tasks")}>
             <ArrowLeftOutlined /> {zh ? "返回任务列表" : "Back to jobs"}
-          </button>
-          <button type="button" className="v2-btn" onClick={load}>
-            <ReloadOutlined /> {zh ? "刷新" : "Refresh"}
           </button>
         </div>
       </div>
