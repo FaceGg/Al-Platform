@@ -25,35 +25,14 @@ vi.mock("../api/client", () => ({
   },
   formatApiError: (_error: unknown, fallback: string) => fallback,
 }));
-vi.mock("../i18n", () => ({
-  useI18n: () => ({
-    t: {
-      kbcenter: {
-        title: "知识中心",
-        refresh: "刷新",
-        loadFailed: "加载失败",
-        updateFailed: "更新失败",
-        retireOk: "已否决",
-        noteOk: "附注已保存",
-        noteTitle: "附注（意见随条目存储，不改正文）",
-        notePlaceholder: "人工附注",
-        noteSave: "保存",
-        noteCancel: "取消",
-        retire: "否决",
-        retireConfirm: "确认否决该经验？",
-        note: "附注",
-        systemTag: "系统库",
-        experienceTitle: "平台经验（真源条目）",
-        colName: "名称", colDocs: "文档", colEnabled: "总开关", colScope: "项目范围",
-        colChat: "对话", colS1: "S1 检索", colTopK: "top_k", colTrigger: "触发",
-        colSync: "经验同步", colDomain: "域", colLesson: "教训", colAction: "动作",
-        colConfidence: "置信度", colStatus: "状态", colNote: "附注", colActions: "操作",
-        scopeAll: "全部项目", scopeUnbound: "未绑定", syncOff: "不接收",
-      },
-      common: { cancel: "取消" },
-    },
-  }),
-}));
+// i18n 用真实 zh 词典（kbcenter 键集随组件接线增长，手抄 mock 会漂移——
+// 本用例断言的是 zh 文案，真源即词典本身）
+vi.mock("../i18n", async () => {
+  const actual = await vi.importActual<typeof import("../i18n")>("../i18n");
+  return {
+    useI18n: () => ({ lang: "zh", t: actual.translations.zh, setLang: () => {} }),
+  };
+});
 
 const makeBinding = (overrides: Partial<KBBinding> = {}): KBBinding => ({
   id: "b1",

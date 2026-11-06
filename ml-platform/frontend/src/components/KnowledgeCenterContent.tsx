@@ -95,22 +95,22 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
   const createKb = async (values: { name: string; description?: string }) => {
     try {
       await apiClient.post('/knowledge/bases', values)
-      message.success('知识库已创建')
+      message.success(text.kb_created)
       setKbModalOpen(false)
       kbForm.resetFields()
       load()
     } catch (error) {
-      message.error(formatApiError(error, '创建失败'))
+      message.error(formatApiError(error, text.create_failed))
     }
   }
 
   const createBinding = async (kbId: string) => {
     try {
       await apiClient.post('/knowledge-center/bindings', { kb_id: kbId })
-      message.success('绑定已创建——该知识库现参与统一检索')
+      message.success(text.bind_created)
       load()
     } catch (error) {
-      message.error(formatApiError(error, '绑定失败'))
+      message.error(formatApiError(error, text.bind_failed))
     }
   }
 
@@ -122,7 +122,7 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
       : values
     try {
       await patchBinding(editingBinding.id, payload)
-      message.success('绑定配置已更新')
+      message.success(text.bind_updated)
       setEditingBinding(null)
       load()
     } catch (error) {
@@ -136,12 +136,12 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
       return entry && entry.status === 'active'
     })
     if (targets.length === 0) {
-      message.info('所选条目中没有可否决的 active 条目')
+      message.info(text.retire_none)
       return
     }
     try {
       await Promise.all(targets.map((id) => retireExperience(id)))
-      message.success(`已否决 ${targets.length} 条`)
+      message.success(text.retired_n.replace('{n}', String(targets.length)))
       setSelectedEntryIds([])
       load()
     } catch (error) {
@@ -154,7 +154,7 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
       const res = await apiClient.post('/knowledge-center/experience/batch-delete', {
         ids: selectedEntryIds,
       })
-      message.success(`已删除 ${res.data?.deleted ?? selectedEntryIds.length} 条`)
+      message.success(text.deleted_n.replace('{n}', String(res.data?.deleted ?? selectedEntryIds.length)))
       setSelectedEntryIds([])
       load()
     } catch (error) {
@@ -165,7 +165,7 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
   const deleteEntry = async (entry: ExperienceEntry) => {
     try {
       await apiClient.delete(`/knowledge-center/experience/${entry.id}`)
-      message.success('已删除')
+      message.success(text.entry_deleted)
       load()
     } catch (error) {
       message.error(formatApiError(error, text.updateFailed))
@@ -175,10 +175,10 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
   const deleteKb = async (kb: Record<string, unknown>) => {
     try {
       await apiClient.delete(`/knowledge/bases/${kb.id}`)
-      message.success('知识库已删除（文档与检索配置一并清理）')
+      message.success(text.kb_deleted)
       load()
     } catch (error) {
-      message.error(formatApiError(error, '删除失败'))
+      message.error(formatApiError(error, text.delete_failed))
     }
   }
 
@@ -225,7 +225,7 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
       dataIndex: 'sync_receive_experience',
       render: (v: boolean, record: KBBinding) =>
         record.is_system
-          ? '≥' + record.sync_experience_min_confidence + '（投影门槛）'
+          ? '≥' + record.sync_experience_min_confidence + (text.floor_suffix || '（投影门槛）')
           : v
             ? '≥' + record.sync_experience_min_confidence
             : text.syncOff,
@@ -264,11 +264,11 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
     { title: text.colAction, dataIndex: 'action', ellipsis: true },
     { title: text.colConfidence, dataIndex: 'confidence', render: (v: number) => v.toFixed(2) },
     {
-      title: '命中/成败',
+      title: text.col_hit,
       key: 'outcome',
       render: (_: unknown, record: ExperienceEntry) => (
         <Space size={4} style={{ whiteSpace: 'nowrap' }}>
-          <span>命中{record.hit_count ?? 0}</span>
+          <span>{(text.hit_n || '命中{n}').replace('{n}', String(record.hit_count ?? 0))}</span>
           <Tag color="green" style={{ marginRight: 0 }}>✓{record.success_count ?? 0}</Tag>
           <Tag color="red" style={{ marginRight: 0 }}>✗{record.fail_count ?? 0}</Tag>
         </Space>
@@ -297,9 +297,9 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
               </Button>
             </Popconfirm>
           )}
-          <Popconfirm title="物理删除该条目？不可恢复。" onConfirm={() => deleteEntry(record)}>
+          <Popconfirm title={text.delete_entry_confirm} onConfirm={() => deleteEntry(record)}>
             <Button size="small" danger icon={<DeleteOutlined />}>
-              删除
+              {text.delete}
             </Button>
           </Popconfirm>
           <Button
@@ -319,14 +319,14 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
   return (
     <>
       <Card
-        title="知识库管理"
+        title={text.kb_title}
         extra={
           <Space>
             <Button icon={<ReloadOutlined />} onClick={load}>
-              刷新
+              {text.refresh}
             </Button>
             <Button icon={<PlusOutlined />} type="primary" onClick={() => setKbModalOpen(true)}>
-              新建知识库
+              {text.new_kb}
             </Button>
           </Space>
         }
@@ -338,17 +338,17 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
           loading={loading}
           dataSource={kbs.filter((kb) => !systemKbIds.has(String(kb.id)))}
           pagination={kbs.length > 8 ? { pageSize: 8 } : false}
-          locale={{ emptyText: '暂无知识库 —— 点击右上角「新建知识库」创建，或到旧版知识库页迁移' }}
+          locale={{ emptyText: text.empty_kbs }}
           columns={[
             {
-              title: '名称',
+              title: text.colName,
               dataIndex: 'name',
               render: (value: string) => <span className="tt">{value}</span>,
             },
-            { title: '描述', dataIndex: 'description', ellipsis: true, render: (v: string) => v || '—' },
-            { title: '文档数', dataIndex: 'document_count', width: 80, render: (v: number) => v ?? 0 },
+            { title: text.col_desc, dataIndex: 'description', ellipsis: true, render: (v: string) => v || '—' },
+            { title: text.col_doc_count, dataIndex: 'document_count', width: 80, render: (v: number) => v ?? 0 },
             {
-              title: '操作',
+              title: text.colActions,
               key: 'actions',
               width: 220,
               render: (_: unknown, record: Record<string, unknown>) => {
@@ -360,11 +360,11 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
                     icon={<FileTextOutlined />}
                     onClick={() => navigate(`/knowledge/${record.id}`)}
                   >
-                    管理文档
+                    {text.manage_docs}
                   </Button>
                   <Popconfirm
-                    title="确认删除该知识库？"
-                    description="文档、向量与检索绑定将一并删除，不可恢复。"
+                    title={text.kb_delete_confirm}
+                    description={text.kb_delete_desc}
                     onConfirm={() => deleteKb(record)}
                     disabled={isSystemKb}
                   >
@@ -373,9 +373,9 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
                       danger
                       icon={<DeleteOutlined />}
                       disabled={isSystemKb}
-                      title={isSystemKb ? '系统经验分区不可删除' : undefined}
+                      title={isSystemKb ? text.system_undeletable : undefined}
                     >
-                      删除
+                      {text.delete}
                     </Button>
                   </Popconfirm>
                 </Space>
@@ -385,7 +385,7 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
           ] as never}
         />
         <div style={{ color: 'var(--v2-dim)', fontSize: 11.5, marginTop: 6 }}>
-          「管理文档」支持上传 PDF / Word / Excel / 文本并做向量化与检索测试；删除知识库会级联清理其绑定配置。
+          {text.manage_hint}
         </div>
       </Card>
       <Card
@@ -416,11 +416,11 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
                   {text.batchRetire}（{selectedEntryIds.length}）
                 </Button>
                 <Popconfirm
-                  title={`物理删除所选 ${selectedEntryIds.length} 条？不可恢复。`}
+                  title={(text.batch_delete_confirm || '物理删除所选 {n} 条？不可恢复。').replace('{n}', String(selectedEntryIds.length))}
                   onConfirm={batchDelete}
                 >
                   <Button danger size="small" icon={<DeleteOutlined />}>
-                    批量删除（{selectedEntryIds.length}）
+                    {(text.batch_delete_n || '批量删除（{n}）').replace('{n}', String(selectedEntryIds.length))}
                   </Button>
                 </Popconfirm>
               </>
@@ -462,20 +462,20 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
         </Card>
       )}
       <Modal
-        title="新建知识库"
+        title={text.kb_modal_title}
         open={kbModalOpen}
         onCancel={() => setKbModalOpen(false)}
         onOk={() => kbForm.submit()}
-        okText="创建"
-        cancelText="取消"
+        okText={text.create}
+        cancelText={text.cancel}
         destroyOnHidden
       >
         <Form form={kbForm} layout="vertical" onFinish={createKb} autoComplete="off">
-          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入知识库名称' }]}>
-            <Input maxLength={128} placeholder="例如：拧紧工艺标准 / 电焊缺陷图谱" />
+          <Form.Item name="name" label={text.name_label} rules={[{ required: true, message: text.name_rule }]}>
+            <Input maxLength={128} placeholder={text.name_placeholder} />
           </Form.Item>
-          <Form.Item name="description" label="描述">
-            <Input.TextArea rows={3} maxLength={500} placeholder="知识库用途说明（可选）" />
+          <Form.Item name="description" label={text.desc_label}>
+            <Input.TextArea rows={3} maxLength={500} placeholder={text.desc_placeholder} />
           </Form.Item>
         </Form>
       </Modal>
@@ -493,26 +493,26 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
         destroyOnHidden
       >
         <Form form={bindForm} layout="vertical" autoComplete="off">
-          <Form.Item name="kb_id" label="选择知识库" rules={[{ required: true, message: '请选择知识库' }]}>
+          <Form.Item name="kb_id" label={text.choose_kb} rules={[{ required: true, message: text.choose_kb_rule }]}>
             <Select
-              placeholder="选择未绑定的知识库"
+              placeholder={text.choose_unbound_kb}
               options={unboundKbs.map((kb) => ({ value: kb.id as string, label: String(kb.name ?? kb.id) }))}
               optionFilterProp="label"
               showSearch
             />
           </Form.Item>
           <div style={{ color: 'var(--v2-dim)', fontSize: 12 }}>
-            绑定后该知识库即参与统一检索（可在此后用开关与范围列细调）。
+            {text.bind_hint}
           </div>
         </Form>
       </Modal>
       <Modal
-        title={editingBinding?.is_system ? '编辑绑定（系统分区）' : '编辑绑定'}
+        title={editingBinding?.is_system ? text.edit_binding_system : text.editBinding}
         open={!!editingBinding}
         onCancel={() => setEditingBinding(null)}
         onOk={() => editForm.submit()}
-        okText="保存"
-        cancelText="取消"
+        okText={text.save}
+        cancelText={text.cancel}
         destroyOnHidden
       >
         <Form form={editForm} layout="vertical" onFinish={saveBindingEdit} autoComplete="off">
@@ -521,41 +521,41 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
               type="info"
               showIcon
               style={{ marginBottom: 12 }}
-              message="系统分区锁定项"
-              description="总开关、项目范围、接收经验同步由系统管理（保障经验闭环不被误关）；检索参数与投影置信度门槛可调，门槛调整影响后续投影。"
+              message={text.system_locked}
+              description={text.system_locked_desc}
             />
           )}
-          <Form.Item name="enabled" label="总开关" valuePropName="checked">
+          <Form.Item name="enabled" label={text.colEnabled} valuePropName="checked">
             <Switch disabled={!!editingBinding?.is_system} />
           </Form.Item>
-          <Form.Item name="scope_projects" label="项目范围（留空 = 全部项目）">
+          <Form.Item name="scope_projects" label={text.scope_projects}>
             <Select
               mode="multiple"
-              placeholder="选择可见项目"
+              placeholder={text.choose_projects}
               options={projects.map((p) => ({ value: p.id, label: p.name ?? p.id }))}
               optionFilterProp="label"
               showSearch
               disabled={!!editingBinding?.is_system}
             />
           </Form.Item>
-          <Form.Item name="scope_chat" label="参与 AI 对话检索" valuePropName="checked">
+          <Form.Item name="scope_chat" label={text.scope_chat} valuePropName="checked">
             <Switch />
           </Form.Item>
-          <Form.Item name="scope_agent_s1" label="参与 S1 建模分析" valuePropName="checked">
+          <Form.Item name="scope_agent_s1" label={text.scope_agent_s1} valuePropName="checked">
             <Switch />
           </Form.Item>
-          <Form.Item name="retrieval_top_k" label="检索条数 top_k">
+          <Form.Item name="retrieval_top_k" label={text.top_k_label}>
             <InputNumber min={1} max={20} style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="retrieval_trigger" label="触发方式">
-            <Select options={[{ value: 'auto', label: 'auto（自动检索）' }, { value: 'explicit', label: 'explicit（显式请求）' }]} />
+          <Form.Item name="retrieval_trigger" label={text.trigger_label}>
+            <Select options={[{ value: 'auto', label: text.trigger_auto }, { value: 'explicit', label: text.trigger_explicit }]} />
           </Form.Item>
-          <Form.Item name="sync_receive_experience" label="接收经验同步" valuePropName="checked">
+          <Form.Item name="sync_receive_experience" label={text.sync_receive} valuePropName="checked">
             <Switch disabled={!!editingBinding?.is_system} />
           </Form.Item>
           <Form.Item
             name="sync_experience_min_confidence"
-            label={editingBinding?.is_system ? '投影置信度门槛（跨域条目达标才投影入区）' : '经验同步置信度门槛'}
+            label={editingBinding?.is_system ? text.conf_floor_system : text.conf_floor}
           >
             <InputNumber min={0} max={1} step={0.05} style={{ width: '100%' }} />
           </Form.Item>
@@ -570,14 +570,14 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
         {previewEntry && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13, lineHeight: 1.8 }}>
             <div><Tag color="blue">{previewEntry.domain}</Tag><Tag color={previewEntry.status === 'active' ? 'green' : previewEntry.status === 'shadow' ? 'blue' : 'default'}>{previewEntry.status}</Tag><Tag color="purple">{previewEntry.origin}</Tag></div>
-            <div><b>情况</b><div>{previewEntry.situation}</div></div>
-            <div><b>教训</b><div>{previewEntry.lesson}</div></div>
-            <div><b>动作</b><div>{previewEntry.action}</div></div>
-            <div><b>置信度</b><div>{previewEntry.confidence.toFixed(2)}{previewEntry.hit_count ? ` · 命中 ${previewEntry.hit_count} 次` : ''}</div></div>
+            <div><b>{text.preview_situation}</b><div>{previewEntry.situation}</div></div>
+            <div><b>{text.preview_lesson}</b><div>{previewEntry.lesson}</div></div>
+            <div><b>{text.preview_action}</b><div>{previewEntry.action}</div></div>
+            <div><b>{text.colConfidence}</b><div>{previewEntry.confidence.toFixed(2)}{previewEntry.hit_count ? ` · ${(text.hit_n || '命中{n}').replace('{n}', String(previewEntry.hit_count))}` : ''}</div></div>
             {(previewEntry.source_tasks ?? []).length > 0 && (
-              <div><b>来源任务</b><div>{previewEntry.source_tasks.map((t) => String(t).slice(0, 8)).join('、')}</div></div>
+              <div><b>{text.source_tasks}</b><div>{previewEntry.source_tasks.map((t) => String(t).slice(0, 8)).join('、')}</div></div>
             )}
-            {previewEntry.human_note && <div><b>人工附注</b><div>{previewEntry.human_note}</div></div>}
+            {previewEntry.human_note && <div><b>{text.note}</b><div>{previewEntry.human_note}</div></div>}
           </div>
         )}
       </Drawer>
