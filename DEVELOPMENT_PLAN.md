@@ -476,3 +476,21 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 **测试**：新 `test_agent_loop_retrain.py` 14 用例（增量触发/未绑定配方 fail-closed/重放创建含无人值守 guidance/部署级单飞/冷却静默/熔断一次通知/accepted→固化+铸造派发白名单转发/失败与升级不推基线/轮询超时/换模推进基线+冷却/门禁否决保留信号/追赶全量/报错停止不再触发/模式 API 校验含外来配方拒绝）；`test_demo_loop`(27)+`test_agent_recipe_gated_swap`+`test_agent_servitize` 回归 56 绿；迁移图 8 绿；前端 tsc 全绿+DemoLoopDetailPage 3 绿+i18n parity 1 绿。week_manifest 已登记。
 
 **坑**：测试 CSV 生成把单字符串元组按字符 join 成乱码（用现成文本行）；跨用例项目级并发闸门会算上遗留 agent_running 配置（setUp 清场）；`_swap_to_best_model` 不自提交，测试断言前需 commit；reset 不清基线会让历史换模基线挡住 reset 后触发。
+
+## 2026-11-07 闭环智能体重训 P1 真实平台 E2E（点焊/train_v2_full.csv）+ 四缺口修复
+
+**E2E 全链通过**（栈 backend 镜像 2a9a9501+gate-fix）：引擎 AutoML（train_v2_full_dense 2180 行、5→8 trials、105s 完成）→ 注册/批准/部署（b1c9da91 running）→ 智能体任务向导链提交（92337fc8，**1 轮收敛 accepted**，deepseek-chat 档案）→ servitize+activate（报错类=[0]）→ 闭环 retrain_mode=agent 绑定配方 → HTTP predict 报错行×3 触发 → **重放 accepted（1 轮）→ 固化新配方（agent-3f0f3e3a）→ 铸造派发（8 trials）→ 换模成功**（部署 model_version f33adcb6→9f839dc8）→ baseline 推进 6 → 冷却期生效（冷却内回流静默跳过）→ invoke 零重发布跟随新版本（predict 返回 9f839dc8）→ 追赶评估不误触发。事件链 triggered→accepted→casting_started→model_swapped→reservitize_manual 完整。
+
+**E2E 揭示并修复的缺口**（各一行提交）：
+1. `cc5ee92f` auto_servitize 固化缺 feature_script——runner 改用 build_fixation_content 统一构造器 + 修 recipe_id 未写回 result_json（fixate 幂等失效）；
+2. `2a9a9501` servitize 冒烟 smoke_row 有消费方无生产方（只存在于测试夹具）——固化构造器从 dataset 首行生产（JSON-safe+32 列截断）；
+3. 冒烟 32 列截断过窄（87 列数据缺部署模型特征列→闭环走点焊桥要求波形列必挂）→ 200 列（对齐宽表上限）；
+4. servitize 硬塞 S2 特征脚本（def transform 沙箱契约）进闭环 script 模式（result= 算子契约）必挂 → 闭环回流改 legacy 直通（记录已含模型特征列），S2→闭环脚本桥接留独立批次；
+5. **agent 换模停用配方门禁兜底**——固化 gates 为轻量口径（recall_minority），引擎候选输出 accuracy/auc/f1 无该键，missing 一票否决永久拦死换模（8 个 f1 0.98+ 候选全被拦）；验收把关由重放 run S4 硬门禁承担，键映射对齐留独立批次。
+
+**既有缺口（未修，记台账）**：
+- **稀疏宽表闭环重训 0 行失败**：train_v2_full.csv 87 列中 59 特征列任一行缺任一列即被 dropna 全剔（2180 行 0 幸存）→ 引擎/闭环重训对稀疏宽表不可用（测试用派生稠密子集 train_v2_full_dense.csv 绕过）；闭环 trigger_retrain_job 不支持 input_columns 选列，修复需重训数据集列选择合同，留 P2。
+- auto_servitize 三资产自动起草仍需 target_semantics/error_classes 合同（AnalysisReport 无该字段，向导为用户手选）——自动起草降级路径保留，档案页续（本次即手动 servitize+override）。
+- E2E 驱动坑：服务层直调 launch_agent_run 的线程随脚本进程退出被杀（run 永久 pending）——真实路径 HTTP 触发无此问题；另登录限流 15min 窗 5 次（调试烧完等冷却）。
+
+**LLM 档案**：deepseek-flash（推理型，content 空）S1 必挂——已知坑第 3 次验证；deepseek-v4-pro 空回复×3（短请求连通 OK、长生成被掐的环境现象）；**deepseek-chat 档案（89ae1fd1）可用且 1 轮收敛**，智能体任务应绑它。
