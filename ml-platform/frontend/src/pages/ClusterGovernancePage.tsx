@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Card, Space, Table, Tag, Typography } from "antd";
+import { Alert, Button, Card, Space, Table, Tag } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import { App as AntApp } from "antd";
 import { formatApiError } from "../api/client";
@@ -165,19 +165,22 @@ export default function ClusterGovernancePage() {
 
   return (
     <AppLayout>
-      <V2PageFrame section="infra" navKey="cluster_governance" testId="v2-cluster-governance">
+      <V2PageFrame
+        section="infra"
+        navKey="cluster_governance"
+        testId="v2-cluster-governance"
+        actions={(
+          <>
+            <Button icon={<ReloadOutlined />} onClick={load}>
+              {gt("refresh", "刷新")}
+            </Button>
+            <Button type="primary" onClick={handlePreview}>
+              {gt("preview", "路由预演")}
+            </Button>
+          </>
+        )}
+      >
       <div style={{ padding: 24, display: "grid", gap: 16 }}>
-        <Space>
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            {gt("title", "集群治理")}
-          </Typography.Title>
-          <Button icon={<ReloadOutlined />} onClick={load}>
-            {gt("refresh", "刷新")}
-          </Button>
-          <Button type="primary" onClick={handlePreview}>
-            {gt("preview", "路由预演")}
-          </Button>
-        </Space>
         {anyStale ? (
           <Alert type="warning" showIcon message={gt("staleWarning", "部分集群用量快照已过期(采集失败或断源)")} />
         ) : null}

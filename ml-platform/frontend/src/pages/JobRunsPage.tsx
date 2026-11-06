@@ -195,16 +195,17 @@ export default function JobRunsPage() {
 
   return (
     <AppLayout>
-      <V2PageFrame section="infra" navKey="job_runs" testId="v2-job-runs">
-      <div style={{ padding: 24 }}>
-        <Space style={{ marginBottom: 16 }}>
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            {jt("title", "作业运行")}
-          </Typography.Title>
+      <V2PageFrame
+        section="infra"
+        navKey="job_runs"
+        testId="v2-job-runs"
+        actions={(
           <Button icon={<ReloadOutlined />} onClick={loadJobs}>
             {jt("refresh", "刷新")}
           </Button>
-        </Space>
+        )}
+      >
+      <div style={{ padding: 24 }}>
         <Table
           rowKey="id"
           loading={loading}

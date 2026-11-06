@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, Form, Input, Modal, Select, Space, Table, Tag, Typography } from "antd";
+import { Button, Form, Input, Modal, Select, Space, Table, Tag } from "antd";
 import { CaretRightOutlined, ReloadOutlined, StopOutlined } from "@ant-design/icons";
 import { App as AntApp } from "antd";
 import apiClient, { formatApiError } from "../api/client";
@@ -165,19 +165,22 @@ export default function NotebookPage() {
 
   return (
     <AppLayout>
-      <V2PageFrame section="infra" navKey="notebooks" testId="v2-notebooks">
+      <V2PageFrame
+        section="infra"
+        navKey="notebooks"
+        testId="v2-notebooks"
+        actions={(
+          <>
+            <Button icon={<ReloadOutlined />} onClick={load}>
+              {nt("refresh", "刷新")}
+            </Button>
+            <Button type="primary" onClick={() => setStartOpen(true)}>
+              {nt("start", "启动会话")}
+            </Button>
+          </>
+        )}
+      >
       <div style={{ padding: 24 }}>
-        <Space style={{ marginBottom: 16 }}>
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            {nt("title", "Notebook 会话")}
-          </Typography.Title>
-          <Button icon={<ReloadOutlined />} onClick={load}>
-            {nt("refresh", "刷新")}
-          </Button>
-          <Button type="primary" onClick={() => setStartOpen(true)}>
-            {nt("start", "启动会话")}
-          </Button>
-        </Space>
         <Table
           rowKey="id"
           loading={loading}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, Form, Input, Modal, Select, Space, Table, Tag, Typography } from "antd";
+import { Button, Form, Input, Modal, Select, Table, Tag, Typography } from "antd";
 import { PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import { App as AntApp } from "antd";
 import { formatApiError } from "../api/client";
@@ -103,19 +103,22 @@ export default function ImageCatalogPage() {
 
   return (
     <AppLayout>
-      <V2PageFrame section="infra" navKey="images" testId="v2-images">
+      <V2PageFrame
+        section="infra"
+        navKey="images"
+        testId="v2-images"
+        actions={(
+          <>
+            <Button icon={<ReloadOutlined />} onClick={load}>
+              {it("refresh", "刷新")}
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setRegisterOpen(true)}>
+              {it("register", "登记镜像")}
+            </Button>
+          </>
+        )}
+      >
       <div style={{ padding: 24 }}>
-        <Space style={{ marginBottom: 16 }}>
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            {it("title", "镜像目录")}
-          </Typography.Title>
-          <Button icon={<ReloadOutlined />} onClick={load}>
-            {it("refresh", "刷新")}
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setRegisterOpen(true)}>
-            {it("register", "登记镜像")}
-          </Button>
-        </Space>
         <Table
           rowKey="id"
           loading={loading}

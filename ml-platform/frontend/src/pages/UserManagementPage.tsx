@@ -25,7 +25,7 @@ interface AnnotatorAccount {
 }
 
 export default function UserManagementPage() {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(false)
   const [currentUserRole, setCurrentUserRole] = useState('')
@@ -330,7 +330,8 @@ export default function UserManagementPage() {
         </Card>
       )}
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h3>{t.nav.users || '用户管理'}</h3>
+        {/* 分区标题：页面名「用户管理」已在统一页头，此处标明本表为平台账号 */}
+        <h3>{lang === 'zh' ? '平台用户' : 'Platform users'}</h3>
         {currentUserRole === 'admin' && selectedUserIds.length > 0 && (
           <Button danger icon={<DeleteOutlined />} onClick={batchDeleteUsers}>
             {t.common.batch_delete} ({selectedUserIds.length})

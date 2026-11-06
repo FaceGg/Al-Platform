@@ -276,27 +276,28 @@ export default function KubernetesPage() {
 
   return (
     <AppLayout>
-      <V2PageFrame section="infra" navKey="kubernetes" testId="v2-kubernetes">
+      <V2PageFrame
+        section="infra"
+        navKey="kubernetes"
+        testId="v2-kubernetes"
+        actions={(
+          <>
+            <Select
+              style={{ minWidth: 220 }}
+              placeholder={kt("selectProject", "选择项目")}
+              value={projectId ?? undefined}
+              options={projects.map((p) => ({ value: p.id, label: p.name }))}
+              onChange={(value) => setProjectId(value)}
+            />
+            <Button icon={<ReloadOutlined />} onClick={loadClusters}>{kt("refresh", "刷新")}</Button>
+            <Button type="primary" onClick={() => setRegisterOpen(true)} disabled={!projectId}>
+              {kt("register", "登记集群")}
+            </Button>
+          </>
+        )}
+      >
       <div>
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
-          <Space wrap style={{ justifyContent: "space-between", width: "100%" }}>
-            <Space wrap>
-              <Typography.Title level={4} style={{ margin: 0 }}>{kt("title", "Kubernetes 集群")}</Typography.Title>
-              <Select
-                style={{ minWidth: 220 }}
-                placeholder={kt("selectProject", "选择项目")}
-                value={projectId ?? undefined}
-                options={projects.map((p) => ({ value: p.id, label: p.name }))}
-                onChange={(value) => setProjectId(value)}
-              />
-            </Space>
-            <Space>
-              <Button icon={<ReloadOutlined />} onClick={loadClusters}>{kt("refresh", "刷新")}</Button>
-              <Button type="primary" onClick={() => setRegisterOpen(true)} disabled={!projectId}>
-                {kt("register", "登记集群")}
-              </Button>
-            </Space>
-          </Space>
 
           <Alert
             type="info"
