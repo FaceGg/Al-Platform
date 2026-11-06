@@ -143,6 +143,7 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_security_contract",
         "test_waveform_samples",
         "test_demo_loop",
+        "test_agent_loop_retrain",
         "test_chat_api_publication",
         "test_model_port",
         "test_model_port_envelope",

@@ -107,6 +107,14 @@ class Settings(BaseSettings):
     # 启动期恢复扫描标记为失败（AGENT_RUN_INTERRUPTED）。
     agent_run_stale_after_seconds: int = Field(default=600, ge=60)
 
+    # 闭环「智能体重训模式」护栏：项目内重放并发上限（跨部署资源护栏）/
+    # 重放轮询超时（LLM S1 实测 >60s、超时地板 240s，全流程按小时留量）/
+    # 轮次终态冷却分钟（agent 模式）/ 24h 滚动窗口熔断次数（触顶转人工）。
+    agent_retrain_project_concurrency: int = Field(default=2, ge=1)
+    agent_retrain_poll_max_age_seconds: int = Field(default=7200, ge=600)
+    agent_retrain_cooldown_minutes: int = Field(default=30, ge=0)
+    agent_retrain_daily_limit: int = Field(default=3, ge=1)
+
     artifact_storage_backend: Literal["local", "minio"] = "local"
     artifact_storage_dir: str = "./artifact_store"
     minio_endpoint: str | None = Field(default=None, repr=False, exclude=True)

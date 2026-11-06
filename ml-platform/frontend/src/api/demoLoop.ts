@@ -39,6 +39,12 @@ export interface DemoLoopConfig {
   /** 闭环重训终选层集成（多模型加权投票），仅单输出分类生效 */
   retrain_ensemble_enabled?: boolean;
   retrain_ensemble_top_k?: number;
+  /** 重训模式：engine=引擎直接重训换模（默认）；agent=复用固化配方重放智能体全流程 */
+  retrain_mode?: "engine" | "agent";
+  retrain_agent_recipe_id?: string | null;
+  retrain_agent_run_id?: string | null;
+  retrain_cool_until?: string | null;
+  retrain_trained_baseline_count?: number;
   collect_correct_enabled: boolean;
   correct_sample_ratio: string | null;
   field_descriptions: Record<string, string> | null;
@@ -75,6 +81,10 @@ export interface DemoLoopStatus {
   swapped_model_version_id: string | null;
   error_artifact: { id: string; name: string; row_count: number } | null;
   events: DemoLoopEvent[];
+  /** 增量触发基线：已部署模型消费过的报错行数（进度与触发判据用） */
+  retrain_trained_baseline_count?: number;
+  retrain_mode?: "engine" | "agent";
+  retrain_cool_until?: string | null;
 }
 
 export interface DemoLoopPredictResult {

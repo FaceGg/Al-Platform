@@ -71,39 +71,10 @@ def dataset_profile(
 
 
 def _fixation_content(run: AgentRun, memory: dict) -> dict:
-    rounds = memory.get("rounds", [])
-    final_script = ""
-    for record in reversed(rounds):
-        for attempt in reversed(record.get("s2_attempts", [])):
-            if attempt.get("script"):
-                final_script = attempt["script"]
-                break
-        if final_script:
-            break
-    gates = dict(((run.guidance_json or {}).get("evaluation") or {}).get(
-        "metric_gates", {}
-    ))
-    modeling = dict((run.guidance_json or {}).get("modeling") or {})
-    ensemble = dict(modeling.get("ensemble") or {})
-    # 算法白名单随配方固化：服务化后闭环重训按白名单缩小引擎搜索族
-    # （此前 guidance.modeling.algorithm_whitelist 无任何消费方，勾选形同虚设）
-    return {
-        "domain": memory.get("last_domain") or "",
-        "inputs": {"target_column": run.target_column},
-        "feature_script": final_script,
-        "automl_config": modeling.get("param_hints", {}),
-        "acceptance_gates": gates or {"recall_minority": 0.90},
-        # 向导第三步的集成选项随配方固化 → 服务化后闭环重训沿用（集成走到线上的最后一环）
-        "retrain_ensemble": (
-            {"enabled": True, "top_k": int(ensemble.get("top_k") or 3)}
-            if ensemble.get("enabled")
-            else {"enabled": False}
-        ),
-        "retrain_algorithm_ids": [str(x) for x in modeling.get("algorithm_whitelist") or []],
-        "baseline_metrics": (run.result_json or {}).get("metrics", {}),
-        "analysis_digest": "run %s" % str(run.id)[:8],
-        "optimization_report": (run.result_json or {}).get("optimization_report"),
-    }
+    """Deprecated alias — 构造器已下沉 recipe 服务（agent 重训重放共用）。"""
+    from app.services.agent.recipe import build_fixation_content
+
+    return build_fixation_content(run, memory)
 
 
 @router.post("/recipes/fixate", status_code=201)
@@ -133,6 +104,20 @@ def fixate_recipe(
         except (TypeError, ValueError):
             existing = None
     if existing is not None:
+        # 存量配方升级回填：早期固化的版本缺 guidance 快照（agent 重训重放
+        # 的输入合同），补发一个新版本而不是拒绝——同配方行，版本递增。
+        from app.services.agent.recipe import get_current_version, update_recipe
+
+        current = get_current_version(db, existing.id)
+        if not ((current.content_json or {}).get("guidance")):
+            update_recipe(
+                db,
+                existing.id,
+                content=_fixation_content(run, run.memory_json or {}),
+                change_note="backfill guidance snapshot for agent retrain replay",
+            )
+            return {"recipe_id": str(existing.id), "version": existing.current_version,
+                    "created": False, "backfilled": True}
         return {"recipe_id": str(existing.id), "version": existing.current_version,
                 "created": False}
     from app.services.agent.recipe import create_recipe
@@ -151,6 +136,46 @@ def fixate_recipe(
     run.result_json = result
     db.commit()
     return {"recipe_id": str(recipe.id), "version": 1, "created": True}
+
+
+@router.get("/recipes")
+def list_recipes(
+    project_id: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """项目内固化配方列表（闭环 agent 重训模式绑定选择用）。
+
+    has_guidance 标记当前版本是否已带 guidance 快照——无快照的存量配方
+    绑定后触发会被 fail-closed 拒绝（需对源 run 重新固化回填）。
+    """
+    from app.services.agent.recipe import get_current_version
+
+    query = db.query(PipelineRecipe)
+    if project_id:
+        try:
+            query = query.filter(
+                PipelineRecipe.project_id == uuid_module.UUID(project_id))
+        except (TypeError, ValueError):
+            raise HTTPException(422, detail={"code": "IDENTIFIER_INVALID"})
+    rows = query.order_by(PipelineRecipe.created_at.desc()).limit(100).all()
+    out = []
+    for recipe in rows:
+        try:
+            current = get_current_version(db, recipe.id)
+            content = dict(current.content_json or {})
+        except LookupError:
+            content = {}
+        out.append({
+            "id": str(recipe.id),
+            "name": recipe.name,
+            "domain": recipe.domain,
+            "target_column": recipe.target_column,
+            "current_version": recipe.current_version,
+            "has_guidance": bool(content.get("guidance")),
+            "created_at": recipe.created_at.isoformat() if recipe.created_at else None,
+        })
+    return out
 
 
 @router.get("/recipes/{recipe_id}/versions")

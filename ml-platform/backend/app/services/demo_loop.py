@@ -16,7 +16,7 @@ import tempfile
 import uuid
 
 from sqlalchemy.exc import IntegrityError
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 
@@ -28,11 +28,13 @@ from app.config import settings
 from app.database import SessionLocal
 from app.engine.operator_contract import OperatorContext
 from app.engine.registry import OperatorRegistry
+from app.models.agent_run import AgentRun
 from app.models.artifact import Artifact
 from app.models.data_version import DatasetSample, DatasetSchemaColumn
 from app.models.demo_loop import DemoLoopConfig, DemoLoopEvent
 from app.models.model_registry import InferenceDeployment, ModelVersion
 from app.models.platform_models import GenericAnnotationTask
+from app.models.recipe import PipelineRecipe
 from app.models.training import TrainingJob
 from app.services.annotation_concurrency import AssignmentError, create_assignments
 from app.services.annotation_scope import persist_scope_entries, scope_descriptor, scope_digest
@@ -353,6 +355,34 @@ class DemoLoopService:
             config.retrain_algorithm_ids = [
                 str(item).strip()[:64] for item in (ids or []) if str(item).strip()
             ][:64]
+        if "retrain_mode" in data:
+            mode = str(data.get("retrain_mode") or "engine").strip() or "engine"
+            if mode not in {"engine", "agent"}:
+                raise DemoLoopError(
+                    "DEMO_LOOP_CONFIG_INVALID", "retrain_mode 必须是 engine 或 agent")
+            if mode == "agent" and config.retrain_status not in {"idle", "failed", ""}:
+                raise DemoLoopError(
+                    "DEMO_LOOP_CONFIG_INVALID", "重训进行中不允许切换模式")
+            config.retrain_mode = mode
+        if "retrain_agent_recipe_id" in data:
+            raw = data.get("retrain_agent_recipe_id")
+            if raw:
+                try:
+                    recipe = self.db.query(PipelineRecipe).filter(
+                        PipelineRecipe.id == uuid.UUID(str(raw)),
+                    ).first()
+                except (TypeError, ValueError) as error:
+                    raise DemoLoopError(
+                        "DEMO_LOOP_CONFIG_INVALID", "retrain_agent_recipe_id 不是合法 UUID")
+                if recipe is None:
+                    raise DemoLoopError(
+                        "DEMO_LOOP_CONFIG_INVALID", "绑定的固化配方不存在")
+                if recipe.project_id != config.project_id:
+                    raise DemoLoopError(
+                        "DEMO_LOOP_CONFIG_INVALID", "固化配方不属于本项目")
+                config.retrain_agent_recipe_id = recipe.id
+            else:
+                config.retrain_agent_recipe_id = None
         if "retrain_target_column" in data:
             config.retrain_target_column = str(data["retrain_target_column"] or "").strip()[:128]
         if "collect_correct_enabled" in data:
@@ -928,11 +958,69 @@ class DemoLoopService:
         if (
             config.retrain_enabled
             and int(config.retrain_threshold_rows or 0) > 0
-            and config.error_count >= int(config.retrain_threshold_rows)
-            and config.retrain_status in {"idle", "failed", ""}
-            and config.retrain_job_id is None
         ):
-            self._trigger_retrain(config, actor_id)
+            self._maybe_trigger_retrain(config, actor_id)
+
+    # ---------------------------------------------------------------- retrain mode
+
+    def _maybe_trigger_retrain(self, config: DemoLoopConfig, actor_id) -> None:
+        """统一触发评估（报错回流 + 轮次终态追赶共用，幂等）。
+
+        增量边沿触发：error_count - trained_baseline >= threshold。基线仅在
+        换模成功时推进（_swap_to_best_model），失败/取消不推进——旧模型仍在
+        服务，回流信号不作废。部署级单飞沿用 retrain_status/retrain_job_id/
+        retrain_agent_run_id 三重守卫；agent 模式再过冷却/熔断/项目并发闸门
+        （loop_retrain.trigger_agent_retrain），引擎模式行为与历史一致。
+        """
+        if config.retrain_status not in {"idle", "failed", ""}:
+            return
+        if config.retrain_job_id is not None:
+            return
+        if getattr(config, "retrain_agent_run_id", None) is not None:
+            return
+        baseline = int(getattr(config, "retrain_trained_baseline_count", 0) or 0)
+        if int(config.error_count or 0) - baseline < int(config.retrain_threshold_rows or 0):
+            return
+        mode = (getattr(config, "retrain_mode", None) or "engine").strip() or "engine"
+        if mode == "agent":
+            from app.services.agent.loop_retrain import (
+                AgentRetrainError,
+                trigger_agent_retrain,
+            )
+
+            try:
+                trigger_agent_retrain(self.db, config, actor_id)
+                return
+            except AgentRetrainError as error:
+                self.db.rollback()
+                self._emit_retrain_failure_once(config, f"智能体重训触发失败：{error}")
+                self.db.commit()
+            except Exception as error:  # noqa: BLE001 - keep the loop alive
+                self.db.rollback()
+                self._emit_retrain_failure_once(config, f"智能体重训触发失败：{error}")
+                self.db.commit()
+            return
+        self._trigger_retrain(config, actor_id)
+
+    def _emit_retrain_failure_once(self, config: DemoLoopConfig, message: str,
+                                   window_minutes: int = 10) -> None:
+        """触发失败事件去重：状态轮询/逐行回流都会走到触发评估，同一故障
+        （如配方未绑定快照）在窗口内只发一条，避免事件刷屏。"""
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        recent = (
+            self.db.query(DemoLoopEvent)
+            .filter(
+                DemoLoopEvent.config_id == config.id,
+                DemoLoopEvent.event_type == "retrain_failed",
+                DemoLoopEvent.created_at >= now - timedelta(minutes=window_minutes),
+            )
+            .first()
+        )
+        if recent is not None:
+            return
+        self._emit(config, "retrain_failed", message, severity="warning")
 
     def _notify_admins(self, config: DemoLoopConfig, predicted: str) -> None:
         notify_project_admins(
@@ -1116,19 +1204,9 @@ class DemoLoopService:
             self.db.commit()
 
     def _trigger_retrain_inner(self, config: DemoLoopConfig, actor_id) -> None:
-        dataset_ids = list(getattr(config, "retrain_dataset_artifact_ids", None) or [])
-        if not dataset_ids and config.retrain_dataset_artifact_id is not None:
-            dataset_ids = [config.retrain_dataset_artifact_id]
-        # 闭环收集的报错数据集默认参与重训（置于最前，去重）。
-        if config.error_artifact_id:
-            error_id = str(config.error_artifact_id)
-            dataset_ids = [error_id] + [did for did in dataset_ids if did != error_id]
-        # 按比例收集的正确数据集同样参与合并（紧随报错数据）。
-        if getattr(config, "correct_artifact_id", None):
-            correct_id = str(config.correct_artifact_id)
-            dataset_ids = [did for did in dataset_ids if did != correct_id]
-            insert_at = 1 if dataset_ids and dataset_ids[0] == str(config.error_artifact_id) else 0
-            dataset_ids.insert(insert_at, correct_id)
+        from app.services.closed_loop_actions import resolve_retrain_dataset_ids
+
+        dataset_ids = resolve_retrain_dataset_ids(config)
         if not dataset_ids:
             raise DemoLoopError("DEMO_LOOP_RETRAIN_DATASET_MISSING", "未配置重训数据集")
         target_column = (config.retrain_target_column or "").strip()
@@ -1191,6 +1269,21 @@ class DemoLoopService:
         return ""
 
     def refresh_retrain_status(self, config: DemoLoopConfig, actor_id) -> None:
+        # agent 重放轮在途（铸造未派发）：走 agent 分支（终态→固化配方+派
+        # 铸造/失败/超时）。铸造已派发后 retrain_job_id 非空，交还引擎分支。
+        if (
+            getattr(config, "retrain_agent_run_id", None) is not None
+            and config.retrain_job_id is None
+        ):
+            from app.services.agent.loop_retrain import poll_agent_retrain
+
+            if poll_agent_retrain(self.db, config, actor_id):
+                return
+        # 空闲追赶评估：轮次终态（换模成功/失败）或冷却到期后，下一次状态
+        # 轮询/回流都会按增量判据再评估——覆盖「报错停了也要追平一轮」场景
+        # （部署完成后用全量积累补一轮，而非等下一个阈值额度）。
+        if config.retrain_status in {"idle", ""} and config.retrain_job_id is None:
+            self._maybe_trigger_retrain(config, actor_id)
         # 收敛入口：job 挂着就必须检查（cancel_requested/终态卡住也在此自愈），
         # 否则取消/失败/完成后 retrain_job_id 残留会永久挡住下一轮触发。
         if config.retrain_job_id is None:
@@ -1227,6 +1320,9 @@ class DemoLoopService:
             # 用户取消：回到可触发状态，下一轮积累重新出发。
             config.retrain_status = "idle"
             config.retrain_job_id = None
+            from app.services.agent.loop_retrain import finish_agent_cycle
+
+            finish_agent_cycle(config)
             self._emit(config, "retrain_cancelled", "自动建模任务已取消，报错继续积累后将再次触发", severity="info")
             self.db.commit()
             return
@@ -1244,6 +1340,9 @@ class DemoLoopService:
         elif job.status == "failed":
             config.retrain_status = "failed"
             config.retrain_job_id = None
+            from app.services.agent.loop_retrain import finish_agent_cycle
+
+            finish_agent_cycle(config)
             self._emit(config, "retrain_failed",
                        f"自动建模失败：{job.error_message or job.error_code or '未知错误'}",
                        severity="critical")
@@ -1256,21 +1355,64 @@ class DemoLoopService:
         # 每个完成的任务只换一次模：上游 refresh_retrain_status 依据
         # retrain_status 迁移保证调用次数；swapped_model_version_id 仅作
         # 前端换模水印，每轮覆盖为新版本，不能当 once-ever 守卫。
+        # agent 重放轮：换模候选过本轮固化配方的验收门禁（一票否决兜底）。
+        recipe_id = None
+        if getattr(config, "retrain_agent_run_id", None) is not None:
+            agent_run = self.db.get(AgentRun, config.retrain_agent_run_id)
+            if agent_run is not None:
+                recipe_id = (agent_run.result_json or {}).get("fixated_recipe_id")
         version = complete_retrain_swap(
             self.db,
             deployment_id=config.deployment_id,
             job=job,
             actor_id=actor_id,
             model_name=f"{config.name}-自动模型",
+            recipe_id=recipe_id,
         )
+        from app.services.agent.loop_retrain import finish_agent_cycle
+
         if version is None:
             self._emit(config, "retrain_failed", "自动建模完成但没有可注册的候选模型", severity="warning")
+            # 门禁否决/无候选同样是轮次终态：清重放引用 + 冷却（基线不推进，
+            # 旧模型继续服务；下一次触发将带全量积累重试，熔断兜底）。
+            finish_agent_cycle(config)
             return
         deployment = self.db.query(InferenceDeployment).filter(
             InferenceDeployment.id == config.deployment_id,
         ).first() if config.deployment_id else None
         previous_id = str(deployment.model_version_id) if deployment is not None and deployment.model_version_id else None
         config.swapped_model_version_id = version.id
+        # 换模成功：推进已消费报错基线（增量触发的唯一推进点），agent 重放
+        # 轮收尾并进入冷却期。失败/门禁否决不推进——旧模型继续服务，回流
+        # 信号不作废；追赶评估由下一次 refresh/回流按增量判据再触发。
+        config.retrain_trained_baseline_count = int(config.error_count or 0)
+        finish_agent_cycle(config)
+        # agent 轮特征脚本可能已随重放演化：提醒在档案页重新服务化（已发布
+        # 条目走新配方版本；serving 图按部署引用绑定，预测自动跟随换模）。
+        if recipe_id:
+            from app.models.recipe import PipelineRecipeVersion
+
+            try:
+                recipe_uuid = uuid.UUID(str(recipe_id))
+            except (TypeError, ValueError):
+                recipe_uuid = None
+            recipe_version = (
+                self.db.query(PipelineRecipeVersion)
+                .filter(
+                    PipelineRecipeVersion.recipe_id == recipe_uuid,
+                    PipelineRecipeVersion.status == "current",
+                )
+                .first()
+            )
+            new_script = (recipe_version.content_json or {}).get("feature_script") or "" if recipe_version else ""
+            if new_script and new_script != (config.feature_script or ""):
+                self._emit(
+                    config, "retrain_reservitize_manual",
+                    "本轮重放的特征脚本与闭环配置不一致，如需对外 API 同步新脚本，"
+                    "请在智能体任务档案页对该轮配方重新服务化",
+                    severity="info",
+                    payload={"recipe_id": str(recipe_id)},
+                )
         self._emit(
             config, "model_swapped",
             f"自动建模完成，已将部署模型替换为最优候选（v{version.version_number}）",
@@ -1290,6 +1432,12 @@ class DemoLoopService:
             config.total_count = 0
             config.retrain_status = "idle"
             config.retrain_job_id = None
+            # 增量触发基线与 agent 重放引用一并清零（reset=全部重来，否则
+            # 历史换模推进的基线会让 reset 后的积累永远够不到阈值）。
+            config.retrain_trained_baseline_count = 0
+            config.retrain_agent_run_id = None
+            config.retrain_agent_started_at = None
+            config.retrain_cool_until = None
             self.db.query(DemoLoopEvent).filter(DemoLoopEvent.config_id == config.id).delete()
             self._emit(config, "loop_reset", "闭环状态已重置（配置与数据集保留）")
             self.db.commit()
@@ -1336,6 +1484,16 @@ class DemoLoopService:
             "model_score": model_score,
             "retrain_status": config.retrain_status,
             "retrain_job_id": str(config.retrain_job_id) if config.retrain_job_id else None,
+            "retrain_mode": (getattr(config, "retrain_mode", None) or "engine"),
+            "retrain_trained_baseline_count": int(
+                getattr(config, "retrain_trained_baseline_count", 0) or 0
+            ),
+            "retrain_agent_run_id": (
+                str(config.retrain_agent_run_id) if getattr(config, "retrain_agent_run_id", None) else None
+            ),
+            "retrain_cool_until": (
+                config.retrain_cool_until.isoformat() if getattr(config, "retrain_cool_until", None) else None
+            ),
             "review_task_id": str(config.review_task_id) if config.review_task_id else None,
             "swapped_model_version_id": (
                 str(config.swapped_model_version_id) if config.swapped_model_version_id else None

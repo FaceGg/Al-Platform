@@ -231,6 +231,76 @@ def notify_project_admins(
 # ---------------------------------------------------------------- retrain
 
 
+def build_retrain_frame(frames: list[pd.DataFrame], target_column: str) -> pd.DataFrame:
+    """Merge retrain source frames, auto-label reflow rows and strip leakage.
+
+    Shared by the engine retrain path (:func:`trigger_retrain_job`) and the
+    agent retrain mode (app.services.agent.loop_retrain) — the agent-side
+    lightweight trainer has no engine-side lazy labeling, so the merged frame
+    must be fully labeled before it is materialized.
+
+    自动标注：回流数据集没有人工标签列，但回流行自带 prediction 列
+    （推理结果）。目标列整列缺失时直接由推理结果生成；部分缺失时补齐。
+    """
+    frame = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+    if target_column not in frame.columns:
+        if "prediction" not in frame.columns:
+            raise ClosedLoopError(
+                "CLOSED_LOOP_TARGET_MISSING", f"目标列 {target_column} 不在重训数据集中")
+        frame[target_column] = frame["prediction"]
+    unlabeled = frame[target_column].isna() | (frame[target_column].astype(str).str.strip() == "")
+    if unlabeled.any():
+        if "prediction" in frame.columns:
+            filled = frame.loc[unlabeled, "prediction"]
+            if filled.notna().any():
+                frame.loc[unlabeled, target_column] = filled
+        if frame[target_column].isna().any() or (frame[target_column].astype(str).str.strip() == "").any():
+            raise ClosedLoopError(
+                "CLOSED_LOOP_TARGET_MISSING",
+                f"目标列 {target_column} 存在缺失值且无推理结果可自动补齐",
+            )
+    # 混合来源的标签可能是数字与字符串（"1" 与 1），统一为数值避免类别分裂。
+    coerced = pd.to_numeric(frame[target_column], errors="coerce")
+    if coerced.notna().all():
+        frame[target_column] = coerced
+    # 回流元数据列不能进特征（标签泄漏）：标注完成后从训练帧剔除。
+    frame = frame.drop(columns=["prediction", "confidence"], errors="ignore")
+    if len(frames) > 1:
+        # 多数据集列体系可能不同（特征工程后 vs 原始报告列）；取交集保行数，
+        # 否则并集列在来源缺之行全 NaN，drop_rows 策略会把所有行丢光。
+        common = set(frames[0].columns) - {"prediction", "confidence"}
+        for part in frames[1:]:
+            common &= set(part.columns) - {"prediction", "confidence"}
+        common.add(target_column)
+        keep = [column for column in frame.columns if column in common]
+        if target_column not in keep:
+            keep.append(target_column)
+        frame = frame[keep]
+    return frame
+
+
+def resolve_retrain_dataset_ids(config) -> list[str]:
+    """闭环重训数据集选择（引擎/agent 重训共用，顺序稳定）：
+
+    用户配置数据集 → 闭环收集的报错数据集（置最前）→ 按比例收集的正确
+    数据集（紧随报错数据）。全部去重；为空返回 []（调用方决定报错方式）。
+    """
+    dataset_ids = list(getattr(config, "retrain_dataset_artifact_ids", None) or [])
+    if not dataset_ids and config.retrain_dataset_artifact_id is not None:
+        dataset_ids = [config.retrain_dataset_artifact_id]
+    # 闭环收集的报错数据集默认参与重训（置于最前，去重）。
+    if config.error_artifact_id:
+        error_id = str(config.error_artifact_id)
+        dataset_ids = [error_id] + [did for did in dataset_ids if did != error_id]
+    # 按比例收集的正确数据集同样参与合并（紧随报错数据）。
+    if getattr(config, "correct_artifact_id", None):
+        correct_id = str(config.correct_artifact_id)
+        dataset_ids = [did for did in dataset_ids if did != correct_id]
+        insert_at = 1 if dataset_ids and dataset_ids[0] == str(config.error_artifact_id) else 0
+        dataset_ids.insert(insert_at, correct_id)
+    return dataset_ids
+
+
 def trigger_retrain_job(
     db, *, project_id, actor_id, experiment_name: str, job_name: str,
     dataset_artifact_id=None, dataset_artifact_ids=None, target_column: str,
@@ -298,42 +368,7 @@ def trigger_retrain_job(
     for source in datasets:
         with service.materialize(source.id, project_id, expected_type="dataset") as path:
             frames.append(pd.read_csv(path))
-    frame = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
-    # 自动标注：回流数据集没有人工标签列，但回流行自带 prediction 列
-    # （推理结果）。目标列整列缺失时直接由推理结果生成；部分缺失时补齐。
-    if target_column not in frame.columns:
-        if "prediction" not in frame.columns:
-            raise ClosedLoopError(
-                "CLOSED_LOOP_TARGET_MISSING", f"目标列 {target_column} 不在重训数据集中")
-        frame[target_column] = frame["prediction"]
-    unlabeled = frame[target_column].isna() | (frame[target_column].astype(str).str.strip() == "")
-    if unlabeled.any():
-        if "prediction" in frame.columns:
-            filled = frame.loc[unlabeled, "prediction"]
-            if filled.notna().any():
-                frame.loc[unlabeled, target_column] = filled
-        if frame[target_column].isna().any() or (frame[target_column].astype(str).str.strip() == "").any():
-            raise ClosedLoopError(
-                "CLOSED_LOOP_TARGET_MISSING",
-                f"目标列 {target_column} 存在缺失值且无推理结果可自动补齐",
-            )
-    # 混合来源的标签可能是数字与字符串（"1" 与 1），统一为数值避免类别分裂。
-    coerced = pd.to_numeric(frame[target_column], errors="coerce")
-    if coerced.notna().all():
-        frame[target_column] = coerced
-    # 回流元数据列不能进特征（标签泄漏）：标注完成后从训练帧剔除。
-    frame = frame.drop(columns=["prediction", "confidence"], errors="ignore")
-    if len(datasets) > 1:
-        # 多数据集列体系可能不同（特征工程后 vs 原始报告列）；取交集保行数，
-        # 否则并集列在来源缺之行全 NaN，drop_rows 策略会把所有行丢光。
-        common = set(frames[0].columns) - {"prediction", "confidence"}
-        for part in frames[1:]:
-            common &= set(part.columns) - {"prediction", "confidence"}
-        common.add(target_column)
-        keep = [column for column in frame.columns if column in common]
-        if target_column not in keep:
-            keep.append(target_column)
-        frame = frame[keep]
+    frame = build_retrain_frame(frames, target_column)
     if len(datasets) > 1:
         # Worker 训练读取 job.dataset_artifact_id 指向的单个数据集；多选时
         # 必须把合并+自动标注后的帧物化为新数据集，否则特征列与训练数据
@@ -442,7 +477,31 @@ def complete_retrain_swap(
     """Register the best candidate of a finished AutoML job, approve it and
     point the deployment at it. Returns the new ModelVersion, or None when
     the job has no registerable candidates or the candidate fails the bound
-    recipe's acceptance gates (spec v0.9 §12.3: 换模候选须过配方门禁)."""
+    recipe's acceptance gates (spec v0.9 §12.3: 换模候选须过配方门禁).
+
+    项目级换模锁：跨闭环（agent 重放多部署并行）同时到达换模段时，
+    model_version_id 指向 + revision 轮换是 last-writer-wins，乱序会把
+    部署停在旧版本且事件流失序；同项目换模串行化（无碍单闭环路径）。"""
+    deployment_id = _as_uuid(deployment_id) if deployment_id else None
+    actor_id = _as_uuid(actor_id)
+    project_id = None
+    if deployment_id is not None:
+        deployment_row = db.query(InferenceDeployment).filter(
+            InferenceDeployment.id == deployment_id,
+        ).first()
+        project_id = deployment_row.project_id if deployment_row is not None else None
+    lock_key = f"model-swap-{project_id or 'global'}"
+    with lock_for(lock_key):
+        return _complete_retrain_swap_locked(
+            db, deployment_id=deployment_id, job=job, actor_id=actor_id,
+            model_name=model_name, recipe_id=recipe_id,
+        )
+
+
+def _complete_retrain_swap_locked(
+    db, *, deployment_id, job: TrainingJob, actor_id, model_name: str,
+    recipe_id=None,
+):
     deployment_id = _as_uuid(deployment_id) if deployment_id else None
     actor_id = _as_uuid(actor_id)
     registry = ModelRegistryService(artifact_service=build_artifact_service(db))

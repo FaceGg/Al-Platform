@@ -225,3 +225,49 @@ def _columns_from_digest(content: dict) -> dict:
     if isinstance(digest, dict):
         return digest
     return {}
+
+
+def build_fixation_content(run, memory: dict) -> dict:
+    """验收通过的 run → 配方版本 content（固化/重放共用的唯一构造器）。
+
+    从 API 层（agent_extras.fixate_recipe）下沉：闭环 agent 重训模式需要
+    从配方版本重放 guidance 快照，构造器必须与服务侧共用，避免双处漂移。
+    guidance 全量快照 + source_run_id 是 agent 重训的输入合同；缺失时触发
+    端 fail-closed（DEMO_LOOP_AGENT_RECIPE_INVALID），不静默降级引擎模式。
+    """
+    rounds = memory.get("rounds", [])
+    final_script = ""
+    for record in reversed(rounds):
+        for attempt in reversed(record.get("s2_attempts", [])):
+            if attempt.get("script"):
+                final_script = attempt["script"]
+                break
+        if final_script:
+            break
+    gates = dict(((run.guidance_json or {}).get("evaluation") or {}).get(
+        "metric_gates", {}
+    ))
+    modeling = dict((run.guidance_json or {}).get("modeling") or {})
+    ensemble = dict(modeling.get("ensemble") or {})
+    # 算法白名单随配方固化：服务化后闭环重训按白名单缩小引擎搜索族
+    # （此前 guidance.modeling.algorithm_whitelist 无任何消费方，勾选形同虚设）
+    return {
+        "domain": memory.get("last_domain") or "",
+        "inputs": {"target_column": run.target_column},
+        "feature_script": final_script,
+        "automl_config": modeling.get("param_hints", {}),
+        "acceptance_gates": gates or {"recall_minority": 0.90},
+        # 向导第三步的集成选项随配方固化 → 服务化后闭环重训沿用（集成走到线上的最后一环）
+        "retrain_ensemble": (
+            {"enabled": True, "top_k": int(ensemble.get("top_k") or 3)}
+            if ensemble.get("enabled")
+            else {"enabled": False}
+        ),
+        "retrain_algorithm_ids": [str(x) for x in modeling.get("algorithm_whitelist") or []],
+        # agent 重训重放输入：完整 UserGuidance 快照 + 源 run（LLM 档案/预算沿用）
+        "guidance": dict(run.guidance_json or {}),
+        "source_run_id": str(run.id),
+        "baseline_metrics": (run.result_json or {}).get("metrics", {}),
+        "analysis_digest": "run %s" % str(run.id)[:8],
+        "optimization_report": (run.result_json or {}).get("optimization_report"),
+    }

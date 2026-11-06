@@ -42,6 +42,8 @@ class DemoLoopConfigUpdate(BaseModel):
     retrain_ensemble_enabled: bool | None = None
     retrain_ensemble_top_k: int | None = Field(default=None, ge=2, le=5)
     retrain_algorithm_ids: list[str] | None = None
+    retrain_mode: str | None = Field(default=None, max_length=16)
+    retrain_agent_recipe_id: str | None = Field(default=None, max_length=64)
     collect_correct_enabled: bool | None = None
     correct_sample_ratio: str | None = None
     field_descriptions: dict | None = None
@@ -131,6 +133,19 @@ def _config_view(db: Session, config: DemoLoopConfig) -> dict:
         "retrain_ensemble_enabled": bool(getattr(config, "retrain_ensemble_enabled", False)),
         "retrain_ensemble_top_k": int(getattr(config, "retrain_ensemble_top_k", 3) or 3),
         "retrain_algorithm_ids": [str(item) for item in (getattr(config, "retrain_algorithm_ids", None) or [])],
+        "retrain_mode": (getattr(config, "retrain_mode", None) or "engine"),
+        "retrain_agent_recipe_id": (
+            str(config.retrain_agent_recipe_id) if getattr(config, "retrain_agent_recipe_id", None) else None
+        ),
+        "retrain_agent_run_id": (
+            str(config.retrain_agent_run_id) if getattr(config, "retrain_agent_run_id", None) else None
+        ),
+        "retrain_cool_until": (
+            config.retrain_cool_until.isoformat() if getattr(config, "retrain_cool_until", None) else None
+        ),
+        "retrain_trained_baseline_count": int(
+            getattr(config, "retrain_trained_baseline_count", 0) or 0
+        ),
         "collect_correct_enabled": bool(config.collect_correct_enabled),
         "correct_sample_ratio": config.correct_sample_ratio or "1:1",
         "field_descriptions": config.field_descriptions or {},

@@ -78,6 +78,16 @@ function buildRatioOptions(zh: boolean): Array<{ value: string; label: string }>
   ];
 }
 
+/** 项目内固化配方（agent 重训模式绑定选择用）。 */
+async function fetchAgentRecipes(projectId: string): Promise<Array<{ id: string; name: string; has_guidance: boolean; current_version: number }>> {
+  try {
+    const data = await apiGet(`/agent/recipes?project_id=${projectId}`);
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function LoopConfigModal({ editor, projectId, deployments, datasets, annotators, fieldDescTasks, onCancel, onSaved }: Props) {
   const { t, lang } = useI18n();
   const zh = (lang ?? "zh") === "zh";
@@ -85,8 +95,25 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
   const [form] = Form.useForm();
   const [feOperatorOptions, setFeOperatorOptions] = useState<Array<{ value: string; label: string }>>([]);
   const [feOperatorsLoading, setFeOperatorsLoading] = useState(true);
+  const [recipeOptions, setRecipeOptions] = useState<Array<{ value: string; label: string }>>([]);
   const scriptTemplateRef = useRef("");
   const featureMode = Form.useWatch("feature_engineering_mode", form);
+  const retrainMode = Form.useWatch("retrain_mode", form);
+
+  // 打开弹窗时：拉取项目内固化配方（agent 重训模式绑定选择用）
+  useEffect(() => {
+    if (!editor) return;
+    let cancelled = false;
+    fetchAgentRecipes(projectId).then((recipes) => {
+      if (cancelled) return;
+      setRecipeOptions(recipes.map((recipe) => ({
+        value: recipe.id,
+        label: `${recipe.name}（v${recipe.current_version}${recipe.has_guidance ? "" : "，" + (tr.recipe_no_guidance || "无重放快照") }）`,
+      })));
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, projectId]);
 
   // 打开弹窗时：列出算子面板「特征工程」类别下的全部算子（operator 模式选项）
   useEffect(() => {
@@ -145,6 +172,8 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
         retrain_target_column: defaultTarget, retrain_max_trials: cfg.retrain_max_trials,
         retrain_ensemble_enabled: !!cfg.retrain_ensemble_enabled,
         retrain_ensemble_top_k: cfg.retrain_ensemble_top_k || 3,
+        retrain_mode: cfg.retrain_mode || "engine",
+        retrain_agent_recipe_id: cfg.retrain_agent_recipe_id || undefined,
         collect_correct_enabled: cfg.collect_correct_enabled,
         correct_sample_ratio: cfg.correct_sample_ratio || "1:1",
         field_descriptions: cfg.field_descriptions || {},
@@ -157,6 +186,7 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
         alert_threshold_rows: 1, require_review: false, review_annotator_ids: [],
         retrain_enabled: false, retrain_threshold_rows: 20, retrain_dataset_artifact_ids: [],
         retrain_max_trials: 10, retrain_ensemble_enabled: false, retrain_ensemble_top_k: 3,
+        retrain_mode: "engine", retrain_agent_recipe_id: undefined,
         ...(editor.defaults || {}),
         collect_correct_enabled: false, correct_sample_ratio: "1:1", field_descriptions: {},
       });
@@ -392,6 +422,39 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
         <Form.Item noStyle shouldUpdate={(prev, next) => prev.retrain_enabled !== next.retrain_enabled}>
           {({ getFieldValue }) => getFieldValue("retrain_enabled") ? (
             <>
+              <Form.Item
+                name="retrain_mode"
+                label={tr.retrain_mode || "重训模式"}
+                initialValue="engine"
+                tooltip={tr.retrain_mode_tooltip || "引擎：平台 AutoML 直接重训换模（快）；智能体：复用固化配方重放完整智能体流程（分析/特征/建模/验收）后再换模（更稳，消耗 LLM）"}
+              >
+                <Select
+                  aria-label={tr.retrain_mode_aria || "重训模式"}
+                  options={[
+                    { value: "engine", label: tr.retrain_mode_engine || "引擎快速重训（AutoML）" },
+                    { value: "agent", label: tr.retrain_mode_agent || "智能体全流程重训（重放配方）" },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item noStyle shouldUpdate={(prev, cur) => prev.retrain_mode !== cur.retrain_mode}>
+                {({ getFieldValue }) => getFieldValue("retrain_mode") === "agent" ? (
+                  <>
+                    <Form.Item
+                      name="retrain_agent_recipe_id"
+                      label={tr.retrain_agent_recipe || "绑定的固化配方"}
+                      rules={[{ required: true, message: tr.retrain_agent_recipe_rule || "智能体模式必须绑定验收通过的固化配方" }]}
+                    >
+                      <Select
+                        options={recipeOptions}
+                        placeholder={tr.retrain_agent_recipe_ph || "选择配方（须含重放快照）"}
+                      />
+                    </Form.Item>
+                    <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 8 }}>
+                      {tr.retrain_agent_hint || "触发后智能体在合并回流数据上重放全流程（分析→特征→建模→验收），验收通过后由引擎铸造部署模型并自动换模；同部署串行、含冷却与 24h 熔断（默认 3 次/日）。"}
+                    </Typography.Text>
+                  </>
+                ) : null}
+              </Form.Item>
               <Form.Item name="retrain_threshold_rows" label={tr.retrain_threshold || "重训触发行数"} initialValue={20}>
                 <InputNumber min={1} style={{ width: "100%" }} />
               </Form.Item>

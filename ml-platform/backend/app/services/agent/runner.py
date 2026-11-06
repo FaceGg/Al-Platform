@@ -265,6 +265,9 @@ class AgentRunner:
                         "memory": self.memory,
                         "result": result,
                         "target_column": self.run.target_column,
+                        # agent 重训重放输入合同：guidance 快照 + 源 run
+                        "guidance": dict(self.guidance or {}),
+                        "source_run_id": str(self.run.id),
                     },
                     change_note="auto-fixated on acceptance (auto_servitize)",
                     created_by=self.actor,

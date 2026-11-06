@@ -65,6 +65,22 @@ class DemoLoopConfig(Base):
     retrain_ensemble_top_k = Column(Integer, nullable=False, default=3)
     # 向导算法白名单（随配方固化/服务化带入）：非空时闭环重训按此缩小引擎搜索族
     retrain_algorithm_ids = Column(JSON, nullable=True, default=list)
+    # 重训模式：engine=平台引擎直接重训换模（默认，行为不变）；agent=复用固化
+    # 配方重放智能体全流程（S1→S4 验收），验收通过后仍由引擎铸造部署模型再换模。
+    retrain_mode = Column(String(16), nullable=False, default="engine")
+    # agent 模式绑定的固化配方（版本 content 须含 guidance 快照 + source_run_id，
+    # 缺失时触发 fail-closed 拒绝，不静默降级为引擎模式）。
+    retrain_agent_recipe_id = Column(UUID(as_uuid=True), nullable=True)
+    # agent 模式当前重放轮的 AgentRun（对应引擎路径 retrain_job_id 的角色）。
+    retrain_agent_run_id = Column(UUID(as_uuid=True), nullable=True)
+    # 当前 agent 重放轮启动时刻（轮询超时判定基点）。
+    retrain_agent_started_at = Column(DateTime, nullable=True)
+    # 轮次终态后的冷却期（agent 模式）：到期前不触发新一轮，防突发回流连环重训。
+    retrain_cool_until = Column(DateTime, nullable=True)
+    # 已部署模型消费过的报错基线：触发判据为 error_count - baseline >= threshold
+    # （增量/边沿触发）。仅在换模成功时推进——失败/门禁否决不推进，弱模型仍在
+    # 服务，回流信号不作废；熔断与冷却兜底防死循环。
+    retrain_trained_baseline_count = Column(Integer, nullable=False, default=0)
     # Artifact that accumulates the error rows (kept without FK: it is created lazily).
     error_artifact_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     # 按比例同步收集的正确预测行（独立数据集，不与报错数据混写）

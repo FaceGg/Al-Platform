@@ -67,6 +67,10 @@ const EVENT_COLORS: Record<string, string> = {
   alert_triggered: "orange", review_task_created: "orange",
   retrain_triggered: "purple", retrain_running: "purple",
   retrain_completed: "purple", retrain_failed: "purple",
+  retrain_agent_triggered: "geekblue", retrain_agent_accepted: "green",
+  retrain_agent_rejected: "red", retrain_agent_failed: "red",
+  retrain_agent_timeout: "red", retrain_agent_circuit_break: "red",
+  retrain_casting_started: "purple", retrain_reservitize_manual: "gold",
   model_swapped: "gold", swap_failed: "red", loop_reset: "blue",
 };
 const EVENT_LABELS: Record<string, string> = {
@@ -74,6 +78,10 @@ const EVENT_LABELS: Record<string, string> = {
   alert_triggered: "触发管理员告警", review_task_created: "创建人工审核任务",
   retrain_triggered: "自动建模已触发", retrain_running: "自动建模执行中",
   retrain_completed: "自动建模完成", retrain_failed: "自动建模失败",
+  retrain_agent_triggered: "智能体重训已触发", retrain_agent_accepted: "智能体重放验收通过",
+  retrain_agent_rejected: "智能体重放未通过验收", retrain_agent_failed: "智能体重放失败",
+  retrain_agent_timeout: "智能体重放超时", retrain_agent_circuit_break: "智能体重训熔断",
+  retrain_casting_started: "部署模型铸造中", retrain_reservitize_manual: "建议重新服务化",
   model_swapped: "推理模型已替换", swap_failed: "模型替换失败", loop_reset: "闭环重置",
 };
 
@@ -379,10 +387,11 @@ export default function DemoLoopDetailPage() {
                   <Statistic title={tr.stat_retrain || "自动建模"} valueRender={() => (
                     <Tag color={status?.retrain_status === "completed" ? "green"
                       : status?.retrain_status === "failed" ? "red"
-                        : status?.retrain_status === "running" || status?.retrain_status === "queued" ? "blue" : "default"}
+                        : status?.retrain_status === "agent_running" ? "geekblue"
+                          : status?.retrain_status === "running" || status?.retrain_status === "queued" ? "blue" : "default"}
                       style={{ marginTop: 8 }}>
                       {status?.retrain_status === "completed" ? (tr.retrain_done || "已完成") : status?.retrain_status === "failed" ? (tr.retrain_failed || "失败")
-                        : status?.retrain_status === "running" ? (tr.retrain_running || "执行中") : status?.retrain_status === "queued" ? (tr.retrain_queued || "已排队") : (tr.retrain_idle || "空闲")}
+                        : status?.retrain_status === "agent_running" ? (tr.retrain_agent_running || "智能体重训中") : status?.retrain_status === "running" ? (tr.retrain_running || "执行中") : status?.retrain_status === "queued" ? (tr.retrain_queued || "已排队") : (tr.retrain_idle || "空闲")}
                     </Tag>
                   )} />
                 </Col>
@@ -393,8 +402,9 @@ export default function DemoLoopDetailPage() {
                   showInfo={false} size="small" strokeColor="#fa8c16" />
                 {retrainThreshold > 0 && (
                   <>
-                    <Text type="secondary" style={{ fontSize: 12 }}>{(tr.retrain_progress || "重训进度（{e}/{t}）").replace("{e}", String(errorCount)).replace("{t}", String(retrainThreshold))}</Text>
-                    <Progress percent={Math.min(100, errorCount / retrainThreshold * 100)}
+                    {/* 增量触发：进度按「未消费报错」（error_count - 已部署模型消费基线）计 */}
+                    <Text type="secondary" style={{ fontSize: 12 }}>{(tr.retrain_progress || "重训进度（{e}/{t}）").replace("{e}", String(Math.max(0, errorCount - (status?.retrain_trained_baseline_count ?? 0)))).replace("{t}", String(retrainThreshold))}</Text>
+                    <Progress percent={Math.min(100, Math.max(0, errorCount - (status?.retrain_trained_baseline_count ?? 0)) / retrainThreshold * 100)}
                       showInfo={false} size="small" strokeColor="#722ed1" />
                   </>
                 )}
