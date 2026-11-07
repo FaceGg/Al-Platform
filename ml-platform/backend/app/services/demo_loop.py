@@ -355,6 +355,13 @@ class DemoLoopService:
             config.retrain_algorithm_ids = [
                 str(item).strip()[:64] for item in (ids or []) if str(item).strip()
             ][:64]
+        if "retrain_input_columns" in data:
+            columns = data.get("retrain_input_columns")
+            if columns is not None and not isinstance(columns, list):
+                raise DemoLoopError("DEMO_LOOP_CONFIG_INVALID", "retrain_input_columns 必须是字符串列表")
+            config.retrain_input_columns = [
+                str(item).strip()[:128] for item in (columns or []) if str(item).strip()
+            ][:512]
         if "retrain_mode" in data:
             mode = str(data.get("retrain_mode") or "engine").strip() or "engine"
             if mode not in {"engine", "agent"}:
@@ -1235,6 +1242,8 @@ class DemoLoopService:
             ),
             # 向导算法白名单（空 = 全族）
             algorithm_ids=list(getattr(config, "retrain_algorithm_ids", None) or []) or None,
+            # 重训特征列白名单（稀疏宽表必配，空 = 全 numeric）
+            input_columns=list(getattr(config, "retrain_input_columns", None) or []) or None,
         )
         config.retrain_job_id = job.id
         config.retrain_status = "queued"
@@ -1487,6 +1496,7 @@ class DemoLoopService:
             "retrain_status": config.retrain_status,
             "retrain_job_id": str(config.retrain_job_id) if config.retrain_job_id else None,
             "retrain_mode": (getattr(config, "retrain_mode", None) or "engine"),
+            "retrain_input_columns": [str(item) for item in (getattr(config, "retrain_input_columns", None) or [])],
             "retrain_trained_baseline_count": int(
                 getattr(config, "retrain_trained_baseline_count", 0) or 0
             ),

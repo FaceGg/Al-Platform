@@ -45,6 +45,8 @@ export interface DemoLoopConfig {
   retrain_agent_run_id?: string | null;
   retrain_cool_until?: string | null;
   retrain_trained_baseline_count?: number;
+  /** 重训特征列白名单（稀疏宽表必配，空=全部数值列） */
+  retrain_input_columns?: string[];
   collect_correct_enabled: boolean;
   correct_sample_ratio: string | null;
   field_descriptions: Record<string, string> | null;
@@ -85,6 +87,7 @@ export interface DemoLoopStatus {
   retrain_trained_baseline_count?: number;
   retrain_mode?: "engine" | "agent";
   retrain_cool_until?: string | null;
+  retrain_input_columns?: string[];
 }
 
 export interface DemoLoopPredictResult {

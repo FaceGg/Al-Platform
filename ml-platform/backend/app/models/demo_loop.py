@@ -81,6 +81,10 @@ class DemoLoopConfig(Base):
     # （增量/边沿触发）。仅在换模成功时推进——失败/门禁否决不推进，弱模型仍在
     # 服务，回流信号不作废；熔断与冷却兜底防死循环。
     retrain_trained_baseline_count = Column(Integer, nullable=False, default=0)
+    # 闭环重训特征列白名单（可选，空=全部数值列，历史行为不变）。稀疏宽表
+    # 必配：引擎 dropna(subset=[目标列, *特征列]) 对任一行缺任一列即整行剔除，
+    # 全 numeric 列在大空缺宽表上会 0 行幸存（train_v2_full E2E 实证）。
+    retrain_input_columns = Column(JSON, nullable=True, default=list)
     # Artifact that accumulates the error rows (kept without FK: it is created lazily).
     error_artifact_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     # 按比例同步收集的正确预测行（独立数据集，不与报错数据混写）

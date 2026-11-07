@@ -323,6 +323,33 @@ class AgentLoopRetrain(unittest.TestCase):
         finally:
             db.close()
 
+    def test_01b_engine_trigger_forwards_input_columns(self):
+        """重训特征列白名单转发：配置列随 job.params.input_columns 下发（稀疏宽表）。"""
+        from app.models.training import TrainingJob
+
+        db = self._db()
+        try:
+            dataset = self._error_dataset(db, [("f1,f2,label"), ("1.0,2.0,0")])
+            config = self._create_config(
+                db,
+                retrain_threshold_rows=1,
+                retrain_dataset_artifact_id=dataset.id,
+                retrain_input_columns=["f1", "f2"],
+            )
+            service = DemoLoopService(db)
+            stub = _StubDispatcher()
+            with patch("app.services.experiment_tracking.resolve_tracking_configuration",
+                       return_value=("sqlite:///./temp_test/ut_mlflow_tracking.db",
+                                     "file:./temp_test/ut_mlflow_artifacts")), \
+                    patch("app.services.closed_loop_actions.automl_dispatcher", return_value=stub):
+                service.predict(config, {"f1": 5.4, "f2": -1.2, "label": ""}, self.user_id)
+            db.refresh(config)
+            job = db.get(TrainingJob, config.retrain_job_id)
+            self.assertIsNotNone(job)
+            self.assertEqual(job.params["input_columns"], ["f1", "f2"])
+        finally:
+            db.close()
+
     def test_02_agent_trigger_requires_bound_recipe(self):
         """agent 模式未绑定配方：fail-closed 事件，不创建重放。"""
         db = self._db()

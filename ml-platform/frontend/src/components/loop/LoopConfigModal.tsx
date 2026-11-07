@@ -172,6 +172,7 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
         retrain_target_column: defaultTarget, retrain_max_trials: cfg.retrain_max_trials,
         retrain_ensemble_enabled: !!cfg.retrain_ensemble_enabled,
         retrain_ensemble_top_k: cfg.retrain_ensemble_top_k || 3,
+        retrain_input_columns: cfg.retrain_input_columns || [],
         retrain_mode: cfg.retrain_mode || "engine",
         retrain_agent_recipe_id: cfg.retrain_agent_recipe_id || undefined,
         collect_correct_enabled: cfg.collect_correct_enabled,
@@ -186,6 +187,7 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
         alert_threshold_rows: 1, require_review: false, review_annotator_ids: [],
         retrain_enabled: false, retrain_threshold_rows: 20, retrain_dataset_artifact_ids: [],
         retrain_max_trials: 10, retrain_ensemble_enabled: false, retrain_ensemble_top_k: 3,
+        retrain_input_columns: [],
         retrain_mode: "engine", retrain_agent_recipe_id: undefined,
         ...(editor.defaults || {}),
         collect_correct_enabled: false, correct_sample_ratio: "1:1", field_descriptions: {},
@@ -478,6 +480,17 @@ export default function LoopConfigModal({ editor, projectId, deployments, datase
               </Form.Item>
               <Form.Item name="retrain_target_column" label={tr.retrain_target || "目标列"} rules={[{ required: true }]}>
                 <Input />
+              </Form.Item>
+              <Form.Item
+                name="retrain_input_columns"
+                label={tr.retrain_input_columns || "重训特征列（可选，默认全部数值列）"}
+                tooltip={tr.retrain_input_columns_tooltip || "稀疏宽表必配：缺列的行会被整行剔除，全数值列在大空缺宽表上会 0 行幸存；填写后重训只用选定特征列"}
+              >
+                <Select
+                  mode="tags"
+                  open={false}
+                  placeholder={tr.retrain_input_columns_hint || "输入特征列名后回车（留空=全部数值列）"}
+                />
               </Form.Item>
               <Form.Item name="retrain_max_trials" label={tr.retrain_trials || "搜索试验次数"} initialValue={10}>
                 <InputNumber min={5} max={200} style={{ width: "100%" }} />

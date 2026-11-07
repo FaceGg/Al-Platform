@@ -307,6 +307,7 @@ def trigger_retrain_job(
     max_trials: int = 10,
     ensemble: dict | None = None,
     algorithm_ids: list[str] | None = None,
+    input_columns: list[str] | None = None,
 ) -> TrainingJob:
     """Create and dispatch one AutoML job on the given dataset(s)/target.
 
@@ -315,6 +316,8 @@ def trigger_retrain_job(
     are auto-labeled with that inference result. ``ensemble``（{"enabled",
     "top_k"}）转发给引擎终选层：部署换模模型本身可为加权投票集成体。
     ``algorithm_ids``（向导算法白名单）缩小引擎搜索族；空 = 全族。
+    ``input_columns``（重训特征列白名单）：稀疏宽表必配——引擎 dropna 只对
+    选定列进行，缺列整行剔除的全 numeric 默认会 0 行幸存；空 = 全部数值列。
     """
     project_id = _as_uuid(project_id)
     actor_id = _as_uuid(actor_id)
@@ -413,7 +416,12 @@ def trigger_retrain_job(
         params={
             "target_column": target_column,
             "target_columns": [target_column],
-            "input_columns": list(feature_columns),
+            # 重训特征列白名单：转发给引擎（resolve_automl_feature_columns 的
+            # requested_input_columns），dropna/特征集均按选定列；空 = 全 numeric。
+            "input_columns": (
+                [str(item).strip() for item in (input_columns or []) if str(item).strip()]
+                or list(feature_columns)
+            ),
             "task": task_type,
             "search_contract": "optuna_v1",
             "algorithm_ids": [family.id for family in families],

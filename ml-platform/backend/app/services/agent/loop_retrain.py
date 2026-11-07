@@ -390,6 +390,7 @@ def poll_agent_retrain(db: Session, config: DemoLoopConfig, actor_id) -> bool:
             max_trials=config.retrain_max_trials,
             ensemble=ensemble,
             algorithm_ids=algorithm_ids,
+            input_columns=list(getattr(config, "retrain_input_columns", None) or []) or None,
         )
         config.retrain_job_id = job.id
         config.retrain_status = "queued"

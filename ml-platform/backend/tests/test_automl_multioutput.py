@@ -257,3 +257,30 @@ def test_registry_result_accepts_candidate_artifact_identity():
     job = SimpleNamespace(status="completed", metrics={"algorithm_results":[{"algorithm_id":"rf", "status":"completed", "model_artifact_id":"abc"}]})
     result = ModelRegistryService._automl_result(job, "rf")
     assert result["model_artifact_id"] == "abc"
+
+
+def test_input_columns_scoping_avoids_sparse_wide_table_zero_row_dropna():
+    """稀疏宽表：全 numeric 列 dropna 0 行幸存，按白名单选列后行数保全。
+
+    E2E 实证：train_v2_full.csv 87 列中任一行缺任一 numeric 列即整行剔除
+    （2180 行 0 幸存）；闭环 retrain_input_columns 选定稠密列后引擎只对
+    选定列 dropna（trigger_retrain_job 转发 params.input_columns）。"""
+    from app.services.automl_execution import resolve_automl_feature_columns
+
+    frame = pd.DataFrame({
+        "dense_a": [1.0, 2.0, 3.0, 4.0],
+        "dense_b": [0.5, 0.6, 0.7, 0.8],
+        "sparse_c": [1.0, None, None, None],
+        "label": [0, 1, 0, 1],
+    })
+    # 默认全 numeric：sparse_c 进特征集，dropna 后 4 行只剩 1 行。
+    default_columns = resolve_automl_feature_columns(frame, "label", None)
+    assert "sparse_c" in default_columns
+    survivors_default = frame.dropna(subset=["label", *default_columns])
+    assert len(survivors_default) == 1
+
+    # 白名单：只选稠密列 → 特征集不含 sparse_c，dropna 全行幸存。
+    scoped = resolve_automl_feature_columns(frame, "label", ["dense_a", "dense_b"])
+    assert scoped == ["dense_a", "dense_b"]
+    survivors_scoped = frame.dropna(subset=["label", *scoped])
+    assert len(survivors_scoped) == 4
