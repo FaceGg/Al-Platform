@@ -544,7 +544,7 @@ export default function AIChatPage() {
                       const fmtTokens = fmtContextTokens;
                       const inputTypeLabels = INPUT_TYPE_LABELS;
                       return (
-                        <div style={{ position: "relative", width: 330 }}>
+                        <div style={{ position: "relative", width: 290 }}>
                           {/* 供应商飞出面板：悬停/点击供应商头时出现在主面板左侧（ZCode 式） */}
                           {providerFlyout ? (
                             <div
