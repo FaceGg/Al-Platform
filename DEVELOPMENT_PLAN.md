@@ -511,3 +511,11 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 
 **验证**：82 绿（automl+闭环回归）+ 前端 tsc/vitest 4 绿；**真实 E2E 对照实证**：同一稀疏原表 train_v2_full.csv（87 列），无列选择时 `AUTOML_FAILED ... 0 行幸存`，配置 15 列白名单后 job completed → **model_swapped → baseline 12**——前后对照闭环通过。**坑（补录）：backend 容器启动只校验 schema 不自动升级（DATABASE_SCHEMA_OUTDATED fail-closed），迁移需 `docker compose run --rm backend alembic upgrade head`；compose 有 migrate 服务但本次 exit 255 失败原因未查**。另：引擎 job 由 worker 执行，改 automl_execution/automl_search 必须同批 `build worker`（上批已记）。
 fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失败快速失败），记录操作序列供复现。
+
+## 2026-11-07 遗留清理批次：P2-3 target_semantics 生产方 + recall 展示 + Mimosa 深扫复核
+
+**①target_semantics 生产方（auto_servitize 全自动起草打通）**：`build_fixation_content(target_values=)` 存目标列取值为 target_semantics（{label: ""}，≤20 标签）——此前全系统无 target_semantics 生产者，auto_servitize 三资产起草必然「cannot derive error classes」降级；runner 固化时从 dataset_frame 目标列取值传入，derive_error_classes 字典序最小标签兜底 + ambiguous 全量（发布批准时逐标签人工核对，把关不变）。单测覆盖（含 derive 兜底语义断言：ambiguous 保持全量）。真实全链 E2E 受环境阻塞（deepseek-chat 档案被并行会话 llm 批次清理、v4-pro S1 长生成再被掐 AGENT_S1_LLM_FAILED，短请求连通正常）——推导/起草代码路径为纯函数+既有已测 servitize 消费路径，单测覆盖；待 LLM 出口恢复后补真实 E2E（提交 run auto_servitize=true→accepted→三资产 draft 自动生成）。
+
+**②TrialSummary recall_minority 读回 + 前端展示**：TrialSummary dataclass + `_trial_summary` 读 trial user_attrs（P2-1 已留痕）；AutoMLTaskPage 候选结果表加「少数类召回」列（分类任务显示、多类/回归隐藏，键 recall_minority，与配方门禁/轻量口径同键），tsc 全绿。
+
+**③Mimosa 深扫复核（scan-2026-11-07T07-16-10 seal fe9274cf…，201 findings，deep）**：201 含 temp_test/head_build* 构建副本膨胀；真仓唯一源 HIGH 4 类复核全部对应既有处置结论——python_script_runtime 的 exec 为 python_script 算子设计内功能（沙箱+AST 违规扫描 fail-closed，11-03 已归档同族）；run_performance.sh:79 为运行时凭据读取（非硬编码）、install-ubuntu.sh:44-46 为 openssl rand 运行时生成（均误报）；vector_store 的 pickle.load 为服务端自写文件纵深防线（结构白名单在位，11-03 验收结论）；ml_operators 兜底 pickle 为平台密封工件受信边界（模型端口密封信封，11-04 闭环）。MEDIUM joblib 族同密封防线。按 11-03 惯例归档记录，无新增真缺口；pickle→安全格式迁移留独立批次。
