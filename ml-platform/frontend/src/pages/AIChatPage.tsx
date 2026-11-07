@@ -10,6 +10,7 @@ import PageHeading from "../components/PageHeading";
 import ChatToolsPanel from "../components/ChatToolsPanel";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
+import { effectiveModelConfig, fmtContextTokens, INPUT_TYPE_LABELS } from "../utils/llmModelConfig";
 
 const { Text } = Typography;
 
@@ -70,8 +71,6 @@ export default function AIChatPage() {
   const [profiles, setProfiles] = useState<any[]>([]);
   const [profileId, setProfileId] = useState(() => localStorage.getItem("chat.profileId") || "");
   const [thinkingLevel, setThinkingLevel] = useState<string>(() => localStorage.getItem("chat.thinkingLevel") || "off");
-  // 弹层视图：models=模型列表 / providers=供应商切换列表（点供应商头切换）
-  const [chatView, setChatView] = useState<"models" | "providers">("models");
   const [contextWindow, setContextWindow] = useState<number>(() => Number(localStorage.getItem("chat.contextWindow") || "8"));
   // 所选模型的 ZCode 风格配置（上下文窗口/推理等级/输入类型，来自「编辑模型配置」弹窗）
   const currentProfile = profiles.find((p) => p.id === profileId) ?? profiles.find((p) => p.is_default) ?? null;
@@ -503,11 +502,29 @@ export default function AIChatPage() {
                     trigger="click"
                     placement="topRight"
                     content={(() => {
-                      const current = currentProfile;
-                      // 思考强度读所选模型的 reasoning_levels 配置（未配置用默认档位）
+                      // 供应商分组（provider_group 优先，无组按档案名兜底）；
+                      // 组名取组内最短档案名（克隆体名带 ·model_id 后缀，主档案最短）
+                      const providerGroups: Array<{ key: string; label: string; items: any[] }> = [];
+                      for (const p of profiles) {
+                        const key = p.provider_group || `n:${p.name}`;
+                        let bucket = providerGroups.find((g) => g.key === key);
+                        if (!bucket) {
+                          bucket = { key, label: p.name, items: [] };
+                          providerGroups.push(bucket);
+                        }
+                        if (p.name && p.name.length < bucket.label.length) bucket.label = p.name;
+                        bucket.items.push(p);
+                      }
+                      const activeProfile = profiles.find((p) => p.id === profileId) ?? profiles.find((p) => p.is_default) ?? null;
+                      const activeKey = activeProfile ? (activeProfile.provider_group || `n:${activeProfile.name}`) : providerGroups[0]?.key;
+                      const activeGroup = providerGroups.find((g) => g.key === activeKey) ?? providerGroups[0] ?? null;
+                      // 模型列表只显示所选供应商下「开启」的模型（ZCode 语义）
+                      const enabledModels = (activeGroup?.items ?? []).filter((p) => p.enabled !== false);
+                      const modelCfg = effectiveModelConfig(activeProfile ?? undefined);
+                      // 思考强度读所选供应商默认模型的 reasoning_levels 配置（未配置用默认档位）
                       const levels = [
-                        ...(modelReasoningLevels
-                          ? modelReasoningLevels.map((level) => ({ value: level, label: level }))
+                        ...(Array.isArray(modelCfg.reasoning_levels) && modelCfg.reasoning_levels.length
+                          ? (modelCfg.reasoning_levels as string[]).map((level) => ({ value: level, label: level }))
                           : [
                               { value: "off", label: zh ? "关闭" : "Off" },
                               { value: "low", label: zh ? "低" : "Low" },
@@ -520,108 +537,96 @@ export default function AIChatPage() {
                         ? levels.findIndex(l => l.value === thinkingLevel)
                         : 0;
                       const ti = Math.max(0, fallbackIndex);
-                      // 模型列表按供应商（档案名）分组显示
-                      const providerGroups: Array<{ name: string; items: typeof profiles }> = [];
-                      for (const p of profiles) {
-                        const key = p.name || "AI";
-                        const bucket = providerGroups.find((g) => g.name === key);
-                        if (bucket) bucket.items.push(p);
-                        else providerGroups.push({ name: key, items: [p] });
-                      }
-                      const fmtTokens = (value: number | null) => {
-                        if (!value) return null;
-                        return value >= 1_000_000 ? `${value / 1_000_000}M` : value >= 1000 ? `${Math.round(value / 1000)}K` : String(value);
-                      };
-                      const modelContext = fmtTokens(modelContextWindow);
-                      // 供应商切换视图：点供应商头进入供应商列表，选中后回到模型列表
-                      const currentProviderName = current?.name ?? providerGroups[0]?.name ?? "";
-                      const shownItems = providerGroups.find((g) => g.name === currentProviderName)?.items ?? profiles;
+                      const fmtTokens = fmtContextTokens;
+                      const inputTypeLabels = INPUT_TYPE_LABELS;
                       return (
-                        <div style={{ width: 260 }}>
-                          {/* 供应商头：点击切换已配置的供应商 */}
-                          <div
-                            onClick={() => setChatView((v) => (v === "providers" ? "models" : "providers"))}
-                            style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 4px 10px", cursor: "pointer", borderRadius: 8 }}
-                            title={zh ? "点击切换供应商" : "Switch provider"}
-                          >
-                            <span aria-hidden="true" style={{ background: "#3859FF", borderRadius: 7, width: 26, height: 26, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 12 }}>
-                              {(currentProviderName || "AI").slice(0, 1)}
-                            </span>
-                            <b style={{ fontSize: 13.5, color: "var(--v2-txt)" }}>{currentProviderName ?? (zh ? "默认档案" : "Default profile")}</b>
-                            <span style={{ marginLeft: "auto", color: "var(--v2-dim)" }}>{chatView === "providers" ? "▴" : "▾"}</span>
+                        <div style={{ width: 420, display: "flex", gap: 10 }}>
+                          {/* 左栏：供应商列表（点击切换） */}
+                          <div style={{ width: 128, flex: "0 0 128px", borderRight: "1px solid var(--v2-line, rgba(36,52,79,.4))", paddingRight: 6 }}>
+                            {providerGroups.map((group) => {
+                              const active = activeGroup?.key === group.key;
+                              const groupOn = group.items.some((p) => p.enabled !== false);
+                              return (
+                                <div
+                                  key={group.key}
+                                  onClick={() => {
+                                    const target = group.items.find((x) => x.is_default) ?? group.items[0];
+                                    if (target) setProfileId(target.id);
+                                  }}
+                                  style={{
+                                    display: "flex", alignItems: "center", gap: 6, padding: "8px 8px",
+                                    borderRadius: 8, cursor: "pointer", fontSize: 13,
+                                    background: active ? "rgba(47,155,245,.10)" : "transparent",
+                                  }}
+                                >
+                                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{group.label}</span>
+                                  <span
+                                    aria-hidden="true"
+                                    title={groupOn ? (zh ? "已启用" : "enabled") : (zh ? "未启用" : "disabled")}
+                                    style={{ width: 7, height: 7, borderRadius: "50%", flex: "0 0 auto", background: groupOn ? "#52c41a" : "#d9d9d9" }}
+                                  />
+                                  {active ? <span style={{ color: "var(--v2-blue)" }}>✓</span> : null}
+                                </div>
+                              );
+                            })}
+                            <div style={{ borderTop: "1px solid var(--v2-line, rgba(36,52,79,.4))", marginTop: 8, paddingTop: 8 }}>
+                              <a href="/system/llm-gateway" style={{ fontSize: 12, color: "var(--v2-dim)" }}>{zh ? "管理模型" : "Manage models"}</a>
+                            </div>
                           </div>
-                          {chatView === "providers" ? (
-                            /* 供应商列表：点击切换到该供应商（默认/首个模型） */
-                            <div>
-                              <div style={{ fontSize: 12, color: "var(--v2-dim)", margin: "4px 0 2px" }}>{zh ? "切换供应商" : "Switch provider"}</div>
-                              {providerGroups.map((group) => {
-                                const active = group.name === currentProviderName;
-                                return (
-                                  <div
-                                    key={group.name}
-                                    onClick={() => {
-                                      const target = group.items.find((x) => x.is_default) ?? group.items[0];
-                                      if (target) setProfileId(target.id);
-                                      setChatView("models");
-                                    }}
-                                    style={{
-                                      display: "flex", alignItems: "center", gap: 8, padding: "8px 10px",
-                                      borderRadius: 8, cursor: "pointer", fontSize: 13,
-                                      background: active ? "rgba(47,155,245,.10)" : "transparent",
-                                    }}
-                                  >
-                                    <span style={{ flex: 1 }}>{group.name}</span>
-                                    <span style={{ color: "var(--v2-dim)", fontSize: 11 }}>{group.items.length} {zh ? "个模型" : "models"}</span>
-                                    {active ? <span style={{ color: "var(--v2-blue)" }}>✓</span> : null}
-                                  </div>
-                                );
-                              })}
+                          {/* 右栏：所选供应商的开启模型 + 思考强度 + 上下文容量 */}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12, color: "var(--v2-dim)", margin: "2px 0 4px" }}>
+                              {activeGroup?.label ? `${zh ? "供应商" : "Provider"}：${activeGroup.label}` : (zh ? "模型" : "Model")}
                             </div>
-                          ) : (
-                            <div>
-                              <div style={{ fontSize: 12, color: "var(--v2-dim)", margin: "4px 0 2px" }}>{zh ? "模型" : "Model"}</div>
-                              {/* 当前供应商下的模型列表，选中带勾 */}
-                              {shownItems.map((p) => {
-                                const selected = p.id === (profileId || profiles.find(x => x.is_default)?.id);
-                                return (
-                                  <div
-                                    key={p.id}
-                                    onClick={() => setProfileId(p.id)}
-                                    style={{
-                                      display: "flex", alignItems: "center", gap: 8, padding: "8px 10px",
-                                      borderRadius: 8, cursor: "pointer", fontSize: 13,
-                                      background: selected ? "rgba(47,155,245,.10)" : "transparent",
-                                    }}
-                                  >
-                                    <span style={{ flex: 1 }}>{p.model_id}</span>
-                                    {selected ? <span style={{ color: "var(--v2-blue)" }}>✓</span> : null}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                          {chatView === "models" ? (
-                          <div style={{ borderTop: "1px solid var(--v2-line, rgba(36,52,79,.4))", marginTop: 8, paddingTop: 10 }}>
-                            {modelContext ? (
-                              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, fontSize: 12, color: "var(--v2-sub)" }}>
-                                <span>{zh ? "上下文容量" : "Context"}</span>
-                                <b style={{ color: "var(--v2-txt)" }}>{modelContext} tok</b>
-                                <span style={{ marginLeft: "auto", color: "var(--v2-dim)", fontSize: 11 }}>{zh ? "来自模型配置" : "from model config"}</span>
+                            {enabledModels.map((p) => {
+                              const selected = p.id === (profileId || profiles.find((x) => x.is_default)?.id);
+                              const pCfg = effectiveModelConfig(p);
+                              const contextBadge = fmtTokens(pCfg.context_window ?? null);
+                              const extraTypes = (pCfg.input_types ?? []).filter((t) => t !== "text").map((t) => inputTypeLabels[t] ?? t);
+                              return (
+                                <div
+                                  key={p.id}
+                                  onClick={() => setProfileId(p.id)}
+                                  style={{
+                                    display: "flex", alignItems: "center", gap: 6, padding: "8px 10px",
+                                    borderRadius: 8, cursor: "pointer", fontSize: 13,
+                                    background: selected ? "rgba(47,155,245,.10)" : "transparent",
+                                  }}
+                                >
+                                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.model_id}</span>
+                                  {contextBadge ? <Tag style={{ marginRight: 0 }}>{contextBadge}</Tag> : null}
+                                  {extraTypes.map((label) => <Tag key={label} style={{ marginRight: 0 }}>{label}</Tag>)}
+                                  {p.is_default ? <Tag style={{ marginRight: 0 }}>{zh ? "默认" : "default"}</Tag> : null}
+                                  {selected ? <span style={{ color: "var(--v2-blue)" }}>✓</span> : null}
+                                </div>
+                              );
+                            })}
+                            {enabledModels.length === 0 ? (
+                              <div className="v2-empty" style={{ padding: 12 }}>
+                                {zh ? "该供应商暂无开启的模型" : "No enabled models"}
                               </div>
                             ) : null}
-                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
-                              <span style={{ fontSize: 12, color: "var(--v2-sub)" }}>{zh ? "思考强度" : "Thinking"}</span>
-                              <b style={{ fontSize: 12.5, color: "var(--v2-txt)" }}>{levels[ti]?.label}</b>
+                            <div style={{ borderTop: "1px solid var(--v2-line, rgba(36,52,79,.4))", marginTop: 8, paddingTop: 10 }}>
+                              {modelCfg.context_window ? (
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, fontSize: 12, color: "var(--v2-sub)" }}>
+                                  <span>{zh ? "上下文容量" : "Context"}</span>
+                                  <b style={{ color: "var(--v2-txt)" }}>{fmtTokens(modelCfg.context_window ?? null)} tok</b>
+                                  <span style={{ marginLeft: "auto", color: "var(--v2-dim)", fontSize: 11 }}>{zh ? "来自模型配置" : "from model config"}</span>
+                                </div>
+                              ) : null}
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+                                <span style={{ fontSize: 12, color: "var(--v2-sub)" }}>{zh ? "思考强度" : "Thinking"}</span>
+                                <b style={{ fontSize: 12.5, color: "var(--v2-txt)" }}>{levels[ti]?.label}</b>
+                              </div>
+                              <Slider
+                                min={0} max={Math.max(0, levels.length - 1)} step={1} value={ti}
+                                onChange={(v) => setThinkingLevel(levels[v]?.value ?? "off")}
+                                tooltip={{ open: false }}
+                                trackStyle={{ background: "linear-gradient(90deg, #1f9d55, #2f9bf5)", height: 10, borderRadius: 5 }}
+                                handleStyle={{ width: 18, height: 18, background: "#fff", borderColor: "#fff", boxShadow: "0 1px 4px rgba(0,0,0,.25)" }}
+                              />
                             </div>
-                            <Slider
-                              min={0} max={Math.max(0, levels.length - 1)} step={1} value={ti}
-                              onChange={(v) => setThinkingLevel(levels[v]?.value ?? "off")}
-                              tooltip={{ open: false }}
-                              trackStyle={{ background: "linear-gradient(90deg, #1f9d55, #2f9bf5)", height: 10, borderRadius: 5 }}
-                              handleStyle={{ width: 18, height: 18, background: "#fff", borderColor: "#fff", boxShadow: "0 1px 4px rgba(0,0,0,.25)" }}
-                            />
                           </div>
-                          ) : null}
                         </div>
                       );
                     })()}

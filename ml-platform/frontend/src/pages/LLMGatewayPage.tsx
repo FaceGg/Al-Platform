@@ -15,6 +15,7 @@ import {
 } from '../api/llmProfiles'
 import { formatApiError } from '../api/client'
 import apiClient from '../api/client'
+import { effectiveModelConfig, fmtContextTokens } from '../utils/llmModelConfig'
 
 const PURPOSE_OPTIONS = ['chat', 'agent', 'embedding']
 
@@ -541,19 +542,20 @@ export default function LLMGatewayPage() {
 
   const openModelCfgEdit = (profile: LLMProfile) => {
     modelForm.resetFields()
-    const cfg = (profile.model_config_json ?? {}) as Record<string, unknown>
+    // 有效配置：未编辑过配置的模型回退推荐默认值（保存后落库）
+    const cfg = effectiveModelConfig(profile)
     modelForm.setFieldsValue({
       model_id: profile.model_id,
       context_window: cfg.context_window ?? undefined,
       max_output_tokens: cfg.max_output_tokens ?? undefined,
-      input_types: Array.isArray(cfg.input_types) && cfg.input_types.length ? cfg.input_types : ['text'],
-      capabilities: Array.isArray(cfg.capabilities) ? cfg.capabilities : [],
-      reasoning_levels: Array.isArray(cfg.reasoning_levels) ? cfg.reasoning_levels : [],
+      input_types: cfg.input_types?.length ? cfg.input_types : ['text'],
+      capabilities: cfg.capabilities ?? [],
+      reasoning_levels: cfg.reasoning_levels ?? [],
       reasoning_mapping: String(cfg.reasoning_mapping ?? ''),
       smart_config: cfg.smart_config !== false,
     })
     // 已配推理等级但映射为空：自动生成映射模板（不覆盖已保存的手写映射）
-    const savedLevels = Array.isArray(cfg.reasoning_levels) ? (cfg.reasoning_levels as string[]) : []
+    const savedLevels = cfg.reasoning_levels ?? []
     if (savedLevels.length && !String(cfg.reasoning_mapping ?? '').trim()) {
       modelForm.setFieldValue('reasoning_mapping', buildReasoningMapping(savedLevels))
     }
@@ -827,16 +829,12 @@ export default function LLMGatewayPage() {
                           }}
                         >
                           <span className="tt" style={{ fontSize: 13 }}>{profile.model_id}</span>
-                          {/* ZCode 式配置徽标：上下文容量 + 输入类型（视觉/视频/PDF） */}
+                          {/* ZCode 式配置徽标：上下文容量 + 输入类型（无配置回退推荐默认值） */}
                           {(() => {
-                            const cfg = (profile.model_config_json ?? {}) as Record<string, unknown>
-                            const contextValue = Number(cfg.context_window)
-                            const contextBadge = contextValue > 0
-                              ? (contextValue >= 1_000_000 ? `${contextValue / 1_000_000}M` : contextValue >= 1000 ? `${Math.round(contextValue / 1000)}K` : String(contextValue))
-                              : null
-                            const inputTypes = Array.isArray(cfg.input_types) ? (cfg.input_types as string[]) : []
+                            const cfg = effectiveModelConfig(profile)
+                            const contextBadge = fmtContextTokens(cfg.context_window ?? null)
                             const typeLabels: Record<string, string> = { image: zh ? '视觉' : 'vision', video: zh ? '视频' : 'video', pdf: 'PDF' }
-                            const extraTypes = inputTypes.filter((t) => t !== 'text').map((t) => typeLabels[t] ?? t)
+                            const extraTypes = (cfg.input_types ?? []).filter((t) => t !== 'text').map((t) => typeLabels[t] ?? t)
                             return (
                               <>
                                 {contextBadge ? <span className="v2-badge v2-bgray">{contextBadge}</span> : null}
