@@ -363,7 +363,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
             {Array.from(new Set(profiles.map((p) => p.name))).map((providerName) => (
               <optgroup key={providerName} label={providerName}>
                 {profiles.filter((p) => p.name === providerName).map((p) => (
-                  <option key={String(p.id)} value={String(p.id)}>{p.name} · {p.model_id}{p.is_default ? (zh ? "（默认）" : " (default)") : ""}</option>
+                  <option key={String(p.id)} value={String(p.id)}>{p.name}-{p.model_id}{p.is_default ? (zh ? "（默认）" : " (default)") : ""}</option>
                 ))}
               </optgroup>
             ))}

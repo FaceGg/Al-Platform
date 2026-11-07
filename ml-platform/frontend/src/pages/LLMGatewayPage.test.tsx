@@ -92,9 +92,9 @@ describe("LLMGatewayPage", () => {
         <LLMGatewayPage />
       </AntApp>
     );
-     screen.debug(undefined, 30000); expect((await within(screen.getByTestId("provider-detail")).findAllByText("glm-default")).length).toBeGreaterThan(0);
+    // 模型行只保留模型 ID + 配置徽标（档案名/格式/默认徽标已按要求去掉）
+    expect(await screen.findByText("glm-4.6")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("***abcd")).toBeInTheDocument();
-    expect(screen.getByText("默认")).toBeInTheDocument();
   });
 
   it("adds a provider from a template card and hints to fill the key", async () => {

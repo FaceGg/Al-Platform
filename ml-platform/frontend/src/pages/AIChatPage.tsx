@@ -70,6 +70,8 @@ export default function AIChatPage() {
   const [profiles, setProfiles] = useState<any[]>([]);
   const [profileId, setProfileId] = useState(() => localStorage.getItem("chat.profileId") || "");
   const [thinkingLevel, setThinkingLevel] = useState<string>(() => localStorage.getItem("chat.thinkingLevel") || "off");
+  // 弹层视图：models=模型列表 / providers=供应商切换列表（点供应商头切换）
+  const [chatView, setChatView] = useState<"models" | "providers">("models");
   const [contextWindow, setContextWindow] = useState<number>(() => Number(localStorage.getItem("chat.contextWindow") || "8"));
   // 所选模型的 ZCode 风格配置（上下文窗口/推理等级/输入类型，来自「编辑模型配置」弹窗）
   const currentProfile = profiles.find((p) => p.id === profileId) ?? profiles.find((p) => p.is_default) ?? null;
@@ -531,22 +533,55 @@ export default function AIChatPage() {
                         return value >= 1_000_000 ? `${value / 1_000_000}M` : value >= 1000 ? `${Math.round(value / 1000)}K` : String(value);
                       };
                       const modelContext = fmtTokens(modelContextWindow);
+                      // 供应商切换视图：点供应商头进入供应商列表，选中后回到模型列表
+                      const currentProviderName = current?.name ?? providerGroups[0]?.name ?? "";
+                      const shownItems = providerGroups.find((g) => g.name === currentProviderName)?.items ?? profiles;
                       return (
                         <div style={{ width: 260 }}>
-                          {/* 供应商/档案头 */}
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 4px 10px" }}>
+                          {/* 供应商头：点击切换已配置的供应商 */}
+                          <div
+                            onClick={() => setChatView((v) => (v === "providers" ? "models" : "providers"))}
+                            style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 4px 10px", cursor: "pointer", borderRadius: 8 }}
+                            title={zh ? "点击切换供应商" : "Switch provider"}
+                          >
                             <span aria-hidden="true" style={{ background: "#3859FF", borderRadius: 7, width: 26, height: 26, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 12 }}>
-                              {(current?.name || "AI").slice(0, 1)}
+                              {(currentProviderName || "AI").slice(0, 1)}
                             </span>
-                            <b style={{ fontSize: 13.5, color: "var(--v2-txt)" }}>{current?.name ?? (zh ? "默认档案" : "Default profile")}</b>
-                            <span style={{ marginLeft: "auto", color: "var(--v2-dim)" }}>›</span>
+                            <b style={{ fontSize: 13.5, color: "var(--v2-txt)" }}>{currentProviderName ?? (zh ? "默认档案" : "Default profile")}</b>
+                            <span style={{ marginLeft: "auto", color: "var(--v2-dim)" }}>{chatView === "providers" ? "▴" : "▾"}</span>
                           </div>
-                          <div style={{ fontSize: 12, color: "var(--v2-dim)", margin: "4px 0 2px" }}>{zh ? "模型（按供应商分组）" : "Models (grouped)"}</div>
-                          {/* 模型列表：按供应商分组，一档案一模型，选中带勾 */}
-                          {providerGroups.map((group) => (
-                            <div key={group.name}>
-                              <div style={{ fontSize: 11.5, color: "var(--v2-dim)", padding: "4px 10px 2px" }}>{group.name}</div>
-                              {group.items.map((p) => {
+                          {chatView === "providers" ? (
+                            /* 供应商列表：点击切换到该供应商（默认/首个模型） */
+                            <div>
+                              <div style={{ fontSize: 12, color: "var(--v2-dim)", margin: "4px 0 2px" }}>{zh ? "切换供应商" : "Switch provider"}</div>
+                              {providerGroups.map((group) => {
+                                const active = group.name === currentProviderName;
+                                return (
+                                  <div
+                                    key={group.name}
+                                    onClick={() => {
+                                      const target = group.items.find((x) => x.is_default) ?? group.items[0];
+                                      if (target) setProfileId(target.id);
+                                      setChatView("models");
+                                    }}
+                                    style={{
+                                      display: "flex", alignItems: "center", gap: 8, padding: "8px 10px",
+                                      borderRadius: 8, cursor: "pointer", fontSize: 13,
+                                      background: active ? "rgba(47,155,245,.10)" : "transparent",
+                                    }}
+                                  >
+                                    <span style={{ flex: 1 }}>{group.name}</span>
+                                    <span style={{ color: "var(--v2-dim)", fontSize: 11 }}>{group.items.length} {zh ? "个模型" : "models"}</span>
+                                    {active ? <span style={{ color: "var(--v2-blue)" }}>✓</span> : null}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div>
+                              <div style={{ fontSize: 12, color: "var(--v2-dim)", margin: "4px 0 2px" }}>{zh ? "模型" : "Model"}</div>
+                              {/* 当前供应商下的模型列表，选中带勾 */}
+                              {shownItems.map((p) => {
                                 const selected = p.id === (profileId || profiles.find(x => x.is_default)?.id);
                                 return (
                                   <div
@@ -559,13 +594,13 @@ export default function AIChatPage() {
                                     }}
                                   >
                                     <span style={{ flex: 1 }}>{p.model_id}</span>
-                                    {p.is_default ? <Tag style={{ marginRight: 0 }}>{zh ? "默认" : "default"}</Tag> : null}
                                     {selected ? <span style={{ color: "var(--v2-blue)" }}>✓</span> : null}
                                   </div>
                                 );
                               })}
                             </div>
-                          ))}
+                          )}
+                          {chatView === "models" ? (
                           <div style={{ borderTop: "1px solid var(--v2-line, rgba(36,52,79,.4))", marginTop: 8, paddingTop: 10 }}>
                             {modelContext ? (
                               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, fontSize: 12, color: "var(--v2-sub)" }}>
@@ -586,6 +621,7 @@ export default function AIChatPage() {
                               handleStyle={{ width: 18, height: 18, background: "#fff", borderColor: "#fff", boxShadow: "0 1px 4px rgba(0,0,0,.25)" }}
                             />
                           </div>
+                          ) : null}
                         </div>
                       );
                     })()}

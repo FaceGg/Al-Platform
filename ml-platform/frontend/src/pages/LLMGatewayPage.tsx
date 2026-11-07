@@ -844,12 +844,10 @@ export default function LLMGatewayPage() {
                               </>
                             )
                           })()}
-                          <span style={{ color: 'var(--v2-sub, #999)', fontSize: 12 }}>{profile.name}</span>
-                          <span className="v2-badge v2-bgray">{FORMAT_SHORT[profile.provider] ?? profile.provider}</span>
+                          {/* 档案名/格式/默认徽标已去掉：模型行只保留模型 ID + 配置徽标（上下文/输入类型） */}
                           {(profile.purpose_tags || []).map((tag) => (
                             <span key={tag} className="v2-badge v2-bgray">{tag}</span>
                           ))}
-                          {profile.is_default ? <span className="v2-badge v2-bb">{text.defaultTag}</span> : null}
                           <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
                             <Button
                               type="text" size="small"
