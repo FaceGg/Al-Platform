@@ -504,3 +504,10 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 **E2E 顺带验证（第 3/4 轮闭环）**：24h 熔断首次真实拦截（第 4 次评估触顶：一次性 critical 事件+管理员站内通知+后续静默积累），管理员恢复动作（清窗口内触发事件）后再触发正常；增量触发防误触（8−6=2<3 不触发，9−6=3 触发）双例实证。第 4 轮重放遇环境级 LLM S2 长重试（deepseek-chat 也偶发），2h 轮询超时护栏兜底范围内，非代码缺陷。
 
 **遗留**：TrialSummary 未读 recall_minority（trial attrs 已留痕，报告页展示属可选增强）；多输出分类无 minority 概念（配方可配 accuracy/f1 键）。
+
+## 2026-11-07 P2-2 稀疏宽表根治：闭环重训特征列白名单（迁移 97）
+
+**改动**：`DemoLoopConfig.retrain_input_columns`（JSON，迁移 `20261107_97`，空=全部数值列历史行为不变）+ `trigger_retrain_job(input_columns=)` 转发 `params.input_columns`（引擎 `resolve_automl_feature_columns(frame, target, requested)` 对选定列 dropna/取特征）+ agent 铸造转发 + API/配置视图/status 视图 + LoopConfigModal「重训特征列」tags 输入 + i18n zh/en。engine/agent 两模式共用；mode 切换校验双向设防（此前仅 agent 方向校验，engine 方向能让在途重放变孤儿，E2E 操作中暴露即修）。
+
+**验证**：82 绿（automl+闭环回归）+ 前端 tsc/vitest 4 绿；**真实 E2E 对照实证**：同一稀疏原表 train_v2_full.csv（87 列），无列选择时 `AUTOML_FAILED ... 0 行幸存`，配置 15 列白名单后 job completed → **model_swapped → baseline 12**——前后对照闭环通过。**坑（补录）：backend 容器启动只校验 schema 不自动升级（DATABASE_SCHEMA_OUTDATED fail-closed），迁移需 `docker compose run --rm backend alembic upgrade head`；compose 有 migrate 服务但本次 exit 255 失败原因未查**。另：引擎 job 由 worker 执行，改 automl_execution/automl_search 必须同批 `build worker`（上批已记）。
+fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失败快速失败），记录操作序列供复现。
