@@ -50,8 +50,12 @@ export const operatorDescriptions: Record<string, { zh: string; en?: string }> =
   merge: { zh: "将多条数据流合并为一路" },
   loop: { zh: "循环执行：按配置迭代处理数据" },
   retrain_threshold: {
-    zh: "回流数据累积到阈值后自动触发 AutoML 重训，任务完成后自动换模上线",
-    en: "Trigger AutoML retraining once the accumulated dataset reaches the row threshold; completes the model swap on a later invoke",
+    zh: "回流数据累积到阈值后自动触发 AutoML 重训，任务完成后自动换模上线；支持算法白名单与重训特征列白名单（逗号分隔）",
+    en: "Trigger AutoML retraining once the accumulated dataset reaches the row threshold; completes the model swap on a later invoke. Supports algorithm whitelist and retrain feature columns (comma separated)",
+  },
+  agent_retrain_threshold: {
+    zh: "智能体重训阈值触发：回流累积到阈值后复用固化配方重放智能体全流程（分析→特征→建模→验收），验收通过后引擎铸造部署模型并自动换模；含单飞/冷却/熔断护栏，配方须含重放快照",
+    en: "Agent retrain threshold trigger: replays the full agent pipeline (analysis→features→modeling→acceptance) from the fixated recipe, then the engine mints and swaps the deployment model. Guarded by single-flight/cooldown/circuit-breaker; the recipe must contain the replay snapshot",
   },
 
   // ---- 机器学习 (ml) ----

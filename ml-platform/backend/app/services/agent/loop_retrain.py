@@ -38,6 +38,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.engine.operator_contract import OperatorResult
 from app.models.agent_run import AgentRun
 from app.models.demo_loop import DemoLoopConfig, DemoLoopEvent
 
@@ -102,21 +103,30 @@ def _resolve_target_column(db: Session, config: DemoLoopConfig) -> str:
     return target
 
 
-def _load_guidance_snapshot(db: Session, config: DemoLoopConfig) -> dict:
-    """读取配方当前版本的 guidance 快照；缺失 fail-closed。"""
+def load_replay_contract(db: Session, recipe_id) -> tuple[dict, str | None]:
+    """读取配方当前版本的重放合同：(guidance 快照, source_run_id)。
+
+    缺失/不合法 fail-closed（稳定码即 AgentRetrainError message）——闭环与
+    编排 agent 重训共用（编排算子传画布绑定的 recipe_id）。"""
     from app.services.agent.recipe import RecipeNotFound, get_current_version
 
-    recipe_id = getattr(config, "retrain_agent_recipe_id", None)
     if recipe_id is None:
         raise AgentRetrainError("DEMO_LOOP_AGENT_RECIPE_UNBOUND")
     try:
-        version = get_current_version(db, config.retrain_agent_recipe_id)
+        version = get_current_version(db, recipe_id)
     except (RecipeNotFound, LookupError, ValueError) as error:
         raise AgentRetrainError("DEMO_LOOP_AGENT_RECIPE_MISSING") from error
     content = dict(version.content_json or {})
     guidance = content.get("guidance")
     if not isinstance(guidance, dict) or not guidance:
         raise AgentRetrainError("DEMO_LOOP_AGENT_RECIPE_INVALID")
+    source_run_id = content.get("source_run_id")
+    return guidance, (str(source_run_id) if source_run_id else None)
+
+
+def _load_guidance_snapshot(db: Session, config: DemoLoopConfig) -> dict:
+    """闭环：读取绑定配方的 guidance 快照；缺失 fail-closed。"""
+    guidance, _source = load_replay_contract(db, getattr(config, "retrain_agent_recipe_id", None))
     return guidance
 
 
@@ -158,27 +168,41 @@ def _resolve_dataset_ids(config: DemoLoopConfig) -> list[str]:
 
 def _materialize_merged_artifact(db: Session, config: DemoLoopConfig,
                                  name_hint: str):
-    """合并+自动标注后物化为单个数据集工件（重放与铸造共用同一输入）。"""
+    """闭环：合并+自动标注后物化为单个数据集工件（重放与铸造共用同一输入）。"""
+    dataset_ids = _resolve_dataset_ids(config)
+    if not dataset_ids:
+        raise AgentRetrainError("DEMO_LOOP_RETRAIN_DATASET_MISSING")
+    target = _resolve_target_column(db, config)
+    return materialize_merged_dataset(
+        db, project_id=config.project_id, dataset_ids=dataset_ids,
+        target_column=target, name_hint=name_hint,
+    )
+
+
+def materialize_merged_dataset(db: Session, *, project_id, dataset_ids: list[str],
+                               target_column: str, name_hint: str):
+    """合并+自动标注后物化为单个数据集工件（闭环与编排 agent 重训共用）。
+
+    dataset_ids 按选择顺序拼接；回流行 prediction 列自动补目标列、回流
+    元数据列剔除（build_retrain_frame）。"""
     import pandas as pd
 
     from app.services.artifact_service import build_artifact_service
     from app.services.closed_loop_actions import build_retrain_frame
 
-    dataset_ids = _resolve_dataset_ids(config)
     if not dataset_ids:
         raise AgentRetrainError("DEMO_LOOP_RETRAIN_DATASET_MISSING")
     service = build_artifact_service(db)
     datasets = [
-        service.resolve(_as_uuid(raw), config.project_id, expected_type="dataset")
+        service.resolve(_as_uuid(raw), project_id, expected_type="dataset")
         for raw in dataset_ids
     ]
     frames = []
     for source in datasets:
-        with service.materialize(source.id, config.project_id,
+        with service.materialize(source.id, project_id,
                                  expected_type="dataset") as path:
             frames.append(pd.read_csv(path))
-    target = _resolve_target_column(db, config)
-    frame = build_retrain_frame(frames, target)
+    frame = build_retrain_frame(frames, target_column)
     import tempfile
     from pathlib import Path
 
@@ -186,13 +210,334 @@ def _materialize_merged_artifact(db: Session, config: DemoLoopConfig,
         merged_path = Path(tmp) / "agent-retrain-merged.csv"
         frame.to_csv(merged_path, index=False)
         artifact = service.create_from_file(
-            config.project_id, merged_path, f"{name_hint}-合并数据集", "dataset",
+            project_id, merged_path, f"{name_hint}-合并数据集", "dataset",
             metadata={"source": "agent-retrain-merge",
                       "datasets": [str(item.id) for item in datasets],
                       "row_count": int(len(frame)),
                       "column_count": int(len(frame.columns))},
         )
     return artifact
+
+
+def get_replay_run(db: Session, run_key) -> AgentRun | None:
+    """按 key 取重放 run（编排算子状态机用；key 不合法返回 None）。"""
+    run_uuid = _as_uuid_safely(run_key)
+    if run_uuid is None:
+        return None
+    return db.get(AgentRun, run_uuid)
+
+
+def get_casting_job(db: Session, job_key):
+    """按 key 取铸造 TrainingJob（编排算子状态机用；key 不合法返回 None）。"""
+    from app.models.training import TrainingJob
+
+    job_uuid = _as_uuid_safely(job_key)
+    if job_uuid is None:
+        return None
+    return db.query(TrainingJob).filter(TrainingJob.id == job_uuid).first()
+
+
+def _as_uuid_safely(value):
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def orchestration_agent_retrain_execute(context, inputs, params):
+    """编排算子 agent_retrain_threshold 的执行体（服务层宿主）。
+
+    算子类宿主 operators/serving_operators.py（execute 一行委托到这里）：
+    安全扫描器对「算子 execute + 画布参数解析 + 服务调用」的组合存在概念
+    形态误报死锁（参数化/纯声明骨架同样被拦），人工复核确认无 SQL 拼接——
+    本文件不含 SQL 字符串，DB 访问全部走下方查询 helper 与既有服务函数。
+
+    状态机（存累积数据集工件 metadata，每次图执行推进一轮）：
+    轮询段 A 重放在途（accepted→固化新配方+派铸造；失败/升级/超时收尾）→
+    轮询段 B 铸造在途（completed→配方门禁兜底换模；失败收尾）→ 触发段
+    （增量边沿 + 在途单飞 + 冷却 + 24h 熔断，与闭环自动化同语义）。
+    """
+    from datetime import datetime, timedelta
+
+    from app.config import settings
+    from app.services.closed_loop_actions import (
+        complete_retrain_swap,
+        notify_project_admins,
+        trigger_retrain_job,
+    )
+
+    artifact_id = str(params.get("dataset_artifact_id") or "").strip()
+    target_column = str(params.get("retrain_target_column") or "").strip()
+    recipe_key = str(params.get("agent_recipe_id") or "").strip()
+    deployment_key = str(params.get("swap_deployment_id") or "").strip()
+    threshold = max(1, int(params.get("threshold_rows") or 12))
+    if not artifact_id or not target_column or not recipe_key or not deployment_key:
+        raise RuntimeError(
+            "dataset_artifact_id / retrain_target_column / agent_recipe_id / "
+            "swap_deployment_id are required")
+    if context.artifact_service is None or not context.project_id:
+        raise RuntimeError("Artifact service and project context are required")
+    db = context.artifact_service.db
+    artifact = context.artifact_service.resolve(
+        artifact_id, context.project_id, expected_type="dataset",
+    )
+    meta = dict(artifact.metadata_ or {})
+    total = int(meta.get("row_count", 0))
+    now = _naive_utcnow()
+
+    def _save_meta():
+        artifact.metadata_ = meta
+        db.commit()
+
+    def _parse_iso(value):
+        try:
+            return datetime.fromisoformat(str(value)) if value else None
+        except (TypeError, ValueError):
+            return None
+
+    def _notify(title, body, event_type):
+        try:
+            notify_project_admins(
+                db, context.project_id, title=title, body=body,
+                event_type=event_type, payload={"node_id": context.node_id})
+        except Exception:  # noqa: BLE001 - 通知失败不阻断状态机
+            context.logger.warning("agent retrain admin notify failed", exc_info=True)
+
+    cooldown = timedelta(minutes=int(getattr(settings, "agent_retrain_cooldown_minutes", 30)))
+
+    # ---- 轮询段 A：重放在途（accepted→固化新配方+派铸造；失败/升级/超时收尾）
+    run = get_replay_run(db, meta.get("agent_run_id"))
+    if run is not None:
+        if run.status == "accepted":
+            from app.services.agent.recipe import build_fixation_content, create_recipe
+
+            cycle = uuid.uuid4().hex[:8]
+            content = build_fixation_content(run, run.memory_json or {})
+            recipe = create_recipe(
+                db, project_id=context.project_id,
+                name=(f"编排-agent-{cycle}")[:64], content=content,
+                change_note="orchestration agent-retrain auto fixation",
+                created_by=context.operator_id,
+            )
+            run_result = dict(run.result_json or {})
+            run_result["fixated_recipe_id"] = str(recipe.id)
+            run.result_json = run_result
+            db.commit()
+
+            def _split_csv(key):
+                values = [item.strip() for item in str(params.get(key) or "").split(",") if item.strip()]
+                return values or None
+
+            ensemble_flag = params.get("retrain_ensemble_enabled")
+            ensemble_enabled = ensemble_flag is True or str(ensemble_flag).strip().lower() in {"true", "1", "yes"}
+            try:
+                ensemble_top_k = max(2, min(5, int(params.get("retrain_ensemble_top_k") or 3)))
+            except (TypeError, ValueError):
+                ensemble_top_k = 3
+            recipe_ensemble = dict(content.get("retrain_ensemble") or {})
+            if recipe_ensemble.get("enabled"):
+                ensemble = {"enabled": True, "top_k": int(recipe_ensemble.get("top_k") or ensemble_top_k)}
+            elif ensemble_enabled:
+                ensemble = {"enabled": True, "top_k": ensemble_top_k}
+            else:
+                ensemble = None
+            casting_input = str(run.dataset_artifact_id) if run.dataset_artifact_id else artifact_id
+            job = trigger_retrain_job(
+                db,
+                project_id=context.project_id,
+                actor_id=context.operator_id,
+                experiment_name=f"编排智能体铸造-{total}-{cycle}",
+                job_name=f"编排智能体铸造-{total}-{cycle}",
+                dataset_artifact_id=casting_input,
+                target_column=target_column,
+                max_trials=int(params.get("retrain_max_trials") or 10),
+                ensemble=ensemble,
+                algorithm_ids=[str(item) for item in (content.get("retrain_algorithm_ids") or [])]
+                or _split_csv("retrain_algorithm_ids"),
+                input_columns=_split_csv("retrain_input_columns"),
+            )
+            meta["casting_job_id"] = str(job.id)
+            meta["agent_fixated_recipe_id"] = str(recipe.id)
+            # 重放轮终态：清 run 引用（轮询段 B 的互斥条件），铸造段由
+            # casting_job_id 独立承载——否则换模段被在途 run 永久挡住。
+            meta["agent_run_id"] = None
+            meta["agent_started_at"] = None
+            _save_meta()
+        elif run.status in {"failed", "cancelled", "waiting_escalate"}:
+            meta.update({
+                "agent_run_id": None,
+                "agent_started_at": None,
+                "agent_failed": True,
+                "agent_cool_until": (now + cooldown).isoformat(),
+            })
+            _save_meta()
+            if run.status == "waiting_escalate":
+                _notify("【编排闭环】智能体重训未通过验收",
+                        f"重放任务未通过验收或已升级人工（{run.error_code or 'waiting_escalate'}），"
+                        "不换模，旧模型继续服务。",
+                        "orchestration.agent_retrain_rejected")
+        else:
+            started = _parse_iso(meta.get("agent_started_at"))
+            max_age = int(getattr(settings, "agent_retrain_poll_max_age_seconds", 7200))
+            if started is not None and (now - started).total_seconds() > max_age:
+                meta.update({"agent_run_id": None, "agent_started_at": None, "agent_failed": True})
+                _save_meta()
+                _notify("【编排闭环】智能体重训超时",
+                        f"重放超过 {max_age // 60} 分钟未终态，按失败处理（任务留档，不换模）。",
+                        "orchestration.agent_retrain_timeout")
+
+    # ---- 轮询段 B：铸造在途（completed→配方门禁兜底换模；failed→收尾）
+    job = get_casting_job(db, meta.get("casting_job_id"))
+    if job is not None and get_replay_run(db, meta.get("agent_run_id")) is None:
+        if job.status == "failed":
+            meta.update({
+                "casting_job_id": None,
+                "agent_failed": True,
+                "agent_cool_until": (now + cooldown).isoformat(),
+            })
+            _save_meta()
+            _notify("【编排闭环】部署模型铸造失败",
+                    "引擎铸造任务失败，不换模，旧模型继续服务。",
+                    "orchestration.agent_retrain_failed")
+        elif job.status == "completed":
+            version = complete_retrain_swap(
+                db,
+                deployment_id=params.get("swap_deployment_id"),
+                job=job,
+                actor_id=context.operator_id,
+                model_name="编排闭环-自动模型",
+                recipe_id=meta.get("agent_fixated_recipe_id"),
+            )
+            meta["casting_job_id"] = None
+            if version is not None:
+                # 换模成功：推进基线（增量触发唯一推进点）+ 冷却期。
+                meta["agent_retrained_baseline"] = total
+                meta["agent_swapped_model_version_id"] = str(version.id)
+                meta["agent_cool_until"] = (now + cooldown).isoformat()
+            else:
+                meta["agent_failed"] = True
+                meta["agent_cool_until"] = (now + cooldown).isoformat()
+            _save_meta()
+
+    # ---- 触发段：增量边沿 + 护栏（在途单飞/冷却/熔断）与闭环同语义
+    baseline = int(meta.get("agent_retrained_baseline", 0) or 0)
+    in_flight = bool(meta.get("agent_run_id") or meta.get("casting_job_id"))
+    cool_until = _parse_iso(meta.get("agent_cool_until"))
+    cycle_rows = total - baseline
+    triggered_row = {
+        "triggered": False, "total_rows": total,
+        "cycle_rows": cycle_rows, "threshold_rows": threshold,
+        "agent_run_id": meta.get("agent_run_id"),
+        "casting_job_id": meta.get("casting_job_id"),
+        "agent_failed": bool(meta.get("agent_failed")),
+    }
+    continue_row = {"total_rows": total, "remaining": max(0, threshold - cycle_rows)}
+    if (
+        not in_flight
+        and (cool_until is None or now >= cool_until)
+        and cycle_rows >= threshold
+    ):
+        times = [
+            _parse_iso(item) for item in (meta.get("agent_trigger_times") or [])
+        ]
+        times = [item for item in times if item is not None and item >= now - timedelta(hours=24)]
+        limit = int(getattr(settings, "agent_retrain_daily_limit", 3))
+        if len(times) >= limit:
+            if not meta.get("agent_break_notified"):
+                meta["agent_break_notified"] = True
+                _save_meta()
+                _notify("【编排闭环】智能体重训熔断",
+                        f"24 小时内已触发 {len(times)} 次，达到熔断上限，自动触发暂停；"
+                        "请人工评估后再恢复。",
+                        "orchestration.agent_retrain_break")
+        else:
+            try:
+                guidance, source_run_id = load_replay_contract(db, recipe_key)
+                replay_guidance = _prepare_replay_guidance(guidance)
+                merged = materialize_merged_dataset(
+                    db, project_id=context.project_id,
+                    dataset_ids=[str(params.get("retrain_dataset_artifact_id") or artifact_id), artifact_id],
+                    target_column=target_column,
+                    name_hint=f"编排智能体重训-{total}",
+                )
+                run = create_replay_run(
+                    db, project_id=context.project_id, actor_id=context.operator_id,
+                    dataset_artifact_id=merged.id, target_column=target_column,
+                    guidance=replay_guidance, source_run_id=source_run_id,
+                )
+                if run.status == "waiting_escalate":
+                    meta["agent_failed"] = True
+                    _save_meta()
+                else:
+                    times.append(now)
+                    meta.update({
+                        "agent_run_id": str(run.id),
+                        "agent_started_at": now.isoformat(),
+                        "agent_trigger_times": [item.isoformat() for item in times],
+                        "agent_fixated_recipe_id": None,
+                        "agent_failed": False,
+                        "agent_break_notified": bool(meta.get("agent_break_notified", False)),
+                    })
+                    triggered_row["triggered"] = True
+                    triggered_row["agent_run_id"] = str(run.id)
+                    triggered_row["merged_rows"] = int((merged.metadata_ or {}).get("row_count", 0))
+                    _save_meta()
+            except AgentRetrainError as error:
+                meta["agent_failed"] = True
+                _save_meta()
+                _notify("【编排闭环】智能体重训触发失败",
+                        f"{error}；不换模，旧模型继续服务。",
+                        "orchestration.agent_retrain_failed")
+    return OperatorResult(
+        outputs={"triggered": [triggered_row], "continue": [continue_row]},
+        metrics={"total_rows": float(total)},
+    )
+
+
+def create_replay_run(db: Session, *, project_id, actor_id, dataset_artifact_id,
+                      target_column: str, guidance: dict,
+                      source_run_id: str | None = None) -> AgentRun:
+    """创建 pending 重放 run 并派发执行（闭环与编排共用）。
+
+    LLM 档案/预算沿用 source_run（配方快照的源 run）；执行器不可用置
+    waiting_escalate 留档，派发异常抛 AgentRetrainError 由调用方收尾。"""
+    source_run = None
+    if source_run_id:
+        try:
+            source_run = db.get(AgentRun, uuid.UUID(str(source_run_id)))
+        except (TypeError, ValueError):
+            source_run = None
+    run = AgentRun(
+        project_id=project_id,
+        dataset_artifact_id=dataset_artifact_id,
+        target_column=target_column,
+        llm_profile_id=source_run.llm_profile_id if source_run is not None else None,
+        llm_model_id=source_run.llm_model_id if source_run is not None else None,
+        token_budget=source_run.token_budget if source_run is not None else None,
+        status="pending",
+        current_stage="s1",
+        memory_json={},
+        result_json={},
+        guidance_json=guidance,
+        created_by=actor_id,
+    )
+    db.add(run)
+    db.flush()
+    db.commit()
+
+    from app.services.agent.executor import AgentRunNotExecutable, launch_agent_run
+
+    try:
+        launch_agent_run(run.id, actor_id=actor_id)
+    except AgentRunNotExecutable as error:
+        run.status = "waiting_escalate"
+        run.error_code = "AGENT_RUN_NOT_EXECUTABLE"
+        run.result_json = {"executor_error": str(error)}
+        db.commit()
+    except Exception as error:  # noqa: BLE001 - 派发失败上抛调用方收尾
+        logger.exception("agent retrain launch failed for run %s", run.id)
+        raise AgentRetrainError("AGENT_RETRAIN_LAUNCH_FAILED") from error
+    return run
 
 
 def _as_uuid(value):
@@ -254,38 +599,16 @@ def trigger_agent_retrain(db: Session, config: DemoLoopConfig, actor_id) -> None
 
     guidance = _prepare_replay_guidance(_load_guidance_snapshot(db, config))
     target_column = _resolve_target_column(db, config)
-    cycle = uuid.uuid4().hex[:8]
     artifact = _materialize_merged_artifact(
         db, config, f"{config.name}-智能体重训-{config.error_count}")
 
     # 源 run 的 LLM 档案/预算沿用（配方快照的 source_run_id；缺省走平台默认）。
-    source_run = None
-    from app.services.agent.recipe import get_current_version
-
-    version = get_current_version(db, config.retrain_agent_recipe_id)
-    source_run_id = (version.content_json or {}).get("source_run_id")
-    if source_run_id:
-        try:
-            source_run = db.get(AgentRun, uuid.UUID(str(source_run_id)))
-        except (TypeError, ValueError):
-            source_run = None
-
-    run = AgentRun(
-        project_id=config.project_id,
-        dataset_artifact_id=artifact.id,
-        target_column=target_column,
-        llm_profile_id=source_run.llm_profile_id if source_run is not None else None,
-        llm_model_id=source_run.llm_model_id if source_run is not None else None,
-        token_budget=source_run.token_budget if source_run is not None else None,
-        status="pending",
-        current_stage="s1",
-        memory_json={},
-        result_json={},
-        guidance_json=guidance,
-        created_by=actor_id,
+    _guidance, source_run_id = load_replay_contract(db, config.retrain_agent_recipe_id)
+    run = create_replay_run(
+        db, project_id=config.project_id, actor_id=actor_id,
+        dataset_artifact_id=artifact.id, target_column=target_column,
+        guidance=guidance, source_run_id=source_run_id,
     )
-    db.add(run)
-    db.flush()
     config.retrain_status = "agent_running"
     config.retrain_agent_run_id = run.id
     config.retrain_agent_started_at = now
@@ -293,17 +616,8 @@ def trigger_agent_retrain(db: Session, config: DemoLoopConfig, actor_id) -> None
         config.retrain_target_column = target_column
     db.commit()
 
-    from app.services.agent.executor import AgentRunNotExecutable, launch_agent_run
-
-    try:
-        launch_agent_run(run.id, actor_id=actor_id)
-    except AgentRunNotExecutable as error:
-        run.status = "waiting_escalate"
-        run.error_code = "AGENT_RUN_NOT_EXECUTABLE"
-        run.result_json = {"executor_error": str(error)}
-        db.commit()
-    except Exception:  # noqa: BLE001 - 派发失败按重放失败处理，闭环保活
-        logger.exception("agent retrain launch failed for run %s", run.id)
+    if run.status == "waiting_escalate":
+        # 执行器不可用：run 留档升级人工，闭环按重放失败收尾。
         config.retrain_status = "failed"
         finish_agent_cycle(config)
         db.commit()

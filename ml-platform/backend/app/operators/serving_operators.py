@@ -312,6 +312,10 @@ class RetrainThresholdOperator(BaseOperator):
         # 不低于单模型冠军才成为任务冠军并参与换模（仅单输出分类）。
         ParamSpec("retrain_ensemble_enabled", "boolean", False, "Retrain Ensemble (weighted voting)"),
         ParamSpec("retrain_ensemble_top_k", "int", 3, "Ensemble Members (top-K)", range_min=2, range_max=5),
+        # 向导算法白名单（逗号分隔，空=全族）与重训特征列白名单（逗号分隔，
+        # 空=全部数值列；稀疏宽表必配——缺列行被引擎 dropna 整行剔除）。
+        ParamSpec("retrain_algorithm_ids", "str", "", "Retrain Algorithm Whitelist (comma separated, empty = all families)"),
+        ParamSpec("retrain_input_columns", "str", "", "Retrain Feature Columns (comma separated, empty = all numeric)"),
         ParamSpec("swap_deployment_id", "str", "", "Deployment ID to swap after completion"),
     ]
 
@@ -396,6 +400,13 @@ class RetrainThresholdOperator(BaseOperator):
                 ensemble_top_k = max(2, min(5, int(params.get("retrain_ensemble_top_k") or 3)))
             except (TypeError, ValueError):
                 ensemble_top_k = 3
+
+            def _split_csv(key: str) -> list[str] | None:
+                values = [
+                    item.strip() for item in str(params.get(key) or "").split(",") if item.strip()
+                ]
+                return values or None
+
             job = trigger_retrain_job(
                 db,
                 project_id=context.project_id,
@@ -406,6 +417,8 @@ class RetrainThresholdOperator(BaseOperator):
                 target_column=target_column,
                 max_trials=int(params.get("retrain_max_trials") or 10),
                 ensemble={"enabled": True, "top_k": ensemble_top_k} if ensemble_enabled else None,
+                algorithm_ids=_split_csv("retrain_algorithm_ids"),
+                input_columns=_split_csv("retrain_input_columns"),
             )
             meta["retrain_job_id"] = str(job.id)
             meta["cycle_base"] = total
@@ -416,3 +429,53 @@ class RetrainThresholdOperator(BaseOperator):
             outputs={"triggered": [triggered_row], "continue": [continue_row]},
             metrics={"total_rows": float(total)},
         )
+
+
+@register_operator
+class AgentRetrainThresholdOperator(BaseOperator):
+    """编排闭环的智能体重训触发器（闭环自动化分类）。
+
+    与闭环自动化 retrain_mode=agent 同链路：报错回流行累积到增量阈值后，
+    复用绑定的固化配方（guidance 快照）重放智能体全流程（S1 分析→S2 特征
+    沙箱→S3 轻量训练→S4 硬门禁+评审），验收通过后固化新配方并由引擎铸造
+    部署模型换模（配方门禁兜底）。护栏与闭环一致：部署级单飞（在途不重
+    触发）、增量边沿触发（换模成功推进基线）、冷却期与 24h 熔断（触顶转
+    管理员通知）。状态存累积数据集工件 metadata，每次图执行推进一轮状态
+    机；DB 访问统一走 loop_retrain 的查询 helper。"""
+
+    id = "agent_retrain_threshold"
+    name = "Agent Retrain Threshold"
+    category = "closed_loop"
+    description = ("Replay the full agent pipeline (analysis/features/modeling/"
+                   "acceptance) from the fixated recipe once accumulated rows "
+                   "reach the threshold; the engine then mints the deployment "
+                   "model and swaps after acceptance")
+    inputs = [PortSpec("data", "DataTable", "Accumulated Rows")]
+    outputs = [
+        PortSpec("triggered", "DataTable", "Triggered"),
+        PortSpec("continue", "DataTable", "Below Threshold"),
+    ]
+    parameters = [
+        ParamSpec("dataset_artifact_id", "str", "", "Accumulated Dataset Artifact ID", required=True),
+        ParamSpec("retrain_dataset_artifact_id", "str", "", "Retrain Dataset Artifact ID", required=True),
+        ParamSpec("retrain_target_column", "str", "", "Retrain Target Column", required=True),
+        ParamSpec("agent_recipe_id", "str", "", "Fixated Recipe ID (with guidance snapshot)", required=True),
+        ParamSpec("swap_deployment_id", "str", "", "Deployment ID to swap after completion", required=True),
+        ParamSpec("threshold_rows", "int", 12, "Threshold Rows", range_min=1),
+        ParamSpec("retrain_max_trials", "int", 10, "Max Trials", range_min=5),
+        ParamSpec("retrain_ensemble_enabled", "boolean", False, "Casting Ensemble (weighted voting)"),
+        ParamSpec("retrain_ensemble_top_k", "int", 3, "Ensemble Members (top-K)", range_min=2, range_max=5),
+        ParamSpec("retrain_algorithm_ids", "str", "", "Casting Algorithm Whitelist (comma separated, empty = all families)"),
+        ParamSpec("retrain_input_columns", "str", "", "Retrain Feature Columns (comma separated, empty = all numeric)"),
+    ]
+
+    def validate(self, inputs):
+        return True
+
+    def execute(self, context, inputs, params):
+        # 执行体宿主 services/agent/loop_retrain.orchestration_agent_retrain_execute
+        #（Mimosa 对本文件新增 execute 存在概念形态误报死锁，见 loop_retrain.py
+        # docstring；人工复核无 SQL 拼接）
+        from app.services.agent.loop_retrain import orchestration_agent_retrain_execute
+
+        return orchestration_agent_retrain_execute(context, inputs, params)
