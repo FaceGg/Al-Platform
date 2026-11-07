@@ -266,7 +266,8 @@ def _columns_from_digest(content: dict) -> dict:
     return {}
 
 
-def build_fixation_content(run, memory: dict, smoke_row: dict | None = None) -> dict:
+def build_fixation_content(run, memory: dict, smoke_row: dict | None = None,
+                           target_values: list | None = None) -> dict:
     """验收通过的 run → 配方版本 content（固化/重放共用的唯一构造器）。
 
     从 API 层（agent_extras.fixate_recipe）下沉：闭环 agent 重训模式需要
@@ -275,6 +276,10 @@ def build_fixation_content(run, memory: dict, smoke_row: dict | None = None) -> 
     端 fail-closed（DEMO_LOOP_AGENT_RECIPE_INVALID），不静默降级引擎模式。
     smoke_row：S5 服务化 dry-run 冒烟行（此前有消费方无生产方，档案页
     servitize 对任何固化配方都挂 RECORD_INVALID——本处补上生产方）。
+    target_values：目标列取值集合 → target_semantics（{label: ""}）。此前
+    全系统无 target_semantics 生产者，auto_servitize 的三资产起草必然
+    「cannot derive error classes」降级——取值走 derive_error_classes 的
+    字典序兜底 + ambiguous 预览（发布批准时人工核对修正，把关不变）。
     """
     rounds = memory.get("rounds", [])
     final_script = ""
@@ -310,6 +315,9 @@ def build_fixation_content(run, memory: dict, smoke_row: dict | None = None) -> 
         "source_run_id": str(run.id),
         # S5 服务化 dry-run 冒烟行（servitize_recipe 的 zero-backflow 冒烟输入）
         "smoke_row": dict(smoke_row or {}),
+        # 目标列取值语义（servitize derive_error_classes 的推导输入；空描述
+        # 走字典序最小标签兜底 + 全量 ambiguous，发布批准时人工核对）
+        "target_semantics": {str(label): "" for label in (target_values or [])[:20]},
         "baseline_metrics": (run.result_json or {}).get("metrics", {}),
         "analysis_digest": "run %s" % str(run.id)[:8],
         "optimization_report": (run.result_json or {}).get("optimization_report"),

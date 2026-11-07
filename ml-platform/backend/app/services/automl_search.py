@@ -316,6 +316,7 @@ class TrialSummary:
     error_message: str | None = None
     auc: float | None = None
     f1: float | None = None
+    recall_minority: float | None = None
     accuracy: float | None = None
 
 
@@ -580,6 +581,7 @@ def _trial_summary(trial: FrozenTrial) -> TrialSummary:
         error_message=trial.user_attrs.get("error_message"),
         auc=trial.user_attrs.get("auc"),
         f1=trial.user_attrs.get("f1"),
+        recall_minority=trial.user_attrs.get("recall_minority"),
         accuracy=trial.user_attrs.get("accuracy", score),
     )
 

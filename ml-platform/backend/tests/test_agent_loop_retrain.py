@@ -756,5 +756,32 @@ class AgentLoopRetrain(unittest.TestCase):
             db.close()
 
 
+    def test_15_fixation_target_semantics_enables_servitize_draft(self):
+        """target_semantics 生产方：固化 content 带目标列取值，servitize 推导
+        不再「cannot derive error classes」降级（无语义描述走字典序兜底 +
+        全量 ambiguous，发布批准人工核对）。"""
+        import pandas as pd
+
+        from app.services.agent.recipe import build_fixation_content
+        from app.services.agent.servitize import derive_error_classes
+
+        class _Run:
+            id = uuid.uuid4()
+            target_column = "fault"
+            guidance_json = {"evaluation": {"metric_gates": {"recall_minority": 0.9}}}
+            result_json = {}
+
+        content = build_fixation_content(
+            _Run(), {}, target_values=[1, 0],
+            smoke_row={"f1": 1.0},
+        )
+        self.assertEqual(content["target_semantics"], {"1": "", "0": ""})
+        error_classes, ambiguous = derive_error_classes(content["target_semantics"])
+        # 无语义描述 → 字典序最小标签兜底为报错类；ambiguous 保持全量
+        # （发布批准时逐标签人工核对）
+        self.assertEqual(error_classes, ["0"])
+        self.assertEqual(ambiguous, ["1", "0"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -264,6 +264,17 @@ class AgentRunner:
 
             result = dict(self.run.result_json or {})
             if not result.get("recipe_id"):
+                # 目标列取值 → target_semantics（auto_servitize 起草推导报错类的输入）
+                target_values: list = []
+                try:
+                    if self.dataset_frame is not None and self.run.target_column in getattr(
+                        self.dataset_frame, "columns", [],
+                    ):
+                        target_values = [
+                            value for value in self.dataset_frame[self.run.target_column].dropna().unique()
+                        ]
+                except Exception:  # noqa: BLE001 - 取值失败不阻断固化
+                    target_values = []
                 name = "recipe-%s" % str(self.run.id)[:8]
                 recipe = create_recipe(
                     self.db,
@@ -272,6 +283,7 @@ class AgentRunner:
                     content=build_fixation_content(
                         self.run, self.memory,
                         smoke_row=smoke_row_from_frame(self.dataset_frame),
+                        target_values=target_values,
                     ),
                     change_note="auto-fixated on acceptance (auto_servitize)",
                     created_by=self.actor,

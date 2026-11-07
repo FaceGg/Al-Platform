@@ -58,6 +58,7 @@ type AutoMLResultRow = Record<string, unknown> & {
   key: string;
   auc: number | null;
   f1: number | null;
+  recall_minority: number | null;
   best_score?: number | null;
   score?: number | null;
   training_time_seconds?: number | null;
@@ -121,7 +122,7 @@ export default function AutoMLTaskPage() {
   const rows = useMemo<AutoMLResultRow[]>(() => {
     const source = resultSource(metrics);
     const mapped: AutoMLResultRow[] = source.map((row, index) => {
-      return { ...row, key: String(row.id || row.name || row.model || index), auc: metric(row, ["auc", "AUC", "roc_auc", "rocAuc", "roc_auc_score"]), f1: metric(row, ["f1", "F1", "f1_score", "f1_weighted"]) };
+      return { ...row, key: String(row.id || row.name || row.model || index), auc: metric(row, ["auc", "AUC", "roc_auc", "rocAuc", "roc_auc_score"]), f1: metric(row, ["f1", "F1", "f1_score", "f1_weighted"]), recall_minority: metric(row, ["recall_minority", "minority_recall", "recall"]) };
     });
     return mapped.sort((left, right) => {
       if (isRegression) {
@@ -187,6 +188,8 @@ export default function AutoMLTaskPage() {
         { title: "模型", key: "name", render: (row: AutoMLResultRow) => String(row.name || row.model || row.algorithm || "-") },
         { title: "AUC", dataIndex: "auc", key: "auc", sorter: (a: AutoMLResultRow, b: AutoMLResultRow) => (b.auc ?? -1) - (a.auc ?? -1), render: (value: number | null) => value == null ? "-" : <Text strong>{value.toFixed(4)}</Text> },
         { title: "F1", dataIndex: "f1", key: "f1", render: (value: number | null) => value == null ? "-" : value.toFixed(4) },
+        // 少数类召回：与智能体轻量口径/配方验收门禁 PRIMARY_METRIC 同键（多类/回归为 -）
+        ...(isRegression ? [] : [{ title: "少数类召回", dataIndex: "recall_minority", key: "recall_minority", sorter: (a: AutoMLResultRow, b: AutoMLResultRow) => (b.recall_minority ?? -1) - (a.recall_minority ?? -1), render: (value: number | null) => value == null ? "-" : value.toFixed(4) }]),
         { title: "Accuracy", key: "accuracy", render: (row: AutoMLResultRow) => formatMetric(metric(row, ["accuracy", "Accuracy", "best_score", "score"])) },
         { title: "状态", dataIndex: "status", key: "status", render: (value: unknown) => value ? <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, "zh")}</Tag> : "-" },
         resultActionColumn,
