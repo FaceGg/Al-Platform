@@ -71,6 +71,8 @@ export default function AIChatPage() {
   const [profiles, setProfiles] = useState<any[]>([]);
   const [profileId, setProfileId] = useState(() => localStorage.getItem("chat.profileId") || "");
   const [thinkingLevel, setThinkingLevel] = useState<string>(() => localStorage.getItem("chat.thinkingLevel") || "off");
+  // 供应商飞出面板：悬停/点击供应商头时显示（默认不展开）
+  const [providerFlyout, setProviderFlyout] = useState(false);
   const [contextWindow, setContextWindow] = useState<number>(() => Number(localStorage.getItem("chat.contextWindow") || "8"));
   // 所选模型的 ZCode 风格配置（上下文窗口/推理等级/输入类型，来自「编辑模型配置」弹窗）
   const currentProfile = profiles.find((p) => p.id === profileId) ?? profiles.find((p) => p.is_default) ?? null;
@@ -540,44 +542,65 @@ export default function AIChatPage() {
                       const fmtTokens = fmtContextTokens;
                       const inputTypeLabels = INPUT_TYPE_LABELS;
                       return (
-                        <div style={{ width: 420, display: "flex", gap: 10 }}>
-                          {/* 左栏：供应商列表（点击切换） */}
-                          <div style={{ width: 128, flex: "0 0 128px", borderRight: "1px solid var(--v2-line, rgba(36,52,79,.4))", paddingRight: 6 }}>
-                            {providerGroups.map((group) => {
-                              const active = activeGroup?.key === group.key;
-                              const groupOn = group.items.some((p) => p.enabled !== false);
-                              return (
-                                <div
-                                  key={group.key}
-                                  onClick={() => {
-                                    const target = group.items.find((x) => x.is_default) ?? group.items[0];
-                                    if (target) setProfileId(target.id);
-                                  }}
-                                  style={{
-                                    display: "flex", alignItems: "center", gap: 6, padding: "8px 8px",
-                                    borderRadius: 8, cursor: "pointer", fontSize: 13,
-                                    background: active ? "rgba(47,155,245,.10)" : "transparent",
-                                  }}
-                                >
-                                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{group.label}</span>
-                                  <span
-                                    aria-hidden="true"
-                                    title={groupOn ? (zh ? "已启用" : "enabled") : (zh ? "未启用" : "disabled")}
-                                    style={{ width: 7, height: 7, borderRadius: "50%", flex: "0 0 auto", background: groupOn ? "#52c41a" : "#d9d9d9" }}
-                                  />
-                                  {active ? <span style={{ color: "var(--v2-blue)" }}>✓</span> : null}
-                                </div>
-                              );
-                            })}
-                            <div style={{ borderTop: "1px solid var(--v2-line, rgba(36,52,79,.4))", marginTop: 8, paddingTop: 8 }}>
-                              <a href="/system/llm-gateway" style={{ fontSize: 12, color: "var(--v2-dim)" }}>{zh ? "管理模型" : "Manage models"}</a>
+                        <div style={{ position: "relative", width: 380 }}>
+                          {/* 供应商飞出面板：悬停/点击供应商头时出现在主面板左侧（ZCode 式） */}
+                          {providerFlyout ? (
+                            <div
+                              onMouseLeave={() => setProviderFlyout(false)}
+                              style={{
+                                position: "absolute", top: 0, right: "calc(100% + 10px)",
+                                width: 168, background: "var(--v2-panel, #fff)",
+                                border: "1px solid var(--v2-line, #e5e7eb)", borderRadius: 10,
+                                boxShadow: "0 4px 16px rgba(0,0,0,.12)", padding: "6px 6px 8px",
+                              }}
+                            >
+                              {providerGroups.map((group) => {
+                                const active = activeGroup?.key === group.key;
+                                const groupOn = group.items.some((p) => p.enabled !== false);
+                                return (
+                                  <div
+                                    key={group.key}
+                                    onClick={() => {
+                                      const target = group.items.find((x) => x.is_default) ?? group.items[0];
+                                      if (target) setProfileId(target.id);
+                                      setProviderFlyout(false);
+                                    }}
+                                    style={{
+                                      display: "flex", alignItems: "center", gap: 6, padding: "8px 8px",
+                                      borderRadius: 8, cursor: "pointer", fontSize: 13,
+                                      background: active ? "rgba(47,155,245,.10)" : "transparent",
+                                    }}
+                                  >
+                                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{group.label}</span>
+                                    <span
+                                      aria-hidden="true"
+                                      title={groupOn ? (zh ? "已启用" : "enabled") : (zh ? "未启用" : "disabled")}
+                                      style={{ width: 7, height: 7, borderRadius: "50%", flex: "0 0 auto", background: groupOn ? "#52c41a" : "#d9d9d9" }}
+                                    />
+                                    {active ? <span style={{ color: "var(--v2-blue)" }}>✓</span> : null}
+                                  </div>
+                                );
+                              })}
+                              <div style={{ borderTop: "1px solid var(--v2-line, rgba(36,52,79,.4))", marginTop: 6, paddingTop: 8 }}>
+                                <a href="/llm-gateway" style={{ fontSize: 12, color: "var(--v2-dim)" }}>{zh ? "管理模型" : "Manage models"}</a>
+                              </div>
                             </div>
-                          </div>
-                          {/* 右栏：所选供应商的开启模型 + 思考强度 + 上下文容量 */}
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 12, color: "var(--v2-dim)", margin: "2px 0 4px" }}>
-                              {activeGroup?.label ? `${zh ? "供应商" : "Provider"}：${activeGroup.label}` : (zh ? "模型" : "Model")}
+                          ) : null}
+                          {/* 主面板：供应商头 + 模型列表 + 思考强度 + 上下文容量 */}
+                          <div>
+                            <div
+                              onMouseEnter={() => setProviderFlyout(true)}
+                              onClick={() => setProviderFlyout((v) => !v)}
+                              style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", cursor: "pointer", borderRadius: 8, border: "1px solid var(--v2-line, #e5e7eb)", marginBottom: 8 }}
+                            >
+                              <span aria-hidden="true" style={{ background: "#3859FF", borderRadius: 7, width: 26, height: 26, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 12, flex: "0 0 auto" }}>
+                                {(activeGroup?.label || "AI").slice(0, 1)}
+                              </span>
+                              <b style={{ fontSize: 13.5, color: "var(--v2-txt)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{activeGroup?.label ?? (zh ? "默认档案" : "Default profile")}</b>
+                              <span className="v2-badge v2-bgray">{zh ? "API" : "API"}</span>
+                              <span style={{ color: "var(--v2-dim)" }}>›</span>
                             </div>
+                            <div style={{ fontSize: 12, color: "var(--v2-dim)", margin: "2px 0 4px" }}>{zh ? "模型" : "Model"}</div>
                             {enabledModels.map((p) => {
                               const selected = p.id === (profileId || profiles.find((x) => x.is_default)?.id);
                               const pCfg = effectiveModelConfig(p);
