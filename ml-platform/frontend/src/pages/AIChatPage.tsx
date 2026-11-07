@@ -228,7 +228,9 @@ export default function AIChatPage() {
   // 上下文容量 = 压缩摘要 + 携带窗口内原文（估算 tokens）
   const [compressedSummary, setCompressedSummary] = useState(() => localStorage.getItem("chat.summary") || "");
   const usedTokens = Math.ceil((compressedSummary.length + carried.reduce((sum, m) => sum + m.content.length, 0)) / 4);
-  const CONTEXT_BUDGET = 32000;
+  // 上下文容量预算读所选模型配置的 context_window（未配置回退 32K）；
+  // 容量 100% 自动压缩（LLM 摘要算法）：旧消息摘要化替换原文，压缩后容量回落。
+  const CONTEXT_BUDGET = Number(modelCfg.context_window) || 32000;
   const pct = Math.min(100, Math.round((usedTokens / CONTEXT_BUDGET) * 100));
   // 容量 100% 自动压缩（LLM 摘要算法）：旧消息摘要化替换原文，压缩后容量回落。
   const compressingRef = useRef(false);
@@ -542,7 +544,7 @@ export default function AIChatPage() {
                       const fmtTokens = fmtContextTokens;
                       const inputTypeLabels = INPUT_TYPE_LABELS;
                       return (
-                        <div style={{ position: "relative", width: 380 }}>
+                        <div style={{ position: "relative", width: 330 }}>
                           {/* 供应商飞出面板：悬停/点击供应商头时出现在主面板左侧（ZCode 式） */}
                           {providerFlyout ? (
                             <div
@@ -604,7 +606,7 @@ export default function AIChatPage() {
                             {enabledModels.map((p) => {
                               const selected = p.id === (profileId || profiles.find((x) => x.is_default)?.id);
                               const pCfg = effectiveModelConfig(p);
-                              const contextBadge = fmtTokens(pCfg.context_window ?? null);
+                              // 只保留输入类型徽标（视觉/视频/PDF）：容量/默认字样按用户要求移除
                               const extraTypes = (pCfg.input_types ?? []).filter((t) => t !== "text").map((t) => inputTypeLabels[t] ?? t);
                               return (
                                 <div
@@ -617,9 +619,7 @@ export default function AIChatPage() {
                                   }}
                                 >
                                   <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.model_id}</span>
-                                  {contextBadge ? <Tag style={{ marginRight: 0 }}>{contextBadge}</Tag> : null}
                                   {extraTypes.map((label) => <Tag key={label} style={{ marginRight: 0 }}>{label}</Tag>)}
-                                  {p.is_default ? <Tag style={{ marginRight: 0 }}>{zh ? "默认" : "default"}</Tag> : null}
                                   {selected ? <span style={{ color: "var(--v2-blue)" }}>✓</span> : null}
                                 </div>
                               );
@@ -646,7 +646,8 @@ export default function AIChatPage() {
                                 onChange={(v) => setThinkingLevel(levels[v]?.value ?? "off")}
                                 tooltip={{ open: false }}
                                 trackStyle={{ background: "linear-gradient(90deg, #1f9d55, #2f9bf5)", height: 10, borderRadius: 5 }}
-                                handleStyle={{ width: 18, height: 18, background: "#fff", borderColor: "#fff", boxShadow: "0 1px 4px rgba(0,0,0,.25)" }}
+                                handleStyle={{ width: 20, height: 20, background: "#fff", border: "none", boxShadow: "none" }}
+                                styles={{ handle: { width: 20, height: 20, border: "none", boxShadow: "none" }, tracks: { background: "linear-gradient(90deg, #1f9d55, #2f9bf5)" } }}
                               />
                             </div>
                           </div>
