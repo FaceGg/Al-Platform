@@ -494,3 +494,13 @@ Task 0 其余项（镜像仓库、GPU 节点可用性、Week 15 builder 路径�
 - E2E 驱动坑：服务层直调 launch_agent_run 的线程随脚本进程退出被杀（run 永久 pending）——真实路径 HTTP 触发无此问题；另登录限流 15min 窗 5 次（调试烧完等冷却）。
 
 **LLM 档案**：deepseek-flash（推理型，content 空）S1 必挂——已知坑第 3 次验证；deepseek-v4-pro 空回复×3（短请求连通 OK、长生成被掐的环境现象）；**deepseek-chat 档案（89ae1fd1）可用且 1 轮收敛**，智能体任务应绑它。
+
+## 2026-11-07 P2-1 门禁键对齐：引擎补 recall_minority + 恢复 agent 换模配方门禁兜底
+
+**改动**：`classification_metrics`（automl_search）返回三元 `(auc, f1, recall_minority)`——二分类少数类=验证集最少样本类（与轻量训练器/配方门禁 PRIMARY_METRIC 同口径），5 处调用方同步（trial attrs×2/family result/集成 metrics/候选评估）；贯通全链：FamilySearchResult 新字段 → `_family_summary` → 集成 all_results 行 metrics → `list_registerable_candidates` 顶层 fallback → best_model/ensemble best_model。`demo_loop._swap_to_best_model` 恢复向 `complete_retrain_swap` 传本轮固化配方（门禁兜底防线回归）。
+
+**验证**：automl 全家+闭环回归 110 绿；真实引擎重派铸造 job（train_v2_full_dense）8 候选 recall_minority 全部就位（0.90-0.98，mlp 0.08 合理离群）；`complete_retrain_swap(recipe_id=配方 gates recall_minority≥0.5)` → SWAPPED 且部署指向新版本（门禁可评估、可过、防线真实生效）。**坑：引擎 job 由 worker 容器执行，`docker compose build backend` 不更新 worker——改 automl_execution/automl_search 后必须 `docker compose build worker`+重启，否则验证 job 仍跑旧代码（本次实证：首轮验证候选 recall 全 None 的根因）。**
+
+**E2E 顺带验证（第 3/4 轮闭环）**：24h 熔断首次真实拦截（第 4 次评估触顶：一次性 critical 事件+管理员站内通知+后续静默积累），管理员恢复动作（清窗口内触发事件）后再触发正常；增量触发防误触（8−6=2<3 不触发，9−6=3 触发）双例实证。第 4 轮重放遇环境级 LLM S2 长重试（deepseek-chat 也偶发），2h 轮询超时护栏兜底范围内，非代码缺陷。
+
+**遗留**：TrialSummary 未读 recall_minority（trial attrs 已留痕，报告页展示属可选增强）；多输出分类无 minority 概念（配方可配 accuracy/f1 键）。
