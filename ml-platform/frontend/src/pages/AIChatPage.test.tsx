@@ -53,10 +53,13 @@ describe("AIChatPage", () => {
     renderPage();
     await waitFor(() => expect(apiClient.get).toHaveBeenCalledWith("/knowledge/bases"));
     expect(await screen.findByText(/知识库: 焊接工艺知识库/)).toBeInTheDocument();
-    // 顶部按钮组：新建对话/会话/对话设置（发布为API与旧配置入口已移除）
-    expect(await screen.findByText(/新建对话/)).toBeInTheDocument();
-    expect(await screen.findByText(/对话设置/)).toBeInTheDocument();
+    // 顶部按钮组已精简（新建对话/会话/对话设置移至输入框左侧会话栏与 + 菜单）
+    expect(screen.queryByText(/新建对话/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/对话设置/)).not.toBeInTheDocument();
     expect(screen.queryByText(/发布为 API/)).not.toBeInTheDocument();
+    // 会话栏：新建会话按钮 + 会话列表（夹具无会话 → 空态提示）
+    expect(await screen.findByText(/新建会话/)).toBeInTheDocument();
+    expect(await screen.findByText(/暂无会话/)).toBeInTheDocument();
   });
 
   it("sends chat messages with kb_id, thinking level and history", async () => {
