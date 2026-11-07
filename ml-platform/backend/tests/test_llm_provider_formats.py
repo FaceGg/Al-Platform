@@ -20,6 +20,7 @@ from app.services.llm_gateway import (  # noqa: E402
     LLMApiUrlError,
     _build_llm_request,
     _parse_llm_stream_event,
+    apply_reasoning_mapping,
     llm_base_url,
     list_upstream_models,
     normalize_llm_endpoint,
@@ -181,6 +182,61 @@ class TestAnthropicProbeHeaders(unittest.TestCase):
         self.assertEqual(headers["anthropic-version"], "2023-06-01")
         self.assertNotIn("Authorization", headers)
         self.assertTrue(result["ok"])
+
+
+class TestApplyReasoningMapping(unittest.TestCase):
+    """「编辑模型配置」的推理参数映射：等级→请求参数求值（不执行任意代码）。"""
+
+    MAPPING = (
+        'reasoningLevel == "disabled"\n'
+        '  ? {\n'
+        '      "thinking": {\n'
+        '        "type": "disabled"\n'
+        '      }\n'
+        '    }\n'
+        '  : reasoningLevel == "low"\n'
+        '  ? {\n'
+        '      "thinking": {\n'
+        '        "type": "enabled",\n'
+        '        "budget_tokens": 4096\n'
+        '      }\n'
+        '    }\n'
+        '  : {}'
+    )
+
+    def test_matching_level_returns_branch_params(self):
+        disabled = apply_reasoning_mapping(self.MAPPING, "disabled")
+        self.assertEqual(disabled, {"thinking": {"type": "disabled"}})
+        low = apply_reasoning_mapping(self.MAPPING, "low")
+        self.assertEqual(low["thinking"]["budget_tokens"], 4096)
+
+    def test_unmatched_level_returns_empty_and_no_match_returns_none(self):
+        self.assertEqual(apply_reasoning_mapping(self.MAPPING, "high"), {})
+        # 未匹配等级走三元链兜底分支 → 空参数（不造假）；映射/等级缺失 → None
+        self.assertEqual(apply_reasoning_mapping(self.MAPPING, "unknown-level"), {})
+        self.assertIsNone(apply_reasoning_mapping(None, "low"))
+        self.assertIsNone(apply_reasoning_mapping(self.MAPPING, None))
+
+    def test_build_llm_request_applies_mapping_for_custom_level(self):
+        """chat 传自定义等级（如 disabled）：映射分支参数合并进 anthropic 请求体。"""
+        config = GatewayLLMConfig(
+            api_url="https://api.deepseek.com/anthropic/v1/messages",
+            api_key="sk",
+            model_id="deepseek-chat",
+            temperature=None,
+            timeout_seconds=30,
+            profile_id=None,
+            profile_name="p",
+            provider="anthropic",
+            model_config={"reasoning_mapping": self.MAPPING},
+        )
+        url, headers, body = _build_llm_request(
+            config,
+            [{"role": "user", "content": "ping"}],
+            None, 100,
+            thinking_level="disabled",
+        )
+        self.assertEqual(body["thinking"], {"type": "disabled"})
 
 
 class TestEndpointNormalization(unittest.TestCase):

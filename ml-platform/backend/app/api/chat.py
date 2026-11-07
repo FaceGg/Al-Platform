@@ -82,9 +82,10 @@ def chat(
     temperature: float = Body(default=0.7, ge=0, le=1),
     # 多轮上下文：[{role: user|assistant, content}]，拼在本次问题前
     history: list[dict] = Body(default_factory=list, max_length=50),
-    # 思考强度（off/low/medium/high）：anthropic→thinking.budget、
-    # responses→reasoning.effort；chat completions 无标准参数不生效
-    thinking_level: str | None = Body(default=None, pattern="^(off|low|medium|high)$"),
+    # 思考强度：默认 off/low/medium/high（anthropic→thinking.budget、
+    # responses→reasoning.effort）；所选模型配置了 reasoning_levels 时可传
+    # 自定义等级 token，网关按该模型 reasoning_mapping 求值应用
+    thinking_level: str | None = Body(default=None, pattern="^(off|[a-z0-9_-]{1,32})$"),
     # Deprecated request-level overrides (spec v0.9 §14.1 收口): kept only to
     # reject old callers with an explicit 422, never honored.
     api_key: str | None = Body(default=None, max_length=512),

@@ -100,6 +100,8 @@ class GatewayLLMConfig:
     # API 格式（openai_compatible=Chat Completions / responses / anthropic）；
     # 默认值保证既有构造点（测试/env fallback）行为不变。
     provider: str = "openai_compatible"
+    # ZCode 风格模型配置（上下文窗口/最大输出/推理等级与映射等）；可空
+    model_config: dict | None = None
 
 
 def resolve_profile(
@@ -141,6 +143,7 @@ def resolve_profile(
         profile_id=str(profile.id),
         profile_name=profile.name,
         provider=profile.provider or "openai_compatible",
+        model_config=getattr(profile, "model_config_json", None),
     )
 
 
@@ -153,11 +156,18 @@ def _build_llm_request(
     - openai_compatible：POST {url}/chat/completions（用户填完整端点）
     - responses：POST {url}/responses（OpenAI Responses 协议）
     - anthropic：POST {url}/v1/messages（x-api-key + anthropic-version）
-    thinking_level（off/low/medium/high）按格式映射：anthropic →
-    thinking.budget_tokens；responses → reasoning.effort；chat
-    completions 无标准参数则忽略（不造假）。
+    thinking_level 按格式映射：anthropic → thinking.budget_tokens；responses →
+    reasoning.effort；chat completions 无标准参数则忽略（不造假）。模型配置
+    （model_config_json.reasoning_mapping）存在时优先按映射表达式求值并合并
+    进请求体——映射来自「编辑模型配置」弹窗，与模型能力绑定。
     """
     provider = config.provider or "openai_compatible"
+    model_cfg = getattr(config, "model_config", None) or {}
+    reasoning_mapping = model_cfg.get("reasoning_mapping")
+    mapped_params = (
+        apply_reasoning_mapping(reasoning_mapping, thinking_level)
+        if thinking_level else None
+    )
     if provider == "anthropic":
         system_text = "\n\n".join(
             message.get("content") or ""
@@ -187,6 +197,8 @@ def _build_llm_request(
                 "type": "enabled",
                 "budget_tokens": {"low": 4096, "medium": 8192, "high": 16384}[thinking_level],
             }
+        if mapped_params:
+            body.update(mapped_params)
         return config.api_url, headers, body
     if provider == "responses":
         headers = (
@@ -206,6 +218,8 @@ def _build_llm_request(
             body["max_output_tokens"] = max_tokens
         if thinking_level in ("low", "medium", "high"):
             body["reasoning"] = {"effort": thinking_level}
+        if mapped_params:
+            body.update(mapped_params)
         return config.api_url, headers, body
     # 默认：Chat Completions（存量路径行为不变）
     headers = (
@@ -267,6 +281,57 @@ def _provider_headers(provider: str, api_key: str | None) -> dict[str, str]:
     if provider == "anthropic":
         return {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
     return {"Authorization": f"Bearer {api_key}"}
+
+
+def apply_reasoning_mapping(mapping: str | None, level: str | None) -> dict | None:
+    """按映射表达式求出该推理等级的请求参数（不执行任意代码）。
+
+    表达式是平台/前端生成的三元链：``reasoningLevel == "low" ? {json} :
+    reasoningLevel == "high" ? {json} : {json}``。求值 = 定位等值比较中
+    等级名匹配的分支，取其后第一个配平的 JSON 对象；无匹配或解析失败
+    返回 None（调用方忽略，不造假参数）。"""
+    if not mapping or not level:
+        return None
+    level_variants = (level, level.lower(), level.upper())
+    for variant in level_variants:
+        marker = f'reasoningLevel == "{variant}"'
+        position = mapping.find(marker)
+        while position != -1:
+            question = mapping.find("?", position + len(marker))
+            if question == -1:
+                break
+            open_brace = mapping.find("{", question + 1)
+            if open_brace == -1:
+                break
+            depth = 0
+            end = open_brace
+            in_string = False
+            escape = False
+            for index in range(open_brace, len(mapping)):
+                char = mapping[index]
+                if escape:
+                    escape = False
+                elif char == "\\" and in_string:
+                    escape = True
+                elif char == '"':
+                    in_string = not in_string
+                elif not in_string:
+                    if char == "{":
+                        depth += 1
+                    elif char == "}":
+                        depth -= 1
+                        if depth == 0:
+                            end = index + 1
+                            break
+            import json as _json
+
+            try:
+                return _json.loads(mapping[open_brace:end])
+            except ValueError:
+                position = mapping.find(marker, end)
+                continue
+    # 有映射但等级无匹配分支：按三元链兜底语义返回空参数（不造假）
+    return {}
 
 
 def list_upstream_models(

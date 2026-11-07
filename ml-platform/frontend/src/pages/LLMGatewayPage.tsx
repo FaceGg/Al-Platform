@@ -593,6 +593,8 @@ export default function LLMGatewayPage() {
     }
     setModelCfgSaving(true)
     try {
+      // 最大输出 Token 同步到 profile.max_tokens（网关 max_tokens 实际取该值，配置「起作用」）
+      const maxTokensPatch = values.max_output_tokens ? { max_tokens: values.max_output_tokens } : {}
       if (modelCfgMode === 'add' && selected?.profiles.length) {
         // 添加：走克隆端点复制供应商 URL/Key（前端无需明文 Key），带模型配置
         const source = selected.profiles.find((p) => p.is_default) ?? selected.profiles[0]
@@ -601,12 +603,17 @@ export default function LLMGatewayPage() {
           name: values.model_id,
           model_config_json: configJson,
         })
+        if (values.max_output_tokens) {
+          const created = await apiClient.get(`/llm-profiles`)
+          const added = (created.data || []).find((p: { model_id?: string; name?: string }) => p.model_id === values.model_id && p.name === values.model_id)
+          if (added) await updateLlmProfile(added.id, { name: added.name, provider: added.provider, api_url: added.api_url, model_id: added.model_id, deployment: added.deployment, is_default: added.is_default, max_tokens: values.max_output_tokens })
+        }
         message.success(zh ? `已添加 ${values.model_id}` : `Added ${values.model_id}`)
       } else if (modelCfgMode === 'edit' && modelCfgTarget) {
-        // 编辑：仅更新 model_id 与模型配置
+        // 编辑：更新 model_id、模型配置与最大输出 Token（网关实际消费）
         await updateLlmProfile(
           modelCfgTarget.id,
-          payloadOf(modelCfgTarget, { model_id: values.model_id, model_config_json: configJson }),
+          payloadOf(modelCfgTarget, { model_id: values.model_id, model_config_json: configJson, ...maxTokensPatch }),
         )
         message.success(zh ? '模型配置已更新' : 'Model config updated')
       }
@@ -820,6 +827,23 @@ export default function LLMGatewayPage() {
                           }}
                         >
                           <span className="tt" style={{ fontSize: 13 }}>{profile.model_id}</span>
+                          {/* ZCode 式配置徽标：上下文容量 + 输入类型（视觉/视频/PDF） */}
+                          {(() => {
+                            const cfg = (profile.model_config_json ?? {}) as Record<string, unknown>
+                            const contextValue = Number(cfg.context_window)
+                            const contextBadge = contextValue > 0
+                              ? (contextValue >= 1_000_000 ? `${contextValue / 1_000_000}M` : contextValue >= 1000 ? `${Math.round(contextValue / 1000)}K` : String(contextValue))
+                              : null
+                            const inputTypes = Array.isArray(cfg.input_types) ? (cfg.input_types as string[]) : []
+                            const typeLabels: Record<string, string> = { image: zh ? '视觉' : 'vision', video: zh ? '视频' : 'video', pdf: 'PDF' }
+                            const extraTypes = inputTypes.filter((t) => t !== 'text').map((t) => typeLabels[t] ?? t)
+                            return (
+                              <>
+                                {contextBadge ? <span className="v2-badge v2-bgray">{contextBadge}</span> : null}
+                                {extraTypes.map((label) => <span key={label} className="v2-badge v2-bgray">{label}</span>)}
+                              </>
+                            )
+                          })()}
                           <span style={{ color: 'var(--v2-sub, #999)', fontSize: 12 }}>{profile.name}</span>
                           <span className="v2-badge v2-bgray">{FORMAT_SHORT[profile.provider] ?? profile.provider}</span>
                           {(profile.purpose_tags || []).map((tag) => (

@@ -360,7 +360,13 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           {zh ? "模型" : "Model"}
           <select className="v2-select" style={{ minWidth: 170 }} value={llmProfileId} onChange={(e) => setLlmProfileId(e.target.value)} aria-label={zh ? "选择大模型档案" : "LLM profile"}>
             {profiles.length === 0 ? <option value="">{zh ? "（无档案）" : "(none)"}</option> : null}
-            {profiles.map((p) => <option key={String(p.id)} value={String(p.id)}>{p.name} · {p.model_id}{p.is_default ? (zh ? "（默认）" : " (default)") : ""}</option>)}
+            {Array.from(new Set(profiles.map((p) => p.name))).map((providerName) => (
+              <optgroup key={providerName} label={providerName}>
+                {profiles.filter((p) => p.name === providerName).map((p) => (
+                  <option key={String(p.id)} value={String(p.id)}>{p.name} · {p.model_id}{p.is_default ? (zh ? "（默认）" : " (default)") : ""}</option>
+                ))}
+              </optgroup>
+            ))}
           </select>
         </label>
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, marginLeft: "auto", cursor: "pointer" }}>

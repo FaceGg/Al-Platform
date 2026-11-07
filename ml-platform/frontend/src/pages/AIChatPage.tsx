@@ -71,6 +71,13 @@ export default function AIChatPage() {
   const [profileId, setProfileId] = useState(() => localStorage.getItem("chat.profileId") || "");
   const [thinkingLevel, setThinkingLevel] = useState<string>(() => localStorage.getItem("chat.thinkingLevel") || "off");
   const [contextWindow, setContextWindow] = useState<number>(() => Number(localStorage.getItem("chat.contextWindow") || "8"));
+  // 所选模型的 ZCode 风格配置（上下文窗口/推理等级/输入类型，来自「编辑模型配置」弹窗）
+  const currentProfile = profiles.find((p) => p.id === profileId) ?? profiles.find((p) => p.is_default) ?? null;
+  const modelCfg = (currentProfile?.model_config_json ?? {}) as Record<string, unknown>;
+  const modelReasoningLevels = Array.isArray(modelCfg.reasoning_levels) && modelCfg.reasoning_levels.length
+    ? (modelCfg.reasoning_levels as string[])
+    : null;
+  const modelContextWindow = Number(modelCfg.context_window) || null;
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -494,14 +501,36 @@ export default function AIChatPage() {
                     trigger="click"
                     placement="topRight"
                     content={(() => {
-                      const current = profiles.find(p => p.id === profileId) ?? profiles.find(p => p.is_default);
+                      const current = currentProfile;
+                      // 思考强度读所选模型的 reasoning_levels 配置（未配置用默认档位）
                       const levels = [
-                        { value: "off", label: zh ? "关闭" : "Off" },
-                        { value: "low", label: zh ? "低" : "Low" },
-                        { value: "medium", label: zh ? "中" : "Med" },
-                        { value: "high", label: zh ? "最高" : "Max" },
+                        ...(modelReasoningLevels
+                          ? modelReasoningLevels.map((level) => ({ value: level, label: level }))
+                          : [
+                              { value: "off", label: zh ? "关闭" : "Off" },
+                              { value: "low", label: zh ? "低" : "Low" },
+                              { value: "medium", label: zh ? "中" : "Med" },
+                              { value: "high", label: zh ? "最高" : "Max" },
+                            ]),
                       ];
-                      const ti = Math.max(0, levels.findIndex(l => l.value === thinkingLevel));
+                      // 所选等级不在模型等级列表中（切换模型后遗留）→ 归位到最低档
+                      const fallbackIndex = thinkingLevel && levels.some(l => l.value === thinkingLevel)
+                        ? levels.findIndex(l => l.value === thinkingLevel)
+                        : 0;
+                      const ti = Math.max(0, fallbackIndex);
+                      // 模型列表按供应商（档案名）分组显示
+                      const providerGroups: Array<{ name: string; items: typeof profiles }> = [];
+                      for (const p of profiles) {
+                        const key = p.name || "AI";
+                        const bucket = providerGroups.find((g) => g.name === key);
+                        if (bucket) bucket.items.push(p);
+                        else providerGroups.push({ name: key, items: [p] });
+                      }
+                      const fmtTokens = (value: number | null) => {
+                        if (!value) return null;
+                        return value >= 1_000_000 ? `${value / 1_000_000}M` : value >= 1000 ? `${Math.round(value / 1000)}K` : String(value);
+                      };
+                      const modelContext = fmtTokens(modelContextWindow);
                       return (
                         <div style={{ width: 260 }}>
                           {/* 供应商/档案头 */}
@@ -512,33 +541,45 @@ export default function AIChatPage() {
                             <b style={{ fontSize: 13.5, color: "var(--v2-txt)" }}>{current?.name ?? (zh ? "默认档案" : "Default profile")}</b>
                             <span style={{ marginLeft: "auto", color: "var(--v2-dim)" }}>›</span>
                           </div>
-                          <div style={{ fontSize: 12, color: "var(--v2-dim)", margin: "4px 0 2px" }}>{zh ? "模型" : "Model"}</div>
-                          {/* 模型列表（一档案一模型），选中带勾 */}
-                          {profiles.map((p) => {
-                            const selected = p.id === (profileId || profiles.find(x => x.is_default)?.id);
-                            return (
-                              <div
-                                key={p.id}
-                                onClick={() => setProfileId(p.id)}
-                                style={{
-                                  display: "flex", alignItems: "center", gap: 8, padding: "8px 10px",
-                                  borderRadius: 8, cursor: "pointer", fontSize: 13,
-                                  background: selected ? "rgba(47,155,245,.10)" : "transparent",
-                                }}
-                              >
-                                <span style={{ flex: 1 }}>{p.model_id}</span>
-                                {p.is_default ? <Tag style={{ marginRight: 0 }}>{zh ? "默认" : "default"}</Tag> : null}
-                                {selected ? <span style={{ color: "var(--v2-blue)" }}>✓</span> : null}
-                              </div>
-                            );
-                          })}
+                          <div style={{ fontSize: 12, color: "var(--v2-dim)", margin: "4px 0 2px" }}>{zh ? "模型（按供应商分组）" : "Models (grouped)"}</div>
+                          {/* 模型列表：按供应商分组，一档案一模型，选中带勾 */}
+                          {providerGroups.map((group) => (
+                            <div key={group.name}>
+                              <div style={{ fontSize: 11.5, color: "var(--v2-dim)", padding: "4px 10px 2px" }}>{group.name}</div>
+                              {group.items.map((p) => {
+                                const selected = p.id === (profileId || profiles.find(x => x.is_default)?.id);
+                                return (
+                                  <div
+                                    key={p.id}
+                                    onClick={() => setProfileId(p.id)}
+                                    style={{
+                                      display: "flex", alignItems: "center", gap: 8, padding: "8px 10px",
+                                      borderRadius: 8, cursor: "pointer", fontSize: 13,
+                                      background: selected ? "rgba(47,155,245,.10)" : "transparent",
+                                    }}
+                                  >
+                                    <span style={{ flex: 1 }}>{p.model_id}</span>
+                                    {p.is_default ? <Tag style={{ marginRight: 0 }}>{zh ? "默认" : "default"}</Tag> : null}
+                                    {selected ? <span style={{ color: "var(--v2-blue)" }}>✓</span> : null}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ))}
                           <div style={{ borderTop: "1px solid var(--v2-line, rgba(36,52,79,.4))", marginTop: 8, paddingTop: 10 }}>
+                            {modelContext ? (
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, fontSize: 12, color: "var(--v2-sub)" }}>
+                                <span>{zh ? "上下文容量" : "Context"}</span>
+                                <b style={{ color: "var(--v2-txt)" }}>{modelContext} tok</b>
+                                <span style={{ marginLeft: "auto", color: "var(--v2-dim)", fontSize: 11 }}>{zh ? "来自模型配置" : "from model config"}</span>
+                              </div>
+                            ) : null}
                             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
                               <span style={{ fontSize: 12, color: "var(--v2-sub)" }}>{zh ? "思考强度" : "Thinking"}</span>
                               <b style={{ fontSize: 12.5, color: "var(--v2-txt)" }}>{levels[ti]?.label}</b>
                             </div>
                             <Slider
-                              min={0} max={3} step={1} value={ti}
+                              min={0} max={Math.max(0, levels.length - 1)} step={1} value={ti}
                               onChange={(v) => setThinkingLevel(levels[v]?.value ?? "off")}
                               tooltip={{ open: false }}
                               trackStyle={{ background: "linear-gradient(90deg, #1f9d55, #2f9bf5)", height: 10, borderRadius: 5 }}
@@ -552,7 +593,7 @@ export default function AIChatPage() {
                     <Button type="text" size="small" style={{ fontSize: 12.5, fontWeight: 600, color: "inherit" }}>
                       {(profiles.find(p => p.id === profileId) ?? profiles.find(p => p.is_default))?.model_id ?? (zh ? "默认模型" : "model")}
                       {" "}
-                      {({ low: "低", medium: "中", high: "最高" } as Record<string, string>)[thinkingLevel] ?? ""}
+                      {({ low: "低", medium: "中", high: "最高", off: "", disabled: "关" } as Record<string, string>)[thinkingLevel] ?? (modelReasoningLevels?.includes(thinkingLevel) ? thinkingLevel : "")}
                       <DownOutlined style={{ fontSize: 10, marginLeft: 4 }} />
                     </Button>
                   </Popover>
