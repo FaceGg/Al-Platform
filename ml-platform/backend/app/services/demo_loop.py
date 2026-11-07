@@ -367,7 +367,10 @@ class DemoLoopService:
             if mode not in {"engine", "agent"}:
                 raise DemoLoopError(
                     "DEMO_LOOP_CONFIG_INVALID", "retrain_mode 必须是 engine 或 agent")
-            if mode == "agent" and config.retrain_status not in {"idle", "failed", ""}:
+            if (
+                mode != (config.retrain_mode or "engine")
+                and config.retrain_status not in {"idle", "failed", ""}
+            ):
                 raise DemoLoopError(
                     "DEMO_LOOP_CONFIG_INVALID", "重训进行中不允许切换模式")
             config.retrain_mode = mode
