@@ -633,7 +633,7 @@ export default function AIChatPage() {
                               {modelCfg.context_window ? (
                                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, fontSize: 12, color: "var(--v2-sub)" }}>
                                   <span>{zh ? "上下文容量" : "Context"}</span>
-                                  <b style={{ color: "var(--v2-txt)" }}>{fmtTokens(modelCfg.context_window ?? null)} tok</b>
+                                  <b style={{ color: "var(--v2-txt)" }}>{fmtTokens(modelCfg.context_window ?? null)}</b>
                                   <span style={{ marginLeft: "auto", color: "var(--v2-dim)", fontSize: 11 }}>{zh ? "来自模型配置" : "from model config"}</span>
                                 </div>
                               ) : null}
