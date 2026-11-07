@@ -426,7 +426,11 @@ class ModelRegistryService:
             if not metrics:
                 # 单输出族摘要的指标在顶层（auc/f1/best_score）。此前这里取空 →
                 # 闭环换模所有候选同分 0.0，max 恒选目录第一个族而非冠军。
-                for key, source_key in (("auc", "auc"), ("f1", "f1"), ("accuracy", "best_score")):
+                for key, source_key in (
+                    ("auc", "auc"), ("f1", "f1"), ("accuracy", "best_score"),
+                    # 少数类召回：闭环 agent 换模配方门禁的 PRIMARY_METRIC 口径
+                    ("recall_minority", "recall_minority"),
+                ):
                     value = item.get(source_key)
                     if isinstance(value, (int, float)) and not isinstance(value, bool):
                         metrics[key] = float(value)

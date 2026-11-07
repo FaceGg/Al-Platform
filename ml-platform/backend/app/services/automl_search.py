@@ -14,7 +14,7 @@ from optuna.pruners import HyperbandPruner, NopPruner
 from optuna.samplers import GridSampler, NSGAIISampler, RandomSampler, TPESampler
 from optuna.trial import FrozenTrial, TrialState
 from sklearn.base import clone
-from sklearn.metrics import f1_score, get_scorer, mean_absolute_error, mean_squared_error, r2_score, roc_auc_score
+from sklearn.metrics import f1_score, get_scorer, mean_absolute_error, mean_squared_error, r2_score, recall_score, roc_auc_score
 from sklearn.model_selection import KFold, StratifiedKFold, cross_val_predict, cross_val_score, train_test_split
 
 from app.services.automl_catalog import AlgorithmFamily, AlgorithmUnavailable, ParameterSpec, TaskType
@@ -330,6 +330,7 @@ class FamilySearchResult:
     best_estimator: object | None = None
     auc: float | None = None
     f1: float | None = None
+    recall_minority: float | None = None
     feature_importance: list[float] = field(default_factory=list)
     completed_trials: int = 0
     pruned_trials: int = 0
@@ -496,10 +497,15 @@ def classification_metrics(
     features: np.ndarray,
     target: np.ndarray,
     evaluation: Mapping[str, object],
-) -> tuple[float | None, float | None]:
-    """Evaluate a fitted model on held-out/CV predictions without training leakage."""
+) -> tuple[float | None, float | None, float | None]:
+    """Evaluate a fitted model on held-out/CV predictions without training leakage.
+
+    返回 ``(auc, f1, recall_minority)``：recall_minority 仅二分类有值
+    （少数类召回，与智能体轻量训练器/配方验收门禁 PRIMARY_METRIC 同口径），
+    多类/无法判定时为 None——闭环 agent 换模的配方门禁兜底依赖此键与
+    引擎候选对齐（missing-veto 死锁修复，E2E 实证）。"""
     if len(np.unique(target)) < 2:
-        return None, None
+        return None, None, None
     cross_validation = bool(evaluation.get("cross_validation_enabled", True))
     if cross_validation:
         folds = int(evaluation.get("cross_validation_folds") or 5)
@@ -536,6 +542,15 @@ def classification_metrics(
                 continue
         metric_target = test_target
     f1 = float(f1_score(metric_target, predictions, average="weighted", zero_division=0))
+    recall_minority: float | None = None
+    metric_classes = np.unique(np.asarray(metric_target))
+    if len(metric_classes) == 2:
+        # 少数类 = 验证集中样本更少的类别（与轻量训练器 minority 语义一致）
+        _, counts = np.unique(np.asarray(metric_target), return_counts=True)
+        minority = metric_classes[int(np.argmin(counts))]
+        recall_minority = float(recall_score(
+            metric_target, predictions, pos_label=minority, zero_division=0,
+        ))
     auc = None
     if scoring is not None:
         try:
@@ -548,7 +563,7 @@ def classification_metrics(
                 auc = float(roc_auc_score(metric_target, scores, multi_class="ovr", average="weighted"))
         except (TypeError, ValueError):
             auc = None
-    return auc, f1
+    return auc, f1, recall_minority
 
 
 def _trial_summary(trial: FrozenTrial) -> TrialSummary:
@@ -644,7 +659,7 @@ def run_family_search(
                         raise TrialPruned()
                 if task == "classification" and estimator_evaluator is _evaluate_estimator:
                     try:
-                        auc, f1 = classification_metrics(
+                        auc, f1, recall_minority = classification_metrics(
                             build_estimator({**params, family.resource_parameter: family.max_resource}),
                             features=features,
                             target=target,
@@ -654,6 +669,8 @@ def run_family_search(
                             trial.set_user_attr("auc", auc)
                         if f1 is not None:
                             trial.set_user_attr("f1", f1)
+                        if recall_minority is not None:
+                            trial.set_user_attr("recall_minority", recall_minority)
                         trial.set_user_attr("accuracy", score)
                     except (TypeError, ValueError, RuntimeError):
                         pass
@@ -666,7 +683,7 @@ def run_family_search(
             ))
             if task == "classification" and estimator_evaluator is _evaluate_estimator:
                 try:
-                    auc, f1 = classification_metrics(
+                    auc, f1, recall_minority = classification_metrics(
                         build_estimator(params),
                         features=features,
                         target=target,
@@ -676,6 +693,8 @@ def run_family_search(
                         trial.set_user_attr("auc", auc)
                     if f1 is not None:
                         trial.set_user_attr("f1", f1)
+                    if recall_minority is not None:
+                        trial.set_user_attr("recall_minority", recall_minority)
                     trial.set_user_attr("accuracy", score)
                 except (TypeError, ValueError, RuntimeError):
                     # auc/f1 属可选附加指标：失败不影响主分数，但留痕便于排查
@@ -744,11 +763,13 @@ def run_family_search(
     # name warnings; the caller computes its domain metrics after the search.
     if task == "classification" and estimator_evaluator is _evaluate_estimator:
         try:
-            result.auc, result.f1 = classification_metrics(
+            result.auc, result.f1, recall_minority = classification_metrics(
                 estimator, features=features, target=target, evaluation=evaluation,
             )
+            result.recall_minority = recall_minority
         except (TypeError, ValueError, RuntimeError):
             result.auc, result.f1 = None, None
+            result.recall_minority = None
     result.feature_importance = _feature_importance(estimator, features.shape[1])
     return result
 

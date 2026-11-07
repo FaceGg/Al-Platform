@@ -401,7 +401,7 @@ def _build_ensemble_candidate(
         n_jobs=-1,
     )
     try:
-        auc, f1 = classification_metrics(
+        auc, f1, recall_minority = classification_metrics(
             vote, features=features, target=target, evaluation=evaluation,
         )
         accuracy = _evaluate_estimator(
@@ -430,6 +430,7 @@ def _build_ensemble_candidate(
         ],
         "metrics": {
             "auc": round(auc, 4) if auc is not None else None,
+            "recall_minority": round(recall_minority, 4) if recall_minority is not None else None,
             "f1": round(f1, 4) if f1 is not None else None,
             "accuracy": round(accuracy, 4),
         },
@@ -698,6 +699,7 @@ def _family_summary(result) -> dict:
         "best_score": result.best_score,
         "auc": result.auc,
         "f1": result.f1,
+        "recall_minority": getattr(result, "recall_minority", None),
         "best_params": result.best_params,
         "completed_trials": result.completed_trials,
         "pruned_trials": result.pruned_trials,
@@ -1110,7 +1112,7 @@ def _execute_optuna_job(
             # 注册表/闭环换模按 metrics 取分（单族摘要指标在顶层，集成行显式给出）
             "metrics": {
                 key: ensemble_metrics.get(key)
-                for key in ("auc", "f1", "accuracy")
+                for key in ("auc", "f1", "accuracy", "recall_minority")
                 if ensemble_metrics.get(key) is not None
             },
             "params": {
@@ -1142,7 +1144,7 @@ def _execute_optuna_job(
         "search": {"method": method, "max_trials": max_trials, "time_budget": time_budget, "budget_exhausted": budget_exhausted},
         "progress": {"completed": completed_trials, "total": planned_trials, "percent": round((completed_trials / planned_trials) * 100, 2) if planned_trials else 100, "current_algorithm": winner.algorithm_id, "current_trial": None, "search_method": method, "budget_exhausted": budget_exhausted},
         "algorithm_results": family_summaries,
-        "best_model": {"algorithm_id": winner.algorithm_id, "name": winner.display_name, "score": winner.best_score, "auc": winner.auc, "f1": winner.f1, "params": winner.best_params, "model_artifact_id": str(model_artifact.id)},
+        "best_model": {"algorithm_id": winner.algorithm_id, "name": winner.display_name, "score": winner.best_score, "auc": winner.auc, "f1": winner.f1, "recall_minority": winner.recall_minority, "params": winner.best_params, "model_artifact_id": str(model_artifact.id)},
         "all_results": all_results,
         "feature_importance": feature_importance,
         "feature_importance_report": feature_importance_report,
@@ -1171,6 +1173,7 @@ def _execute_optuna_job(
             "score": ensemble_metrics.get("accuracy"),
             "auc": ensemble_metrics.get("auc"),
             "f1": ensemble_metrics.get("f1"),
+            "recall_minority": ensemble_metrics.get("recall_minority"),
             "params": {"members": ensemble_info.get("members"), "voting": "soft"},
             "model_artifact_id": str(model_artifact.id),
         }
@@ -1994,10 +1997,10 @@ def execute_automl_job(
                     score = float(scorer(estimator, test_features, test_target))
                 if not math.isfinite(score):
                     raise ValueError("Candidate score is not finite")
-                auc = f1 = None
+                auc = f1 = recall_minority = None
                 if task == "classification":
                     try:
-                        auc, f1 = classification_metrics(
+                        auc, f1, recall_minority = classification_metrics(
                             estimator,
                             # Keep the DataFrame schema: custom estimators and
                             # feature-name-aware sklearn pipelines may require
@@ -2007,8 +2010,8 @@ def execute_automl_job(
                             evaluation=evaluation,
                         )
                     except (TypeError, ValueError, RuntimeError):
-                        auc, f1 = None, None
-                    candidate_metrics[candidate.name] = (auc, f1)
+                        auc, f1, recall_minority = None, None, None
+                    candidate_metrics[candidate.name] = (auc, f1, recall_minority)
                 duration = time.perf_counter() - started
                 tracking.log_metrics(child.run_id, {
                     "cv_score" if cv is not None else "holdout_score": score,
@@ -2021,6 +2024,7 @@ def execute_automl_job(
                     "score": score,
                     "auc": auc,
                     "f1": f1,
+                    "recall_minority": recall_minority,
                     "training_time_seconds": duration,
                     "status": "completed",
                 })
@@ -2077,7 +2081,9 @@ def execute_automl_job(
         winner.fit(features, target)
         if dependencies.cancellation_requested and dependencies.cancellation_requested(job.id):
             raise AutoMLCancelled("AutoML cancellation requested")
-        winner_auc, winner_f1 = candidate_metrics.get(best_candidate.name, (None, None))
+        winner_auc, winner_f1, winner_recall_minority = candidate_metrics.get(
+            best_candidate.name, (None, None, None),
+        )
         with tempfile.TemporaryDirectory() as temporary:
             model_path = Path(temporary) / f"{job.id}.joblib"
             joblib.dump({
@@ -2132,6 +2138,7 @@ def execute_automl_job(
                 "score": best_score,
                 "auc": winner_auc,
                 "f1": winner_f1,
+                "recall_minority": winner_recall_minority,
             },
             "all_results": final_results,
         }

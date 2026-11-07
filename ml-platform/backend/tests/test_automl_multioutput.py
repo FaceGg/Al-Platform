@@ -129,7 +129,7 @@ class DecisionOnlyClassifier(ClassifierMixin, BaseEstimator):
 
 def test_auc_falls_back_to_decision_function_when_predict_proba_missing():
     frame = _frame()
-    auc, f1 = classification_metrics(
+    auc, f1, recall_minority = classification_metrics(
         DecisionOnlyClassifier(),
         features=frame[["x1", "x2", "x3"]],
         target=frame["label_a"].to_numpy(),
@@ -137,6 +137,8 @@ def test_auc_falls_back_to_decision_function_when_predict_proba_missing():
     )
     assert auc is not None
     assert f1 is not None
+    # recall_minority 与 auc/f1 同批返回（闭环换模配方门禁的 PRIMARY_METRIC 口径）
+    assert recall_minority is not None
 
 
 def test_search_controls_expose_four_strengths_and_time_budgets():
