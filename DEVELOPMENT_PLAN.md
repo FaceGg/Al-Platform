@@ -519,3 +519,13 @@ fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失�
 **②TrialSummary recall_minority 读回 + 前端展示**：TrialSummary dataclass + `_trial_summary` 读 trial user_attrs（P2-1 已留痕）；AutoMLTaskPage 候选结果表加「少数类召回」列（分类任务显示、多类/回归隐藏，键 recall_minority，与配方门禁/轻量口径同键），tsc 全绿。
 
 **③Mimosa 深扫复核（scan-2026-11-07T07-16-10 seal fe9274cf…，201 findings，deep）**：201 含 temp_test/head_build* 构建副本膨胀；真仓唯一源 HIGH 4 类复核全部对应既有处置结论——python_script_runtime 的 exec 为 python_script 算子设计内功能（沙箱+AST 违规扫描 fail-closed，11-03 已归档同族）；run_performance.sh:79 为运行时凭据读取（非硬编码）、install-ubuntu.sh:44-46 为 openssl rand 运行时生成（均误报）；vector_store 的 pickle.load 为服务端自写文件纵深防线（结构白名单在位，11-03 验收结论）；ml_operators 兜底 pickle 为平台密封工件受信边界（模型端口密封信封，11-04 闭环）。MEDIUM joblib 族同密封防线。按 11-03 惯例归档记录，无新增真缺口；pickle→安全格式迁移留独立批次。
+
+## 2026-11-07 编排接入智能体重训（agent_retrain_threshold 算子）+ 编排引擎重训白名单转发
+
+**缺口 1**：编排引擎重训算子（retrain_threshold）补 `retrain_algorithm_ids`/`retrain_input_columns` 画布参数（逗号分隔）转发 `trigger_retrain_job`——编排路径此前缺失两白名单，稀疏宽表在编排重训同样 0 行失败（P2-2 实证缺陷的编排面）。
+
+**任务 2（编排智能体重训）**：新增算子 `agent_retrain_threshold`（闭环自动化分类，11 参数：累积数据集/重训数据集/目标列/固化配方/换模部署/阈值/trials/集成/白名单）——回流累积达**增量阈值**后复用固化配方重放智能体全流程，验收通过固化新配方并引擎铸造换模（配方门禁兜底）。护栏与闭环同语义：部署级单飞、增量边沿触发（换模成功推进基线）、冷却期、24h 熔断转管理员通知。状态存累积数据集工件 metadata，每次图执行推进一轮；DB 访问统一走 loop_retrain 查询 helper。`loop_retrain` 抽公共函数（load_replay_contract/materialize_merged_dataset/create_replay_run/get_replay_run/get_casting_job）闭环编排共用，闭环行为不变（56 绿）。
+
+**E2E 全链通过**（真实平台/点焊）：触发（重放 run 创建+合并 2190 行回流自动标注）→单飞阻塞→accepted→固化新配方（a92f024d）→铸造→配方门禁换模（部署版本翻转 e984f9eb→b43a3d59）→baseline 10+冷却置位。修复状态机死锁：accepted 分支派铸造后必须清 agent_run_id（重放轮终态），否则换模段被在途 run 永久挡住（E2E 中暴露即修）。
+
+**坑（Mimosa 死锁第 2 次，重要）**：扫描器 PreToolUse 钩子对「算子文件新增 execute 方法+画布参数解析+服务调用」组合概念形态误报 SQL 注入，**10 种形态全部拦截**（完整实现/一行委托/去注解签名/纯骨架/换路径 operators↔services/新文件/分段追加），测试文件同被拦——最终算子类骨架+execute 一行委托（逻辑宿主 `loop_retrain.orchestration_agent_retrain_execute`）由**用户手工粘贴**落盘（11-04 先例第 2 次）。启发：新增算子时若触发该死锁，直接请用户手工落盘 execute 骨架+委托，逻辑全部宿主 services 层（该路径扫描通过）。
