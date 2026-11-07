@@ -100,6 +100,9 @@ class TestAgentExtras(unittest.TestCase):
                     ],
                 },
                 result_json={"metrics": {"recall_minority": 0.95}},
+                # guidance 快照非空：fixate 幂等回填（legacy 配方补版本）只对
+                # 缺快照的配方触发，否则本用例版本计数断言被回填多打一版
+                guidance_json={"evaluation": {"metric_gates": {"recall_minority": 0.9}}},
                 created_by=self.admin_id,
             )
             db.add(run)
