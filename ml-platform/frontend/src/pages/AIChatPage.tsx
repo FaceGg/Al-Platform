@@ -269,7 +269,40 @@ export default function AIChatPage() {
           </>
         )}
       />
-      <Card styles={{ body: { height: "calc(100vh - 260px)", display: "flex", flexDirection: "column", padding: 0 } }}>
+      {/* 页面级双栏：左会话栏（Card 外）+ 右聊天区 */}
+      <div style={{ display: "flex", gap: 14, alignItems: "stretch" }}>
+      {/* 会话栏（页面左侧，Card 外）：新建会话按钮 + 会话列表（单击切换/双击重命名/删除） */}
+      <div className="v2-panel" style={{ width: 210, flex: "0 0 210px", display: "flex", flexDirection: "column", padding: 12 }}>
+        <Button icon={<PlusOutlined />} onClick={newChat} block>{zh ? "新建会话" : "New chat"}</Button>
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", marginTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+          {sessions.slice(0, 50).map(s => (
+            <div
+              key={s.id}
+              onClick={() => switchSession(s.id)}
+              onDoubleClick={() => void renameSession(s.id, s.title)}
+              title={zh ? "单击切换 · 双击重命名" : "Click to switch · double-click to rename"}
+              style={{
+                display: "flex", alignItems: "center", gap: 6, padding: "7px 8px",
+                borderRadius: 8, cursor: "pointer", fontSize: 12.5,
+                background: s.id === activeSessionId ? "rgba(47,155,245,.10)" : "transparent",
+              }}
+            >
+              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</span>
+              <span style={{ color: "var(--v2-dim)", fontSize: 11 }}>{(s.messages || []).length}</span>
+              <Button
+                type="text" size="small" danger
+                icon={<DeleteOutlined style={{ fontSize: 11 }} />}
+                onClick={(e) => { e.stopPropagation(); void deleteSession(s.id); }}
+                style={{ width: 20, height: 20, minWidth: 20 }}
+              />
+            </div>
+          ))}
+          {sessions.length === 0 ? (
+            <span style={{ fontSize: 12, color: "var(--v2-dim)", padding: "4px 8px" }}>{zh ? "暂无会话" : "No sessions"}</span>
+          ) : null}
+        </div>
+      </div>
+      <Card style={{ flex: 1, minWidth: 0 }} styles={{ body: { height: "calc(100vh - 260px)", display: "flex", flexDirection: "column", padding: 0 } }}>
         <div ref={listRef} style={{ flex: 1, overflowY: "auto", padding: 16 }}>
           {messages.length === 0 && <Empty description={text.start} style={{ marginTop: 100 }} />}
           {messages.map((msg, i) => (
@@ -320,45 +353,13 @@ export default function AIChatPage() {
             setMessages(next);
             saveActive(next);
           }} />
-          {/* 会话栏（左）：新建会话按钮在输入框左侧，下方为会话列表（点击切换/删除） */}
-          <div style={{ width: 168, flex: "0 0 168px", display: "flex", flexDirection: "column", gap: 8, alignSelf: "stretch" }}>
-            <Button icon={<PlusOutlined />} onClick={newChat} block>{zh ? "新建会话" : "New chat"}</Button>
-            <div style={{ flex: 1, minHeight: 60, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
-              {sessions.slice(0, 30).map(s => (
-                <div
-                  key={s.id}
-                  onClick={() => switchSession(s.id)}
-                  onDoubleClick={() => void renameSession(s.id, s.title)}
-                  title={zh ? "单击切换 · 双击重命名" : "Click to switch · double-click to rename"}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 6, padding: "6px 8px",
-                    borderRadius: 8, cursor: "pointer", fontSize: 12.5,
-                    background: s.id === activeSessionId ? "rgba(47,155,245,.10)" : "transparent",
-                  }}
-                >
-                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</span>
-                  <span style={{ color: "var(--v2-dim)", fontSize: 11 }}>{(s.messages || []).length}</span>
-                  <Button
-                    type="text" size="small" danger
-                    icon={<DeleteOutlined style={{ fontSize: 11 }} />}
-                    onClick={(e) => { e.stopPropagation(); void deleteSession(s.id); }}
-                    style={{ width: 20, height: 20, minWidth: 20 }}
-                  />
-                </div>
-              ))}
-              {sessions.length === 0 ? (
-                <span style={{ fontSize: 12, color: "var(--v2-dim)", padding: "4px 8px" }}>{zh ? "暂无会话" : "No sessions"}</span>
-              ) : null}
-            </div>
-          </div>
           {/* ZCode 式输入框：最左 + 号（数据/知识库/系统提示词/白名单工具），右侧容量圆圈/模型/思考强度/发送 */}
-          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
           {(() => {
             return (
               <div style={{
                 border: "1px solid var(--v2-line, #d9d9d9)", borderRadius: 16,
                 background: "var(--v2-panel2, rgba(22,34,58,.35))",
-                padding: "10px 12px 8px", transition: "border-color .15s", height: "100%",
+                padding: "10px 12px 8px", transition: "border-color .15s",
               }}>
                 {/* 原生 textarea：彻底去掉 antd 白底圆角嵌套块，融入容器 */}
                 <textarea
@@ -679,9 +680,9 @@ export default function AIChatPage() {
               </div>
             );
           })()}
-          </div>
         </div>
       </Card>
+      </div>
       <Modal title={text.settings} open={settingsOpen} onCancel={() => setSettingsOpen(false)} okText={text.save} onOk={() => {
         localStorage.setItem("chat.systemPrompt", systemPrompt);
         localStorage.setItem("chat.kbId", kbId);
