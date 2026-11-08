@@ -254,21 +254,28 @@ def _get_api_call_example(db, user, params):
 
 
 def _list_datasets(db, user, params):
-    """项目下数据集清单（Artifact type=dataset + 最新版本行列统计）。"""
+    """项目下数据集清单（Artifact type=dataset + 最新版本行列统计）。
+
+    与官方列表端点同口径：source=normalized 是导入管道的内部归一化
+    工件（normalized.csv），不属于用户数据集，一律过滤。
+    """
     from app.models.artifact import Artifact
     from app.models.data_version import DatasetVersion
 
-    artifacts = (
-        db.query(Artifact)
-        .filter(
-            Artifact.project_id == UUID(str(params["project_id"])),
-            Artifact.type == "dataset",
-            Artifact.archived_at.is_(None),
+    artifacts = [
+        artifact for artifact in (
+            db.query(Artifact)
+            .filter(
+                Artifact.project_id == UUID(str(params["project_id"])),
+                Artifact.type == "dataset",
+                Artifact.archived_at.is_(None),
+            )
+            .order_by(Artifact.created_at.desc())
+            .limit(40)
+            .all()
         )
-        .order_by(Artifact.created_at.desc())
-        .limit(20)
-        .all()
-    )
+        if (artifact.metadata_ or {}).get("source") != "normalized"
+    ][:20]
     versions = {}
     if artifacts:
         rows = (

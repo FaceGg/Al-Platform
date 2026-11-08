@@ -180,7 +180,12 @@ def _resolve_project(db: Session, user, value: str) -> dict:
 
 
 def _resolve_dataset(db: Session, user, value: str, project_id=None) -> dict:
+    """数据集名称解析：内部归一化工件（source=normalized）不参与
+    （Python 层过滤与官方列表端点同口径，metadata 为 NULL 安全）。"""
     from app.models.artifact import Artifact
+
+    def _visible(rows):
+        return [r for r in rows if (r.metadata_ or {}).get("source") != "normalized"]
 
     query = db.query(Artifact).filter(
         Artifact.type == "dataset",
@@ -189,7 +194,7 @@ def _resolve_dataset(db: Session, user, value: str, project_id=None) -> dict:
     )
     if project_id:
         query = query.filter(Artifact.project_id == UUID(str(project_id)))
-    rows = query.limit(5).all()
+    rows = _visible(query.limit(10).all())
     if not rows:
         query = db.query(Artifact).filter(
             Artifact.type == "dataset",
@@ -198,8 +203,8 @@ def _resolve_dataset(db: Session, user, value: str, project_id=None) -> dict:
         )
         if project_id:
             query = query.filter(Artifact.project_id == UUID(str(project_id)))
-        rows = query.order_by(Artifact.created_at.desc()).limit(5).all()
-    return _pick(rows, value, "dataset_id", "数据集")
+        rows = _visible(query.order_by(Artifact.created_at.desc()).limit(10).all())
+    return _pick(rows[:5], value, "dataset_id", "数据集")
 
 
 def _resolve_recipe(db: Session, user, value: str) -> dict:
