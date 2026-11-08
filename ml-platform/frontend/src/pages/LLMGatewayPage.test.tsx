@@ -187,6 +187,17 @@ describe("buildReasoningMapping", () => {
     expect(mapping.trimEnd().endsWith(": {}")).toBe(true);
   });
 
+  it("never uses the level name as thinking.type (upstream 422 guard)", async () => {
+    // deepseek 只认 adaptive/enabled/disabled：档位名直接当 type 曾让
+    // 对话整体哑掉（上游 422 → 空回复）
+    const { buildReasoningMapping } = await import("./LLMGatewayPage");
+    const mapping = buildReasoningMapping(["low", "high", "max"]);
+    expect(mapping).not.toContain('"type": "low"');
+    expect(mapping).not.toContain('"type": "high"');
+    expect(mapping).not.toContain('"type": "max"');
+    expect(mapping).toContain('"type": "enabled"');
+  });
+
   it("returns empty for no levels", async () => {
     const { buildReasoningMapping } = await import("./LLMGatewayPage");
     expect(buildReasoningMapping([])).toBe("");

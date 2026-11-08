@@ -68,10 +68,16 @@ export function buildReasoningMapping(levels: string[]): string {
   if (!clean.length) return ''
   const lines: string[] = []
   clean.forEach((level, index) => {
+    // thinking.type 的合法值各供应商不同（deepseek 只认 adaptive/enabled/
+    // disabled，anthropic 用 enabled+budget_tokens）——档位名（low/high 等）
+    // 不能直接当 type，否则上游 422、对话整体哑掉（实测踩坑）。模板只产
+    // 出普适合法形态：关闭档 → disabled，其余档 → enabled；梯度参数按
+    // 供应商文档手调。
+    const typeValue = level === 'off' || level === 'disabled' ? 'disabled' : 'enabled'
     lines.push(`${index === 0 ? '' : ': '}reasoningLevel == "${level}"`)
     lines.push('  ? {')
     lines.push('      "thinking": {')
-    lines.push(`        "type": "${level}"`)
+    lines.push(`        "type": "${typeValue}"`)
     lines.push('      }')
     lines.push('    }')
   })
