@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Modal, Switch } from "antd";
-import { SafetyOutlined, SettingOutlined } from "@ant-design/icons";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
 
@@ -11,268 +10,85 @@ interface WhitelistItem {
   enabled: boolean;
 }
 
-interface WhitelistResponse {
-  read_tools?: WhitelistItem[];
-  insight_tools?: WhitelistItem[];
-  write_tools?: WhitelistItem[];
-}
-
-interface PendingInvocation {
-  tool: string;
-  label: string;
-  kind: "read" | "write" | "insight";
-  needsConfirm: boolean;
-  message?: string;
-}
-
 /**
- * 白名单工具管理弹窗（AI对话「+」菜单入口）：工具清单、参数调用与
- * §15 写确认卡——写工具先无确认发起，后端答 confirmation_required，
- * 仅用户显式点击后才带 confirmed=true 重发。结果经 onResult 落回对话。
+ * 白名单工具管理弹窗（AI对话「+」菜单入口）：全局启停配置。
+ * 停用对所有用户生效（执行层同源拒绝）；仅管理员可保存。工具的
+ * 对话内调用走自然语言编排（/chat tool_call），不再手填参数。
  */
 export default function ChatToolsModal({
-  open, onClose, onResult,
-}: { open: boolean; onClose: () => void; onResult: (text: string) => void }) {
+  open, onClose,
+}: { open: boolean; onClose: () => void }) {
   const { lang } = useI18n();
   const zh = lang === "zh";
-  const [whitelist, setWhitelist] = useState<WhitelistResponse>({});
-  const [selected, setSelected] = useState<PendingInvocation | null>(null);
-  const [paramsText, setParamsText] = useState("{}");
-  const [running, setRunning] = useState(false);
-  const [error, setError] = useState("");
-
-  const load = () => {
-    apiClient.get("/chat-tools/whitelist").then((r) => setWhitelist(r.data || {})).catch(() => setWhitelist({}));
-  };
+  const [tools, setTools] = useState<WhitelistItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [forbidden, setForbidden] = useState(false);
 
   useEffect(() => {
-    if (open) load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!open) return;
+    setLoading(true);
+    setForbidden(false);
+    apiClient.get("/chat-tools/config")
+      .then((r) => setTools(r.data?.tools ?? []))
+      .catch((e) => {
+        setForbidden(e?.response?.status === 403);
+        setTools([]);
+      })
+      .finally(() => setLoading(false));
   }, [open]);
-
-  const entries = useMemo(() => {
-    const list: WhitelistItem[] = [];
-    (whitelist.insight_tools || []).forEach((item) => list.push(item));
-    (whitelist.read_tools || []).forEach((item) => list.push(item));
-    (whitelist.write_tools || []).forEach((item) => list.push(item));
-    return list.filter((item) => item.enabled);
-  }, [whitelist]);
-
-  const kindLabel = (kind: PendingInvocation["kind"]) =>
-    kind === "write" ? (zh ? "写" : "write") : kind === "insight" ? (zh ? "洞察" : "insight") : zh ? "读" : "read";
-  const kindClass = (kind: PendingInvocation["kind"]) =>
-    kind === "write" ? "v2-bgo" : kind === "insight" ? "v2-bp" : "v2-bb";
-
-  const pick = (item: WhitelistItem) => {
-    setSelected({ tool: item.tool, label: item.label, kind: item.kind, needsConfirm: false });
-    setParamsText("{}");
-    setError("");
-  };
-
-  const run = async (confirmed: boolean) => {
-    if (!selected) return;
-    let params: Record<string, unknown>;
-    try {
-      params = paramsText.trim() ? JSON.parse(paramsText) : {};
-    } catch {
-      setError(zh ? "参数不是合法 JSON" : "params must be valid JSON");
-      return;
-    }
-    setRunning(true);
-    setError("");
-    try {
-      const res = await apiClient.post("/chat-tools/execute", { tool: selected.tool, params, confirmed });
-      const data = res.data || {};
-      if (data.status === "confirmation_required") {
-        setSelected({ ...selected, needsConfirm: true, message: data.message });
-      } else if (data.status === "success") {
-        onResult(`[${selected.tool}] ${JSON.stringify(data.result, null, 2)}`);
-        setSelected(null);
-      } else {
-        setError(`${data.code ?? "failed"}: ${data.message ?? ""}`.trim());
-      }
-    } catch (e: any) {
-      setError(String(e?.response?.data?.detail || e?.message || e));
-    } finally {
-      setRunning(false);
-    }
-  };
-
-  return (
-    <Modal
-      title={zh ? "白名单工具管理" : "Whitelist tools"}
-      open={open}
-      onCancel={onClose}
-      footer={null}
-      width={520}
-    >
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-        {entries.map((item) => (
-          <button
-            key={item.tool}
-            type="button"
-            title={item.tool}
-            onClick={() => pick(item)}
-            style={{
-              fontSize: 12, padding: "3px 10px", borderRadius: 9, cursor: "pointer",
-              border: "1px solid rgba(36,52,79,.9)", background: "rgba(22,34,58,.6)", color: "inherit",
-            }}
-          >
-            {item.label} <span style={{ opacity: 0.75 }}>[{kindLabel(item.kind)}]</span>
-          </button>
-        ))}
-        <AdminToolsConfig onSaved={() => load()} />
-        {entries.length === 0 ? (
-          <span style={{ fontSize: 12, color: "var(--v2-dim, #999)" }}>
-            {zh ? "暂无启用的白名单工具" : "No enabled tools"}
-          </span>
-        ) : null}
-      </div>
-
-      {selected && (
-        <div style={{
-          marginTop: 12, border: "1px solid rgba(92,178,255,.35)", borderRadius: 10,
-          background: "rgba(47,155,245,.06)", padding: "10px 12px",
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <span className={`v2-badge ${kindClass(selected.kind)}`} title={selected.tool}>{selected.label}</span>
-            <span style={{ fontSize: 12, color: "var(--v2-sub)" }}>
-              {selected.kind === "write" ? (zh ? "写操作——需要确认后执行" : "write — requires confirmation") : zh ? "只读操作" : "read-only"}
-            </span>
-          </div>
-          <textarea
-            value={paramsText}
-            onChange={(e) => setParamsText(e.target.value)}
-            rows={3}
-            aria-label={zh ? "工具参数 JSON" : "Tool params JSON"}
-            style={{
-              width: "100%", fontFamily: '"JetBrains Mono", "Noto Sans SC", monospace', fontSize: 12,
-              background: "rgba(13,20,32,.7)", color: "inherit",
-              border: "1px solid rgba(36,52,79,.9)", borderRadius: 8, padding: "6px 10px",
-            }}
-          />
-          {selected.needsConfirm ? (
-            <div style={{
-              display: "flex", alignItems: "center", gap: 10, marginTop: 8,
-              border: "1px solid rgba(255,209,102,.4)", background: "rgba(255,209,102,.08)",
-              borderRadius: 8, padding: "7px 10px", flexWrap: "wrap",
-            }}>
-              <SafetyOutlined style={{ color: "#ffd166" }} />
-              <span style={{ fontSize: 12 }}>{selected.message}</span>
-              <button
-                type="button"
-                onClick={() => void run(true)}
-                disabled={running}
-                style={{
-                  marginLeft: "auto", fontSize: 12, padding: "4px 14px", borderRadius: 8, cursor: "pointer",
-                  border: "none", background: "linear-gradient(135deg,#2f9bf5,#1d6fd0)", color: "#fff",
-                }}
-              >
-                {running ? (zh ? "执行中…" : "Running…") : (zh ? "确认执行" : "Confirm & run")}
-              </button>
-            </div>
-          ) : (
-            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              <button
-                type="button"
-                onClick={() => void run(false)}
-                disabled={running}
-                style={{
-                  fontSize: 12, padding: "4px 14px", borderRadius: 8, cursor: "pointer",
-                  border: "1px solid rgba(36,52,79,.9)", background: "rgba(27,42,71,.8)", color: "inherit",
-                }}
-              >
-                {running ? (zh ? "执行中…" : "Running…") : (zh ? "执行" : "Run")}
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelected(null)}
-                style={{ fontSize: 12, padding: "4px 10px", borderRadius: 8, cursor: "pointer", border: "none", background: "transparent", color: "inherit", opacity: 0.7 }}
-              >
-                {zh ? "取消" : "Cancel"}
-              </button>
-            </div>
-          )}
-          {error ? <div style={{ marginTop: 8, fontSize: 12, color: "#e66f75" }}>注意：{error}</div> : null}
-        </div>
-      )}
-
-      <div style={{ fontSize: 12, color: "var(--v2-dim, #999)", marginTop: 12 }}>
-        {zh
-          ? "点击工具填写参数 JSON 后执行，结果以助手消息落回当前对话；写操作需二次确认。"
-          : "Pick a tool, fill params JSON and run; the result lands in the chat as an assistant message. Writes require confirmation."}
-      </div>
-    </Modal>
-  );
-}
-
-/** 管理员工具启停配置（全局生效）：只有 admin 能看到入口。 */
-function AdminToolsConfig({ onSaved }: { onSaved: () => void }) {
-  const { lang } = useI18n();
-  const zh = lang === "zh";
-  const isAdmin = localStorage.getItem("role") === "admin";
-  const [open, setOpen] = useState(false);
-  const [tools, setTools] = useState<WhitelistItem[]>([]);
-  const [saving, setSaving] = useState(false);
-
-  if (!isAdmin) return null;
-
-  const openPanel = () => {
-    apiClient.get("/chat-tools/config").then((r) => {
-      setTools(r.data?.tools ?? []);
-      setOpen(true);
-    }).catch(() => {});
-  };
 
   const save = async () => {
     setSaving(true);
     try {
       const disabled = tools.filter((t) => !t.enabled).map((t) => t.tool);
       await apiClient.put("/chat-tools/config", { disabled });
-      setOpen(false);
-      onSaved();
+      onClose();
     } finally {
       setSaving(false);
     }
   };
 
+  const kindLabel = (kind: WhitelistItem["kind"]) =>
+    kind === "write" ? (zh ? "写" : "write") : kind === "insight" ? (zh ? "洞察" : "insight") : zh ? "读" : "read";
+
   return (
-    <>
-      <button
-        type="button"
-        onClick={openPanel}
-        title={zh ? "管理员配置工具启停（全局生效）" : "Admin: toggle tools globally"}
-        style={{
-          fontSize: 11.5, padding: "2px 9px", borderRadius: 9, cursor: "pointer",
-          border: "1px dashed rgba(36,52,79,.9)", background: "transparent", color: "inherit", opacity: 0.85,
-        }}
-      >
-        <SettingOutlined /> {zh ? "管理" : "Admin"}
-      </button>
-      <Modal
-        title={zh ? "白名单工具配置（对全部用户生效）" : "Chat tools (global)"}
-        open={open}
-        onCancel={() => setOpen(false)}
-        onOk={save}
-        confirmLoading={saving}
-        okText={zh ? "保存" : "Save"}
-        cancelText={zh ? "取消" : "Cancel"}
-      >
-        <div style={{ fontSize: 12, color: "var(--v2-dim, #999)", marginBottom: 10 }}>
-          {zh ? "停用的工具对所有用户隐藏且拒绝执行；写操作始终保留用户确认。" : "Disabled tools are hidden and rejected for all users."}
+    <Modal
+      title={zh ? "白名单工具配置（对全部用户生效）" : "Whitelist tools (global)"}
+      open={open}
+      onCancel={onClose}
+      onOk={save}
+      confirmLoading={saving}
+      okText={zh ? "保存" : "Save"}
+      cancelText={zh ? "取消" : "Cancel"}
+      width={520}
+    >
+      <div style={{ fontSize: 12, color: "var(--v2-dim, #999)", marginBottom: 10 }}>
+        {zh
+          ? "停用的工具对所有用户隐藏且拒绝执行；写操作在对话中仍保留二次确认。工具可直接在对话里用自然语言调用（缺参数时助手会追问）。"
+          : "Disabled tools are hidden and rejected for all users; writes keep their confirmation step. Tools can be invoked from the chat in natural language."}
+      </div>
+      {loading ? (
+        <div style={{ fontSize: 12, color: "var(--v2-dim, #999)", padding: "12px 0" }}>
+          {zh ? "加载中…" : "Loading…"}
         </div>
-        {tools.map((tool) => (
+      ) : forbidden ? (
+        <div style={{ fontSize: 12, color: "var(--v2-dim, #999)", padding: "12px 0" }}>
+          {zh ? "仅管理员可配置白名单工具。" : "Admin only."}
+        </div>
+      ) : (
+        tools.map((tool) => (
           <div key={tool.tool} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0" }}>
             <Switch
               size="small"
               checked={tool.enabled}
               onChange={(checked) => setTools((prev) => prev.map((t) => (t.tool === tool.tool ? { ...t, enabled: checked } : t)))}
             />
-            <span style={{ fontSize: 13 }}>{tool.label}</span>
-            <span style={{ fontSize: 11, color: "var(--v2-dim, #999)" }}>{tool.tool}</span>
+            <span style={{ fontSize: 13, flex: 1 }}>{tool.label}</span>
+            <span style={{ fontSize: 11, color: "var(--v2-dim, #999)" }}>[{kindLabel(tool.kind)}] {tool.tool}</span>
           </div>
-        ))}
-      </Modal>
-    </>
+        ))
+      )}
+    </Modal>
   );
 }

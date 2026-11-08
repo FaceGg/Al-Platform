@@ -56,6 +56,51 @@ TOOL_CATALOG: dict[str, dict] = {
     "offline_api": {"label": "下线 API", "kind": "write"},
 }
 
+# 参数规范（对话自然语言编排用）：声明每个工具的参数、是否必填、追问
+# 话术与取值类型。kind 决定名称→ID 的确定性解析方式（见编排器）；
+# create_automl_task/create_loop_task/publish_workflow_api 参数面复杂
+# （实验/幂等键/编排拓扑），不做对话编排，由编排器返回页面指引。
+TOOL_PARAM_SPECS: dict[str, dict[str, dict]] = {
+    "list_datasets": {
+        "project": {"required": True, "kind": "project", "question": "要查看哪个项目的数据集？"},
+    },
+    "preview_dataset": {
+        "project": {"required": True, "kind": "project", "question": "数据集在哪个项目下？"},
+        "dataset": {"required": True, "kind": "dataset", "question": "要预览哪个数据集？"},
+        "rows": {"required": False, "kind": "int", "question": "预览前几行？"},
+    },
+    "query_training_status": {
+        "project": {"required": True, "kind": "project", "question": "要查询哪个项目的训练任务状态？"},
+    },
+    "query_loop_status": {
+        "project": {"required": True, "kind": "project", "question": "要查询哪个项目的闭环任务状态？"},
+    },
+    "query_recipe_reports": {
+        "recipe": {"required": True, "kind": "recipe", "question": "要查询哪个配方的报告？"},
+    },
+    "get_api_call_example": {
+        "api": {"required": True, "kind": "api", "question": "要查看哪个 API 的调用示例？"},
+    },
+    "save_insight": {
+        "text": {"required": True, "kind": "text", "question": "要沉淀的洞察内容是什么？"},
+        "domain": {"required": False, "kind": "domain", "question": "属于哪个领域（如 spot_weld）？"},
+    },
+    "create_recipe_task": {
+        "recipe": {"required": True, "kind": "recipe", "question": "按哪个配方创建任务？"},
+        "project": {"required": True, "kind": "project", "question": "任务建在哪个项目下？"},
+    },
+    "offline_api": {
+        "api": {"required": True, "kind": "api", "question": "要下线哪个 API？"},
+    },
+}
+
+# 对话编排不做执行的复杂写类 → 明确指引（不假支持）
+TOOL_PAGE_GUIDES: dict[str, str] = {
+    "create_automl_task": "创建自动建模任务的参数面较复杂（实验、搜索预算、算法白名单等），请到「算法平台 / 自动建模」或「智能体中心 / 新建任务」向导中创建。",
+    "create_loop_task": "创建闭环任务需要部署模型、回流与重训完整配置，请到「算法平台 / 闭环自动化」中创建。",
+    "publish_workflow_api": "发布工作流为 API 需要选择编排与端口配置，请到「算法平台 / 应用编排」的发布入口操作。",
+}
+
 
 class ToolNotInWhitelist(LookupError):
     """Structural boundary: the tool does not exist for the LLM."""
@@ -118,6 +163,12 @@ def execute_tool(
     registry.setdefault("save_insight", _save_insight)
     registry.setdefault("query_recipe_reports", _query_recipe_reports)
     registry.setdefault("get_api_call_example", _get_api_call_example)
+    registry.setdefault("list_datasets", _list_datasets)
+    registry.setdefault("preview_dataset", _preview_dataset)
+    registry.setdefault("query_training_status", _query_training_status)
+    registry.setdefault("query_loop_status", _query_loop_status)
+    registry.setdefault("create_recipe_task", _create_recipe_task)
+    registry.setdefault("offline_api", _offline_api)
     handler = registry.get(tool)
     if handler is None:
         # Platform-backed tools (dataset/training/loop listings) delegate to
@@ -200,6 +251,209 @@ def _get_api_call_example(db, user, params):
         "status": api.status,
         "example_body": example_body,
     }
+
+
+def _list_datasets(db, user, params):
+    """项目下数据集清单（Artifact type=dataset + 最新版本行列统计）。"""
+    from app.models.artifact import Artifact
+    from app.models.data_version import DatasetVersion
+
+    artifacts = (
+        db.query(Artifact)
+        .filter(
+            Artifact.project_id == UUID(str(params["project_id"])),
+            Artifact.type == "dataset",
+            Artifact.archived_at.is_(None),
+        )
+        .order_by(Artifact.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    versions = {}
+    if artifacts:
+        rows = (
+            db.query(DatasetVersion)
+            .filter(DatasetVersion.original_artifact_id.in_([a.id for a in artifacts]))
+            .order_by(DatasetVersion.created_at.desc())
+            .all()
+        )
+        for row in rows:
+            versions.setdefault(row.original_artifact_id, row)
+    items = [
+        {
+            "id": str(a.id),
+            "name": a.name,
+            "rows": versions[a.id].row_count if a.id in versions else None,
+            "columns": versions[a.id].column_count if a.id in versions else None,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
+        for a in artifacts
+    ]
+    return {"items": items, "total": len(items)}
+
+
+def _preview_dataset(db, user, params):
+    """数据集前 N 行预览（默认 5 行；走 DatasetVersion→DatasetSample）。"""
+    from app.models.artifact import Artifact
+    from app.models.data_version import DatasetSample, DatasetVersion
+
+    artifact = db.get(Artifact, UUID(str(params["dataset_id"])))
+    if artifact is None or artifact.type != "dataset":
+        raise LookupError("dataset not found")
+    version = (
+        db.query(DatasetVersion)
+        .filter(DatasetVersion.original_artifact_id == artifact.id)
+        .order_by(DatasetVersion.version.desc())
+        .first()
+    )
+    if version is None:
+        return {"name": artifact.name, "columns": [], "rows": [], "note": "该数据集尚无解析版本"}
+    try:
+        limit = max(1, min(int(params.get("rows") or 5), 20))
+    except (TypeError, ValueError):
+        limit = 5
+    samples = (
+        db.query(DatasetSample)
+        .filter(DatasetSample.dataset_version_id == version.id)
+        .order_by(DatasetSample.row_index.asc())
+        .limit(limit)
+        .all()
+    )
+    rows = [s.values or {} for s in samples]
+    columns = list((rows[0] if rows else {}).keys())
+    return {
+        "name": artifact.name,
+        "version": version.version,
+        "row_count": version.row_count,
+        "column_count": version.column_count,
+        "columns": columns,
+        "rows": rows,
+    }
+
+
+def _query_training_status(db, user, params):
+    """项目最近训练任务状态（AutoML/普通训练各条 job 的当前态）。"""
+    from app.models.training import TrainingJob
+
+    jobs = (
+        db.query(TrainingJob)
+        .filter(TrainingJob.project_id == UUID(str(params["project_id"])))
+        .order_by(TrainingJob.created_at.desc())
+        .limit(8)
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "id": str(j.id),
+                "name": j.name,
+                "operator": j.operator_id,
+                "status": j.status,
+                "task_id": j.task_id,
+                "created_at": j.created_at.isoformat() if j.created_at else None,
+            }
+            for j in jobs
+        ],
+        "total": len(jobs),
+    }
+
+
+def _query_loop_status(db, user, params):
+    """项目闭环任务状态 + 每任务最近事件流。"""
+    from app.models.demo_loop import DemoLoopConfig, DemoLoopEvent
+
+    configs = (
+        db.query(DemoLoopConfig)
+        .filter(DemoLoopConfig.project_id == UUID(str(params["project_id"])))
+        .order_by(DemoLoopConfig.created_at.desc())
+        .limit(5)
+        .all()
+    )
+    items = []
+    for config in configs:
+        events = (
+            db.query(DemoLoopEvent)
+            .filter(DemoLoopEvent.config_id == config.id)
+            .order_by(DemoLoopEvent.created_at.desc())
+            .limit(3)
+            .all()
+        )
+        items.append({
+            "id": str(config.id),
+            "name": config.name,
+            "error_classes": config.error_classes or [],
+            "last_events": [
+                {
+                    "type": e.event_type,
+                    "severity": e.severity,
+                    "message": e.message,
+                    "created_at": e.created_at.isoformat() if e.created_at else None,
+                }
+                for e in events
+            ],
+        })
+    return {"items": items, "total": len(items)}
+
+
+def _create_recipe_task(db, user, params):
+    """按配方重放智能体任务：以配方 current 版本固化的 guidance 快照新建
+    AgentRun 并启动执行（P1 闭环重训同款重放路径）。"""
+    from app.models.agent_run import AgentRun
+    from app.models.recipe import PipelineRecipe
+    from app.services.agent.recipe import get_current_version
+
+    recipe = db.get(PipelineRecipe, UUID(str(params["recipe_id"])))
+    if recipe is None:
+        raise LookupError("recipe not found")
+    version = get_current_version(db, recipe.id)
+    content = version.content_json or {}
+    guidance = dict(content.get("guidance") or {})
+    if not guidance:
+        raise LookupError("该配方缺少可重放的 guidance 快照（旧版配方请在向导中重建任务）")
+    dataset_artifact_raw = content.get("dataset_artifact_id") or guidance.get("dataset_artifact_id")
+    inputs = guidance.get("inputs") or {}
+    dataset_artifact_raw = dataset_artifact_raw or inputs.get("dataset_artifact_id")
+    run = AgentRun(
+        project_id=UUID(str(params["project_id"])),
+        dataset_artifact_id=UUID(str(dataset_artifact_raw)) if dataset_artifact_raw else None,
+        target_column=recipe.target_column or inputs.get("target_column"),
+        llm_profile_id=version.llm_profile_id,
+        token_budget=8000,
+        status="pending",
+        current_stage="s1",
+        memory_json={},
+        result_json={},
+        guidance_json=guidance,
+        created_by=user.id,
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    from app.services.agent.executor import AgentRunNotExecutable, launch_agent_run
+
+    try:
+        launch_agent_run(run.id, actor_id=user.id)
+    except AgentRunNotExecutable as error:
+        run.status = "waiting_escalate"
+        run.error_code = "AGENT_RUN_NOT_EXECUTABLE"
+        run.result_json = {"executor_error": str(error)}
+        db.commit()
+        db.refresh(run)
+    return {"run_id": str(run.id), "status": run.status, "recipe": recipe.name, "version": version.version}
+
+
+def _offline_api(db, user, params):
+    """下线已发布 API（状态 published→offline，幂等）。"""
+    from app.models.api_model import PlatformAPI
+
+    api = db.get(PlatformAPI, UUID(str(params["api_id"])))
+    if api is None:
+        raise LookupError("api not found")
+    if api.status == "offline":
+        return {"api": api.name, "status": "offline", "changed": False}
+    api.status = "offline"
+    db.commit()
+    return {"api": api.name, "status": "offline", "changed": True}
 
 
 def _admin_id(db):

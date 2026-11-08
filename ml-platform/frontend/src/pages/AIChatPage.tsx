@@ -60,6 +60,9 @@ export default function AIChatPage() {
   // 「+」菜单弹窗：附件 / 知识库 / 系统提示词 / 白名单工具管理（各自独立弹窗）
   const [modal, setModal] = useState<"attach" | "kb" | "prompt" | "tools" | null>(null);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  // 白名单工具编排往返：助手追问/确认期间保存 tool_call，下轮作为
+  // tool_context 带回（后端合并参数或确认执行）；取消按钮清空即放弃
+  const [pendingToolCall, setPendingToolCall] = useState<{ tool: string; params?: Record<string, unknown>; status: string } | null>(null);
   const [systemPrompt, setSystemPrompt] = useState(() => localStorage.getItem("chat.systemPrompt") || "你是汽车焊接制造领域的智能助手。");
   const [temperature] = useState(() => Number(localStorage.getItem("chat.temperature") || "0.7"));
   const [kbId, setKbId] = useState(() => localStorage.getItem("chat.kbId") || "");
@@ -221,6 +224,7 @@ export default function AIChatPage() {
         profile_id: profileId || undefined,
         kb_id: kbId || undefined,
         attachments: attachments.map(({ name, kind, data }) => ({ name, kind, data })),
+        tool_context: pendingToolCall ?? undefined,
       });
       const reply = res.data.reply || "No response.";
       const assistantMsg: ChatMsg = {
@@ -235,6 +239,13 @@ export default function AIChatPage() {
       }
       saveActive(final);
       setAttachments([]); // 发送完成 → 本轮附件随消息已交付
+      // 工具编排往返：追问/确认中 → 保存状态供下轮带回；终态 → 清空
+      const toolCall = res.data.tool_call;
+      if (toolCall && (toolCall.status === "clarify" || toolCall.status === "confirm")) {
+        setPendingToolCall({ tool: toolCall.tool, params: toolCall.params, status: toolCall.status });
+      } else {
+        setPendingToolCall(null);
+      }
     } catch (e: any) {
       const detail = e.response?.data?.detail;
       const detailText = typeof detail === "object" ? (detail?.message || detail?.code) : detail;
@@ -377,6 +388,27 @@ export default function AIChatPage() {
         </div>
         <Divider style={{ margin: 0 }} />
         <div style={{ padding: "12px 16px" }}>
+          {/* 工具编排进行中状态条（追问/确认期间常显；取消即放弃调用） */}
+          {pendingToolCall && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8, marginBottom: 8, padding: "6px 10px",
+              borderRadius: 10, border: "1px solid rgba(92,178,255,.35)", background: "rgba(47,155,245,.08)",
+              fontSize: 12.5,
+            }}>
+              <ToolOutlined style={{ color: "var(--v2-blue)" }} />
+              <span style={{ fontWeight: 600 }}>{zh ? "工具调用进行中" : "Tool call pending"}</span>
+              <span style={{ color: "var(--v2-sub)" }}>
+                {pendingToolCall.tool}
+                {pendingToolCall.params && Object.keys(pendingToolCall.params).length > 0
+                  ? `（${Object.entries(pendingToolCall.params).map(([k, v]) => `${k}=${String(v)}`).join("，")}）`
+                  : ""}
+                · {pendingToolCall.status === "clarify" ? (zh ? "等待补充参数" : "awaiting params") : zh ? "等待确认" : "awaiting confirmation"}
+              </span>
+              <Button type="text" size="small" danger onClick={() => setPendingToolCall(null)} style={{ marginLeft: "auto", height: 22, padding: "0 8px" }}>
+                {zh ? "取消" : "Cancel"}
+              </Button>
+            </div>
+          )}
           {/* ZCode 式输入框：最左 + 号（附件/知识库/系统提示词/白名单工具管理），右侧容量圆圈/模型/思考强度/发送 */}
           {(() => {
             return (
@@ -748,16 +780,8 @@ export default function AIChatPage() {
           {zh ? "每轮对话开头注入的角色设定；保存后下次发送生效。" : "Injected at the start of every turn; applies from the next message."}
         </Text>
       </Modal>
-      {/* 白名单工具管理弹窗（调用结果落回当前对话） */}
-      <ChatToolsModal
-        open={modal === "tools"}
-        onClose={() => setModal(null)}
-        onResult={(resultText) => {
-          const next = [...messages, { role: "assistant", content: resultText, time: new Date().toLocaleTimeString() } as ChatMsg];
-          setMessages(next);
-          saveActive(next);
-        }}
-      />
+      {/* 白名单工具管理弹窗（全局启停配置；对话内调用走自然语言编排） */}
+      <ChatToolsModal open={modal === "tools"} onClose={() => setModal(null)} />
     </AppLayout>
   );
 }

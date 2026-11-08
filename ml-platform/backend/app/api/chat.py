@@ -150,6 +150,8 @@ def chat(
     # 本轮附件：[{name, kind: image|text, data}]——图片 data URL 直入
     # 多模态 content，文本引述拼进问题（发送侧逐轮携带，不入 history）
     attachments: list[dict] = Body(default_factory=list, max_length=6),
+    # 白名单工具编排往返状态（上一轮 tool_call 为 clarify/confirm 时带回）
+    tool_context: dict | None = Body(default=None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -189,6 +191,29 @@ def chat(
         if kb_info is not None:
             payload.update({"sources": sources, "kb": kb_info, "kb_warning": kb_warning})
         return payload
+
+    # 白名单工具自然语言编排（§15 对话入口）：关键词预筛避免普通闲聊
+    # 多付一次路由调用；带 tool_context（追问/确认中）时必定进编排。
+    from app.services.chat_tool_orchestrator import orchestrate
+
+    tool_hint = any(
+        keyword in message
+        for keyword in (
+            "数据集", "数据列表", "预览", "训练", "闭环", "配方", "洞察", "下线",
+            "API", "api", "项目里", "任务状态", "dataset", "recipe", "insight",
+        )
+    )
+    if tool_context or tool_hint:
+        outcome = orchestrate(
+            db, config=config, user=current_user, message=message, tool_context=tool_context,
+        )
+        if outcome.mode != "chat":
+            payload = {"reply": outcome.reply, "type": "success"}
+            if outcome.tool_call is not None:
+                payload["tool_call"] = outcome.tool_call
+            if kb_info is not None:
+                payload.update({"kb": kb_info})
+            return payload
 
     try:
         reply, usage = chat_completion(
