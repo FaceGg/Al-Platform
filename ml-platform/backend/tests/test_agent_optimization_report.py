@@ -67,7 +67,7 @@ class TestOptimizationReport(unittest.TestCase):
         self.db_commit = True
         with mock.patch(
             "app.services.agent.optimization_report.chat_completion",
-            return_value=(_GOOD_REPLY, {}),
+            return_value=(_GOOD_REPLY, {}, None),
         ):
             report, error = build_report(
                 db,
@@ -102,7 +102,7 @@ class TestOptimizationReport(unittest.TestCase):
         bad = '{"what_optimized": "应该是数组"}'
         with mock.patch(
             "app.services.agent.optimization_report.chat_completion",
-            return_value=(bad, {}),
+            return_value=(bad, {}, None),
         ):
             report, error = build_report(db, run=run, config=_config())
         self.assertIsNone(report)

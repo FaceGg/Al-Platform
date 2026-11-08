@@ -168,7 +168,7 @@ class TestRunS1(unittest.TestCase):
         reply = "```json\n" + __import__("json").dumps(_VALID_ANALYSIS) + "\n```"
         with SessionLocal() as db, mock.patch(
             "app.services.agent.llm_client.chat_completion",
-            return_value=(reply, {}),
+            return_value=(reply, {}, None),
         ):
             report, error, _usage = run_s1(
                 db, config=self._config(), profile_report={"row_count": 10}
@@ -180,7 +180,7 @@ class TestRunS1(unittest.TestCase):
         broken = {**_VALID_ANALYSIS, "focus_channels": []}
         with SessionLocal() as db, mock.patch(
             "app.services.agent.llm_client.chat_completion",
-            return_value=(__import__("json").dumps(broken), {}),
+            return_value=(__import__("json").dumps(broken), {}, None),
         ):
             report, error, _usage = run_s1(
                 db, config=self._config(), profile_report={"row_count": 10}
@@ -202,7 +202,7 @@ class TestRunS1(unittest.TestCase):
         )
         with SessionLocal() as db, mock.patch(
             "app.services.agent.llm_client.chat_completion",
-            return_value=(__import__("json").dumps(payload), {}),
+            return_value=(__import__("json").dumps(payload), {}, None),
         ):
             report, error, _usage = run_s1(
                 db, config=self._config(), profile_report={"row_count": 10}
@@ -223,7 +223,7 @@ class TestRunS1(unittest.TestCase):
         }
         with SessionLocal() as db, mock.patch(
             "app.services.agent.llm_client.chat_completion",
-            return_value=(__import__("json").dumps(payload), {}),
+            return_value=(__import__("json").dumps(payload), {}, None),
         ):
             report, error, _usage = run_s1(
                 db, config=self._config(), profile_report={"row_count": 10}
@@ -235,7 +235,7 @@ class TestRunS1(unittest.TestCase):
     def test_run_s1_non_json_output_returns_parse_error(self):
         with SessionLocal() as db, mock.patch(
             "app.services.agent.llm_client.chat_completion",
-            return_value=("我认为这个数据集很好", {}),
+            return_value=("我认为这个数据集很好", {}, None),
         ):
             report, error, _usage = run_s1(
                 db, config=self._config(), profile_report={"row_count": 10}

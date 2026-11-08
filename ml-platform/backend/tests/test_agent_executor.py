@@ -365,7 +365,7 @@ class TestL2InjectionAndDistill(ExecutorHarness, unittest.TestCase):
         self._patch_llm(captured)
         with mock.patch(
             "app.services.agent.experience._distill_chat_completion",
-            return_value=("[]", {}),
+            return_value=("[]", {}, None),
         ), mock.patch(
             "app.services.agent.optimization_report.chat_completion",
             return_value=(_REPORT_REPLY, {}, None),
