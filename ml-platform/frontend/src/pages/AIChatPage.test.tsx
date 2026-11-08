@@ -23,6 +23,12 @@ vi.mock("../i18n", () => ({
 const KB = { id: "kb-1", name: "焊接工艺知识库", document_count: 2 };
 const PROFILE = { id: "p-1", name: "DeepSeek", model_id: "deepseek-chat", is_default: true };
 
+// SSE 流响应构造：send() 已改走 /api/chat/stream2（fetch ReadableStream）
+function sseResponse(events: Array<Record<string, unknown>>): Response {
+  const text = events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("") + "data: [DONE]\n\n";
+  return new Response(text, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+}
+
 function renderPage() {
   return render(
     <MemoryRouter>
@@ -63,36 +69,37 @@ describe("AIChatPage", () => {
   });
 
   it("sends chat messages with kb_id, thinking level and history", async () => {
-    apiClient.post.mockImplementation((url: string, body?: any) => {
-      if (url === "/chat") {
-        return Promise.resolve({
-          data: {
-            reply: "点焊质量取决于焊接电流 [1]。",
-            type: "success",
-            kb: { id: KB.id, name: KB.name },
-            sources: [{ index: 1, chunk_id: "c1", doc_id: "d1", filename: "process.txt", score: 0.83, content: "点焊质量取决于焊接电流。" }],
-          },
-        });
-      }
+    apiClient.post.mockImplementation((url: string) => {
       if (url === "/chat-sessions") return Promise.resolve({ data: { id: "s-new", title: "新对话" } });
       return Promise.reject(new Error("unexpected post " + url));
     });
+    const fetchMock = vi.fn().mockResolvedValue(sseResponse([
+      { type: "sources", sources: [{ index: 1, chunk_id: "c1", doc_id: "d1", filename: "process.txt", score: 0.83, content: "点焊质量取决于焊接电流。" }] },
+      { type: "delta", text: "点焊质量取决于" },
+      { type: "delta", text: "焊接电流 [1]。" },
+      { type: "done", usage: { prompt_tokens: 40, completion_tokens: 12 } },
+    ]));
+    vi.stubGlobal("fetch", fetchMock);
     renderPage();
     const input = await screen.findByPlaceholderText("输入消息，Enter 发送…");
     fireEvent.change(input, { target: { value: "点焊质量取决于什么？" } });
     fireEvent.click(screen.getByRole("button", { name: /发送/ }));
-    await waitFor(() =>
-      expect(apiClient.post).toHaveBeenCalledWith("/chat", expect.objectContaining({
-        message: "点焊质量取决于什么？",
-        kb_id: KB.id,
-        thinking_level: "off",
-        history: [],
-      })),
-    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/chat/stream2");
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body).toMatchObject({
+      message: "点焊质量取决于什么？",
+      kb_id: KB.id,
+      thinking_level: "off",
+      history: [],
+    });
+    // 流式增量拼接出的完整回答 + 引用折叠面板
     expect(await screen.findByText(/点焊质量取决于焊接电流/)).toBeInTheDocument();
     const citations = await screen.findByText(/引用来源 \(1\)/);
     fireEvent.click(citations);
-    expect(await screen.findByText(/process.txt/)).toBeInTheDocument();
+    expect(await screen.findByText(/process\.txt/)).toBeInTheDocument();
+    vi.unstubAllGlobals();
   });
 
   it("keeps publish flow removed from the header", () => {

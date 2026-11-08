@@ -427,6 +427,8 @@ app.include_router(llm_profiles_api.router)
 app.include_router(announcements_api.router)
 app.include_router(prompt_templates_api.router)
 app.include_router(chat_tools_api.router)
+from app.api import chat_stream as chat_stream_api  # noqa: E402
+app.include_router(chat_stream_api.router)
 from app.api import chat_sessions_api  # noqa: E402
 app.include_router(chat_sessions_api.router)
 app.include_router(knowledge_center_api.router)

@@ -27,6 +27,14 @@ from app.services.llm_gateway import (
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
+# 白名单工具编排预筛词表：普通闲聊不付路由 LLM 调用；带 tool_context
+# （追问/确认中）时必定进编排。/chat 与流式端点共用（chat_stream）。
+TOOL_HINT_KEYWORDS: tuple[str, ...] = (
+    "数据集", "数据列表", "预览", "训练", "闭环", "配方", "洞察", "下线",
+    "API", "api", "项目", "任务", "建模", "模型", "发布", "创建", "新建",
+    "建一个", "查一下", "查询", "看看", "列出", "dataset", "recipe", "insight",
+)
+
 
 def _resolve_bound_kb(db: Session, kb_id, current_user) -> KnowledgeBase | None:
     """Owner-checked KB lookup; hidden 404 mirrors knowledge-base endpoints."""
@@ -196,14 +204,7 @@ def chat(
     # 多付一次路由调用；带 tool_context（追问/确认中）时必定进编排。
     from app.services.chat_tool_orchestrator import orchestrate
 
-    tool_hint = any(
-        keyword in message
-        for keyword in (
-            "数据集", "数据列表", "预览", "训练", "闭环", "配方", "洞察", "下线",
-            "API", "api", "项目", "任务", "建模", "模型", "发布", "创建", "新建",
-            "建一个", "查一下", "查询", "看看", "列出", "dataset", "recipe", "insight",
-        )
-    )
+    tool_hint = any(keyword in message for keyword in TOOL_HINT_KEYWORDS)
     if tool_context or tool_hint:
         outcome = orchestrate(
             db, config=config, user=current_user, message=message, tool_context=tool_context,

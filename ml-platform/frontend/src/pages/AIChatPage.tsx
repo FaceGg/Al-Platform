@@ -63,6 +63,17 @@ export default function AIChatPage() {
   // 白名单工具编排往返：助手追问/确认期间保存 tool_call，下轮作为
   // tool_context 带回（后端合并参数或确认执行）；取消按钮清空即放弃
   const [pendingToolCall, setPendingToolCall] = useState<{ tool: string; params?: Record<string, unknown>; status: string } | null>(null);
+  // 流式生成：AbortController 支持停止；缓存命中率取上游 usage 真实值
+  const abortRef = useRef<AbortController | null>(null);
+  const stoppedFlag = useRef(false);
+  const [cacheInfo, setCacheInfo] = useState<{ hit: number; prompt: number } | null>(() => {
+    try {
+      const raw = localStorage.getItem("chat.cacheHit");
+      return raw ? (JSON.parse(raw) as { hit: number; prompt: number }) : null;
+    } catch {
+      return null;
+    }
+  });
   const [systemPrompt, setSystemPrompt] = useState(() => localStorage.getItem("chat.systemPrompt") || "你是汽车焊接制造领域的智能助手。");
   const [temperature] = useState(() => Number(localStorage.getItem("chat.temperature") || "0.7"));
   const [kbId, setKbId] = useState(() => localStorage.getItem("chat.kbId") || "");
@@ -196,7 +207,7 @@ export default function AIChatPage() {
 
   const send = async () => {
     const trimmed = input.trim();
-    if (!trimmed) return;
+    if (!trimmed || loading) return;
     // 展示层带附件标记（历史/上下文也由此字符串承载）
     const display = attachments.length
       ? `${trimmed}\n〔附件：${attachments.map(a => a.name).join("、")}〕`
@@ -210,51 +221,114 @@ export default function AIChatPage() {
         .slice(-contextWindow)
         .map(m => ({ role: m.role, content: m.content })),
     ];
-    const next = [...messages, userMsg];
+    const payload = {
+      message: trimmed,
+      system_prompt: systemPrompt,
+      temperature,
+      history,
+      thinking_level: thinkingLevel,
+      profile_id: profileId || undefined,
+      kb_id: kbId || undefined,
+      attachments: attachments.map(({ name, kind, data }) => ({ name, kind, data })),
+      tool_context: pendingToolCall ?? undefined,
+    };
+    // 占位 assistant 消息：流式增量持续填充（工具编排分支为一次性 reply）
+    const placeholder: ChatMsg = { role: "assistant", content: "", time: new Date().toLocaleTimeString() };
+    const next = [...messages, userMsg, placeholder];
+    const answerIndex = next.length - 1;
+    const patchAnswer = (patch: Partial<ChatMsg>) => {
+      setMessages(msgs => msgs.map((m, i) => (i === answerIndex ? { ...m, ...patch } : m)));
+    };
     setMessages(next);
     setInput("");
     setLoading(true);
+    stoppedFlag.current = false;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let grew = "";          // 已累计的回答文本
+    let answerSources: ChatSource[] | undefined = kbId ? [] : undefined;
+    let toolCall: { tool: string; params?: Record<string, unknown>; status: string } | null = null;
+    let failed = "";
     try {
-      const res = await apiClient.post("/chat", {
-        message: trimmed,
-        system_prompt: systemPrompt,
-        temperature,
-        history,
-        thinking_level: thinkingLevel,
-        profile_id: profileId || undefined,
-        kb_id: kbId || undefined,
-        attachments: attachments.map(({ name, kind, data }) => ({ name, kind, data })),
-        tool_context: pendingToolCall ?? undefined,
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch("/api/chat/stream2", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
       });
-      const reply = res.data.reply || "No response.";
-      const assistantMsg: ChatMsg = {
-        role: "assistant", content: reply, time: new Date().toLocaleTimeString(),
-        sources: kbId ? (res.data.sources || []) : undefined,
-      };
-      const final = [...next, assistantMsg];
-      if (kbId && res.data.kb_warning && (res.data.sources || []).length === 0) {
-        setMessages([...final, { role: "system", content: text.emptySources, time: new Date().toLocaleTimeString() }]);
-      } else {
-        setMessages(final);
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buffer.indexOf("\n\n")) >= 0) {
+          const raw = buffer.slice(0, idx).trim();
+          buffer = buffer.slice(idx + 2);
+          if (!raw.startsWith("data:")) continue;
+          const data = raw.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+          let event: any;
+          try { event = JSON.parse(data); } catch { continue; }
+          if (event.type === "delta" && typeof event.text === "string") {
+            grew += event.text;
+            patchAnswer({ content: grew });
+          } else if (event.type === "reply" && typeof event.text === "string") {
+            grew = event.text;
+            patchAnswer({ content: grew });
+            if (event.tool_call) toolCall = event.tool_call;
+          } else if (event.type === "sources" && Array.isArray(event.sources)) {
+            answerSources = event.sources as ChatSource[];
+            patchAnswer({ sources: answerSources });
+          } else if (event.type === "done") {
+            const cache = event.cache;
+            if (cache && cache.prompt > 0) {
+              setCacheInfo(cache);
+              localStorage.setItem("chat.cacheHit", JSON.stringify(cache));
+            }
+          } else if (event.type === "error") {
+            failed = String(event.message || "未知错误");
+          }
+        }
       }
+    } catch (e: any) {
+      if (e?.name !== "AbortError") failed = e?.message || String(e);
+    } finally {
+      abortRef.current = null;
+      // failed → 保留已生成部分 + 追加 system 错误；中止 → 文本加停止标记
+      let answer = failed ? grew : (grew || "（无返回内容）");
+      if (!failed && grew && abortRef.current === null && stoppedFlag.current) {
+        answer = grew + "\n〔已停止生成〕";
+      }
+      const finalBase: ChatMsg[] = [
+        ...next.slice(0, answerIndex),
+        { role: "assistant", content: answer, time: new Date().toLocaleTimeString(), sources: answerSources },
+      ];
+      let final = finalBase;
+      if (failed) {
+        final = [...finalBase, { role: "system", content: "Error: " + failed, time: new Date().toLocaleTimeString() } as ChatMsg];
+      } else if (kbId && answerSources && answerSources.length === 0 && grew) {
+        final = [...finalBase, { role: "system", content: text.emptySources, time: new Date().toLocaleTimeString() } as ChatMsg];
+      }
+      setMessages(final);
       saveActive(final);
-      setAttachments([]); // 发送完成 → 本轮附件随消息已交付
-      // 工具编排往返：追问/确认中 → 保存状态供下轮带回；终态 → 清空
-      const toolCall = res.data.tool_call;
+      setAttachments([]);
       if (toolCall && (toolCall.status === "clarify" || toolCall.status === "confirm")) {
-        setPendingToolCall({ tool: toolCall.tool, params: toolCall.params, status: toolCall.status });
+        setPendingToolCall(toolCall);
       } else {
         setPendingToolCall(null);
       }
-    } catch (e: any) {
-      const detail = e.response?.data?.detail;
-      const detailText = typeof detail === "object" ? (detail?.message || detail?.code) : detail;
-      const errNext = [...next, { role: "system", content: "Error: " + (detailText || e.message), time: new Date().toLocaleTimeString() } as ChatMsg];
-      setMessages(errNext);
-      saveActive(errNext);
-    } finally {
       setLoading(false);
     }
+  };
+
+  const stopGenerating = () => {
+    stoppedFlag.current = true;
+    abortRef.current?.abort();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -504,11 +578,17 @@ export default function AIChatPage() {
                               </div>
                             );
                           })}
-                          {/* 保留平均缓存命中率行；窗口滑条与清空按钮已按用户要求移除 */}
+                          {/* 缓存命中率：上游 usage 真实值（deepseek
+                              prompt_cache_hit_tokens / openai cached_tokens），
+                              随每轮 done 事件更新；无数据显示「暂无」 */}
                           <div style={{ borderTop: "1px solid var(--v2-line, rgba(128,140,160,.4))", marginTop: 8, paddingTop: 8 }}>
                             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "var(--v2-sub)" }}>
                               <span>{zh ? "平均缓存命中率" : "Avg cache hit"}</span>
-                              <span>—</span>
+                              <span>
+                                {cacheInfo && cacheInfo.prompt > 0
+                                  ? `${Math.round((cacheInfo.hit / cacheInfo.prompt) * 100)}%（${fmtK(cacheInfo.hit)}/${fmtK(cacheInfo.prompt)} tok）`
+                                  : zh ? "暂无（对话后统计）" : "n/a"}
+                              </span>
                             </div>
                           </div>
                         </div>
@@ -690,7 +770,17 @@ export default function AIChatPage() {
                     </Button>
                   </Popover>
                   {loading ? (
-                    <Button danger shape="circle" onClick={() => { /* 生成不可硬中断，边界生效 */ }} title={zh ? "生成中（阶段边界生效）" : "Generating"} style={{ width: 34, height: 34 }} />
+                    <Button
+                      danger
+                      shape="circle"
+                      onClick={stopGenerating}
+                      title={zh ? "停止生成" : "Stop generating"}
+                      aria-label={zh ? "停止生成" : "Stop generating"}
+                      style={{ width: 34, height: 34 }}
+                    >
+                      {/* 生成中 → 中间变方块（ZCode 同款「停止生成」语义） */}
+                      <span style={{ width: 10, height: 10, background: "#fff", borderRadius: 2, display: "block" }} />
+                    </Button>
                   ) : (
                     <Button
                       type="primary"
