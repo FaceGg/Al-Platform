@@ -137,6 +137,9 @@ export default function AIChatPage() {
       setSessions(prev => [{ ...session }, ...prev]);
       setActiveSessionId(session.id);
       setMessages([]);
+      // 新会话统计归零：缓存命中率属「最近一次请求」，旧会话的不再显示
+      setCacheInfo(null);
+      localStorage.removeItem("chat.cacheHit");
       antdMessage.success(zh ? "已新建对话" : "New chat created");
     } catch (e: any) {
       antdMessage.error(e.response?.data?.detail?.message || (zh ? "创建失败" : "Failed"));
@@ -635,7 +638,7 @@ export default function AIChatPage() {
                               <span>{zh ? "平均缓存命中率" : "Avg cache hit"}</span>
                               <span>
                                 {cacheInfo && cacheInfo.prompt > 0
-                                  ? `${Math.round((cacheInfo.hit / cacheInfo.prompt) * 100)}%（${fmtK(cacheInfo.hit)}/${fmtK(cacheInfo.prompt)} tok）`
+                                  ? `${Math.round((cacheInfo.hit / cacheInfo.prompt) * 100)}%`
                                   : zh ? "暂无（对话后统计）" : "n/a"}
                               </span>
                             </div>
