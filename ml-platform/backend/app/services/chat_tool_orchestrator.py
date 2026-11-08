@@ -48,7 +48,7 @@ def _enabled_tools(db: Session) -> set[str]:
     from app.models.platform_option import get_option
 
     disabled = set(get_option(db, "chat_tools_disabled", []) or [])
-    return set(TOOL_PARAM_SPECS) - disabled
+    return (set(TOOL_PARAM_SPECS) | set(TOOL_PAGE_GUIDES)) - disabled
 
 
 def _routing_prompt(message: str, pending: dict | None) -> str:
@@ -115,7 +115,7 @@ def _route_intent(db: Session, config, message: str, pending: dict | None, actor
     if not data or not data.get("tool"):
         return {}
     tool = str(data.get("tool"))
-    if tool not in TOOL_PARAM_SPECS:
+    if tool not in TOOL_PARAM_SPECS and tool not in TOOL_PAGE_GUIDES:
         return {}
     params = data.get("params") if isinstance(data.get("params"), dict) else {}
     clean = {str(k): v for k, v in params.items() if v not in (None, "")}
@@ -243,21 +243,9 @@ def _pick(rows, value: str, id_field: str, label: str) -> dict:
     return {"missing_value": value, "question": f"「{value}」匹配到多个{label}：{names}，请说明是哪一个。"}
 
 
-_RESOLVERS = {
-    "project": _resolve_project,
-    "dataset": _resolve_dataset,
-    "recipe": _resolve_recipe,
-    "api": _resolve_api,
-}
-
-
 def _normalize_message(message: str) -> str:
     return re.sub(r"[\s！!。.，,？?]+", "", message or "").lower()
 
-
-# ---------------------------------------------------------------------------
-# 主入口
-# ---------------------------------------------------------------------------
 
 def orchestrate(db: Session, *, config, user, message: str, tool_context: dict | None) -> ToolOrchestration:
     """/chat 的工具编排分支。返回 mode=chat 表示未命中工具，走普通对话。"""
@@ -301,7 +289,8 @@ def orchestrate(db: Session, *, config, user, message: str, tool_context: dict |
     collected = dict(pending.get("params") or {}) if pending.get("tool") == tool else {}
     collected.update(routed["params"])
 
-    # 3) 名称解析（project 先行，dataset 依赖 project 过滤）
+    # 3) 名称解析（project 先行，dataset 依赖 project 过滤；显式分派，
+    #    便于测试替换解析器）
     resolved: dict = {}
     display: dict = {}
     questions: list[str] = []
@@ -311,10 +300,16 @@ def orchestrate(db: Session, *, config, user, message: str, tool_context: dict |
         if not spec or name not in collected:
             continue
         value = str(collected.pop(name))
-        if name == "dataset":
+        if name == "project":
+            outcome = _resolve_project(db, user, value)
+        elif name == "dataset":
             outcome = _resolve_dataset(db, user, value, project_id=project_id)
+        elif name == "recipe":
+            outcome = _resolve_recipe(db, user, value)
+        elif name == "api":
+            outcome = _resolve_api(db, user, value)
         else:
-            outcome = _RESOLVERS[spec["kind"]](db, user, value)
+            continue
         if "question" in outcome:
             questions.append(outcome["question"])
             continue
