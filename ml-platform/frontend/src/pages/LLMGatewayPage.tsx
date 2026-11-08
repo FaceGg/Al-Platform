@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AutoComplete, Button, Checkbox, Collapse, Dropdown, Form, Input, InputNumber, message, Modal, Select, Space, Switch, Tooltip } from 'antd'
-import { ApiOutlined, CloudDownloadOutlined, DeleteOutlined, EditOutlined, MoreOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined } from '@ant-design/icons'
+import { ApiOutlined, CloudDownloadOutlined, DeleteOutlined, EditOutlined, MinusCircleOutlined, MoreOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useI18n } from '../i18n'
 import AppLayout from '../components/AppLayout'
 import PageHeading from '../components/PageHeading'
@@ -530,6 +530,15 @@ export default function LLMGatewayPage() {
   const [modelCfgTarget, setModelCfgTarget] = useState<LLMProfile | null>(null)
   const [modelCfgSaving, setModelCfgSaving] = useState(false)
   const [modelForm] = Form.useForm()
+  // 等级变化且映射为空（未手写）时自动生成映射模板（竖排逐行编辑共用）
+  const syncMappingFromLevels = () => {
+    const levels: string[] = (modelForm.getFieldValue('reasoning_levels') ?? [])
+      .map((v: unknown) => String(v ?? '').trim())
+      .filter(Boolean)
+    if (!String(modelForm.getFieldValue('reasoning_mapping') || '').trim()) {
+      modelForm.setFieldValue('reasoning_mapping', buildReasoningMapping(levels))
+    }
+  }
 
   const openAddModel = () => {
     if (!selected) return
@@ -1127,16 +1136,49 @@ export default function LLMGatewayPage() {
                       ]}
                     />
                   </Form.Item>
-                  <Form.Item label={<span>{zh ? '推理等级（从低到高）' : 'Reasoning levels (low to high)'} <Tooltip title={zh ? '点「+」添加等级标签，按从低到高排序' : 'Add level tags in ascending order'}><QuestionCircleOutlined style={{ color: 'var(--v2-dim, #999)' }} /></Tooltip></span>} name="reasoning_levels">
-                    <Select
-                      mode="tags" open={false} placeholder="+" style={{ width: 200 }} tokenSeparators={[',']}
-                      onChange={(levels: string[]) => {
-                        // 等级变化且映射为空（未手写）时自动生成映射模板
-                        if (!String(modelForm.getFieldValue('reasoning_mapping') || '').trim()) {
-                          modelForm.setFieldValue('reasoning_mapping', buildReasoningMapping(levels ?? []))
-                        }
-                      }}
-                    />
+                  <Form.Item
+                    label={(
+                      <span>
+                        {zh ? '推理等级（从低到高）' : 'Reasoning levels (low to high)'}
+                        <Tooltip title={zh ? '每个等级单独一行，按从低到高排序；等级变化且映射为空时自动生成映射模板' : 'One level per row, ascending; mapping template auto-generated when empty'}>
+                          <QuestionCircleOutlined style={{ color: 'var(--v2-dim, #999)' }} />
+                        </Tooltip>
+                      </span>
+                    )}
+                  >
+                    {/* ZCode 式竖排：每个等级单独一行（输入框 + 行尾删除），添加按钮在底部 */}
+                    <Form.List name="reasoning_levels">
+                      {(fields, { add, remove }) => (
+                        <div style={{ width: 200, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {fields.map((field) => (
+                            <div key={field.key} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <Form.Item name={field.name} noStyle>
+                                <Input
+                                  placeholder={zh ? '等级名，如 low' : 'level, e.g. low'}
+                                  onChange={() => syncMappingFromLevels()}
+                                />
+                              </Form.Item>
+                              <Button
+                                type="text"
+                                size="small"
+                                icon={<MinusCircleOutlined style={{ color: 'var(--v2-dim, #999)', fontSize: 14 }} />}
+                                onClick={() => { remove(field.name); setTimeout(syncMappingFromLevels, 0) }}
+                                aria-label={zh ? '删除等级' : 'Remove level'}
+                                style={{ width: 24, height: 24, minWidth: 24, flex: '0 0 auto' }}
+                              />
+                            </div>
+                          ))}
+                          <Button
+                            type="dashed"
+                            icon={<PlusOutlined />}
+                            onClick={() => add()}
+                            style={{ width: '100%' }}
+                          >
+                            {zh ? '添加等级' : 'Add level'}
+                          </Button>
+                        </div>
+                      )}
+                    </Form.List>
                   </Form.Item>
                   <Form.Item label={<span>{zh ? '推理参数映射' : 'Reasoning param mapping'} <Tooltip title={zh ? '推理等级到请求参数的映射表达式（三元链）；可手写，等级变化且为空时自动生成模板' : 'Ternary chain mapping levels to request params'}><QuestionCircleOutlined style={{ color: 'var(--v2-dim, #999)' }} /></Tooltip></span>} name="reasoning_mapping">
                     <Input.TextArea
