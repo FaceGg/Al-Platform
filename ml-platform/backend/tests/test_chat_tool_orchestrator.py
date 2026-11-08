@@ -67,8 +67,11 @@ class TestOrchestrateFlow(unittest.TestCase):
     def setUp(self):
         self.user = _user()
         self.config = _config()
-        # 启停配置读 DB；单测里无库，固定为全量可用
-        self._enabled = mock.patch.object(orch, "_enabled_tools", return_value=set(orch.TOOL_PARAM_SPECS))
+        # 启停配置读 DB；单测里无库，固定为全量可用（含 guided 复杂写类）
+        self._enabled = mock.patch.object(
+            orch, "_enabled_tools",
+            return_value=set(orch.TOOL_PARAM_SPECS) | set(orch.TOOL_PAGE_GUIDES),
+        )
         self._enabled.start()
         self.addCleanup(self._enabled.stop)
 
