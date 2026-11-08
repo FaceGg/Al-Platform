@@ -88,6 +88,10 @@ class GuidanceAnalysis(BaseModel):
     row_notes: list[dict] = Field(default_factory=list)
     prompts: list[str] = Field(default_factory=list)
     suspect_focus: list[str] = Field(default_factory=list)
+    # 全量数据训练（默认 True=百分百真实实验）：S3 验收训练用全部行、
+    # 类别编码不截断。仅在超大数据集（数十万行+）验收阶段过慢时由用户
+    # 显式关闭——降采样触发时任务档案与验收指标旁会显式标注，绝不静默。
+    full_data: bool = Field(default=True)
 
 
 class GuidanceFeature(BaseModel):
@@ -154,6 +158,7 @@ class UserGuidance(BaseModel):
             or self.evaluation.custom_test_dataset_id
             or self.evaluation.metric_gates
             or self.evaluation.review_focus
+            or not self.analysis.full_data
         )
 
 

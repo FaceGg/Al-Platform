@@ -98,7 +98,7 @@ export interface AgentRunCreatePayload {
   token_budget?: number | null;
   step_by_step?: boolean;
   guidance: {
-    analysis?: { column_notes?: { column: string; note: string }[]; prompts?: string[] };
+    analysis?: { column_notes?: { column: string; note: string }[]; prompts?: string[]; full_data?: boolean };
     feature?: {
       data_shape?: "tabular" | "waveform" | "mixed";
       // 列级数据类型标注（向导自动预填+可改）；全局 data_shape 单选已退役
@@ -277,6 +277,16 @@ export async function castDeploymentStatus(
 ): Promise<CastDeploymentStatusResult> {
   const response = await apiClient.get(
     `/agent/servitize/cast-deployment/${jobId}?recipe_id=${recipeId}`,
+  );
+  return response.data;
+}
+
+// 页面恢复：配方当前铸造状态（无在途时 status=idle）
+export async function castDeploymentCurrent(
+  recipeId: string,
+): Promise<CastDeploymentStatusResult & { job_id?: string }> {
+  const response = await apiClient.get(
+    `/agent/servitize/cast-deployment/current?recipe_id=${recipeId}`,
   );
   return response.data;
 }

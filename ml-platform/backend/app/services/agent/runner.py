@@ -654,8 +654,10 @@ class AgentRunner:
             # 智能体训练族，用户要求"必须使用勾选的"）经 hints 传入训练器；
             # 均未启用时保持 {} 与既有训练器签名兼容。
             modeling_cfg = {}
+            analysis_cfg = {}
             if isinstance(self.guidance, dict):
                 modeling_cfg = dict(self.guidance.get("modeling") or {})
+                analysis_cfg = dict(self.guidance.get("analysis") or {})
             ensemble_cfg = dict(modeling_cfg.get("ensemble") or {})
             hints_payload: dict = {}
             if ensemble_cfg.get("enabled"):
@@ -663,8 +665,14 @@ class AgentRunner:
             whitelist = [str(x) for x in modeling_cfg.get("algorithm_whitelist") or []]
             if whitelist:
                 hints_payload["algorithm_whitelist"] = whitelist
+            # 全量训练合同（默认 True）：向导第一步可关；关闭时训练器才会
+            # 启用 2 万行/类别 top-200 保护上限，且保真度事实随指标落档。
+            hints_payload["full_data"] = bool(analysis_cfg.get("full_data", True))
             trainer_result = self.trainer(feature_df, y, hints_payload)
             s3_digest = self._s3_digest(trainer_result)
+            fidelity = trainer_result.get("data_fidelity")
+            if fidelity:
+                s3_digest["data_fidelity"] = fidelity
             if target_excluded:
                 # 留痕：评审与排障能看到"特征表里的标签列已被平台剥离"。
                 s3_digest["target_excluded_from_features"] = target
@@ -734,6 +742,7 @@ class AgentRunner:
                 gate_failures=[],
                 round_number=round_number,
                 actor=self.actor,
+                data_fidelity=trainer_result.get("data_fidelity"),
             )
             if not self._absorb_usage(usage):
                 return self._escalate("AGENT_TOKEN_BUDGET_EXCEEDED")
@@ -759,11 +768,17 @@ class AgentRunner:
                 self.run.status = "accepted"
                 self.run.current_stage = "done"
                 self.run.memory_json = self.memory
-                self.run.result_json = {
+                accepted_result = {
                     "token_used": self._usage_total,
                     "metrics": trainer_result.get("metrics", {}),
                     "rounds": round_number,
                 }
+                # 验收指标的数据保真度随终态落库（全量 or 显式抽样子集）——
+                # 指标语义永远对用户透明，抽样子集结果不再假装全量
+                fidelity = trainer_result.get("data_fidelity")
+                if fidelity:
+                    accepted_result["data_fidelity"] = fidelity
+                self.run.result_json = accepted_result
                 self.db.commit()
                 self._auto_servitize_if_requested()
                 self._finalize_reports()

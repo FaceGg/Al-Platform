@@ -106,13 +106,16 @@ def _ensemble_member_importance(model) -> list[float] | None:
 
 
 def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
-    """S3 真训练（轻量）：分层切分 + 少量 sklearn 家族，按少数类召回选优。
+    """S3 验收训练（真实实验合同）：分层切分 + sklearn 家族，按少数类召回选优。
 
-    返回 Runner/S4 需要的形状：metrics / topk_metrics / importance。
+    返回 Runner/S4 需要的形状：metrics / topk_metrics / importance /
+    data_fidelity（训练数据保真度事实——全量或显式降采样，绝不静默）。
 
-    行/宽双重上限对齐"轻量"定位：全量数据上高基数类别经 get_dummies 会
-    展开成数千列宽矩阵，随机森林单核可跑数十分钟（8381156a 事故——
-    非挂死，是无限时慢算）。分层抽样 2 万行 + 类别编码截断 top 200。
+    full_data（默认 True，向导第一步可关）：全量模式用全部行、类别编码
+    不截断——验收指标百分百对应该数据集本身。关闭时才启用保护上限
+    （>2 万行分层抽样 + 类别 top-200 截断，防 8381156a 式慢算：全量高
+    基数展开数千列随机森林单核数十分钟），且 sampled/truncated 事实
+    写入返回值随档案与验收报告呈现。
     """
     import pandas as pd
     from sklearn.ensemble import (
@@ -126,26 +129,37 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
     from sklearn.model_selection import train_test_split
     from sklearn.preprocessing import LabelEncoder
 
+    full_data = bool((hints or {}).get("full_data", True))
+    total_rows = len(y) if y is not None else 0
+    fidelity: dict = {"full_data": full_data, "total_rows": int(total_rows)}
     frame = feature_frame if isinstance(feature_frame, pd.DataFrame) else pd.DataFrame(feature_frame)
     labels = LabelEncoder().fit_transform([str(value) for value in y])
     minority = 1 if (labels == 1).mean() <= 0.5 else 0
-    if len(labels) > 20000:
+    if not full_data and len(labels) > 20000:
         keep, _ = train_test_split(
             range(len(labels)), train_size=20000, random_state=7,
             stratify=labels,
         )
         frame = frame.iloc[keep].reset_index(drop=True)
         labels = labels[keep]
+        fidelity["sampled_rows"] = int(len(labels))
+        fidelity["note"] = (
+            f"验收训练基于 {len(labels)} 行分层抽样（总 {total_rows} 行）——"
+            "指标为抽样子集结果，非全量"
+        )
     numeric = frame.select_dtypes(include=["number"]).fillna(0.0)
     categorical = frame.select_dtypes(exclude=["number"]).astype(str)
     if not categorical.empty and categorical.shape[1]:
-        # 每列只保留 top 200 类别，其余归并 __other__，防宽矩阵爆炸。
-        for column in categorical.columns:
-            top = categorical[column].value_counts().head(200).index
-            categorical[column] = categorical[column].where(
-                categorical[column].isin(top), "__other__"
-            )
-        X = pd.get_dummies(categorical, dummy_na=True).join(numeric)
+        if full_data:
+            X = pd.get_dummies(categorical, dummy_na=True).join(numeric)
+        else:
+            # 每列只保留 top 200 类别，其余归并 __other__，防宽矩阵爆炸。
+            for column in categorical.columns:
+                top = categorical[column].value_counts().head(200).index
+                categorical[column] = categorical[column].where(
+                    categorical[column].isin(top), "__other__"
+                )
+            X = pd.get_dummies(categorical, dummy_na=True).join(numeric)
     else:
         X = numeric
     stratify = labels if min((labels == c).sum() for c in set(labels)) >= 2 else None
@@ -231,6 +245,7 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
             "topk_metrics": [],
             "importance": [],
             "minority_test_count": minority_test_count,
+            "data_fidelity": fidelity,
         }
     scored.sort(key=lambda item: item[2], reverse=True)
 
@@ -348,6 +363,9 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
         ],
         "importance": importance,
         "minority_test_count": minority_test_count,
+        # 训练数据保真度：全量（full_data=True）或显式抽样的行数事实——
+        # 随 S3 digest/验收报告落档案，指标语义对用户永远透明
+        "data_fidelity": fidelity,
     }
     if ensemble_info is not None:
         result["ensemble"] = ensemble_info

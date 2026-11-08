@@ -444,19 +444,22 @@ def build_s4_messages(
     expectations: list[dict],
     gate_failures: list[str],
     round_number: int,
+    data_fidelity: dict | None = None,
 ) -> list[dict]:
+    evaluation_payload = {
+        "round": round_number,
+        "metrics": metrics,
+        "feature_importance": importance,
+        "hard_gate_failures": gate_failures,
+    }
+    if data_fidelity:
+        # 评审知情：指标基于全量或显式抽样子集（抽样子集的指标置信度
+        # 应在评审中如实打折，不得当全量结果对待）
+        evaluation_payload["data_fidelity"] = data_fidelity
     sections = [
         _quote_block(
             "评估数据",
-            json.dumps(
-                {
-                    "round": round_number,
-                    "metrics": metrics,
-                    "feature_importance": importance,
-                    "hard_gate_failures": gate_failures,
-                },
-                ensure_ascii=False,
-            ),
+            json.dumps(evaluation_payload, ensure_ascii=False),
         ),
         _quote_block(
             "S1 预期特征",
@@ -480,6 +483,7 @@ def run_s4(
     gate_failures: list[str],
     round_number: int,
     actor=None,
+    data_fidelity: dict | None = None,
 ) -> tuple[ReviewVerdict | None, str | None, dict]:
     """One S4 review attempt; verdict can never override hard gates."""
     messages = build_s4_messages(
@@ -488,6 +492,7 @@ def run_s4(
         expectations=expectations,
         gate_failures=gate_failures,
         round_number=round_number,
+        data_fidelity=data_fidelity,
     )
     reply, usage, error = chat_completion_with_retry(
         db,

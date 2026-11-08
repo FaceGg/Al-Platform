@@ -173,5 +173,48 @@ class TestTrainerWhitelistHardConstraint(unittest.TestCase):
         self.assertTrue({"random_forest", "hist_gb"}.issubset(names))
 
 
+class TestDataFidelityContract(unittest.TestCase):
+    """全量训练合同（2026-11-08 用户定稿）：默认百分百全量；抽样上限仅
+    在用户显式关闭 full_data 时启用，且保真度事实随指标返回——抽样子集
+    结果绝不假装全量。"""
+
+    @staticmethod
+    def _frame(rows: int):
+        rng = np.random.RandomState(7)
+        signal = rng.rand(rows)
+        frame = pd.DataFrame({"f1": signal, "f2": rng.rand(rows)})
+        labels = (signal > 0.8).astype(int)  # 少数类 ~20%
+        return frame, labels
+
+    def test_default_full_data_never_samples(self):
+        """默认（full_data 缺省=True）：3 万行也全量训练，fidelity 如实标注。"""
+        frame, labels = self._frame(30000)
+        result = lightweight_trainer(frame, labels, {})
+        fidelity = result.get("data_fidelity") or {}
+        self.assertTrue(fidelity.get("full_data"))
+        self.assertEqual(fidelity.get("total_rows"), 30000)
+        self.assertNotIn("sampled_rows", fidelity)  # 无抽样事实
+        self.assertTrue(result.get("metrics"))
+
+    def test_sampling_only_when_user_opted_out(self):
+        """显式 full_data=False：>2 万行触发分层抽样，fidelity 标注行数+警示。"""
+        frame, labels = self._frame(30000)
+        result = lightweight_trainer(frame, labels, {"full_data": False})
+        fidelity = result.get("data_fidelity") or {}
+        self.assertFalse(fidelity.get("full_data"))
+        self.assertEqual(fidelity.get("sampled_rows"), 20000)
+        self.assertIn("非全量", fidelity.get("note", ""))
+
+    def test_small_dataset_identical_both_modes(self):
+        """小数据集（<2 万行）两模式行为一致（无抽样事实）。"""
+        frame, labels = self._frame(500)
+        full = lightweight_trainer(frame, labels, {"full_data": True})
+        sampled_mode = lightweight_trainer(frame, labels, {"full_data": False})
+        self.assertEqual(
+            full["metrics"]["recall_minority"],
+            sampled_mode["metrics"]["recall_minority"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

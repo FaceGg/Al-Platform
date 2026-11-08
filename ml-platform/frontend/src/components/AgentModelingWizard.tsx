@@ -83,6 +83,8 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   const [profiles, setProfiles] = useState<ProfileOption[]>([]);
   const [llmProfileId, setLlmProfileId] = useState("");
   const [stepByStep, setStepByStep] = useState(false);
+  // 全量数据训练（真实实验合同，默认开）：关=超大数据集保护性抽样上限
+  const [fullData, setFullData] = useState(true);
 
   // Step 2
   // 数据形态全局单选已退役（用户指示）：列级「数据类型」自动识别 + 可改。
@@ -287,6 +289,8 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           analysis: {
             column_notes: chosenNotes,
             prompts: analysisPrompt.trim() ? [analysisPrompt.trim()] : [],
+            // 真实实验合同：默认全量训练；仅用户显式关闭才允许抽样上限
+            full_data: fullData,
           },
           feature: {
             // 全局 data_shape 单选已退役：列级标注随引导进 S2 提示词
@@ -438,6 +442,20 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
                 </tbody>
               </table>
             </div>
+          </div>
+          <div className="v2-panel">
+            <h4><span className="bar" />{zh ? "数据与训练真实性" : "Data & training fidelity"}</h4>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, cursor: "pointer" }}>
+              <input type="checkbox" checked={fullData} onChange={(e) => setFullData(e.target.checked)} />
+              <span>
+                <b>{zh ? "全量数据训练（推荐）" : "Full-data training (recommended)"}</b>
+                <span className="more" style={{ display: "block", color: "var(--v2-dim)", fontSize: 11.5 }}>
+                  {zh
+                    ? "验收训练使用全部行、类别编码不截断——指标 100% 对应本数据集。仅在数据集达数十万行、验收等待过长时关闭；关闭后超 2 万行将分层抽样，指标旁会显式标注「抽样结果，非全量」。"
+                    : "Acceptance training uses every row with no category truncation. Turn off only for very large datasets (sampling cap 20k rows applies and is prominently labeled)."}
+                </span>
+              </span>
+            </label>
           </div>
           <div className="v2-panel">
             <h4><span className="bar" />{zh ? "分析提示词（可选）" : "Analysis prompt (optional)"}</h4>
