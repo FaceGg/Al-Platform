@@ -34,6 +34,12 @@ _HTTP_CLIENT = httpx.Client(
     limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
 )
 
+# 推理型思考余量系数（自动预算隔离，零配置）：请求体 max_tokens 按此倍数
+# 放大——思考与正文共享上游生成预算，推理型模型的思考通常 2-4 倍于正文
+# 长度；不放大则思考吃光预算、正文空/截断（deepseek-flash S1 实测根因）。
+# 非推理型模型生成完自然停，多给的余量无副作用。
+REASONING_TOKEN_HEADROOM = 4
+
 
 class LLMProfileNotFoundError(LookupError):
     """Explicit profile_id does not resolve to an existing profile."""
@@ -300,41 +306,59 @@ def _build_llm_request(
     return config.api_url, headers, body
 
 
-def _parse_llm_stream_event(provider: str, event: dict) -> tuple[str | None, dict | None]:
-    """从 SSE 事件里解出 (文本增量, usage)。三格式的增量位置不同：
-    - chat completions: choices[0].delta.content
-    - responses: type=response.output_text.delta → delta
-    - anthropic: type=content_block_delta → delta.text
+def _parse_llm_stream_event(provider: str, event: dict) -> tuple[str | None, dict | None, str | None]:
+    """从 SSE 事件里解出 (文本增量, usage, 思考增量)。三格式增量位置不同：
+    - chat completions: choices[0].delta.content / 思考 delta.reasoning_content
+      （DeepSeek 系推理模型的思考通道；正文预算隔离的关键——思考不计入
+      调用方 max_tokens 语义，收集后随响应返回供留档）
+    - responses: type=response.output_text.delta → delta；思考
+      response.reasoning_summary_text.delta
+    - anthropic: type=content_block_delta → delta.text；思考块
+      content_block_delta.delta.thinking
     """
     if provider == "anthropic":
         if event.get("type") == "content_block_delta":
-            delta = (event.get("delta") or {}).get("text")
-            return (delta, None) if delta else (None, None)
+            block_delta = event.get("delta") or {}
+            delta = block_delta.get("text")
+            thinking = block_delta.get("thinking")
+            if delta:
+                return (delta, None, None)
+            if thinking:
+                return (None, None, thinking)
+            return (None, None, None)
         if event.get("type") == "message_delta":
             usage_event = event.get("usage") or {}
             return None, {
                 "prompt_tokens": usage_event.get("input_tokens"),
                 "completion_tokens": usage_event.get("output_tokens"),
-            }
-        return None, None
+            }, None
+        return None, None, None
     if provider == "responses":
         if event.get("type") == "response.output_text.delta":
             delta = event.get("delta")
-            return (delta, None) if delta else (None, None)
+            return (delta, None, None) if delta else (None, None, None)
+        if event.get("type") == "response.reasoning_summary_text.delta":
+            thinking = event.get("delta")
+            return (None, None, thinking) if thinking else (None, None, None)
         if event.get("type") == "response.completed":
             response = event.get("response") or {}
             usage_event = response.get("usage") or {}
             return None, {
                 "prompt_tokens": usage_event.get("input_tokens"),
                 "completion_tokens": usage_event.get("output_tokens"),
-            }
-        return None, None
+            }, None
+        return None, None, None
     # Chat Completions
     choices = event.get("choices") or []
     delta = None
+    reasoning = None
     if choices:
-        delta = (choices[0].get("delta") or {}).get("content")
-    return (delta, event.get("usage")) if (delta or event.get("usage")) else (None, None)
+        message_delta = choices[0].get("delta") or {}
+        delta = message_delta.get("content")
+        reasoning = message_delta.get("reasoning_content") or message_delta.get("reasoning")
+    if delta or reasoning or event.get("usage"):
+        return (delta, event.get("usage"), reasoning)
+    return (None, None, None)
 
 
 def _provider_headers(provider: str, api_key: str | None) -> dict[str, str]:
@@ -457,7 +481,7 @@ def chat_completion(
     request=None,
     timeout_floor: float | None = None,
     thinking_level: str | None = None,
-) -> tuple[str | None, dict]:
+) -> tuple[str | None, dict, str | None]:
     """Synchronous completion through the resolved config, with egress audit.
 
     Audit records destination metadata only — profile, purpose, model and
@@ -468,6 +492,13 @@ def chat_completion(
     completions legitimately run long (the agent's S1/S2/S4 stages emit
     multi-thousand-token JSON and routinely exceed the 60s profile default
     tuned for chat).
+
+    返回 ``(reply, usage, reasoning)``：reasoning 为推理型模型的思考文本
+    （chat completions 的 reasoning_content / anthropic thinking 块 /
+    responses reasoning_summary），非推理型为 None——自动探测，无需用户
+    配置映射。max_tokens 自动加思考余量（REASONING_TOKEN_HEADROOM×）：
+    思考与正文共享上游预算，调用方给的 max_tokens 语义是「正文字数」，
+    推理型不放大必然挤占正文（实测空回复/截断根因）。
     """
     from app.services.platform_audit import PlatformAuditIntent, record_platform_event
 
@@ -475,6 +506,13 @@ def chat_completion(
         temperature
         if temperature is not None
         else (config.temperature if config.temperature is not None else 0.7)
+    )
+    # 推理型思考余量（自动，零配置）：请求体 max_tokens 放大为正文预算×4
+    # ——思考通常 2-4 倍于正文长度；非推理型多给的余量不产出额外正文
+    # （生成完自然停），无副作用。REASONING_TOKEN_HEADROOM 见常量定义。
+    requested_max_tokens = max_tokens
+    amplified_max_tokens = (
+        int(max_tokens) * REASONING_TOKEN_HEADROOM if max_tokens else max_tokens
     )
     effective_timeout = (
         max(config.timeout_seconds, timeout_floor)
@@ -490,9 +528,10 @@ def chat_completion(
     # 三种 API 格式共用同一流式框架：构造器/解析器按 provider 分派
     # （openai_compatible=Chat Completions / responses / anthropic）。
     url, headers, body = _build_llm_request(
-        config, messages, resolved_temperature, max_tokens, thinking_level
+        config, messages, resolved_temperature, amplified_max_tokens, thinking_level
     )
     reply_parts: list[str] = []
+    reasoning_parts: list[str] = []
     usage: dict = {}
     status_code: int = 0
     try:
@@ -523,11 +562,13 @@ def chat_completion(
                         event = json.loads(chunk_text)
                     except ValueError:
                         continue
-                    delta, event_usage = _parse_llm_stream_event(
+                    delta, event_usage, reasoning_delta = _parse_llm_stream_event(
                         config.provider, event
                     )
                     if delta:
                         reply_parts.append(delta)
+                    if reasoning_delta:
+                        reasoning_parts.append(reasoning_delta)
                     if event_usage:
                         usage = event_usage
     except httpx.HTTPError:
@@ -563,12 +604,21 @@ def chat_completion(
         raise
     latency_ms = round((time.perf_counter() - started) * 1000, 1)
     if status_code == 200:
+        message_content: dict = {"content": "".join(reply_parts)}
+        # 思考文本随响应带出（截断留档 8k 字符——审计/任务档案可见推理过程；
+        # 调用方不读不影响，S1/S2/S4 由 llm_client 写入 run memory）
+        reasoning_text = "".join(reasoning_parts)
+        if reasoning_text:
+            message_content["reasoning_content"] = reasoning_text[:8000]
         data = {
-            "choices": [{"message": {"content": "".join(reply_parts)}}],
+            "choices": [{"message": message_content}],
             "usage": usage,
         }
     reply = (
         data.get("choices", [{}])[0].get("message", {}).get("content", "") or None
+    )
+    reasoning_out = (
+        data.get("choices", [{}])[0].get("message", {}).get("reasoning_content") or None
     )
     changes = {
         "purpose": purpose,
@@ -610,7 +660,9 @@ def chat_completion(
             )
         except Exception:  # noqa: BLE001 - audit must not break the answer path
             pass
-    return reply, usage
+    # 思考文本随返回值带出（推理型模型的思考通道；非推理型为 None）。
+    # 三元为稳定契约：调用方按需解包，行为差异只在第三个返回值。
+    return reply, usage, reasoning_out
 
 
 class LLMApiUrlError(ValueError):

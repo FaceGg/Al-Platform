@@ -88,7 +88,36 @@ _TRANSIENT_NETWORK_ERRORS = {
     "RemoteProtocolError",
     "PoolTimeout",
     "WriteError",
+    "RemoteDisconnected",
+    "ConnectionResetError",
+    "ConnectionAbortedError",
+    "ChunkedEncodingError",
 }
+
+# 重连策略（2026-11-08 定稿）：网络断开与内部错误（上游 5xx/负载抖动）都
+# 自动重试，最多 5 次、每次间隔 60s；5 次都失败才断开放弃。另设总进展
+# 护栏：单阶段重试循环累计超过 1 小时无成功返回即放弃（防每轮 60s+慢速
+# 失败叠加成无限挂起——与 run 级 2h 轮询超时、心跳清扫双保险）。
+RECONNECT_MAX_ATTEMPTS = 5
+RECONNECT_INTERVAL_SECONDS = 60
+RECONNECT_MAX_WALL_SECONDS = 3600
+
+# 内部错误也重试（用户定稿）：上游服务端错误（HTTP 5xx/负载 429/网关
+# 内部异常）多为暂态——与网络断连同策略重连。仅「确定性失败」（契约/
+# 认证类：401/403 等）不重试浪费时间。按异常类名 + 消息特征识别。
+_INTERNAL_RETRYABLE_HINTS = (
+    "408", "425", "429", "500", "502", "503", "504",
+    "internal", "overloaded", "rate limit", "timeout",
+)
+
+
+def _is_retryable_error(error: Exception) -> bool:
+    """网络断连一律重试；内部错误按类名+消息特征判定暂态性。"""
+    name = type(error).__name__
+    if name in _TRANSIENT_NETWORK_ERRORS:
+        return True
+    text = str(error).lower()
+    return any(hint in text for hint in _INTERNAL_RETRYABLE_HINTS)
 
 
 def chat_completion_with_retry(
@@ -101,23 +130,27 @@ def chat_completion_with_retry(
     purpose: str,
     actor=None,
     timeout_floor: float | None = None,
-    attempts: int = 3,
+    attempts: int = RECONNECT_MAX_ATTEMPTS,
+    interval_seconds: int = RECONNECT_INTERVAL_SECONDS,
+    max_wall_seconds: int = RECONNECT_MAX_WALL_SECONDS,
 ) -> tuple[str | None, dict, str | None]:
-    """带瞬时故障重试的网关调用，返回 (reply, usage, error)。
+    """带断线重连的网关调用，返回 (reply, usage, error)。
 
-    可重试：网络类瞬时错误（ReadError/Errno 104 连接被中间设备重置是
-    非流式长生成的典型死法——连接静默等待整个生成期，测试调用的短请求
-    活得下来而阶段调用的长请求被掐）与空回复（上游负载下的暂态现象）。
-    退避 5s/15s。契约类失败发生在调用成功之后，不属于此层。"""
+    网络断连与内部错误（上游 5xx/负载暂态）自动重连：最多 ``attempts``
+    次（默认 5），每次间隔 ``interval_seconds``（默认 60s）；重试循环
+    累计超过 ``max_wall_seconds``（默认 1h）无成功返回也放弃——单阶段
+    不会无限挂起（与 run 级轮询超时双保险）。确定性失败（认证/契约类）
+    立即返回不重试。"""
     import time as _time
 
     reply: str | None = None
     usage: dict = {}
     last_error: Exception | None = None
     last_empty = False
+    started = _time.monotonic()
     for attempt in range(attempts):
         try:
-            reply, usage = chat_completion(
+            reply, usage, reasoning = chat_completion(
                 db,
                 config=config,
                 messages=messages,
@@ -127,25 +160,42 @@ def chat_completion_with_retry(
                 actor=actor,
                 timeout_floor=timeout_floor,
             )
+            # 思考文本透传（挂 usage dict 上，不改三层返回签名）：调用方
+            # 可选写入 run memory 留档；非推理型为缺省。
+            if reasoning:
+                usage = dict(usage or {})
+                usage.setdefault("reasoning_content", reasoning)
             if reply and reply.strip():
                 return reply, usage, None
             last_empty = True
             last_error = None
-        except Exception as error:  # noqa: BLE001 - 网络类失败重试，其余立即返回
-            name = type(error).__name__
-            if name not in _TRANSIENT_NETWORK_ERRORS:
-                return None, {}, f"llm_call_failed: {name}: {error}"
+        except Exception as error:  # noqa: BLE001 - 网络断连/内部暂态重连
+            if not _is_retryable_error(error):
+                return None, {}, f"llm_call_failed: {type(error).__name__}: {error}"
             last_empty = False
             last_error = error
         if attempt < attempts - 1:
-            _time.sleep(5 * (attempt + 1))
+            elapsed = _time.monotonic() - started
+            if elapsed + interval_seconds >= max_wall_seconds:
+                # 总进展护栏：再加一轮就要超时——直接放弃，不再等下一轮
+                if last_error is not None:
+                    return None, {}, (
+                        f"llm_call_failed: {type(last_error).__name__}: {last_error}"
+                        f" (no progress for {int(elapsed)}s >= {max_wall_seconds}s budget,"
+                        f" {attempt + 1} attempts)"
+                    )
+                return None, usage or {}, (
+                    f"llm_empty_completion (no progress for {int(elapsed)}s"
+                    f" >= {max_wall_seconds}s budget, {attempt + 1} attempts)")
+            _time.sleep(interval_seconds)
     if last_error is not None:
         return None, {}, (
             f"llm_call_failed: {type(last_error).__name__}: {last_error}"
-            f" ({attempts} attempts incl. backoff)"
+            f" ({attempts} reconnect attempts, {interval_seconds}s interval)"
         )
     if last_empty:
-        return None, usage or {}, f"llm_empty_completion ({attempts} attempts incl. backoff)"
+        return None, usage or {}, (
+            f"llm_empty_completion ({attempts} reconnect attempts, {interval_seconds}s interval)")
     return None, usage or {}, "llm_empty_completion"
 
 

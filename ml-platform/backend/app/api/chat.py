@@ -217,7 +217,7 @@ def chat(
             return payload
 
     try:
-        reply, usage = chat_completion(
+        reply, usage, _reasoning = chat_completion(
             db,
             config=config,
             messages=_assemble_messages(system_prompt, message, context, history, attachments),
@@ -287,7 +287,7 @@ def compress_chat_history(
     if not config.api_key:
         raise HTTPException(503, detail={"code": "LLM_NOT_CONFIGURED"})
     try:
-        reply, _usage = chat_completion(
+        reply, _usage, _reasoning = chat_completion(
             db,
             config=config,
             messages=[

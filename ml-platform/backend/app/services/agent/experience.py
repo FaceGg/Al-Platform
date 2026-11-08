@@ -271,7 +271,7 @@ def distill_experience_entries(db, *, config, run, memory: dict) -> list[UUID]:
         },
     ]
     try:
-        reply, _usage = _distill_chat_completion(
+        reply, _usage, _reasoning = _distill_chat_completion(
             db,
             config=config,
             messages=messages,

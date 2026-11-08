@@ -103,11 +103,14 @@ class AgentRunner:
             }
         )
 
-    def _stage_digest(self, round_number: int, stage: str, digest: dict) -> None:
+    def _stage_digest(self, round_number: int, stage: str, digest: dict,
+                      reasoning: str | None = None) -> None:
         """阶段产物边跑边落档案（§7 任务档案的"干了什么得到什么"）。
 
         每阶段完成即 commit——S3/S4 崩溃的 run（85bd8c96 事故）也能在档案里
         看到此前 S1/S2 的完整产出，而不是一个空壳轮次骨架。
+        reasoning：推理型模型（DeepSeek flash/v4-pro 等）该阶段的思考文本，
+        截断 2k 留档进 digest（任务详情可见大模型的思考过程）；非推理型缺省。
         """
         rounds = self.memory.setdefault("rounds", [])
         entry = next(
@@ -116,6 +119,9 @@ class AgentRunner:
         if entry is None:
             entry = {"round": round_number}
             rounds.append(entry)
+        if reasoning:
+            digest = dict(digest)
+            digest["reasoning"] = str(reasoning)[:2000]
         entry[stage] = digest
         self.run.memory_json = self.memory
         # 阶段产物提交即刷新心跳：S3 全量重放/训练可达分钟级，不刷新会被
@@ -411,6 +417,10 @@ class AgentRunner:
             if not self._absorb_usage(usage):
                 raise _BudgetExceeded()
             attempt_record: dict = {"attempt": attempt}
+            # 推理型思考留档（最后一次尝试的思考即可见）
+            s2_reasoning = (usage or {}).pop("reasoning_content", None)
+            if s2_reasoning:
+                attempt_record["reasoning"] = str(s2_reasoning)[:2000]
             if error:
                 attempt_record["error"] = error
                 error_history.append(attempt_record)
@@ -528,6 +538,7 @@ class AgentRunner:
                 guidance=(self.guidance or {}).get("analysis") if isinstance(self.guidance, dict) else None,
                 actor=self.actor,
             )
+            s1_reasoning = (usage or {}).pop("reasoning_content", None)
             if not self._absorb_usage(usage):
                 return self._escalate("AGENT_TOKEN_BUDGET_EXCEEDED")
             if error:
@@ -552,7 +563,7 @@ class AgentRunner:
             wide_note = (self.profile_report or {}).get("wide_table_note")
             if wide_note:
                 s1_digest["wide_table_note"] = wide_note
-            self._stage_digest(round_number, "s1", s1_digest)
+            self._stage_digest(round_number, "s1", s1_digest, reasoning=s1_reasoning)
             if self._pause_if_requested("s1", pause_at, resume_state, round_number):
                 return self.run
 
@@ -728,6 +739,7 @@ class AgentRunner:
                 return self._escalate("AGENT_TOKEN_BUDGET_EXCEEDED")
             if error:
                 return self._escalate("AGENT_S4_CONTRACT_FAILED", detail=error)
+            s4_reasoning = (usage or {}).pop("reasoning_content", None)
 
             if verdict.verdict == "pass":
                 self._stage_digest(
@@ -738,6 +750,7 @@ class AgentRunner:
                         "surprises": verdict.surprises[:4],
                         "readiness": verdict.business_readiness[:600],
                     },
+                    reasoning=s4_reasoning,
                 )
                 self._record_round(
                     round_number, s2_attempts=s2_attempts, verdict="pass", hints=[]
@@ -765,6 +778,7 @@ class AgentRunner:
                         "readiness": verdict.business_readiness[:600],
                         "hints": verdict.next_iteration_hints[:4],
                     },
+                    reasoning=s4_reasoning,
                 )
                 self._record_round(
                     round_number,

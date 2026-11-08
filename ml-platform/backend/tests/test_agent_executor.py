@@ -177,10 +177,10 @@ class TestExecutor(ExecutorHarness, unittest.TestCase):
         self._patch_llm()
         with mock.patch(
             "app.services.agent.experience._distill_chat_completion",
-            return_value=(_DISTILL_REPLY, {}),
+            return_value=(_DISTILL_REPLY, {}, None),
         ), mock.patch(
             "app.services.agent.optimization_report.chat_completion",
-            return_value=(_REPORT_REPLY, {}),
+            return_value=(_REPORT_REPLY, {}, None),
         ):
             execute_agent_run(run_id)
         with SessionLocal() as db:
@@ -223,10 +223,10 @@ class TestExecutor(ExecutorHarness, unittest.TestCase):
 
         with mock.patch(
             "app.services.agent.experience._distill_chat_completion",
-            return_value=(_DISTILL_REPLY, {}),
+            return_value=(_DISTILL_REPLY, {}, None),
         ), mock.patch(
             "app.services.agent.optimization_report.chat_completion",
-            return_value=(_REPORT_REPLY, {}),
+            return_value=(_REPORT_REPLY, {}, None),
         ):
             if interval_patch:
                 with interval_patch:
@@ -368,7 +368,7 @@ class TestL2InjectionAndDistill(ExecutorHarness, unittest.TestCase):
             return_value=("[]", {}),
         ), mock.patch(
             "app.services.agent.optimization_report.chat_completion",
-            return_value=(_REPORT_REPLY, {}),
+            return_value=(_REPORT_REPLY, {}, None),
         ):
             execute_agent_run(run_id)
         self.assertTrue(captured)
@@ -387,10 +387,10 @@ class TestL2InjectionAndDistill(ExecutorHarness, unittest.TestCase):
         )
         with mock.patch(
             "app.services.agent.experience._distill_chat_completion",
-            return_value=(unique_reply, {}),
+            return_value=(unique_reply, {}, None),
         ), mock.patch(
             "app.services.agent.optimization_report.chat_completion",
-            return_value=(_REPORT_REPLY, {}),
+            return_value=(_REPORT_REPLY, {}, None),
         ):
             execute_agent_run(run_id)
         with SessionLocal() as db:
@@ -410,7 +410,7 @@ class TestL2InjectionAndDistill(ExecutorHarness, unittest.TestCase):
         self._patch_llm()
         with mock.patch.object(runner_module, "run_s2", failing_s2), mock.patch(
             "app.services.agent.experience._distill_chat_completion",
-            return_value=(_DISTILL_REPLY, {}),
+            return_value=(_DISTILL_REPLY, {}, None),
         ), mock.patch(
             "app.services.agent.optimization_report.chat_completion",
             side_effect=RuntimeError("report unavailable"),

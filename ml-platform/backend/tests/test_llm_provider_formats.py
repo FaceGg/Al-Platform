@@ -127,31 +127,59 @@ class TestMultimodalContentByFormat(unittest.TestCase):
 
 class TestStreamParsingByFormat(unittest.TestCase):
     def test_chat_completions_delta(self):
-        delta, usage = _parse_llm_stream_event(
+        delta, usage, reasoning = _parse_llm_stream_event(
             "openai_compatible",
             {"choices": [{"delta": {"content": "hi"}}]},
         )
         self.assertEqual(delta, "hi")
         self.assertIsNone(usage)
+        self.assertIsNone(reasoning)
+
+    def test_chat_completions_reasoning_delta(self):
+        delta, _usage, reasoning = _parse_llm_stream_event(
+            "openai_compatible",
+            {"choices": [{"delta": {"reasoning_content": "先分析数据分布…"}}]},
+        )
+        self.assertIsNone(delta)
+        self.assertEqual(reasoning, "先分析数据分布…")
+        delta2, _u2, reasoning2 = _parse_llm_stream_event(
+            "openai_compatible",
+            {"choices": [{"delta": {"reasoning": "alias"}}]},
+        )
+        self.assertEqual(reasoning2, "alias")
+        self.assertIsNone(delta2)
+
+    def test_anthropic_thinking_delta(self):
+        _delta, _usage, reasoning = _parse_llm_stream_event(
+            "anthropic",
+            {"type": "content_block_delta", "delta": {"thinking": "hmm"}},
+        )
+        self.assertEqual(reasoning, "hmm")
+
+    def test_responses_reasoning_summary(self):
+        _delta, _usage, reasoning = _parse_llm_stream_event(
+            "responses",
+            {"type": "response.reasoning_summary_text.delta", "delta": "chain"},
+        )
+        self.assertEqual(reasoning, "chain")
 
     def test_responses_delta_and_usage(self):
-        delta, _ = _parse_llm_stream_event(
+        delta, _d0, _r = _parse_llm_stream_event(
             "responses", {"type": "response.output_text.delta", "delta": "yo"}
         )
         self.assertEqual(delta, "yo")
-        _d, usage = _parse_llm_stream_event(
+        _d, usage, _r2 = _parse_llm_stream_event(
             "responses",
             {"type": "response.completed", "response": {"usage": {"input_tokens": 3, "output_tokens": 5}}},
         )
         self.assertEqual(usage, {"prompt_tokens": 3, "completion_tokens": 5})
 
     def test_anthropic_delta_and_usage(self):
-        delta, _ = _parse_llm_stream_event(
-            "anthropic",
-            {"type": "content_block_delta", "delta": {"text": "ok"}},
+        delta, _d0, _r = _parse_llm_stream_event(
+            "anthropic", {"type": "content_block_delta", "delta": {"text": "ok"}},
         )
         self.assertEqual(delta, "ok")
-        _d, usage = _parse_llm_stream_event(
+        _d, usage, _r2 = _parse_llm_stream_event(
             "anthropic",
             {"type": "message_delta", "usage": {"input_tokens": 2, "output_tokens": 4}},
         )

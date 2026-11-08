@@ -72,7 +72,7 @@ def build_report(
     error = None
     report = None
     try:
-        reply, _usage = chat_completion(
+        reply, _usage, _reasoning = chat_completion(
             db,
             config=config,
             messages=messages,

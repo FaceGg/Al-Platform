@@ -136,7 +136,7 @@ class TestLLMGateway(unittest.TestCase):
             _HTTP_CLIENT, "stream", side_effect=fake_stream
         ):
             user = db.query(User).filter(User.username == _ADMIN_USER).first()
-            reply, usage = chat_completion(
+            reply, usage, _reasoning = chat_completion(
                 db,
                 config=config,
                 messages=[{"role": "user", "content": "SECRET-CONTENT-XYZ"}],

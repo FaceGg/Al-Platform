@@ -97,7 +97,7 @@ def _route_intent(db: Session, config, message: str, pending: dict | None, actor
     from app.services.llm_gateway import chat_completion
 
     try:
-        reply, _usage = chat_completion(
+        reply, _usage, _reasoning = chat_completion(
             db,
             config=config,
             messages=[
@@ -129,7 +129,7 @@ def _summarize(db: Session, config, actor, tool: str, params: dict, result) -> s
     digest = json.dumps(result, ensure_ascii=False, default=str)[:6000]
     label = TOOL_CATALOG[tool]["label"]
     try:
-        reply, _usage = chat_completion(
+        reply, _usage, _reasoning = chat_completion(
             db,
             config=config,
             messages=[
