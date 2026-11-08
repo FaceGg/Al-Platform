@@ -403,6 +403,8 @@
 .v2-shell .ant-tag.ant-tag-warning { background: rgba(255,209,102,.1) !important; border-color: rgba(255,209,102,.2) !important; color: #ecc76e !important; }
 
 .v2-shell .ant-btn { border-radius: 6px !important; }
+/* 圆形按钮（shape="circle"，如对话发送/停止）不受全局 6px 圆角影响 */
+.v2-shell .ant-btn.ant-btn-circle { border-radius: 50% !important; }
 .v2-shell .ant-form-item-label > label { color: var(--v2-sub) !important; }
 .v2-shell .ant-input,
 .v2-shell .ant-select-selector,

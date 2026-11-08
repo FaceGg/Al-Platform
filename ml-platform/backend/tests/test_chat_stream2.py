@@ -91,5 +91,50 @@ class TestChatStream2(unittest.TestCase):
         self.assertTrue(r.text.rstrip().endswith("[DONE]"))
 
 
+class TestExtractCache(unittest.TestCase):
+    """三种供应商 usage 形态的缓存命中提取；anthropic 分母含缓存读+写。"""
+
+    def test_deepseek_openai_form(self):
+        from app.api.chat_stream import _extract_cache
+
+        out = _extract_cache({
+            "prompt_tokens": 1000, "completion_tokens": 50,
+            "prompt_cache_hit_tokens": 640, "prompt_cache_miss_tokens": 360,
+        })
+        self.assertEqual(out, {"hit": 640, "prompt": 1000})
+
+    def test_openai_details_form(self):
+        from app.api.chat_stream import _extract_cache
+
+        out = _extract_cache({
+            "prompt_tokens": 500, "completion_tokens": 20,
+            "prompt_tokens_details": {"cached_tokens": 128},
+        })
+        self.assertEqual(out, {"hit": 128, "prompt": 500})
+
+    def test_anthropic_form_denominator_includes_cache(self):
+        """input_tokens 不含缓存读/写：分母 = hit + creation + input。
+        （976% 荒谬值根因：曾只拿 input 当分母）"""
+        from app.api.chat_stream import _extract_cache
+
+        out = _extract_cache({
+            "input_tokens": 354, "output_tokens": 200,
+            "cache_read_input_tokens": 3540, "cache_creation_input_tokens": 100,
+        })
+        self.assertEqual(out, {"hit": 3540, "prompt": 3994})
+
+    def test_hit_clamped_to_total(self):
+        from app.api.chat_stream import _extract_cache
+
+        out = _extract_cache({"prompt_tokens": 100, "prompt_cache_hit_tokens": 300})
+        self.assertEqual(out["hit"], 100)
+
+    def test_no_cache_fields_returns_none(self):
+        from app.api.chat_stream import _extract_cache
+
+        self.assertIsNone(_extract_cache({"prompt_tokens": 10, "completion_tokens": 2}))
+        self.assertIsNone(_extract_cache("not-a-dict"))
+
+
 if __name__ == "__main__":
     unittest.main()

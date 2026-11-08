@@ -772,15 +772,14 @@ export default function AIChatPage() {
                   </Popover>
                   {loading ? (
                     <Button
-                      danger
                       shape="circle"
                       onClick={stopGenerating}
                       title={zh ? "停止生成" : "Stop generating"}
                       aria-label={zh ? "停止生成" : "Stop generating"}
-                      style={{ width: 34, height: 34 }}
+                      style={{ width: 34, height: 34, background: "var(--v2-panel, #fff)", border: "1px solid var(--v2-line, #d9d9d9)" }}
                     >
-                      {/* 生成中 → 中间变方块（ZCode 同款「停止生成」语义） */}
-                      <span style={{ width: 10, height: 10, background: "#fff", borderRadius: 2, display: "block" }} />
+                      {/* 生成中 → 圆形按钮中间红色实心方块（小于圆形） */}
+                      <span style={{ width: 10, height: 10, background: "#e05252", borderRadius: 2, display: "block" }} />
                     </Button>
                   ) : (
                     <Button

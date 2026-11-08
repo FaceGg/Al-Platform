@@ -47,6 +47,42 @@ def _sse(payload: dict) -> str:
     return f"data: {_json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+def _extract_cache(raw_usage: dict) -> dict | None:
+    """从上游原始 usage 提取缓存命中（解析器只归一 prompt/completion）。
+
+    三种供应商形态：
+    - deepseek(openai 兼容): prompt_cache_hit_tokens，prompt_tokens 为总输入
+    - openai: prompt_tokens_details.cached_tokens，prompt_tokens 为总输入
+    - anthropic（含 deepseek 的 /anthropic 兼容端点）: cache_read_input_tokens；
+      注意 anthropic 语义 input_tokens **不含**缓存读/写——总输入 =
+      cache_read + cache_creation + input_tokens（分母算错会出 976% 这种
+      荒谬命中率，实测踩坑）。
+    """
+    if not isinstance(raw_usage, dict):
+        return None
+    hit = raw_usage.get("prompt_cache_hit_tokens")
+    if hit is None:
+        details = raw_usage.get("prompt_tokens_details") or {}
+        hit = details.get("cached_tokens") if isinstance(details, dict) else None
+    anthropic = hit is None and raw_usage.get("cache_read_input_tokens") is not None
+    if anthropic:
+        hit = raw_usage.get("cache_read_input_tokens")
+    if hit is None:
+        return None
+    hit = int(hit or 0)
+    if anthropic:
+        total = (
+            hit
+            + int(raw_usage.get("cache_creation_input_tokens") or 0)
+            + int(raw_usage.get("input_tokens") or 0)
+        )
+    else:
+        total = int(raw_usage.get("prompt_tokens") or 0)
+    if total <= 0:
+        return None
+    return {"hit": min(hit, total), "prompt": total}
+
+
 @router.post("/stream2")
 def chat_stream2(
     message: str = Body(...),
@@ -145,28 +181,10 @@ def chat_stream2(
                         yield _sse({"type": "delta", "text": delta})
                     if event_usage:
                         usage = event_usage
-                    # 缓存命中 tokens 从原始 usage 抠（解析器只归一 prompt/
-                    # completion）。三种供应商形态全覆盖：
-                    # - deepseek(openai 兼容): prompt_cache_hit_tokens
-                    # - openai: prompt_tokens_details.cached_tokens
-                    # - anthropic（含 deepseek 的 /anthropic 兼容端点）:
-                    #   cache_read_input_tokens（input_tokens 为总输入）
                     raw_usage = event.get("usage") if isinstance(event, dict) else None
-                    if isinstance(raw_usage, dict):
-                        hit = raw_usage.get("prompt_cache_hit_tokens")
-                        if hit is None:
-                            details = raw_usage.get("prompt_tokens_details") or {}
-                            hit = details.get("cached_tokens") if isinstance(details, dict) else None
-                        if hit is None:
-                            hit = raw_usage.get("cache_read_input_tokens")
-                        prompt_raw = raw_usage.get("prompt_tokens")
-                        if prompt_raw is None:
-                            prompt_raw = raw_usage.get("input_tokens")
-                        if hit is not None:
-                            cache = {
-                                "hit": int(hit or 0),
-                                "prompt": int(prompt_raw or 0),
-                            }
+                    extracted = _extract_cache(raw_usage)
+                    if extracted is not None:
+                        cache = extracted
             yield _sse({"type": "done", "usage": usage, **({"cache": cache} if cache else {})})
         except Exception as error:  # noqa: BLE001 - 流中断以事件形式告知前端
             yield _sse({"type": "error", "message": str(error)[:300]})
