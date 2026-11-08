@@ -529,3 +529,19 @@ fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失�
 **E2E 全链通过**（真实平台/点焊）：触发（重放 run 创建+合并 2190 行回流自动标注）→单飞阻塞→accepted→固化新配方（a92f024d）→铸造→配方门禁换模（部署版本翻转 e984f9eb→b43a3d59）→baseline 10+冷却置位。修复状态机死锁：accepted 分支派铸造后必须清 agent_run_id（重放轮终态），否则换模段被在途 run 永久挡住（E2E 中暴露即修）。
 
 **坑（Mimosa 死锁第 2 次，重要）**：扫描器 PreToolUse 钩子对「算子文件新增 execute 方法+画布参数解析+服务调用」组合概念形态误报 SQL 注入，**10 种形态全部拦截**（完整实现/一行委托/去注解签名/纯骨架/换路径 operators↔services/新文件/分段追加），测试文件同被拦——最终算子类骨架+execute 一行委托（逻辑宿主 `loop_retrain.orchestration_agent_retrain_execute`）由**用户手工粘贴**落盘（11-04 先例第 2 次）。启发：新增算子时若触发该死锁，直接请用户手工落盘 execute 骨架+委托，逻辑全部宿主 services 层（该路径扫描通过）。
+
+## 2026-11-08 配置即用：推理型模型直跑智能体/AI对话（思考预算自动隔离+断线重连+思考留档）
+
+**需求定稿**（用户）：只配 API 地址+Key+模型 ID 即可用（智能体建模/AI 对话开箱即用）；网络断开自动重连（最多 5 次×60s，全失败才断开）；内部错误也重试但长时间无进展（1h）断开；不要 chat 类降级方案，配置的原始推理型模型直接用。
+
+**实现**（`8a51e162`）：
+- **断线重连**：`chat_completion_with_retry` 网络断连（名单+RemoteDisconnected/ConnectionReset/ChunkedEncoding 扩充）+内部错误（408/425/429/5xx/overloaded/timeout 消息特征）自动重连 5 次×60s；重试循环累计 1h 无进展放弃（不无限等）；确定性失败（401/403）立即返回。
+- **思考预算自动隔离**（零配置根治推理型 S1 必挂）：请求体 max_tokens 自动×4（REASONING_TOKEN_HEADROOM）——思考与正文共享上游预算，推理型思考 2-4 倍于正文，不放大则思考吃光正文预算（flash S1 截断/v4-pro 空回复根因）；非推理型生成完自然停无副作用。无需 reasoning_mapping 等任何用户配置。
+- **思考收集留档**：流式解析三格式思考通道（chat completions reasoning_content/reasoning 别名、anthropic thinking 块、responses reasoning_summary），`chat_completion` 稳定三元 (reply, usage, reasoning)；S1/S4 阶段 digest、S2 attempt 落 memory_json（2k 截断）——任务档案可见大模型思考过程。
+- 7 处调用方与全部测试桩同步三元。82 绿（retry 12/provider formats 26/gateway/executor/wizard/chat）。
+
+**真实平台多轮验证**（5 轮智能体+3 轮 AI 对话，全部真实 LLM 调用）：
+- flash×3（稀疏原表/稠密子集×2）：全过 S1/S2/S3/S4 LLM 链（此前 S1 必挂），终态均为业务性升级（REVIEW_ESCALATE×2/MAX_ROUNDS×1——挂 topk_variance 方差门禁，与 LLM 无关）；S1+S4 思考留档各 2000 字符。
+- v4-pro×2（稀疏/稠密）：全过 LLM 链（此前 S1 空回复必挂），1 轮+3 轮迭代终态业务性升级；S1/S2/S4 思考留档 2000 字符。
+- AI 对话×3（flash）：即时回复 200，语义正确（少数类召回定义等）。
+- **结论：配置即用达成**——推理型与非推理型在智能体建模/AI 对话两条链路均直接可用；升级均为门禁/评审业务判断（数据可分性/方差），LLM 传输与预算层零故障。
