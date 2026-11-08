@@ -4,6 +4,7 @@ import {
   SendOutlined, RobotOutlined, UserOutlined,
   FileTextOutlined, DownOutlined, PlusOutlined,
   EditOutlined, DeleteOutlined, PaperClipOutlined, DatabaseOutlined, ToolOutlined, FileImageOutlined,
+  EllipsisOutlined, CopyOutlined, PushpinOutlined, PushpinFilled,
 } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import PageHeading from "../components/PageHeading";
@@ -16,7 +17,7 @@ const { Text } = Typography;
 
 interface ChatSource { index: number; chunk_id: string; doc_id: string; filename: string; score: number; }
 interface ChatMsg { role: "user" | "assistant" | "system"; content: string; time: string; sources?: ChatSource[]; }
-interface ChatSession { id: string; title: string; messages: ChatMsg[]; created_at?: string; updated_at?: string; }
+interface ChatSession { id: string; title: string; messages: ChatMsg[]; created_at?: string; updated_at?: string; pinned?: boolean; }
 /** 本轮附件：图片走多模态 content，文本以引述拼进问题（发送后清空） */
 interface ChatAttachment { uid: string; name: string; kind: "image" | "text"; data: string; }
 
@@ -150,18 +151,23 @@ export default function AIChatPage() {
   };
 
   const renameSession = async (id: string, current: string) => {
-    // 用输入对话框简洁重命名
-    const input = document.createElement("input");
-    input.value = current;
-    input.style.position = "fixed";
-    input.style.top = "-100px";
-    document.body.appendChild(input);
-    // 借助 antd Modal 不可行（需要受控），用 window.prompt 简洁实现
-    input.remove();
     const next = window.prompt(zh ? "重命名会话" : "Rename session", current);
     if (!next || next === current) return;
     await apiClient.put(`/chat-sessions/${id}`, { title: next }).catch(() => {});
     setSessions(prev => prev.map(s => (s.id === id ? { ...s, title: next } : s)));
+  };
+
+  // 置顶：服务端持久化（pinned 字段），列表端点置顶优先返回
+  const togglePinSession = async (id: string, pinned: boolean) => {
+    await apiClient.put(`/chat-sessions/${id}`, { pinned }).catch(() => {});
+    setSessions(prev => {
+      const updated = prev.map(s => (s.id === id ? { ...s, pinned } : s));
+      // 本地同步服务端排序口径：置顶优先，其余保持原顺序
+      const pinnedFirst = updated.filter(s => s.pinned);
+      const rest = updated.filter(s => !s.pinned);
+      return [...pinnedFirst, ...rest];
+    });
+    antdMessage.success(pinned ? (zh ? "已置顶" : "Pinned") : (zh ? "已取消置顶" : "Unpinned"));
   };
 
   const copySessionId = async (id: string) => {
@@ -173,13 +179,16 @@ export default function AIChatPage() {
     }
   };
 
-  const deleteSession = async (id: string) => {
+  const deleteSessionWithConfirm = async (id: string) => {
+    const target = sessions.find(s => s.id === id);
+    if (!window.confirm(zh ? `删除会话「${target?.title || id}」？该操作不可恢复。` : `Delete session? This cannot be undone.`)) return;
     await apiClient.delete(`/chat-sessions/${id}`).catch(() => {});
     setSessions(prev => prev.filter(s => s.id !== id));
     if (activeSessionId === id) {
       setActiveSessionId(null);
       setMessages([]);
     }
+    antdMessage.success(zh ? "会话已删除" : "Session deleted");
   };
 
   // 附件解析：图片转 data URL（多模态输入），文本读内容（引述注入提问）
@@ -402,14 +411,37 @@ export default function AIChatPage() {
                 background: s.id === activeSessionId ? "rgba(47,155,245,.10)" : "transparent",
               }}
             >
+              {s.pinned ? <PushpinFilled style={{ color: "var(--v2-blue)", fontSize: 11, flex: "0 0 auto" }} /> : null}
               <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</span>
               <span style={{ color: "var(--v2-dim)", fontSize: 11 }}>{(s.messages || []).length}</span>
-              <Button
-                type="text" size="small" danger
-                icon={<DeleteOutlined style={{ fontSize: 11 }} />}
-                onClick={(e) => { e.stopPropagation(); void deleteSession(s.id); }}
-                style={{ width: 20, height: 20, minWidth: 20 }}
-              />
+              {/* 「...」操作菜单：重命名 / 置顶 / 复制ID / 删除 */}
+              <Dropdown
+                trigger={["click"]}
+                menu={{
+                  items: [
+                    { key: "rename", icon: <EditOutlined />, label: zh ? "重命名" : "Rename" },
+                    { key: "pin", icon: <PushpinOutlined />, label: s.pinned ? (zh ? "取消置顶" : "Unpin") : (zh ? "置顶" : "Pin to top") },
+                    { key: "copyid", icon: <CopyOutlined />, label: zh ? "复制 ID" : "Copy ID" },
+                    { type: "divider" },
+                    { key: "delete", icon: <DeleteOutlined />, label: zh ? "删除" : "Delete", danger: true },
+                  ],
+                  onClick: ({ key, domEvent }) => {
+                    domEvent.stopPropagation();
+                    if (key === "rename") void renameSession(s.id, s.title);
+                    if (key === "pin") void togglePinSession(s.id, !s.pinned);
+                    if (key === "copyid") void copySessionId(s.id);
+                    if (key === "delete") void deleteSessionWithConfirm(s.id);
+                  },
+                }}
+              >
+                <Button
+                  type="text" size="small"
+                  icon={<EllipsisOutlined style={{ fontSize: 14, color: "var(--v2-sub)" }} />}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ width: 20, height: 20, minWidth: 20 }}
+                  aria-label={zh ? "会话操作" : "Session actions"}
+                />
+              </Dropdown>
             </div>
           ))}
           {sessions.length === 0 ? (

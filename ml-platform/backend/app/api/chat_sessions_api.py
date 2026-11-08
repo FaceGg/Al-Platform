@@ -31,6 +31,7 @@ class ChatSessionCreate(BaseModel):
 class ChatSessionUpdate(BaseModel):
     title: str | None = Field(default=None, max_length=120)
     messages: list[dict] | None = None
+    pinned: bool | None = None
 
 
 @router.get("")
@@ -38,7 +39,9 @@ def list_chat_sessions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return _sessions(db, current_user.id)
+    # 置顶优先（其余保持原顺序：最新在前）；stable sorted 保序
+    sessions = _sessions(db, current_user.id)
+    return sorted(sessions, key=lambda s: not bool(s.get("pinned")))
 
 
 @router.post("", status_code=201)
@@ -81,6 +84,8 @@ def update_chat_session(
         target["title"] = payload.title[:120] or target["title"]
     if payload.messages is not None:
         target["messages"] = payload.messages
+    if payload.pinned is not None:
+        target["pinned"] = payload.pinned
     from app.tasks.time_utils import utcnow
 
     target["updated_at"] = utcnow().isoformat()

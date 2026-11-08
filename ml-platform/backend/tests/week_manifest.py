@@ -246,6 +246,7 @@ PHASE_TEST_MODULES: dict[str, list[str]] = {
         "test_chat_tools",
         "test_chat_tool_orchestrator",
         "test_chat_stream2",
+        "test_chat_sessions_pin",
         "test_agent_wiring_api",
         "test_agent_center_api",
         "test_agent_extras",
