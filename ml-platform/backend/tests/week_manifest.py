@@ -244,6 +244,7 @@ PHASE_TEST_MODULES: dict[str, list[str]] = {
     "p6": [
         "test_kb_bindings",
         "test_chat_tools",
+        "test_chat_tool_orchestrator",
         "test_agent_wiring_api",
         "test_agent_center_api",
         "test_agent_extras",
