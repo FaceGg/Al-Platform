@@ -11,7 +11,7 @@ import { useI18n } from "../i18n";
 /**
  * 建模智能体五步向导（平台改版设计稿 v-agent）：
  * 数据分析（选列+备注+提示词）→ 特征工程（形态+列指令）→ 自动建模
- * （算法白名单+参数）→ 评估验收（指标阈值）→ 服务化发布。
+ * （算法白名单+参数）→ 评估验收（指标阈值）→ 启动与服务化。
  * 配置条含项目/数据集/目标列/模型与「逐步确认模式」；提交即归档
  * UserGuidance（第四契约）并创建 pending AgentRun。
  */
@@ -260,7 +260,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
     { n: 2, tt: zh ? "特征工程" : "Features", st: zh ? "列数据类型 · 指令" : "dtypes · directives" },
     { n: 3, tt: zh ? "自动建模" : "Modeling", st: zh ? "算法白名单 · 参数" : "whitelist · params" },
     { n: 4, tt: zh ? "评估验收" : "Evaluation", st: zh ? "测试集 · 指标阈值" : "gates" },
-    { n: 5, tt: zh ? "服务化发布" : "Serving", st: zh ? "闭环 · 编排 · API" : "closed loop · API" },
+    { n: 5, tt: zh ? "启动与服务化" : "Launch & Serving", st: zh ? "闭环 · 编排 · API" : "closed loop · API" },
   ];
 
   const submit = async (servitize: boolean) => {
@@ -360,12 +360,8 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           {zh ? "模型" : "Model"}
           <select className="v2-select" style={{ minWidth: 170 }} value={llmProfileId} onChange={(e) => setLlmProfileId(e.target.value)} aria-label={zh ? "选择大模型档案" : "LLM profile"}>
             {profiles.length === 0 ? <option value="">{zh ? "（无档案）" : "(none)"}</option> : null}
-            {Array.from(new Set(profiles.map((p) => p.name))).map((providerName) => (
-              <optgroup key={providerName} label={providerName}>
-                {profiles.filter((p) => p.name === providerName).map((p) => (
-                  <option key={String(p.id)} value={String(p.id)}>{p.name}-{p.model_id}{p.is_default ? (zh ? "（默认）" : " (default)") : ""}</option>
-                ))}
-              </optgroup>
+            {profiles.map((p) => (
+              <option key={String(p.id)} value={String(p.id)}>{p.name}-{p.model_id}{p.is_default ? (zh ? "（默认）" : " (default)") : ""}</option>
             ))}
           </select>
         </label>
@@ -673,7 +669,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
         </>
       )}
 
-      {/* Step 5 服务化发布 */}
+      {/* Step 5 启动与服务化 */}
       {step === 5 && (
         <>
           <div className="v2-note" style={{ marginBottom: 12 }}>
