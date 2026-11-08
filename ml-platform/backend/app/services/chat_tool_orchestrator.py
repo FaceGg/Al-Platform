@@ -350,10 +350,11 @@ def orchestrate(db: Session, *, config, user, message: str, tool_context: dict |
             handler_params[name] = collected[name]
     display_final = {**display, **collected}
 
-    # 6) 写类（save_insight/create_recipe_task/offline_api）→ 显式确认
+    # 6) 需显式确认的工具（写类 + save_insight——它写经验库，执行层
+    #    同样强制 ToolConfirmationRequired）→ 先确认再执行
     from app.services.chat_tools import WRITE_TOOLS
 
-    if tool in WRITE_TOOLS:
+    if tool in WRITE_TOOLS or tool == "save_insight":
         return ToolOrchestration(
             "confirm",
             f"即将执行「{TOOL_CATALOG[tool]['label']}」，参数：{json.dumps(display_final, ensure_ascii=False)}。回复「确认」执行，或「取消」放弃。",
