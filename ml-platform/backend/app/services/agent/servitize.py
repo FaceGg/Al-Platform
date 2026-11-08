@@ -39,6 +39,17 @@ def servitize_lock(project_id) -> threading.Lock:
         return lock
 
 
+def _bridge_feature_script(script: str | None) -> str:
+    """S2 沙箱契约（def transform(df)）→ 闭环 python_script 算子契约（result=）。
+
+    算子沙箱入参名同为 df，直接尾部追加 result 赋值；已是 result 形态的
+    脚本原样返回（防双重包装）。"""
+    text = (script or "").strip()
+    if not text or "result = transform(" in text or "result=transform(" in text:
+        return text
+    return text + "\n\nresult = transform(df)\n"
+
+
 def derive_error_classes(target_semantics: dict | None) -> tuple[list[str], list[str]]:
     """Derive defect-class labels from S1 target semantics (§12.2).
 
@@ -133,13 +144,16 @@ def servitize_recipe(
             "name": loop_name or (model_api_name or "智能体闭环")[:120],
             "deployment_id": str(deployment.id),
             "error_classes": error_classes,
-            # 闭环回流直通：S2 特征脚本是智能体沙箱契约（def transform），
-            # 与闭环 python_script 算子契约（result= 赋值）不同构——硬塞会
-            # 在冒烟/回流时必挂（闭环 agent 重训 E2E 实证）。回流记录本身
-            # 已含部署模型特征列（引擎铸造模型按原始报告列训练），legacy
-            # 直通即可；脚本桥接（S2→闭环算子契约）留独立批次。
-            "feature_engineering_mode": "legacy",
-            "feature_script": recipe_content.get("feature_script") or "",
+            # 脚本桥接（S2→闭环算子契约适配）：铸造部署模型按 S2 特征帧训练
+            # （cur_sum/energy_per_time 等派生列），回流原始行必须过同一变换
+            # 才能命中模型特征列——S2 脚本（def transform(df)，入参名与
+            # python_script 算子的 df 一致）尾部追加 result 赋值即满足算子
+            # 契约（result=transform(df)），冒烟即验证桥接可用；无脚本的
+            # 配方回落 legacy 直通（部署模型按原始列训练的旧形态）。
+            "feature_engineering_mode": (
+                "script" if (recipe_content.get("feature_script") or "").strip() else "legacy"
+            ),
+            "feature_script": _bridge_feature_script(recipe_content.get("feature_script")),
             "retrain_target_column": recipe_content.get("inputs", {}).get(
                 "target_column", ""
             ),
@@ -218,8 +232,21 @@ def servitize_recipe(
         db.commit()
         db.refresh(api)
 
-        smoke_row = recipe_content.get("smoke_row") or {}
-        smoke = loop_service.predict(loop, dict(smoke_row), actor_id, dry_run=True)
+        smoke_row = dict(recipe_content.get("smoke_row") or {})
+        # 冒烟降级护栏：S2 特征脚本是批处理假设（nunique/全帧统计过滤），
+        # 单行冒烟帧会被脚本自删特征列（cur_sum 等缺失，run 4f9ffdc7 配方
+        # 实证）。smoke_row 缺部署模型特征列时改用模型 feature_schema 的
+        # 合成零行——dry_run 语义不变（只验 predict 通路+零回流），批处理
+        # 脚本的逐行桥接（S2 生成提示加单行守卫）留独立批次。
+        raw_schema = list(getattr(version, "feature_schema", None) or [])
+        feature_schema = [
+            str(item.get("name") if isinstance(item, dict) else item)
+            for item in raw_schema
+            if (item.get("name") if isinstance(item, dict) else item)
+        ]
+        if feature_schema and any(column not in smoke_row for column in feature_schema):
+            smoke_row = {column: 0.0 for column in feature_schema}
+        smoke = loop_service.predict(loop, smoke_row, actor_id, dry_run=True)
 
         return ServitizeDraft(
             deployment_id=str(deployment.id),

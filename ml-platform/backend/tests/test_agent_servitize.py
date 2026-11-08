@@ -169,7 +169,9 @@ class TestServitize(unittest.TestCase):
         self.assertEqual(api.source_kind, "servitize")
         self.assertIsNotNone(loop)
         self.assertEqual(loop.error_classes, ["0"])
-        self.assertEqual(loop.feature_engineering_mode, "legacy")
+        # 脚本桥接：配方带 S2 特征脚本 → 闭环 script 模式（result= 适配尾）
+        self.assertEqual(loop.feature_engineering_mode, "script")
+        self.assertIn("result = transform(df)", loop.feature_script or "")
         # A draft loop has seen zero traffic.
         self.assertEqual(int(loop.total_count or 0), 0)
         # 旧配方无 retrain_ensemble 键：闭环重训集成默认关闭（行为不变）

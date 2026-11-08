@@ -243,3 +243,40 @@ export async function getRecipeDetail(recipeId: string): Promise<RecipeDetail> {
 export async function deleteRecipe(recipeId: string): Promise<void> {
   await apiClient.delete(`/agent/recipes/${recipeId}`);
 }
+
+// 「启动并服务化」完整语义：按配方铸造最优模型并新建部署（两段式）
+export interface CastDeploymentStartResult {
+  job_id: string;
+  recipe_id: string;
+  status: string;
+  max_trials: number;
+}
+
+export interface CastDeploymentStatusResult {
+  status: string;
+  deployment_id?: string;
+  model_version_id?: string;
+  deployment_state?: string;
+  error?: string;
+}
+
+export async function castDeploymentStart(payload: {
+  recipe_id: string;
+  project_id: string;
+  run_id?: string | null;
+  dataset_artifact_id?: string | null;
+  max_trials?: number;
+}): Promise<CastDeploymentStartResult> {
+  const response = await apiClient.post("/agent/servitize/cast-deployment", payload);
+  return response.data;
+}
+
+export async function castDeploymentStatus(
+  jobId: string,
+  recipeId: string,
+): Promise<CastDeploymentStatusResult> {
+  const response = await apiClient.get(
+    `/agent/servitize/cast-deployment/${jobId}?recipe_id=${recipeId}`,
+  );
+  return response.data;
+}
