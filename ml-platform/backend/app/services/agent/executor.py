@@ -35,6 +35,10 @@ def _load_frame_for(db, artifact_id, project_id):
 
     from app.services.artifact_service import build_artifact_service
 
+    if not artifact_id:
+        # 数据集未指定：显式不可执行（AgentRunNotExecutable 落
+        # waiting_escalate），而不是把 None 塞进 UUID 解析让线程 CRASHED
+        raise AgentRunNotExecutable("dataset_artifact_id is required to run the agent")
     service = build_artifact_service(db)
     artifact = service.resolve(
         str(artifact_id), project_id, expected_type="dataset"

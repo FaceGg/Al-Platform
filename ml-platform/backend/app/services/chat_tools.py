@@ -404,8 +404,15 @@ def _query_loop_status(db, user, params):
 
 def _create_recipe_task(db, user, params):
     """按配方重放智能体任务：以配方 current 版本固化的 guidance 快照新建
-    AgentRun 并启动执行（P1 闭环重训同款重放路径）。"""
+    AgentRun 并启动执行（P1 闭环重训同款重放路径）。
+
+    数据集解析：配方 content/guidance 里固化的 dataset_artifact_id 优先
+    （向导固化时不一定写入）；缺失时兜底目标项目下最新的用户数据集
+    （排除内部归一化工件）——没有可用数据集时明确报错，不静默造出
+    dataset_artifact_id=None 的必崩 run（executor 对 None 直接 CRASHED）。
+    """
     from app.models.agent_run import AgentRun
+    from app.models.artifact import Artifact
     from app.models.recipe import PipelineRecipe
     from app.services.agent.recipe import get_current_version
 
@@ -417,13 +424,33 @@ def _create_recipe_task(db, user, params):
     guidance = dict(content.get("guidance") or {})
     if not guidance:
         raise LookupError("该配方缺少可重放的 guidance 快照（旧版配方请在向导中重建任务）")
-    dataset_artifact_raw = content.get("dataset_artifact_id") or guidance.get("dataset_artifact_id")
-    inputs = guidance.get("inputs") or {}
-    dataset_artifact_raw = dataset_artifact_raw or inputs.get("dataset_artifact_id")
+    dataset_artifact_raw = (
+        content.get("dataset_artifact_id")
+        or guidance.get("dataset_artifact_id")
+        or (guidance.get("inputs") or {}).get("dataset_artifact_id")
+    )
+    if not dataset_artifact_raw:
+        fallback = [
+            a for a in (
+                db.query(Artifact)
+                .filter(
+                    Artifact.project_id == UUID(str(params["project_id"])),
+                    Artifact.type == "dataset",
+                    Artifact.archived_at.is_(None),
+                )
+                .order_by(Artifact.created_at.desc())
+                .limit(10)
+                .all()
+            )
+            if (a.metadata_ or {}).get("source") != "normalized"
+        ]
+        if not fallback:
+            raise LookupError("目标项目下没有可用数据集，无法按配方创建任务")
+        dataset_artifact_raw = str(fallback[0].id)
     run = AgentRun(
         project_id=UUID(str(params["project_id"])),
-        dataset_artifact_id=UUID(str(dataset_artifact_raw)) if dataset_artifact_raw else None,
-        target_column=recipe.target_column or inputs.get("target_column"),
+        dataset_artifact_id=UUID(str(dataset_artifact_raw)),
+        target_column=recipe.target_column or (guidance.get("inputs") or {}).get("target_column"),
         llm_profile_id=version.llm_profile_id,
         token_budget=8000,
         status="pending",
