@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect } from "react";
 import { Card, Input, Button, Typography, Space, Spin, Tag, Empty, Divider, Modal, Select, Collapse, Popover, Upload, Slider, message as antdMessage, Dropdown } from "antd";
 import {
-  SendOutlined, RobotOutlined, UserOutlined, SettingOutlined,
-  FileTextOutlined, DownOutlined, PlusOutlined, EllipsisOutlined, CopyOutlined,
-  EditOutlined, DeleteOutlined, CloudDownloadOutlined,
+  SendOutlined, RobotOutlined, UserOutlined,
+  FileTextOutlined, DownOutlined, PlusOutlined,
+  EditOutlined, DeleteOutlined, PaperClipOutlined, DatabaseOutlined, ToolOutlined, FileImageOutlined,
 } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
 import PageHeading from "../components/PageHeading";
-import ChatToolsPanel from "../components/ChatToolsPanel";
+import ChatToolsModal from "../components/ChatToolsPanel";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
 import { effectiveModelConfig, fmtContextTokens, INPUT_TYPE_LABELS } from "../utils/llmModelConfig";
@@ -17,53 +17,53 @@ const { Text } = Typography;
 interface ChatSource { index: number; chunk_id: string; doc_id: string; filename: string; score: number; }
 interface ChatMsg { role: "user" | "assistant" | "system"; content: string; time: string; sources?: ChatSource[]; }
 interface ChatSession { id: string; title: string; messages: ChatMsg[]; created_at?: string; updated_at?: string; }
+/** 本轮附件：图片走多模态 content，文本以引述拼进问题（发送后清空） */
+interface ChatAttachment { uid: string; name: string; kind: "image" | "text"; data: string; }
 
 export default function AIChatPage() {
   const { t, lang } = useI18n();
   const zh = lang === "zh";
   const text = zh ? {
-    settings: "对话设置",
     systemPrompt: "系统提示词",
     start: "开始对话", thinking: "正在思考...",
-    placeholder: "输入消息，Enter 发送…", save: "保存配置",
-    knowledgeBase: "知识库（RAG）", knowledgeBaseHint: "绑定后回答基于知识库检索内容并标注引用来源",
+    placeholder: "输入消息，Enter 发送…", save: "保存",
+    knowledgeBase: "知识库", knowledgeBaseHint: "绑定后回答基于知识库检索内容并标注引用来源",
     noKnowledgeBase: "不使用知识库", citations: "引用来源", noCitations: "本次回答未引用知识库内容",
     emptySources: "知识库中没有检索到相关内容，已按通用助手回答",
     contextManager: "上下文容量",
-    newChat: "新建对话", sessions: "会话", rename: "重命名", copyId: "复制 ID",
-    delete: "删除", copied: "已复制", attach: "添加数据",
-    attachHint: "上传文件到所选项目的数据管理（CSV/Excel）",
-    attachDone: "已上传为数据集",
-    attachNoProject: "请先选择项目",
-    upload: "上传", kbBound: "知识库", clearContext: "清空上下文",
+    attach: "附件",
+    attachHint: "图片（png/jpg/gif/webp，≤5MB）随消息作为多模态输入；文本类（txt/md/csv/json/log/代码，≤512KB）内容以引述注入提问。发送时一并交给大模型，最多 6 个。",
+    attachFull: "附件最多 6 个",
+    attachImageTooLarge: "图片超过 5MB 上限",
+    attachTextTooLarge: "文本文件超过 512KB 上限",
+    attachNotText: "不是可读文本文件",
+    kbBound: "知识库",
   } : {
-    settings: "Chat settings",
     systemPrompt: "System prompt",
     start: "Start a conversation", thinking: "Thinking...",
     placeholder: "Type a message, Enter to send…", save: "Save",
-    knowledgeBase: "Knowledge base (RAG)", knowledgeBaseHint: "Answers grounded in retrieved chunks",
+    knowledgeBase: "Knowledge base", knowledgeBaseHint: "Answers grounded in retrieved chunks",
     noKnowledgeBase: "No knowledge base", citations: "Citations", noCitations: "No KB content used",
     emptySources: "Nothing relevant retrieved; answered as a general assistant",
     contextManager: "Context",
-    newChat: "New chat", sessions: "Sessions", rename: "Rename", copyId: "Copy ID",
-    delete: "Delete", copied: "Copied", attach: "Add data",
-    attachHint: "Upload file to the selected project (CSV/Excel)",
-    attachDone: "Uploaded as dataset",
-    attachNoProject: "Select a project first",
-    upload: "Upload", kbBound: "KB", clearContext: "Clear context",
+    attach: "Attachments",
+    attachHint: "Images (png/jpg/gif/webp, ≤5MB) go to the LLM as multimodal input; text files (txt/md/csv/json/log/code, ≤512KB) are quoted into the question. Sent with the message, max 6.",
+    attachFull: "Max 6 attachments",
+    attachImageTooLarge: "Image exceeds the 5MB limit",
+    attachTextTooLarge: "Text file exceeds the 512KB limit",
+    attachNotText: "Not a readable text file",
+    kbBound: "KB",
   };
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // 「+」菜单弹窗：附件 / 知识库 / 系统提示词 / 白名单工具管理（各自独立弹窗）
+  const [modal, setModal] = useState<"attach" | "kb" | "prompt" | "tools" | null>(null);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [systemPrompt, setSystemPrompt] = useState(() => localStorage.getItem("chat.systemPrompt") || "你是汽车焊接制造领域的智能助手。");
   const [temperature] = useState(() => Number(localStorage.getItem("chat.temperature") || "0.7"));
   const [kbId, setKbId] = useState(() => localStorage.getItem("chat.kbId") || "");
   const [kbs, setKbs] = useState<any[]>([]);
-  const [listProjects, setListProjects] = useState(false);
-  const [projects, setProjects] = useState<any[]>([]);
-  const [attachProject, setAttachProject] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
   // 多会话
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -74,13 +74,11 @@ export default function AIChatPage() {
   // 供应商飞出面板：悬停/点击供应商头时显示（默认不展开）
   const [providerFlyout, setProviderFlyout] = useState(false);
   const [contextWindow, setContextWindow] = useState<number>(() => Number(localStorage.getItem("chat.contextWindow") || "8"));
-  // 所选模型的 ZCode 风格配置（上下文窗口/推理等级/输入类型，来自「编辑模型配置」弹窗）
+  // 所选模型的 ZCode 风格配置（上下文窗口/推理等级/输入类型，来自「编辑模型配置」弹窗；
+  // effectiveModelConfig 对未配置模型回退推荐默认值——与模型选择弹层口径一致）
   const currentProfile = profiles.find((p) => p.id === profileId) ?? profiles.find((p) => p.is_default) ?? null;
-  const modelCfg = (currentProfile?.model_config_json ?? {}) as Record<string, unknown>;
-  const modelReasoningLevels = Array.isArray(modelCfg.reasoning_levels) && modelCfg.reasoning_levels.length
-    ? (modelCfg.reasoning_levels as string[])
-    : null;
-  const modelContextWindow = Number(modelCfg.context_window) || null;
+  const modelCfg = effectiveModelConfig(currentProfile ?? undefined);
+  const modelReasoningLevels = modelCfg.reasoning_levels.length ? modelCfg.reasoning_levels : null;
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -170,10 +168,37 @@ export default function AIChatPage() {
     }
   };
 
+  // 附件解析：图片转 data URL（多模态输入），文本读内容（引述注入提问）
+  const addAttachment = (file: File) => {
+    if (attachments.length >= 6) { antdMessage.error(text.attachFull); return; }
+    const uid = `${file.name}-${file.size}-${Date.now()}`;
+    if (/^image\/(png|jpe?g|gif|webp|bmp)$/i.test(file.type)) {
+      if (file.size > 5 * 1024 * 1024) { antdMessage.error(`${file.name}：${text.attachImageTooLarge}`); return; }
+      const reader = new FileReader();
+      reader.onload = () => {
+        setAttachments(prev => [...prev, { uid, name: file.name, kind: "image", data: String(reader.result || "") }]);
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+    if (file.size > 512 * 1024) { antdMessage.error(`${file.name}：${text.attachTextTooLarge}`); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const content = String(reader.result ?? "");
+      if (content.includes("\u0000")) { antdMessage.error(`${file.name}：${text.attachNotText}`); return; }
+      setAttachments(prev => [...prev, { uid, name: file.name, kind: "text", data: content.slice(0, 80000) }]);
+    };
+    reader.readAsText(file);
+  };
+
   const send = async () => {
     const trimmed = input.trim();
     if (!trimmed) return;
-    const userMsg: ChatMsg = { role: "user", content: trimmed, time: new Date().toLocaleTimeString() };
+    // 展示层带附件标记（历史/上下文也由此字符串承载）
+    const display = attachments.length
+      ? `${trimmed}\n〔附件：${attachments.map(a => a.name).join("、")}〕`
+      : trimmed;
+    const userMsg: ChatMsg = { role: "user", content: display, time: new Date().toLocaleTimeString() };
     const history = [
       // 压缩摘要注入历史头部（LLM 由此知晓更早的对话内容）
       ...(compressedSummary ? [{ role: "assistant", content: "【此前对话摘要】" + compressedSummary }] : []),
@@ -195,6 +220,7 @@ export default function AIChatPage() {
         thinking_level: thinkingLevel,
         profile_id: profileId || undefined,
         kb_id: kbId || undefined,
+        attachments: attachments.map(({ name, kind, data }) => ({ name, kind, data })),
       });
       const reply = res.data.reply || "No response.";
       const assistantMsg: ChatMsg = {
@@ -208,6 +234,7 @@ export default function AIChatPage() {
         setMessages(final);
       }
       saveActive(final);
+      setAttachments([]); // 发送完成 → 本轮附件随消息已交付
     } catch (e: any) {
       const detail = e.response?.data?.detail;
       const detailText = typeof detail === "object" ? (detail?.message || detail?.code) : detail;
@@ -225,12 +252,14 @@ export default function AIChatPage() {
 
   const boundKb = kbs.find(kb => kb.id === kbId);
   const carried = messages.filter(m => m.role === "user" || m.role === "assistant").slice(-contextWindow);
-  // 上下文容量 = 压缩摘要 + 携带窗口内原文（估算 tokens）
+  // 上下文容量 = 压缩摘要 + 携带窗口内原文 + 待发送文本附件（估算 tokens）
   const [compressedSummary, setCompressedSummary] = useState(() => localStorage.getItem("chat.summary") || "");
-  const usedTokens = Math.ceil((compressedSummary.length + carried.reduce((sum, m) => sum + m.content.length, 0)) / 4);
-  // 上下文容量预算读所选模型配置的 context_window（未配置回退 32K）；
-  // 容量 100% 自动压缩（LLM 摘要算法）：旧消息摘要化替换原文，压缩后容量回落。
-  const CONTEXT_BUDGET = Number(modelCfg.context_window) || 32000;
+  const attachTokens = Math.ceil(attachments.filter(a => a.kind === "text").reduce((sum, a) => sum + a.data.length, 0) / 4);
+  const usedTokens = Math.ceil((compressedSummary.length + carried.reduce((sum, m) => sum + m.content.length, 0)) / 4) + attachTokens;
+  // 上下文容量预算读所选模型配置的 context_window（effectiveModelConfig
+  // 兜底 128K，与模型选择弹层显示同一口径）；容量 100% 自动压缩（LLM
+  // 摘要算法）：旧消息摘要化替换原文，压缩后容量回落。
+  const CONTEXT_BUDGET = modelCfg.context_window || 32000;
   const pct = Math.min(100, Math.round((usedTokens / CONTEXT_BUDGET) * 100));
   // 容量 100% 自动压缩（LLM 摘要算法）：旧消息摘要化替换原文，压缩后容量回落。
   const compressingRef = useRef(false);
@@ -348,12 +377,7 @@ export default function AIChatPage() {
         </div>
         <Divider style={{ margin: 0 }} />
         <div style={{ padding: "12px 16px" }}>
-          <ChatToolsPanel onResult={(resultText) => {
-            const next = [...messages, { role: "assistant", content: resultText, time: new Date().toLocaleTimeString() } as ChatMsg];
-            setMessages(next);
-            saveActive(next);
-          }} />
-          {/* ZCode 式输入框：最左 + 号（数据/知识库/系统提示词/白名单工具），右侧容量圆圈/模型/思考强度/发送 */}
+          {/* ZCode 式输入框：最左 + 号（附件/知识库/系统提示词/白名单工具管理），右侧容量圆圈/模型/思考强度/发送 */}
           {(() => {
             return (
               <div style={{
@@ -361,6 +385,22 @@ export default function AIChatPage() {
                 background: "var(--v2-panel2, rgba(22,34,58,.35))",
                 padding: "10px 12px 8px", transition: "border-color .15s",
               }}>
+                {/* 待发送附件 chips（图片/文本，可移除；发送后清空） */}
+                {attachments.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
+                    {attachments.map(a => (
+                      <Tag
+                        key={a.uid}
+                        closable
+                        onClose={(e) => { e.preventDefault(); setAttachments(prev => prev.filter(x => x.uid !== a.uid)); }}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, padding: "2px 8px", borderRadius: 8 }}
+                      >
+                        {a.kind === "image" ? <FileImageOutlined /> : <FileTextOutlined />}
+                        <span style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span>
+                      </Tag>
+                    ))}
+                  </div>
+                )}
                 {/* 原生 textarea：彻底去掉 antd 白底圆角嵌套块，融入容器 */}
                 <textarea
                   autoComplete="off"
@@ -379,73 +419,26 @@ export default function AIChatPage() {
                 />
                 {/* 底部工具行：左=+ … 右=容量圆圈 | 模型 | 思考强度 | 发送 */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-                  {/* + 号：数据上传 / 知识库 / 系统提示词 / 白名单工具配置 收拢于此 */}
+                  {/* + 号：附件 / 知识库 / 系统提示词 / 白名单工具管理（统一格式，各自弹窗） */}
                   <Dropdown
                     trigger={["click"]}
                     menu={{
                       items: [
-                        { key: "attach", icon: <CloudDownloadOutlined />, label: text.attach },
-                        { key: "kb", icon: <FileTextOutlined />, label: text.knowledgeBase },
-                        { key: "system", icon: <SettingOutlined />, label: text.systemPrompt },
-                        { type: "divider" },
-                        { key: "tools", icon: <EllipsisOutlined />, label: zh ? "白名单工具管理" : "Chat tools config" },
+                        { key: "attach", icon: <PaperClipOutlined />, label: text.attach },
+                        { key: "kb", icon: <DatabaseOutlined />, label: text.knowledgeBase },
+                        { key: "system", icon: <EditOutlined />, label: text.systemPrompt },
+                        { key: "tools", icon: <ToolOutlined />, label: zh ? "白名单工具管理" : "Whitelist tools" },
                       ],
                       onClick: ({ key }) => {
-                        if (key === "kb" || key === "system") { fetchKbs(); setSettingsOpen(true); }
-                        if (key === "tools") {
-                          const btn = Array.from(document.querySelectorAll("button")).find(b => (b.innerText || "").includes("白名单工具"));
-                          btn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-                        }
-                        if (key === "attach") {
-                          apiClient.get("/projects").then(r => {
-                            const items = r.data?.items ?? r.data;
-                            setProjects(Array.isArray(items) ? items : []);
-                            setListProjects(true);
-                          }).catch(() => {});
-                        }
+                        if (key === "attach") setModal("attach");
+                        if (key === "kb") { fetchKbs(); setModal("kb"); }
+                        if (key === "system") setModal("prompt");
+                        if (key === "tools") setModal("tools");
                       },
                     }}
                   >
                     <Button type="text" size="small" icon={<PlusOutlined style={{ fontSize: 16 }} />} aria-label={zh ? "添加" : "Add"} style={{ width: 28, height: 28, color: "var(--v2-sub)" }} />
                   </Dropdown>
-                  {/* 附件上传到所选项目（数据管理）——真实上传 */}
-                  <Modal
-                    title={text.attach}
-                    open={listProjects}
-                    onCancel={() => setListProjects(false)}
-                    footer={null}
-                    width={420}
-                  >
-                    <Select
-                      placeholder={zh ? "选择项目" : "Select project"}
-                      style={{ width: "100%", marginBottom: 12 }}
-                      value={attachProject ?? undefined}
-                      onChange={setAttachProject}
-                      options={projects.map(p => ({ value: p.id, label: p.name }))}
-                    />
-                    <Upload
-                      beforeUpload={async (file: any) => {
-                        if (!attachProject) { antdMessage.error(text.attachNoProject); return false; }
-                        setUploading(true);
-                        try {
-                          const formData = new FormData();
-                          formData.append("file", file);
-                          await apiClient.post(`/projects/${attachProject}/datasets/upload`, formData);
-                          antdMessage.success(text.attachDone);
-                        } catch (e: any) {
-                          antdMessage.error(e.response?.data?.detail || (zh ? "上传失败" : "Upload failed"));
-                        } finally {
-                          setUploading(false);
-                        }
-                        return false;
-                      }}
-                      showUploadList={false}
-                      accept=".csv,.xls,.xlsx,.json,.parquet"
-                    >
-                      <Button icon={<CloudDownloadOutlined />} loading={uploading} disabled={!attachProject}>{text.upload}</Button>
-                    </Upload>
-                    <div style={{ fontSize: 12, color: "var(--v2-dim)", marginTop: 8 }}>{text.attachHint}</div>
-                  </Modal>
                   {/* 上下文容量圆圈（悬停/点击展开） */}
                   <Popover
                     trigger={["click", "hover"]}
@@ -463,7 +456,7 @@ export default function AIChatPage() {
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
                             <b style={{ fontSize: 13.5, color: "var(--v2-txt)" }}>{text.contextManager}</b>
                             <span style={{ fontSize: 12, color: "var(--v2-sub)", fontVariantNumeric: "tabular-nums" }}>
-                              {fmtK(rowTotal)}/32.0K（{pct}%）
+                              {fmtK(rowTotal)}/{fmtContextTokens(CONTEXT_BUDGET) ?? "32K"}（{pct}%）
                             </span>
                           </div>
                           <div style={{ height: 8, borderRadius: 4, background: "rgba(128,140,160,.25)", overflow: "hidden", marginBottom: 12 }}>
@@ -492,7 +485,7 @@ export default function AIChatPage() {
                   >
                     {/* 空心环形进度（用量以环带颜色表示，中心镂空）；marginLeft:auto 推到右侧 */}
                     <div
-                      title={`${text.contextManager}：≈${fmtK(usedTokens)} / 32.0K tokens`}
+                      title={`${text.contextManager}：≈${fmtK(usedTokens)} / ${fmtContextTokens(CONTEXT_BUDGET) ?? "32K"} tokens`}
                       style={{
                         width: 14, height: 14, borderRadius: "50%", cursor: "pointer", flex: "0 0 auto",
                         marginLeft: "auto",
@@ -683,24 +676,88 @@ export default function AIChatPage() {
         </div>
       </Card>
       </div>
-      <Modal title={text.settings} open={settingsOpen} onCancel={() => setSettingsOpen(false)} okText={text.save} onOk={() => {
-        localStorage.setItem("chat.systemPrompt", systemPrompt);
-        localStorage.setItem("chat.kbId", kbId);
-        setSettingsOpen(false);
-      }}>
-        <Text strong>{text.knowledgeBase}</Text>
+      {/* 附件弹窗：本地文档/图像加入本轮输入（随消息发给大模型） */}
+      <Modal
+        title={text.attach}
+        open={modal === "attach"}
+        onCancel={() => setModal(null)}
+        footer={null}
+        width={460}
+      >
+        <Upload.Dragger
+          multiple
+          showUploadList={false}
+          accept=".txt,.md,.csv,.json,.log,.xml,.yaml,.yml,.py,.js,.ts,.tsx,.sql,.ini,.toml,image/png,image/jpeg,image/gif,image/webp,image/bmp"
+          beforeUpload={(file: any) => { addAttachment(file as File); return false; }}
+        >
+          <p className="ant-upload-drag-icon" style={{ marginBottom: 6 }}><PaperClipOutlined style={{ fontSize: 26, color: "var(--v2-blue)" }} /></p>
+          <p style={{ margin: 0, fontSize: 13 }}>{zh ? "点击或拖拽文件到此处添加附件" : "Click or drag files here"}</p>
+          <div style={{ fontSize: 12, color: "var(--v2-dim)", marginTop: 4, padding: "0 12px" }}>{text.attachHint}</div>
+        </Upload.Dragger>
+        {attachments.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <Text strong style={{ fontSize: 12.5 }}>{zh ? "待发送附件" : "Pending attachments"}</Text>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+              {attachments.map(a => (
+                <div key={a.uid} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, padding: "6px 8px", borderRadius: 8, border: "1px solid var(--v2-line, rgba(36,52,79,.5))" }}>
+                  {a.kind === "image" ? <FileImageOutlined style={{ color: "var(--v2-blue)" }} /> : <FileTextOutlined style={{ color: "#47c3a0" }} />}
+                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span>
+                  <Tag style={{ marginRight: 0 }}>{a.kind === "image" ? (zh ? "多模态输入" : "image") : zh ? "文本注入" : "text"}</Tag>
+                  <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />}
+                    onClick={() => setAttachments(prev => prev.filter(x => x.uid !== a.uid))}
+                    style={{ width: 22, height: 22, minWidth: 22 }} />
+                </div>
+              ))}
+            </div>
+            <Text type="secondary" style={{ display: "block", fontSize: 11.5, marginTop: 8 }}>
+              {zh ? "附件显示在输入框上方，随下一条消息一起发送。" : "Attachments sit above the input and go with the next message."}
+            </Text>
+          </div>
+        )}
+      </Modal>
+      {/* 知识库弹窗（绑定 RAG 检索） */}
+      <Modal
+        title={text.knowledgeBase}
+        open={modal === "kb"}
+        onCancel={() => setModal(null)}
+        okText={text.save}
+        onOk={() => { localStorage.setItem("chat.kbId", kbId); setModal(null); }}
+        width={460}
+      >
         <Select
           value={kbId || undefined}
           allowClear
           placeholder={text.noKnowledgeBase}
           onChange={(value) => setKbId(value || "")}
-          style={{ width: "100%", marginTop: 8, marginBottom: 4 }}
+          style={{ width: "100%" }}
           options={kbs.map(kb => ({ value: kb.id, label: kb.name }))}
         />
-        <Text type="secondary" style={{ display: "block", fontSize: 12, marginBottom: 16 }}>{text.knowledgeBaseHint}</Text>
-        <Text strong>{text.systemPrompt}</Text>
-        <Input.TextArea autoComplete="off" value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} rows={5} style={{ marginTop: 8 }} />
+        <Text type="secondary" style={{ display: "block", fontSize: 12, marginTop: 10 }}>{text.knowledgeBaseHint}</Text>
       </Modal>
+      {/* 系统提示词弹窗（每轮注入的角色设定） */}
+      <Modal
+        title={text.systemPrompt}
+        open={modal === "prompt"}
+        onCancel={() => setModal(null)}
+        okText={text.save}
+        onOk={() => { localStorage.setItem("chat.systemPrompt", systemPrompt); setModal(null); }}
+        width={520}
+      >
+        <Input.TextArea autoComplete="off" value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} rows={6} />
+        <Text type="secondary" style={{ display: "block", fontSize: 12, marginTop: 10 }}>
+          {zh ? "每轮对话开头注入的角色设定；保存后下次发送生效。" : "Injected at the start of every turn; applies from the next message."}
+        </Text>
+      </Modal>
+      {/* 白名单工具管理弹窗（调用结果落回当前对话） */}
+      <ChatToolsModal
+        open={modal === "tools"}
+        onClose={() => setModal(null)}
+        onResult={(resultText) => {
+          const next = [...messages, { role: "assistant", content: resultText, time: new Date().toLocaleTimeString() } as ChatMsg];
+          setMessages(next);
+          saveActive(next);
+        }}
+      />
     </AppLayout>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal, Switch } from "antd";
-import { ToolOutlined, SafetyOutlined, SettingOutlined } from "@ant-design/icons";
+import { SafetyOutlined, SettingOutlined } from "@ant-design/icons";
 import apiClient from "../api/client";
 import { useI18n } from "../i18n";
 
@@ -26,16 +26,16 @@ interface PendingInvocation {
 }
 
 /**
- * Whitelisted chat tools with the §15 write-confirmation card:
- * write tools first run unconfirmed, the backend answers
- * confirmation_required, and only an explicit user click re-submits
- * with confirmed=true.
+ * 白名单工具管理弹窗（AI对话「+」菜单入口）：工具清单、参数调用与
+ * §15 写确认卡——写工具先无确认发起，后端答 confirmation_required，
+ * 仅用户显式点击后才带 confirmed=true 重发。结果经 onResult 落回对话。
  */
-export default function ChatToolsPanel({ onResult }: { onResult: (text: string) => void }) {
+export default function ChatToolsModal({
+  open, onClose, onResult,
+}: { open: boolean; onClose: () => void; onResult: (text: string) => void }) {
   const { lang } = useI18n();
   const zh = lang === "zh";
   const [whitelist, setWhitelist] = useState<WhitelistResponse>({});
-  const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<PendingInvocation | null>(null);
   const [paramsText, setParamsText] = useState("{}");
   const [running, setRunning] = useState(false);
@@ -45,7 +45,10 @@ export default function ChatToolsPanel({ onResult }: { onResult: (text: string) 
     apiClient.get("/chat-tools/whitelist").then((r) => setWhitelist(r.data || {})).catch(() => setWhitelist({}));
   };
 
-  useEffect(load, []);
+  useEffect(() => {
+    if (open) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const entries = useMemo(() => {
     const list: WhitelistItem[] = [];
@@ -95,46 +98,40 @@ export default function ChatToolsPanel({ onResult }: { onResult: (text: string) 
     }
   };
 
-  if (entries.length === 0) return null;
-
   return (
-    <div style={{ marginBottom: 8 }}>
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        style={{
-          display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12,
-          padding: "3px 10px", borderRadius: 8, cursor: "pointer",
-          border: "1px solid rgba(92,178,255,.35)", background: "rgba(47,155,245,.10)",
-          color: "inherit",
-        }}
-      >
-        <ToolOutlined />{zh ? `白名单工具 (${entries.length})` : `Tools (${entries.length})`}{open ? " ▴" : " ▾"}
-      </button>
-
-      {open && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8, alignItems: "center" }}>
-          {entries.map((item) => (
-            <button
-              key={item.tool}
-              type="button"
-              title={item.tool}
-              onClick={() => pick(item)}
-              style={{
-                fontSize: 11.5, padding: "2px 9px", borderRadius: 9, cursor: "pointer",
-                border: "1px solid rgba(36,52,79,.9)", background: "rgba(22,34,58,.6)", color: "inherit",
-              }}
-            >
-              {item.label} <span style={{ opacity: 0.75 }}>[{kindLabel(item.kind)}]</span>
-            </button>
-          ))}
-          <AdminToolsConfig onSaved={() => load()} />
-        </div>
-      )}
+    <Modal
+      title={zh ? "白名单工具管理" : "Whitelist tools"}
+      open={open}
+      onCancel={onClose}
+      footer={null}
+      width={520}
+    >
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+        {entries.map((item) => (
+          <button
+            key={item.tool}
+            type="button"
+            title={item.tool}
+            onClick={() => pick(item)}
+            style={{
+              fontSize: 12, padding: "3px 10px", borderRadius: 9, cursor: "pointer",
+              border: "1px solid rgba(36,52,79,.9)", background: "rgba(22,34,58,.6)", color: "inherit",
+            }}
+          >
+            {item.label} <span style={{ opacity: 0.75 }}>[{kindLabel(item.kind)}]</span>
+          </button>
+        ))}
+        <AdminToolsConfig onSaved={() => load()} />
+        {entries.length === 0 ? (
+          <span style={{ fontSize: 12, color: "var(--v2-dim, #999)" }}>
+            {zh ? "暂无启用的白名单工具" : "No enabled tools"}
+          </span>
+        ) : null}
+      </div>
 
       {selected && (
         <div style={{
-          marginTop: 10, border: "1px solid rgba(92,178,255,.35)", borderRadius: 10,
+          marginTop: 12, border: "1px solid rgba(92,178,255,.35)", borderRadius: 10,
           background: "rgba(47,155,245,.06)", padding: "10px 12px",
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
@@ -199,7 +196,13 @@ export default function ChatToolsPanel({ onResult }: { onResult: (text: string) 
           {error ? <div style={{ marginTop: 8, fontSize: 12, color: "#e66f75" }}>注意：{error}</div> : null}
         </div>
       )}
-    </div>
+
+      <div style={{ fontSize: 12, color: "var(--v2-dim, #999)", marginTop: 12 }}>
+        {zh
+          ? "点击工具填写参数 JSON 后执行，结果以助手消息落回当前对话；写操作需二次确认。"
+          : "Pick a tool, fill params JSON and run; the result lands in the chat as an assistant message. Writes require confirmation."}
+      </div>
+    </Modal>
   );
 }
 

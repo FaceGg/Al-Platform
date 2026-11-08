@@ -53,12 +53,49 @@ def _retrieve_for_chat(db: Session, kb, message: str, top_k: int):
         return []
 
 
-def _assemble_messages(system_prompt: str, message: str, context: str | None, history: list[dict] | None = None):
+def _validate_attachments(attachments: list[dict]) -> None:
+    """附件契约：name/kind/data；图片为 data:image/* base64，文本为纯文本。"""
+    for att in attachments:
+        if att.get("kind") not in ("image", "text") or not att.get("data"):
+            raise HTTPException(
+                422,
+                detail={"code": "ATTACHMENT_INVALID", "message": "附件必须为 {name, kind: image|text, data}"},
+            )
+        if att.get("kind") == "image":
+            data = str(att.get("data"))
+            if not data.startswith("data:image/"):
+                raise HTTPException(
+                    422,
+                    detail={"code": "ATTACHMENT_INVALID", "message": "图片附件必须是 data:image/* base64 data URL"},
+                )
+            if len(data) > 8_000_000:
+                raise HTTPException(
+                    422,
+                    detail={"code": "ATTACHMENT_TOO_LARGE", "message": "图片附件超过大小上限"},
+                )
+        elif len(str(att.get("data"))) > 80_000:
+            raise HTTPException(
+                422,
+                detail={"code": "ATTACHMENT_TOO_LARGE", "message": "文本附件超过 80k 字符上限"},
+            )
+
+
+def _assemble_messages(
+    system_prompt: str,
+    message: str,
+    context: str | None,
+    history: list[dict] | None = None,
+    attachments: list[dict] | None = None,
+):
     """Build provider messages; KB content is data, never instructions.
 
     history 为客户端传来的多轮上下文（user/assistant 交替），作为数据
     拼在 system 之后、本次问题之前——内容由客户端对话产生，不作为
-    指令解释（引述即数据原则同 KB）。"""
+    指令解释（引述即数据原则同 KB）。
+
+    attachments：本轮附件（kind=text 的内容以引述文本拼进问题；kind=image
+    的 data URL 组成 OpenAI 多模态 content 数组——网关再按 provider 格式
+    映射成 anthropic/responses 的图像块）。"""
     if context:
         system_content = f"{system_prompt}\n\n{RAG_SYSTEM_APPENDIX}"
         user_content = f"参考资料：\n\n{context}\n\n问题：{message}"
@@ -71,7 +108,24 @@ def _assemble_messages(system_prompt: str, message: str, context: str | None, hi
         content = str(item.get("content") or "")
         if role in ("user", "assistant") and content:
             messages.append({"role": role, "content": content[:4000]})
-    messages.append({"role": "user", "content": user_content})
+    text_blocks = []
+    image_urls = []
+    for att in attachments or []:
+        name = str(att.get("name") or "attachment")[:200]
+        if att.get("kind") == "text":
+            text_blocks.append(f"[附件 {name}]\n{str(att.get('data') or '')[:60000]}")
+        elif att.get("kind") == "image":
+            image_urls.append(str(att.get("data")))
+    if text_blocks:
+        user_content += "\n\n" + "\n\n".join(text_blocks)
+    if image_urls:
+        content: str | list = [
+            {"type": "text", "text": user_content},
+            *[{"type": "image_url", "image_url": {"url": url}} for url in image_urls],
+        ]
+    else:
+        content = user_content
+    messages.append({"role": "user", "content": content})
     return messages
 
 
@@ -93,6 +147,9 @@ def chat(
     profile_id: str | None = Body(default=None, max_length=64),
     kb_id: str | None = Body(default=None, max_length=64),
     top_k: int = Body(default=4, ge=1, le=10),
+    # 本轮附件：[{name, kind: image|text, data}]——图片 data URL 直入
+    # 多模态 content，文本引述拼进问题（发送侧逐轮携带，不入 history）
+    attachments: list[dict] = Body(default_factory=list, max_length=6),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -107,6 +164,7 @@ def chat(
                 "/api/llm-profiles.",
             },
         )
+    _validate_attachments(attachments)
     kb = _resolve_bound_kb(db, kb_id, current_user)
     sources: list[dict] = []
     kb_info = None
@@ -136,7 +194,7 @@ def chat(
         reply, usage = chat_completion(
             db,
             config=config,
-            messages=_assemble_messages(system_prompt, message, context, history),
+            messages=_assemble_messages(system_prompt, message, context, history, attachments),
             temperature=temperature,
             purpose="chat",
             actor=current_user,

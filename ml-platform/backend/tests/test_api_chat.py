@@ -147,6 +147,73 @@ class TestChatAPI(unittest.TestCase):
         finally:
             client.delete(f"/api/knowledge/bases/{kb_id}", headers=self.h)
 
+    def test_13_chat_attachments_invalid_kind_rejected(self):
+        """附件契约：kind 不在 image/text → 422，不静默丢弃。"""
+        r = client.post("/api/chat", json={
+            "message": "hello",
+            "attachments": [{"name": "a.exe", "kind": "binary", "data": "xx"}],
+        }, headers=self.h)
+        self.assertEqual(r.status_code, 422)
+        self.assertEqual(r.json()["detail"]["code"], "ATTACHMENT_INVALID")
+
+    def test_14_chat_attachments_image_requires_data_url(self):
+        """图片附件必须是 data:image/* data URL。"""
+        r = client.post("/api/chat", json={
+            "message": "hello",
+            "attachments": [{"name": "a.png", "kind": "image", "data": "http://example.com/a.png"}],
+        }, headers=self.h)
+        self.assertEqual(r.status_code, 422)
+        self.assertEqual(r.json()["detail"]["code"], "ATTACHMENT_INVALID")
+
+    def test_15_chat_attachments_text_too_large_rejected(self):
+        r = client.post("/api/chat", json={
+            "message": "hello",
+            "attachments": [{"name": "big.txt", "kind": "text", "data": "x" * 80001}],
+        }, headers=self.h)
+        self.assertEqual(r.status_code, 422)
+        self.assertEqual(r.json()["detail"]["code"], "ATTACHMENT_TOO_LARGE")
+
+
+class TestAssembleMessagesAttachments(unittest.TestCase):
+    """附件组装：文本拼进问题、图片走 OpenAI 多模态 content 数组。"""
+
+    def _assemble(self, attachments):
+        from app.api.chat import _assemble_messages
+        return _assemble_messages("sys", "问题", None, None, attachments)
+
+    def test_text_attachment_quoted_into_question(self):
+        messages = self._assemble([{"name": "note.txt", "kind": "text", "data": "扭矩数据异常"}])
+        self.assertEqual(len(messages), 2)
+        content = messages[-1]["content"]
+        self.assertIsInstance(content, str)
+        self.assertIn("[附件 note.txt]", content)
+        self.assertIn("扭矩数据异常", content)
+        self.assertIn("问题", content)
+
+    def test_image_attachment_builds_multimodal_content(self):
+        data_url = "data:image/png;base64,aGVsbG8="
+        messages = self._assemble([{"name": "weld.png", "kind": "image", "data": data_url}])
+        content = messages[-1]["content"]
+        self.assertIsInstance(content, list)
+        self.assertEqual(content[0], {"type": "text", "text": "问题"})
+        self.assertEqual(content[1], {"type": "image_url", "image_url": {"url": data_url}})
+
+    def test_mixed_attachments_keep_order_and_text_join(self):
+        messages = self._assemble([
+            {"name": "a.txt", "kind": "text", "data": "AAA"},
+            {"name": "b.png", "kind": "image", "data": "data:image/png;base64,Qg=="},
+            {"name": "c.txt", "kind": "text", "data": "CCC"},
+        ])
+        content = messages[-1]["content"]
+        self.assertIsInstance(content, list)
+        self.assertIn("[附件 a.txt]\nAAA", content[0]["text"])
+        self.assertIn("[附件 c.txt]\nCCC", content[0]["text"])
+        self.assertEqual(content[1]["type"], "image_url")
+
+    def test_no_attachments_keeps_plain_string(self):
+        messages = self._assemble([])
+        self.assertEqual(messages[-1]["content"], "问题")
+
 
 if __name__ == "__main__":
     unittest.main()

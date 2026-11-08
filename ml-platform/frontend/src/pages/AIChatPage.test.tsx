@@ -104,10 +104,10 @@ describe("AIChatPage", () => {
     localStorage.removeItem("chat.kbId");
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: /添加/ }));
-    // + 弹层菜单：点「知识库（RAG）」打开配置弹窗（rc-select 下拉交互在
+    // + 弹层菜单：点「知识库」打开独立配置弹窗（rc-select 下拉交互在
     // jsdom 不稳定，此处验证配置入口链路；绑定持久化由保存逻辑覆盖）
-    await waitFor(() => expect(screen.getByText("知识库（RAG）")).toBeInTheDocument());
-    fireEvent.click(screen.getByText("知识库（RAG）"));
+    await waitFor(() => expect(screen.getByText("知识库")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("知识库"));
     await waitFor(() => {
       const inModal = screen.getAllByRole("combobox")
         .find((el) => el.closest(".ant-modal"));

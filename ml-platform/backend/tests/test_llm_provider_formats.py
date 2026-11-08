@@ -81,6 +81,50 @@ class TestBuildRequestByFormat(unittest.TestCase):
         self.assertNotIn("reasoning", c_body)
 
 
+MULTIMODAL_MESSAGES = [
+    {"role": "system", "content": "你是助手"},
+    {"role": "user", "content": [
+        {"type": "text", "text": "这张焊接图有什么问题？"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}},
+    ]},
+]
+
+
+class TestMultimodalContentByFormat(unittest.TestCase):
+    """附件图片（OpenAI content 数组）按 provider 映射：openai 原样、
+    anthropic → image/base64 块、responses → input_image 块。"""
+
+    def test_chat_completions_passthrough(self):
+        _u, _h, body = _build_llm_request(_config("openai_compatible"), MULTIMODAL_MESSAGES, 0.7, 1000)
+        self.assertEqual(body["messages"][1]["content"], MULTIMODAL_MESSAGES[1]["content"])
+
+    def test_anthropic_maps_to_base64_image_block(self):
+        _u, _h, body = _build_llm_request(_config("anthropic"), MULTIMODAL_MESSAGES, 0.7, 1000)
+        content = body["messages"][0]["content"]
+        self.assertEqual(content[0], {"type": "text", "text": "这张焊接图有什么问题？"})
+        self.assertEqual(content[1], {
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/png", "data": "aGVsbG8="},
+        })
+
+    def test_responses_maps_to_input_image_block(self):
+        _u, _h, body = _build_llm_request(_config("responses"), MULTIMODAL_MESSAGES, 0.7, 1000)
+        content = body["input"][1]["content"]
+        self.assertEqual(content[0], {"type": "input_text", "text": "这张焊接图有什么问题？"})
+        self.assertEqual(content[1], {
+            "type": "input_image",
+            "image_url": "data:image/png;base64,aGVsbG8=",
+        })
+
+    def test_anthropic_non_image_url_blocks_skipped(self):
+        messages = [{"role": "user", "content": [
+            {"type": "text", "text": "hi"},
+            {"type": "image_url", "image_url": {"url": "https://example.com/x.png"}},
+        ]}]
+        _u, _h, body = _build_llm_request(_config("anthropic"), messages, 0.7, 1000)
+        self.assertEqual(body["messages"][0]["content"], [{"type": "text", "text": "hi"}])
+
+
 class TestStreamParsingByFormat(unittest.TestCase):
     def test_chat_completions_delta(self):
         delta, usage = _parse_llm_stream_event(

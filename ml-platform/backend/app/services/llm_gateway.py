@@ -147,6 +147,68 @@ def resolve_profile(
     )
 
 
+def _data_url_parts(url: str) -> tuple[str, str] | None:
+    """data:image/png;base64,xxxx → (media_type, base64)；非图像 data URL 返回 None。"""
+    if not url.startswith("data:"):
+        return None
+    header, _, data = url.partition(",")
+    media_type = header[5:].split(";", 1)[0]
+    if not media_type.startswith("image/") or not data:
+        return None
+    return media_type, data
+
+
+def _anthropic_content(content) -> str | list:
+    """OpenAI 多模态 content 数组 → anthropic content 块（text/image）。"""
+    if not isinstance(content, list):
+        return content or ""
+    blocks = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            blocks.append({"type": "text", "text": block.get("text") or ""})
+        elif block.get("type") == "image_url":
+            parts = _data_url_parts((block.get("image_url") or {}).get("url") or "")
+            if parts:
+                blocks.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": parts[0], "data": parts[1]},
+                })
+    return blocks or ""
+
+
+def _responses_content(content) -> str | list:
+    """OpenAI 多模态 content 数组 → Responses 协议 input 块（input_text/input_image）。"""
+    if not isinstance(content, list):
+        return content or ""
+    parts = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            parts.append({"type": "input_text", "text": block.get("text") or ""})
+        elif block.get("type") == "image_url":
+            url = (block.get("image_url") or {}).get("url") or ""
+            if url.startswith("data:image/"):
+                parts.append({"type": "input_image", "image_url": url})
+    return parts or ""
+
+
+def _content_chars(content) -> int:
+    """payload 大小审计：content 数组按块内文本/图像 data 长度累计。"""
+    if isinstance(content, list):
+        total = 0
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    total += len(block.get("text") or "")
+                else:
+                    total += len(str((block.get("image_url") or {}).get("url") or ""))
+        return total
+    return len(content or "")
+
+
 def _build_llm_request(
     config, messages: list[dict], temperature: float, max_tokens: int,
     thinking_level: str | None = None,
@@ -160,6 +222,8 @@ def _build_llm_request(
     reasoning.effort；chat completions 无标准参数则忽略（不造假）。模型配置
     （model_config_json.reasoning_mapping）存在时优先按映射表达式求值并合并
     进请求体——映射来自「编辑模型配置」弹窗，与模型能力绑定。
+    多模态 content 数组（附件图片）按 provider 映射：openai 原样透传、
+    anthropic → image/base64 块、responses → input_image 块；system 恒为纯文本。
     """
     provider = config.provider or "openai_compatible"
     model_cfg = getattr(config, "model_config", None) or {}
@@ -172,10 +236,10 @@ def _build_llm_request(
         system_text = "\n\n".join(
             message.get("content") or ""
             for message in messages
-            if message.get("role") == "system"
+            if message.get("role") == "system" and isinstance(message.get("content"), str)
         )
         chat_messages = [
-            {"role": message["role"], "content": message.get("content") or ""}
+            {"role": message["role"], "content": _anthropic_content(message.get("content"))}
             for message in messages
             if message.get("role") != "system"
         ]
@@ -207,7 +271,7 @@ def _build_llm_request(
         body = {
             "model": config.model_id,
             "input": [
-                {"role": message.get("role") or "user", "content": message.get("content") or ""}
+                {"role": message.get("role") or "user", "content": _responses_content(message.get("content"))}
                 for message in messages
             ],
             "stream": True,
@@ -417,7 +481,7 @@ def chat_completion(
         if timeout_floor is not None
         else config.timeout_seconds
     )
-    payload_chars = sum(len(message.get("content") or "") for message in messages)
+    payload_chars = sum(_content_chars(message.get("content")) for message in messages)
     started = time.perf_counter()
     # 流式接收（SSE）：非流式长生成在静默等待整个响应期会被网络中间设备
     # 按"空闲连接"掐断（实测 Errno 104 Connection reset，60-200s 静默窗口，

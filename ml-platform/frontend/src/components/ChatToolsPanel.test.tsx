@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import ChatToolsPanel from "./ChatToolsPanel";
+import ChatToolsModal from "./ChatToolsPanel";
 
 const apiGet = vi.hoisted(() => vi.fn());
 const apiPost = vi.hoisted(() => vi.fn());
@@ -11,7 +11,11 @@ vi.mock("../i18n", () => ({
   useI18n: () => ({ lang: "zh", t: {}, setLang: () => {} }),
 }));
 
-describe("ChatToolsPanel (whitelist tools + write confirmation)", () => {
+function renderModal() {
+  return render(<ChatToolsModal open onClose={() => {}} onResult={onResult} />);
+}
+
+describe("ChatToolsModal (whitelist tools + write confirmation)", () => {
   beforeEach(() => {
     localStorage.clear();
     apiGet.mockReset().mockResolvedValue({ data: {
@@ -24,9 +28,8 @@ describe("ChatToolsPanel (whitelist tools + write confirmation)", () => {
   });
 
   it("renders whitelist chips grouped by kind", async () => {
-    render(<ChatToolsPanel onResult={onResult} />);
+    renderModal();
 
-    fireEvent.click(await screen.findByRole("button", { name: /白名单工具/ }));
     expect(await screen.findByText(/查看项目列表/)).toBeInTheDocument();
     expect(screen.getByText(/沉淀对话洞察为经验/)).toBeInTheDocument();
     expect(screen.getByText(/闭环重训换模/)).toBeInTheDocument();
@@ -34,9 +37,8 @@ describe("ChatToolsPanel (whitelist tools + write confirmation)", () => {
 
   it("runs read tools directly and streams the result", async () => {
     apiPost.mockResolvedValue({ data: { status: "success", result: { projects: 2 } } });
-    render(<ChatToolsPanel onResult={onResult} />);
+    renderModal();
 
-    fireEvent.click(await screen.findByRole("button", { name: /白名单工具/ }));
     fireEvent.click(await screen.findByText(/查看项目列表/));
     fireEvent.click(await screen.findByRole("button", { name: "执行" }));
 
@@ -51,9 +53,8 @@ describe("ChatToolsPanel (whitelist tools + write confirmation)", () => {
       payload.confirmed
         ? Promise.resolve({ data: { status: "success", result: { swapped: true } } })
         : Promise.resolve({ data: { status: "confirmation_required", code: "CHAT_TOOL_CONFIRMATION_REQUIRED", tool: "retrain_swap", message: "写操作需要用户在对话中确认后执行" } }));
-    render(<ChatToolsPanel onResult={onResult} />);
+    renderModal();
 
-    fireEvent.click(await screen.findByRole("button", { name: /白名单工具/ }));
     fireEvent.click(await screen.findByText(/闭环重训换模/));
     fireEvent.click(await screen.findByRole("button", { name: "执行" }));
 
@@ -71,8 +72,7 @@ describe("ChatToolsPanel (whitelist tools + write confirmation)", () => {
   });
 
   it("rejects invalid JSON params without calling the API", async () => {
-    render(<ChatToolsPanel onResult={onResult} />);
-    fireEvent.click(await screen.findByRole("button", { name: /白名单工具/ }));
+    renderModal();
     fireEvent.click(await screen.findByText(/查看项目列表/));
     fireEvent.change(await screen.findByLabelText("工具参数 JSON"), { target: { value: "{bad" } });
     fireEvent.click(screen.getByRole("button", { name: "执行" }));
