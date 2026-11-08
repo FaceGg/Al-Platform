@@ -300,10 +300,11 @@ export default function AIChatPage() {
     } finally {
       abortRef.current = null;
       // failed → 保留已生成部分 + 追加 system 错误；中止 → 文本加停止标记
-      let answer = failed ? grew : (grew || "（无返回内容）");
-      if (!failed && grew && abortRef.current === null && stoppedFlag.current) {
-        answer = grew + "\n〔已停止生成〕";
-      }
+      // （思考型模型思考阶段无 delta：中途停止时可能一字未出）
+      let answer: string;
+      if (failed) answer = grew;
+      else if (grew) answer = stoppedFlag.current ? grew + "\n〔已停止生成〕" : grew;
+      else answer = stoppedFlag.current ? "（已停止，未生成内容）" : "（无返回内容）";
       const finalBase: ChatMsg[] = [
         ...next.slice(0, answerIndex),
         { role: "assistant", content: answer, time: new Date().toLocaleTimeString(), sources: answerSources },
