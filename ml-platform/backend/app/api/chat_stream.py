@@ -146,18 +146,26 @@ def chat_stream2(
                     if event_usage:
                         usage = event_usage
                     # 缓存命中 tokens 从原始 usage 抠（解析器只归一 prompt/
-                    # completion；deepseek=prompt_cache_hit_tokens，openai=
-                    # prompt_tokens_details.cached_tokens）
+                    # completion）。三种供应商形态全覆盖：
+                    # - deepseek(openai 兼容): prompt_cache_hit_tokens
+                    # - openai: prompt_tokens_details.cached_tokens
+                    # - anthropic（含 deepseek 的 /anthropic 兼容端点）:
+                    #   cache_read_input_tokens（input_tokens 为总输入）
                     raw_usage = event.get("usage") if isinstance(event, dict) else None
                     if isinstance(raw_usage, dict):
                         hit = raw_usage.get("prompt_cache_hit_tokens")
                         if hit is None:
                             details = raw_usage.get("prompt_tokens_details") or {}
                             hit = details.get("cached_tokens") if isinstance(details, dict) else None
+                        if hit is None:
+                            hit = raw_usage.get("cache_read_input_tokens")
+                        prompt_raw = raw_usage.get("prompt_tokens")
+                        if prompt_raw is None:
+                            prompt_raw = raw_usage.get("input_tokens")
                         if hit is not None:
                             cache = {
                                 "hit": int(hit or 0),
-                                "prompt": int(raw_usage.get("prompt_tokens") or 0),
+                                "prompt": int(prompt_raw or 0),
                             }
             yield _sse({"type": "done", "usage": usage, **({"cache": cache} if cache else {})})
         except Exception as error:  # noqa: BLE001 - 流中断以事件形式告知前端
