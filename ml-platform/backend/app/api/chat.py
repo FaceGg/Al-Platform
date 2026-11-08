@@ -200,7 +200,8 @@ def chat(
         keyword in message
         for keyword in (
             "数据集", "数据列表", "预览", "训练", "闭环", "配方", "洞察", "下线",
-            "API", "api", "项目里", "任务状态", "dataset", "recipe", "insight",
+            "API", "api", "项目", "任务", "建模", "模型", "发布", "创建", "新建",
+            "建一个", "查一下", "查询", "看看", "列出", "dataset", "recipe", "insight",
         )
     )
     if tool_context or tool_hint:
