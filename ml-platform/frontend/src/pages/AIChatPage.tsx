@@ -171,9 +171,25 @@ export default function AIChatPage() {
   };
 
   const copySessionId = async (id: string) => {
+    // clipboard API 失败（权限受限/非安全上下文）时 execCommand 兜底
     try {
       await navigator.clipboard.writeText(id);
       antdMessage.success(zh ? "已复制 ID" : "ID copied");
+      return;
+    } catch {
+      // fall through to execCommand
+    }
+    try {
+      const helper = document.createElement("textarea");
+      helper.value = id;
+      helper.style.position = "fixed";
+      helper.style.opacity = "0";
+      document.body.appendChild(helper);
+      helper.select();
+      const ok = document.execCommand("copy");
+      helper.remove();
+      if (ok) antdMessage.success(zh ? "已复制 ID" : "ID copied");
+      else antdMessage.error(zh ? "复制失败" : "Copy failed");
     } catch {
       antdMessage.error(zh ? "复制失败" : "Copy failed");
     }
