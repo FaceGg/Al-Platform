@@ -83,7 +83,7 @@ TOOL_PARAM_SPECS: dict[str, dict[str, dict]] = {
     },
     "save_insight": {
         "text": {"required": True, "kind": "text", "question": "要沉淀的洞察内容是什么？"},
-        "domain": {"required": False, "kind": "domain", "question": "属于哪个领域（如 spot_weld）？"},
+        "domain": {"required": False, "kind": "domain", "question": "属于哪个领域？"},
     },
     "create_recipe_task": {
         "recipe": {"required": True, "kind": "recipe", "question": "按哪个配方创建任务？"},
