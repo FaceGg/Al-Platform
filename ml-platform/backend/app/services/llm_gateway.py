@@ -395,13 +395,55 @@ def _mapping_string(text: str, pos: int) -> tuple[str, int]:
     raise ValueError("unterminated string")
 
 
+def _mapping_skip_ws(text: str, pos: int) -> int:
+    while pos < len(text) and text[pos] in " \t\r\n":
+        pos += 1
+    return pos
+
+
+def _mapping_string(text: str, pos: int) -> tuple[str, int]:
+    """解析单/双引号字符串（含反斜杠转义），返回 (值, 下一位置)。"""
+    quote = text[pos]
+    pos += 1
+    out: list[str] = []
+    while pos < len(text):
+        char = text[pos]
+        if char == "\\" and pos + 1 < len(text):
+            out.append(text[pos + 1])
+            pos += 2
+            continue
+        if char == quote:
+            return "".join(out), pos + 1
+        out.append(char)
+        pos += 1
+    raise ValueError("unterminated string")
+
+
+def _mapping_level_atom(text: str, pos: int, level: str):
+    """解析 reasoningLevel 原子：裸标识符（→ 等级名）或 ==/!= 字符串比较（→ 布尔）。"""
+    probe = _mapping_skip_ws(text, pos)
+    if text.startswith("==", probe):
+        pos = _mapping_skip_ws(text, probe + 2)
+        if pos >= len(text) or text[pos] not in "\"'":
+            raise ValueError("comparison needs a string literal")
+        literal, pos = _mapping_string(text, pos)
+        return any(level == v for v in (literal, literal.lower(), literal.upper())), pos
+    if text.startswith("!=", probe):
+        pos = _mapping_skip_ws(text, probe + 2)
+        if pos >= len(text) or text[pos] not in "\"'":
+            raise ValueError("comparison needs a string literal")
+        literal, pos = _mapping_string(text, pos)
+        return not any(level == v for v in (literal, literal.lower(), literal.upper())), pos
+    return level, pos
+
+
 def _parse_mapping_value(text: str, pos: int, level: str):
-    """递归下降解析映射值：JSON 子集 + 内嵌 reasoningLevel 三元（不 eval）。
+    """递归下降解析映射值：JSON 子集 + 内嵌 reasoningLevel 三元/逻辑运算（不 eval）。
 
     支持：对象/数组/单双引号字符串/数字/true/false/null、裸 ``reasoningLevel``
-    （→ 等级名）、``reasoningLevel == "x"``（→ 布尔）、``条件 ? 值 : 值`` 三元
-    （右结合）。其余标识符一律拒绝——安全求值，不执行任意代码。
-    返回 (值, 下一位置)；语法非法抛 ValueError。"""
+    （→ 等级名）、``reasoningLevel ==/!= "x"``（→ 布尔）、``&&``/``||`` 逻辑
+    （左结合短路）、``条件 ? 值 : 值`` 三元（右结合）。其余标识符一律拒绝——
+    安全求值，不执行任意代码。返回 (值, 下一位置)；语法非法抛 ValueError。"""
     pos = _mapping_skip_ws(text, pos)
     if pos >= len(text):
         raise ValueError("unexpected end")
@@ -461,7 +503,7 @@ def _parse_mapping_value(text: str, pos: int, level: str):
             return (int(literal), pos) if literal.lstrip("-").isdigit() else (float(literal), pos)
         except ValueError as error:
             raise ValueError("bad number") from error
-    # 标识符：true/false/null/reasoningLevel（可跟 == "x" 比较，可接三元）
+    # 标识符/布尔原子（reasoningLevel 比较、true/false/null），&&/|| 逻辑，三元
     if not char.isalpha():
         raise ValueError(f"unexpected char {char!r}")
     start = pos
@@ -471,17 +513,23 @@ def _parse_mapping_value(text: str, pos: int, level: str):
     if ident in ("true", "false", "null"):
         value = {"true": True, "false": False, "null": None}[ident]
     elif ident == "reasoningLevel":
-        probe = _mapping_skip_ws(text, pos)
-        if text.startswith("==", probe):
-            pos = _mapping_skip_ws(text, probe + 2)
-            if pos >= len(text) or text[pos] not in "\"'":
-                raise ValueError("comparison needs a string literal")
-            literal, pos = _mapping_string(text, pos)
-            value = any(level == v for v in (literal, literal.lower(), literal.upper()))
-        else:
-            value = level
+        value, pos = _mapping_level_atom(text, pos, level)
     else:
         raise ValueError(f"unknown identifier {ident!r}")
+    # 逻辑连接（左结合短路）：&& / ||
+    while True:
+        probe = _mapping_skip_ws(text, pos)
+        if text.startswith("&&", probe):
+            pos = _mapping_skip_ws(text, probe + 2)
+            right, pos = _mapping_level_compare_operand(text, pos, level)
+            value = bool(value) and bool(right)
+            continue
+        if text.startswith("||", probe):
+            pos = _mapping_skip_ws(text, probe + 2)
+            right, pos = _mapping_level_compare_operand(text, pos, level)
+            value = bool(value) or bool(right)
+            continue
+        break
     # 三元（右结合）：cond ? A : B
     probe = _mapping_skip_ws(text, pos)
     if text.startswith("?", probe):
@@ -492,6 +540,24 @@ def _parse_mapping_value(text: str, pos: int, level: str):
         branch_false, pos = _parse_mapping_value(text, pos2 + 1, level)
         return (branch_true if value else branch_false), pos
     return value, pos
+
+
+def _mapping_level_compare_operand(text: str, pos: int, level: str):
+    """&&/|| 的右侧操作数：reasoningLevel 比较/bool 字面量（不支持嵌套对象）。"""
+    pos = _mapping_skip_ws(text, pos)
+    if pos >= len(text):
+        raise ValueError("unexpected end")
+    if not text[pos].isalpha():
+        raise ValueError("logical operand must be an identifier")
+    start = pos
+    while pos < len(text) and (text[pos].isalnum() or text[pos] == "_"):
+        pos += 1
+    ident = text[start:pos]
+    if ident in ("true", "false"):
+        return (ident == "true"), pos
+    if ident == "reasoningLevel":
+        return _mapping_level_atom(text, pos, level)
+    raise ValueError(f"unknown identifier {ident!r}")
 
 
 def apply_reasoning_mapping(mapping: str | None, level: str | None) -> dict | None:
