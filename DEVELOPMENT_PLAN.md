@@ -572,3 +572,12 @@ fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失�
 8. **API 市场 servitize 条目删除按钮** + 后端删条目连带清理绑定闭环任务；**监控大屏状态卡/事件文案模式感知**（agent=智能体重训/已验收换模，eb4a4e17）。
 
 **验证**：各批 tsc/相关单测绿（registry 33/extras 13/servitize 8/wizard 7 等）；S3 冠军直接部署真实验证 2.3s（部署 running+ONNX 端口 32 特征）；④编排发布真实验证 69ms（6 节点实例化+参数替换+published）。**坑追加**：onnx_worker 包合同缺 target_schema.dtype/task 任一字段即 MODEL_CONVERSION_FAILED（无具体错误信息，需直调 _convert 拿 traceback）；共享验证栈并行会话会清理部署/job 数据（当天两次，页面进行中状态被打断非代码缺陷）。
+
+## 2026-11-09 智能体中心两处真机缺陷修复（配方库重复行 + pending 任务永久排队）
+
+用户报告两症状：①任务列表多人任务「排队中」超数小时（3 条 run 卡 pending，heartbeat NULL）；②配方库删除异常——有的点击没反应，有的点一下同时消失好几行。
+
+1. **配方库列表笛卡尔积重复行（根因修复）**：[agent_center.py](ml-platform/backend/app/api/agent_center.py) `list_pipeline_recipes` 的「version == PipelineRecipe.current_version」子查询中 `PipelineRecipe` 不在子查询 FROM 内、无法被 SQLAlchemy 相关化，退化为子查询内 `FROM pipeline_recipe_versions, pipeline_recipes` 笛卡尔积——任何配方版本号撞上**其他配方**的 current_version 号即被错误带入列表（14 条 cv=1 配方时每配方重复 ~14 行）。表现为：删 1 个配方多行同时消失（实为同一配方重复行）、点已删配方的残余重复行 404 无反应。改为版本表直接 LEFT JOIN 条件 `(recipe_id, version == current_version)`（唯一约束保证每配方恰一行）。backend 日志证实 13 次 DELETE 全部为独立 204、无后端级联。
+2. **pending 孤儿任务永久排队**：批量创建 8 条 run 中 3 条卡 pending 数小时（heartbeat NULL，派发线程未成功提交首跳）。旧恢复清扫（lifespan 启动 + beat `ml_platform.recover_stale_agent_runs`）只覆盖 running，pending 孤儿永久无人认领。[executor.py](ml-platform/backend/app/services/agent/executor.py) 新增 `relaunch_orphaned_pending_agent_runs`（pending 且 heartbeat 空/陈旧 + 创建超 120s 宽限 → DB 级 CAS pending→running 抢占后重派；不可执行落 waiting_escalate/AGENT_RUN_NOT_EXECUTABLE 与创建端点同口径），接线至 backend lifespan 启动清扫与 beat 周期清扫；CAS 保证启动/beat/多进程并发不双跑。
+3. **测试**：新增回归 6 个（配方列表混合 current_version 不重复/多版本配方状态取自身当前版本；孤儿重派/新鲜 pending 不误抢/不可执行落升级态，共享 dev 库用例内保护并还原既有孤儿行）；test_agent_executor + test_agent_center_api 全绿 30、test_celery_workflows 19。镜像重建后 backend lifespan 即重派孤儿（用户已自行清理卡死任务，新批次 run 正常流转 accepted）。
+4. **浏览器真实验证**：修复后配方列表每配方恰一行；点删除→Popconfirm→确认→toast「配方已删除」→恰一行消失；测试残留配方已清理。

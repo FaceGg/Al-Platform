@@ -296,6 +296,62 @@ class TestRecipeListing(AgentCenterHarness, unittest.TestCase):
         self.assertNotIn("content_json", recipe)
         self.assertNotIn("TORQUE_DEVIATION", response.text)
 
+    def test_lists_each_recipe_once_across_mixed_current_versions(self):
+        """回归：列表 join 每配方恰一行（真机事故——旧子查询笛卡尔积让
+        同一配方随「其他配方的 current_version 号」重复出现多行，删除
+        一个配方时多行同时消失）。
+
+        构造：配方 A 升级到 v2（v1 superseded），配方 B 停在 v1——
+        旧实现下 A 的 v1 行会因 B 的 current_version=1 被错误带入列表。"""
+        from app.services.agent.recipe import update_recipe
+
+        project_id, _ = self._project()
+        with SessionLocal() as db:
+            recipe_a = create_recipe(
+                db,
+                project_id=uuid.UUID(project_id),
+                name="recipe-multi-version",
+                domain="tightening",
+                target_column="DECIDE",
+                content={"features": {}},
+                change_note="第一版",
+                created_by=uuid.UUID(self.user_id),
+            )
+            update_recipe(
+                db,
+                recipe_a.id,
+                content={"features": {"keep": ["TORQUE"]}},
+                change_note="第二版升级",
+                created_by=uuid.UUID(self.user_id),
+            )
+            create_recipe(
+                db,
+                project_id=uuid.UUID(project_id),
+                name="recipe-still-v1",
+                domain="tightening",
+                target_column="DECIDE",
+                content={"features": {}},
+                change_note="仍是第一版",
+                created_by=uuid.UUID(self.user_id),
+            )
+
+        response = client.get("/api/agent/recipes", headers=self.h)
+        self.assertEqual(response.status_code, 200)
+        items = response.json()
+        ids = [item["id"] for item in items]
+        self.assertEqual(len(ids), len(set(ids)), "同一配方不得重复出现")
+        self.assertEqual(len(items), 2)
+        by_name = {item["name"]: item for item in items}
+        # 多版本配方的状态/说明必须来自它自己的当前版本（v2），不是别的配方行
+        multi = by_name["recipe-multi-version"]
+        self.assertEqual(multi["current_version"], 2)
+        self.assertEqual(multi["version_status"], "current")
+        self.assertEqual(multi["change_note"], "第二版升级")
+        still = by_name["recipe-still-v1"]
+        self.assertEqual(still["current_version"], 1)
+        self.assertEqual(still["version_status"], "current")
+        self.assertEqual(still["change_note"], "仍是第一版")
+
     def test_requires_authentication(self):
         response = client.get("/api/agent/recipes")
         self.assertEqual(response.status_code, 401)

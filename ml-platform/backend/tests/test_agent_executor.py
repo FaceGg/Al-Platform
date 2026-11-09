@@ -346,6 +346,145 @@ class TestStaleAgentRunSweep(ExecutorHarness, unittest.TestCase):
             )
 
 
+class TestOrphanPendingRunRelaunch(ExecutorHarness, unittest.TestCase):
+    """pending 孤儿重派：派发线程从未运行的「排队中」遗留行重新驱动。
+
+    真机事故（2026-11-09）：批量创建的 8 条 run 中 3 条卡 pending 数小时，
+    heartbeat NULL——旧清扫只覆盖 running，pending 孤儿永久无人认领。"""
+
+    def _age_created_at(self, run_id: str, seconds: int = 3600) -> None:
+        from datetime import timedelta
+
+        from app.tasks.time_utils import utcnow as _age_utcnow
+
+        with SessionLocal() as db:
+            db.get(AgentRun, uuid.UUID(run_id)).created_at = (
+                _age_utcnow() - timedelta(seconds=seconds)
+            )
+            db.commit()
+
+    def _protect_dev_orphans(self, exclude_ids) -> list:
+        """共享 dev 库隔离：测试期间把库里既有的真实 pending 孤儿行（含
+        用户报告卡死的任务）心跳刷新保护，避免被本用例的 mock 清扫抢走
+        （抢走后无真实执行线程接管，会污染用户任务状态）。返回被保护的
+        id 列表，测试结束后用 _restore_dev_orphans 恢复 heartbeat NULL。"""
+        from datetime import timedelta
+        from uuid import UUID as _UUID
+
+        from sqlalchemy import or_ as _or
+
+        from app.tasks.time_utils import utcnow as _p_utcnow
+
+        exclude = {_UUID(item) for item in exclude_ids}
+        protected: list = []
+        with SessionLocal() as db:
+            candidates = (
+                db.query(AgentRun)
+                .filter(
+                    AgentRun.status == "pending",
+                    AgentRun.created_at < _p_utcnow() - timedelta(seconds=120),
+                    _or(
+                        AgentRun.heartbeat_at.is_(None),
+                        AgentRun.heartbeat_at < _p_utcnow() - timedelta(minutes=10),
+                    ),
+                )
+                .all()
+            )
+            for row in candidates:
+                if row.id in exclude:
+                    continue
+                protected.append(str(row.id))
+                row.heartbeat_at = _p_utcnow()
+            db.commit()
+        return protected
+
+    def _restore_dev_orphans(self, protected_ids) -> None:
+        with SessionLocal() as db:
+            for item in protected_ids:
+                row = db.get(AgentRun, uuid.UUID(item))
+                if row is not None:
+                    row.heartbeat_at = None
+            db.commit()
+
+    def test_orphan_pending_run_is_reclaimed_and_relaunched(self):
+        from datetime import timedelta
+
+        from app.services.agent import executor as executor_module
+        from app.services.agent.executor import relaunch_orphaned_pending_agent_runs
+
+        orphan_id = self._make_run(status="pending")
+        self._age_created_at(orphan_id)
+        protected = self._protect_dev_orphans([orphan_id])
+        self.addCleanup(self._restore_dev_orphans, protected)
+        launched_ids: list[str] = []
+        with mock.patch.object(
+            executor_module, "launch_agent_run",
+            side_effect=lambda run_id, actor_id=None: launched_ids.append(str(run_id)),
+        ):
+            with SessionLocal() as db:
+                relaunched = relaunch_orphaned_pending_agent_runs(
+                    db, stale_after=timedelta(minutes=10)
+                )
+        self.assertGreaterEqual(relaunched, 1)
+        self.assertIn(orphan_id, launched_ids)
+        with SessionLocal() as db:
+            run = db.get(AgentRun, uuid.UUID(orphan_id))
+            # CAS 抢占落 running + 刷新心跳；真实执行线程随 launch 接管
+            self.assertEqual(run.status, "running")
+            self.assertIsNotNone(run.heartbeat_at)
+
+    def test_fresh_pending_run_is_left_alone(self):
+        """刚创建的 pending run（线程尚未提交首次心跳的毫秒级窗口）不被误抢。"""
+        from datetime import timedelta
+
+        from app.services.agent import executor as executor_module
+        from app.services.agent.executor import relaunch_orphaned_pending_agent_runs
+
+        fresh_id = self._make_run(status="pending")
+        protected = self._protect_dev_orphans([fresh_id])
+        self.addCleanup(self._restore_dev_orphans, protected)
+        launched_ids: list[str] = []
+        with mock.patch.object(
+            executor_module, "launch_agent_run",
+            side_effect=lambda run_id, actor_id=None: launched_ids.append(str(run_id)),
+        ):
+            with SessionLocal() as db:
+                relaunched = relaunch_orphaned_pending_agent_runs(
+                    db, stale_after=timedelta(minutes=10)
+                )
+        self.assertNotIn(fresh_id, launched_ids)
+        self.assertEqual(relaunched, 0)
+        with SessionLocal() as db:
+            self.assertEqual(
+                db.get(AgentRun, uuid.UUID(fresh_id)).status, "pending"
+            )
+
+    def test_not_executable_orphan_lands_in_escalate(self):
+        """重派后不可执行（数据集缺失等）落升级态，与创建端点同口径，不无限重试。"""
+        from datetime import timedelta
+
+        from app.services.agent import executor as executor_module
+        from app.services.agent.executor import relaunch_orphaned_pending_agent_runs
+
+        orphan_id = self._make_run(status="pending")
+        self._age_created_at(orphan_id)
+        protected = self._protect_dev_orphans([orphan_id])
+        self.addCleanup(self._restore_dev_orphans, protected)
+        with mock.patch.object(
+            executor_module, "launch_agent_run",
+            side_effect=AgentRunNotExecutable("dataset_artifact_id is required"),
+        ):
+            with SessionLocal() as db:
+                relaunch_orphaned_pending_agent_runs(
+                    db, stale_after=timedelta(minutes=10)
+                )
+        with SessionLocal() as db:
+            run = db.get(AgentRun, uuid.UUID(orphan_id))
+            self.assertEqual(run.status, "waiting_escalate")
+            self.assertEqual(run.error_code, "AGENT_RUN_NOT_EXECUTABLE")
+            self.assertIn("executor_error", run.result_json)
+
+
 class TestL2InjectionAndDistill(ExecutorHarness, unittest.TestCase):
     def test_s1_receives_active_experience_references(self):
         with SessionLocal() as db:

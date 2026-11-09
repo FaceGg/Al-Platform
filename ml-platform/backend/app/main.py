@@ -290,17 +290,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     with session_factory() as db:
         repair_orphaned_project_owners(db)
         recover_orphaned_local_quality_runs(db)
-        # 启动期清扫进程重启遗留的 running 状态 AgentRun（依据 heartbeat_at）。
-        from app.services.agent.executor import recover_stale_agent_runs
-
-        recover_stale_agent_runs(
-            db,
-            stale_after=timedelta(seconds=getattr(
-                app_settings,
-                "agent_run_stale_after_seconds",
-                settings.agent_run_stale_after_seconds,
-            )),
+        # 启动期清扫进程重启遗留的 running 状态 AgentRun（依据 heartbeat_at）；
+        # pending 孤儿（派发线程从未运行的「排队中」遗留行）重新派发。
+        from app.services.agent.executor import (
+            recover_stale_agent_runs,
+            relaunch_orphaned_pending_agent_runs,
         )
+
+        agent_stale_after = timedelta(seconds=getattr(
+            app_settings,
+            "agent_run_stale_after_seconds",
+            settings.agent_run_stale_after_seconds,
+        ))
+        recover_stale_agent_runs(db, stale_after=agent_stale_after)
+        relaunch_orphaned_pending_agent_runs(db, stale_after=agent_stale_after)
     # Capture event loop for background thread WebSocket broadcast
     import app.api.runs as runs_mod
     runs_mod._main_loop = asyncio.get_running_loop()

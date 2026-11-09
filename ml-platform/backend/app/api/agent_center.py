@@ -414,20 +414,19 @@ def list_pipeline_recipes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    current_version = (
-        db.query(PipelineRecipeVersion)
-        .filter(PipelineRecipeVersion.version == PipelineRecipe.current_version)
-        .with_entities(
-            PipelineRecipeVersion.recipe_id,
-            PipelineRecipeVersion.status,
-            PipelineRecipeVersion.change_note,
-        )
-        .subquery()
-    )
+    # 当前版本信息直接按 (recipe_id, version == current_version) 左连版本表——
+    # 此前的「version == PipelineRecipe.current_version」子查询因 PipelineRecipe
+    # 不在子查询 FROM 中无法被相关化，SQLAlchemy 退化为子查询内笛卡尔积，
+    # 导致列表同一配方重复出现多行（删除时"同时消失好几个"的根因）。
+    # (recipe_id, version) 有唯一约束，此连接每配方恰得一行。
     rows = (
-        db.query(PipelineRecipe, Project.name, current_version.c.status, current_version.c.change_note)
+        db.query(PipelineRecipe, Project.name, PipelineRecipeVersion.status, PipelineRecipeVersion.change_note)
         .outerjoin(Project, PipelineRecipe.project_id == Project.id)
-        .outerjoin(current_version, current_version.c.recipe_id == PipelineRecipe.id)
+        .outerjoin(
+            PipelineRecipeVersion,
+            (PipelineRecipeVersion.recipe_id == PipelineRecipe.id)
+            & (PipelineRecipeVersion.version == PipelineRecipe.current_version),
+        )
         .order_by(PipelineRecipe.updated_at.desc())
         .offset(offset)
         .limit(limit)

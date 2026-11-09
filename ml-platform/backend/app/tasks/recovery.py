@@ -203,22 +203,26 @@ def recover_stale_workflow_runs():
 def recover_stale_agent_runs_task():
     """升级批次：AgentRun 陈旧清扫周期化（此前仅 lifespan 启动期执行一次，
     进程存活期间线程被 SIGKILL/OOM 后任务永久停在 running）。判定与启动期
-    同一函数同一 stale 参数（heartbeat_at NULL 或早于阈值）。"""
+    同一函数同一 stale 参数（heartbeat_at NULL 或早于阈值）。
+    同批重派 pending 孤儿（派发线程从未运行、永久卡「排队中」的遗留行），
+    CAS 抢占保证与启动清扫/多进程并发不双跑。"""
     from app.config import settings as _settings
-    from app.services.agent.executor import recover_stale_agent_runs as _sweep
+    from app.services.agent.executor import (
+        recover_stale_agent_runs as _sweep,
+        relaunch_orphaned_pending_agent_runs as _relaunch,
+    )
 
+    stale_after = timedelta(
+        seconds=getattr(
+            _settings,
+            "agent_run_stale_after_seconds",
+            _settings.agent_run_stale_after_seconds,
+        ),
+    )
     with SessionLocal() as db:
-        swept = _sweep(
-            db,
-            stale_after=timedelta(
-                seconds=getattr(
-                    _settings,
-                    "agent_run_stale_after_seconds",
-                    _settings.agent_run_stale_after_seconds,
-                ),
-            ),
-        )
-    return {"swept_agent_runs": swept}
+        swept = _sweep(db, stale_after=stale_after)
+        relaunched = _relaunch(db, stale_after=stale_after)
+    return {"swept_agent_runs": swept, "relaunched_pending_runs": relaunched}
 
 
 def sweep_stale_workflow_runs_startup() -> int:

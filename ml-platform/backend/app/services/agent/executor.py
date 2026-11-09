@@ -15,6 +15,7 @@ from __future__ import annotations
 import io
 import logging
 import threading
+from datetime import timedelta
 from uuid import UUID
 
 from app.config import settings
@@ -500,6 +501,72 @@ def launch_agent_run(run_id, actor_id=None) -> None:
 
     thread = threading.Thread(target=_worker, name="agent-run-%s" % str(run_id)[:8], daemon=True)
     thread.start()
+
+
+def relaunch_orphaned_pending_agent_runs(db, stale_after, grace_seconds: int = 120) -> int:
+    """重新派发卡死在 pending 的孤儿 run（用户可见「排队中」几小时的根因）。
+
+    create_agent_run 派发的执行线程会在毫秒级提交首次心跳并推进到 running；
+    pending 行若心跳为空/过期且创建已超过宽限期，说明派发线程从未成功运行
+    （进程重启杀掉守护线程、DB 提交竞态等）。此前启动/周期清扫只覆盖
+    running 状态，pending 孤儿永远不会被重新驱动——任务永久停在「排队中」。
+
+    用 DB 级 CAS（pending→running，带同样的心跳陈旧条件）抢占后再派发：
+    启动清扫、beat 周期清扫、多进程并发都只有一方能抢到，不会双跑。
+    返回成功派发的数量。
+    """
+    from sqlalchemy import or_, update as sa_update
+
+    from app.tasks.time_utils import utcnow as _relaunch_utcnow
+
+    now = _relaunch_utcnow()
+    cutoff = now - stale_after
+    grace = now - timedelta(seconds=grace_seconds)
+    orphan_ids = [
+        row.id
+        for row in db.query(AgentRun.id)
+        .filter(
+            AgentRun.status == "pending",
+            AgentRun.created_at < grace,
+            or_(
+                AgentRun.heartbeat_at.is_(None),
+                AgentRun.heartbeat_at < cutoff,
+            ),
+        )
+        .all()
+    ]
+    launched = 0
+    for run_id in orphan_ids:
+        claimed = db.execute(
+            sa_update(AgentRun)
+            .where(
+                AgentRun.id == run_id,
+                AgentRun.status == "pending",
+                or_(
+                    AgentRun.heartbeat_at.is_(None),
+                    AgentRun.heartbeat_at < cutoff,
+                ),
+            )
+            .values(status="running", heartbeat_at=now, current_stage="s1")
+        ).rowcount
+        db.commit()
+        if not claimed:
+            continue
+        try:
+            launch_agent_run(run_id)
+            launched += 1
+        except AgentRunNotExecutable as error:
+            # 与 create_agent_run 同口径：不可执行落升级态，不无限重试
+            run = db.get(AgentRun, run_id)
+            if run is not None and run.status == "running":
+                run.status = "waiting_escalate"
+                run.error_code = "AGENT_RUN_NOT_EXECUTABLE"
+                run.result_json = {"executor_error": str(error)}
+                db.commit()
+            logging.getLogger(__name__).warning(
+                "orphan pending agent run %s relaunch refused: %s", run_id, error
+            )
+    return launched
 
 
 def recover_stale_agent_runs(db, stale_after) -> int:
