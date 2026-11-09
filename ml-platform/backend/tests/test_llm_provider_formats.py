@@ -289,6 +289,76 @@ class TestApplyReasoningMapping(unittest.TestCase):
         self.assertIsNone(apply_reasoning_mapping(None, "low"))
         self.assertIsNone(apply_reasoning_mapping(self.MAPPING, None))
 
+    def test_nested_ternary_inside_object_values(self):
+        """供应商文档形态：对象值内嵌三元（kimi-k2.7 / mimo）。"""
+        mapping = '{\n  "thinking": {\n    "type": reasoningLevel == "enabled" ? "enabled" : "disabled"\n  }\n}'
+        self.assertEqual(
+            apply_reasoning_mapping(mapping, "enabled"),
+            {"thinking": {"type": "enabled"}},
+        )
+        self.assertEqual(
+            apply_reasoning_mapping(mapping, "disabled"),
+            {"thinking": {"type": "disabled"}},
+        )
+
+    def test_bare_level_identifier_as_value(self):
+        """裸 reasoningLevel 作值（kimi-k3.1 output_config.effort）。"""
+        mapping = '{\n  "output_config": {\n    "effort": reasoningLevel\n  }\n}'
+        self.assertEqual(
+            apply_reasoning_mapping(mapping, "high"),
+            {"output_config": {"effort": "high"}},
+        )
+
+    def test_plain_json_mapping_without_conditions(self):
+        """纯 JSON 映射（硅基流动 enable_thinking）——旧实现返回 {} 的形态。"""
+        self.assertEqual(
+            apply_reasoning_mapping('{"enable_thinking": true}', "enabled"),
+            {"enable_thinking": True},
+        )
+
+    def test_zhipu_multi_key_embedded_ternary(self):
+        """智谱多键内嵌三元 + 三元返回字符串。"""
+        mapping = (
+            '{\n'
+            '  "thinking": {\n'
+            '    "type": reasoningLevel == "disabled" || reasoningLevel == "none" ? "disabled" : "enabled"\n'
+            '  },\n'
+            '  "enable_thinking": reasoningLevel != "disabled" && reasoningLevel != "none",\n'
+            '  "reasoning_effort": reasoningLevel == "disabled" ? "none" : reasoningLevel == "enabled" ? "high" : reasoningLevel\n'
+            '}'
+        )
+        out = apply_reasoning_mapping(mapping, "low")
+        self.assertEqual(out["thinking"], {"type": "enabled"})
+        self.assertEqual(out["reasoning_effort"], "low")
+
+    def test_unknown_identifier_rejected(self):
+        """未知标识符拒绝（不执行任意代码）。"""
+        self.assertEqual(apply_reasoning_mapping('{"x": someEvilIdentifier}', "low"), {})
+
+    def test_top_level_ternary_with_else_branch_evaluates(self):
+        """顶层三元链整段求值：无匹配分支走 else（火山方舟 none 形态）。"""
+        mapping = (
+            'reasoningLevel == "none"\n'
+            '  ? {\n'
+            '      "thinking": {\n'
+            '        "type": "disabled"\n'
+            '      }\n'
+            '    }\n'
+            '  : {\n'
+            '      "output_config": {\n'
+            '        "effort": reasoningLevel\n'
+            '      }\n'
+            '    }'
+        )
+        self.assertEqual(
+            apply_reasoning_mapping(mapping, "none"),
+            {"thinking": {"type": "disabled"}},
+        )
+        self.assertEqual(
+            apply_reasoning_mapping(mapping, "high"),
+            {"output_config": {"effort": "high"}},
+        )
+
     def test_build_llm_request_applies_mapping_for_custom_level(self):
         """chat 传自定义等级（如 disabled）：映射分支参数合并进 anthropic 请求体。"""
         config = GatewayLLMConfig(

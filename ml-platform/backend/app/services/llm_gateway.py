@@ -371,13 +371,140 @@ def _provider_headers(provider: str, api_key: str | None) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"}
 
 
+def _mapping_skip_ws(text: str, pos: int) -> int:
+    while pos < len(text) and text[pos] in " \t\r\n":
+        pos += 1
+    return pos
+
+
+def _mapping_string(text: str, pos: int) -> tuple[str, int]:
+    """解析单/双引号字符串（含 \\" 转义），返回 (值, 下一位置)。"""
+    quote = text[pos]
+    pos += 1
+    out: list[str] = []
+    while pos < len(text):
+        char = text[pos]
+        if char == "\\" and pos + 1 < len(text):
+            out.append(text[pos + 1])
+            pos += 2
+            continue
+        if char == quote:
+            return "".join(out), pos + 1
+        out.append(char)
+        pos += 1
+    raise ValueError("unterminated string")
+
+
+def _parse_mapping_value(text: str, pos: int, level: str):
+    """递归下降解析映射值：JSON 子集 + 内嵌 reasoningLevel 三元（不 eval）。
+
+    支持：对象/数组/单双引号字符串/数字/true/false/null、裸 ``reasoningLevel``
+    （→ 等级名）、``reasoningLevel == "x"``（→ 布尔）、``条件 ? 值 : 值`` 三元
+    （右结合）。其余标识符一律拒绝——安全求值，不执行任意代码。
+    返回 (值, 下一位置)；语法非法抛 ValueError。"""
+    pos = _mapping_skip_ws(text, pos)
+    if pos >= len(text):
+        raise ValueError("unexpected end")
+    char = text[pos]
+    if char == "{":
+        pos += 1
+        obj: dict = {}
+        pos = _mapping_skip_ws(text, pos)
+        if pos < len(text) and text[pos] == "}":
+            return obj, pos + 1
+        while True:
+            pos = _mapping_skip_ws(text, pos)
+            if pos >= len(text) or text[pos] not in "\"'":
+                raise ValueError("object key must be a string")
+            key, pos = _mapping_string(text, pos)
+            pos = _mapping_skip_ws(text, pos)
+            if pos >= len(text) or text[pos] != ":":
+                raise ValueError("expected ':'")
+            value, pos = _parse_mapping_value(text, pos + 1, level)
+            obj[key] = value
+            pos = _mapping_skip_ws(text, pos)
+            if pos < len(text) and text[pos] == ",":
+                pos += 1
+                continue
+            if pos < len(text) and text[pos] == "}":
+                return obj, pos + 1
+            raise ValueError("expected ',' or '}'")
+    if char == "[":
+        pos += 1
+        arr: list = []
+        pos = _mapping_skip_ws(text, pos)
+        if pos < len(text) and text[pos] == "]":
+            return arr, pos + 1
+        while True:
+            value, pos = _parse_mapping_value(text, pos, level)
+            arr.append(value)
+            pos = _mapping_skip_ws(text, pos)
+            if pos < len(text) and text[pos] == ",":
+                pos += 1
+                continue
+            if pos < len(text) and text[pos] == "]":
+                return arr, pos + 1
+            raise ValueError("expected ',' or ']'")
+    if char in "\"'":
+        value, pos = _mapping_string(text, pos)
+        return value, pos
+    if char.isdigit() or char == "-":
+        start = pos
+        pos += 1
+        while pos < len(text) and (text[pos].isdigit() or text[pos] in ".eE+-"):
+            # 简易数字消费：指数/小数足够映射场景
+            if text[pos] in "+-" and text[pos - 1] not in "eE":
+                break
+            pos += 1
+        literal = text[start:pos]
+        try:
+            return (int(literal), pos) if literal.lstrip("-").isdigit() else (float(literal), pos)
+        except ValueError as error:
+            raise ValueError("bad number") from error
+    # 标识符：true/false/null/reasoningLevel（可跟 == "x" 比较，可接三元）
+    if not char.isalpha():
+        raise ValueError(f"unexpected char {char!r}")
+    start = pos
+    while pos < len(text) and (text[pos].isalnum() or text[pos] == "_"):
+        pos += 1
+    ident = text[start:pos]
+    if ident in ("true", "false", "null"):
+        value = {"true": True, "false": False, "null": None}[ident]
+    elif ident == "reasoningLevel":
+        probe = _mapping_skip_ws(text, pos)
+        if text.startswith("==", probe):
+            pos = _mapping_skip_ws(text, probe + 2)
+            if pos >= len(text) or text[pos] not in "\"'":
+                raise ValueError("comparison needs a string literal")
+            literal, pos = _mapping_string(text, pos)
+            value = any(level == v for v in (literal, literal.lower(), literal.upper()))
+        else:
+            value = level
+    else:
+        raise ValueError(f"unknown identifier {ident!r}")
+    # 三元（右结合）：cond ? A : B
+    probe = _mapping_skip_ws(text, pos)
+    if text.startswith("?", probe):
+        branch_true, pos2 = _parse_mapping_value(text, probe + 1, level)
+        pos2 = _mapping_skip_ws(text, pos2)
+        if pos2 >= len(text) or text[pos2] != ":":
+            raise ValueError("ternary needs ':'")
+        branch_false, pos = _parse_mapping_value(text, pos2 + 1, level)
+        return (branch_true if value else branch_false), pos
+    return value, pos
+
+
 def apply_reasoning_mapping(mapping: str | None, level: str | None) -> dict | None:
     """按映射表达式求出该推理等级的请求参数（不执行任意代码）。
 
-    表达式是平台/前端生成的三元链：``reasoningLevel == "low" ? {json} :
-    reasoningLevel == "high" ? {json} : {json}``。求值 = 定位等值比较中
-    等级名匹配的分支，取其后第一个配平的 JSON 对象；无匹配或解析失败
-    返回 None（调用方忽略，不造假参数）。"""
+    支持两种形态（供应商文档原样粘贴即可用）：
+    1. 顶层三元链（平台前端生成）：``reasoningLevel == "low" ? {json} : {...}``
+       ——按等值比较定位分支，取其后第一个配平 JSON 对象；
+    2. 对象内嵌三元/裸等级/纯 JSON（各供应商文档形态）：
+       ``{"thinking": {"type": reasoningLevel == "enabled" ? "enabled" : "disabled"}}``、
+       ``{"output_config": {"effort": reasoningLevel}}``、``{"enable_thinking": true}``
+       ——递归下降安全求值（不 eval，未知标识符拒绝）。
+    无映射返回 None；有映射但解析失败/等级无匹配分支返回 {}（不造假参数）。"""
     if not mapping or not level:
         return None
     level_variants = (level, level.lower(), level.upper())
@@ -418,6 +545,13 @@ def apply_reasoning_mapping(mapping: str | None, level: str | None) -> dict | No
             except ValueError:
                 position = mapping.find(marker, end)
                 continue
+    # 顶层三元链无匹配分支：尝试整段安全求值（对象内嵌三元/裸等级/纯 JSON）
+    try:
+        value, end_pos = _parse_mapping_value(mapping, 0, level)
+        if isinstance(value, dict) and not mapping[end_pos:].strip():
+            return value
+    except ValueError:
+        pass
     # 有映射但等级无匹配分支：按三元链兜底语义返回空参数（不造假）
     return {}
 
