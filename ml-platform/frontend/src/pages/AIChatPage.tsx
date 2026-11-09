@@ -18,8 +18,8 @@ const { Text } = Typography;
 interface ChatSource { index: number; chunk_id: string; doc_id: string; filename: string; score: number; }
 interface ChatMsg { role: "user" | "assistant" | "system"; content: string; time: string; sources?: ChatSource[]; }
 interface ChatSession { id: string; title: string; messages: ChatMsg[]; created_at?: string; updated_at?: string; pinned?: boolean; }
-/** 本轮附件：图片走多模态 content，文本以引述拼进问题（发送后清空） */
-interface ChatAttachment { uid: string; name: string; kind: "image" | "text"; data: string; }
+/** 本轮附件：图片/PDF 走多模态 content，文本以引述拼进问题（发送后清空） */
+interface ChatAttachment { uid: string; name: string; kind: "image" | "text" | "pdf"; data: string; }
 
 export default function AIChatPage() {
   const { t, lang } = useI18n();
@@ -210,15 +210,45 @@ export default function AIChatPage() {
     antdMessage.success(zh ? "会话已删除" : "Session deleted");
   };
 
-  // 附件解析：图片转 data URL（多模态输入），文本读内容（引述注入提问）
+  // 附件解析：图片转 data URL（多模态输入）、PDF 转 base64（anthropic
+  // document 块）、文本读内容（引述注入提问）。类型受所选模型「输入类型」
+  // 约束：图片需勾选 image；PDF 需勾选 pdf 且供应商为 anthropic 格式
+  // （openai 系无 PDF 块标准——不造假发送）；文本附件常驻不受限。
+  const currentInputTypes = modelCfg.input_types ?? ["text", "image"];
+  const currentProvider = (currentProfile?.provider || "openai_compatible");
+  const pdfAllowed = currentInputTypes.includes("pdf") && currentProvider === "anthropic";
+  const imageAllowed = currentInputTypes.includes("image");
+  const acceptTypes = [
+    ".txt,.md,.csv,.json,.log,.xml,.yaml,.yml,.py,.js,.ts,.tsx,.sql,.ini,.toml",
+    ...(imageAllowed ? ["image/png,image/jpeg,image/gif,image/webp,image/bmp"] : []),
+    ...(pdfAllowed ? ["application/pdf,.pdf"] : []),
+  ].join(",");
   const addAttachment = (file: File) => {
     if (attachments.length >= 6) { antdMessage.error(text.attachFull); return; }
     const uid = `${file.name}-${file.size}-${Date.now()}`;
     if (/^image\/(png|jpe?g|gif|webp|bmp)$/i.test(file.type)) {
+      if (!imageAllowed) { antdMessage.error(`${file.name}：${zh ? "当前模型的输入类型未勾选「图片」" : "model input types do not include image"}`); return; }
       if (file.size > 5 * 1024 * 1024) { antdMessage.error(`${file.name}：${text.attachImageTooLarge}`); return; }
       const reader = new FileReader();
       reader.onload = () => {
         setAttachments(prev => [...prev, { uid, name: file.name, kind: "image", data: String(reader.result || "") }]);
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+    if (/^application\/pdf$/i.test(file.type) || /\.pdf$/i.test(file.name)) {
+      if (!pdfAllowed) {
+        antdMessage.error(
+          currentInputTypes.includes("pdf")
+            ? `${file.name}：${zh ? "PDF 输入仅 Anthropic Messages 格式的模型支持" : "PDF input requires an Anthropic Messages model"}`
+            : `${file.name}：${zh ? "当前模型的输入类型未勾选「PDF」" : "model input types do not include pdf"}`,
+        );
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) { antdMessage.error(`${file.name}：${zh ? "PDF 超过 10MB 上限" : "PDF exceeds 10MB"}`); return; }
+      const reader = new FileReader();
+      reader.onload = () => {
+        setAttachments(prev => [...prev, { uid, name: file.name, kind: "pdf", data: String(reader.result || "") }]);
       };
       reader.readAsDataURL(file);
       return;
@@ -860,7 +890,7 @@ export default function AIChatPage() {
         <Upload.Dragger
           multiple
           showUploadList={false}
-          accept=".txt,.md,.csv,.json,.log,.xml,.yaml,.yml,.py,.js,.ts,.tsx,.sql,.ini,.toml,image/png,image/jpeg,image/gif,image/webp,image/bmp"
+          accept={acceptTypes}
           beforeUpload={(file: any) => { addAttachment(file as File); return false; }}
         >
           <p className="ant-upload-drag-icon" style={{ marginBottom: 6 }}><PaperClipOutlined style={{ fontSize: 26, color: "var(--v2-blue)" }} /></p>

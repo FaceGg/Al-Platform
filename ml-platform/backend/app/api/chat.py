@@ -62,12 +62,13 @@ def _retrieve_for_chat(db: Session, kb, message: str, top_k: int):
 
 
 def _validate_attachments(attachments: list[dict]) -> None:
-    """附件契约：name/kind/data；图片为 data:image/* base64，文本为纯文本。"""
+    """附件契约：name/kind/data；图片为 data:image/* base64，PDF 为
+    data:application/pdf;base64，文本为纯文本。"""
     for att in attachments:
-        if att.get("kind") not in ("image", "text") or not att.get("data"):
+        if att.get("kind") not in ("image", "text", "pdf") or not att.get("data"):
             raise HTTPException(
                 422,
-                detail={"code": "ATTACHMENT_INVALID", "message": "附件必须为 {name, kind: image|text, data}"},
+                detail={"code": "ATTACHMENT_INVALID", "message": "附件必须为 {name, kind: image|pdf|text, data}"},
             )
         if att.get("kind") == "image":
             data = str(att.get("data"))
@@ -80,6 +81,18 @@ def _validate_attachments(attachments: list[dict]) -> None:
                 raise HTTPException(
                     422,
                     detail={"code": "ATTACHMENT_TOO_LARGE", "message": "图片附件超过大小上限"},
+                )
+        elif att.get("kind") == "pdf":
+            data = str(att.get("data"))
+            if not data.startswith("data:application/pdf;base64,"):
+                raise HTTPException(
+                    422,
+                    detail={"code": "ATTACHMENT_INVALID", "message": "PDF 附件必须是 data:application/pdf;base64 data URL"},
+                )
+            if len(data) > 16_000_000:
+                raise HTTPException(
+                    422,
+                    detail={"code": "ATTACHMENT_TOO_LARGE", "message": "PDF 附件超过大小上限"},
                 )
         elif len(str(att.get("data"))) > 80_000:
             raise HTTPException(
@@ -118,18 +131,24 @@ def _assemble_messages(
             messages.append({"role": role, "content": content[:4000]})
     text_blocks = []
     image_urls = []
+    pdf_urls = []
     for att in attachments or []:
         name = str(att.get("name") or "attachment")[:200]
         if att.get("kind") == "text":
             text_blocks.append(f"[附件 {name}]\n{str(att.get('data') or '')[:60000]}")
         elif att.get("kind") == "image":
             image_urls.append(str(att.get("data")))
+        elif att.get("kind") == "pdf":
+            pdf_urls.append(str(att.get("data")))
     if text_blocks:
         user_content += "\n\n" + "\n\n".join(text_blocks)
-    if image_urls:
+    if image_urls or pdf_urls:
         content: str | list = [
             {"type": "text", "text": user_content},
             *[{"type": "image_url", "image_url": {"url": url}} for url in image_urls],
+            # PDF → 网关 anthropic 映射 document 块（openai 系由上传侧按
+            # 所选模型过滤，不会发出）
+            *[{"type": "document_url", "document_url": {"url": url}} for url in pdf_urls],
         ]
     else:
         content = user_content

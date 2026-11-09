@@ -760,7 +760,6 @@ export default function LLMGatewayPage() {
     if (!selected) return
     modelForm.resetFields()
     modelForm.setFieldsValue({
-      smart_config: true,
       input_types: ['text'],
       capabilities: [],
       reasoning_levels: [],
@@ -783,7 +782,6 @@ export default function LLMGatewayPage() {
       capabilities: cfg.capabilities ?? [],
       reasoning_levels: cfg.reasoning_levels ?? [],
       reasoning_mapping: String(cfg.reasoning_mapping ?? ''),
-      smart_config: cfg.smart_config !== false,
     })
     // 已配推理等级但映射为空：自动生成映射模板（不覆盖已保存的手写映射）
     const savedLevels = cfg.reasoning_levels ?? []
@@ -795,28 +793,9 @@ export default function LLMGatewayPage() {
     setModelCfgOpen(true)
   }
 
-  // 智能配置关闭：自动填入推荐配置（空字段填默认值；推理等级缺省为
-  // disabled/low/high 并生成映射模板；已填字段不覆盖）
-  const fillRecommendedModelCfg = () => {
-    const current = modelForm.getFieldsValue()
-    const patch: Record<string, unknown> = {}
-    if (!current.context_window) patch.context_window = 131072
-    if (!current.max_output_tokens) patch.max_output_tokens = 32768
-    if (!current.input_types?.length) patch.input_types = ['text', 'image']
-    if (!current.capabilities?.length) patch.capabilities = ['system_message']
-    if (!current.reasoning_levels?.length) {
-      patch.reasoning_levels = ['disabled', 'low', 'high']
-      patch.reasoning_mapping = buildReasoningMapping(['disabled', 'low', 'high'])
-    } else if (!String(current.reasoning_mapping || '').trim()) {
-      patch.reasoning_mapping = buildReasoningMapping(current.reasoning_levels)
-    }
-    if (Object.keys(patch).length) modelForm.setFieldsValue(patch)
-  }
-
   const saveModelCfg = async () => {
     const values = await modelForm.validateFields()
     const configJson = {
-      smart_config: values.smart_config !== false,
       context_window: values.context_window ?? null,
       max_output_tokens: values.max_output_tokens ?? null,
       input_types: values.input_types?.length ? values.input_types : ['text'],
@@ -1306,14 +1285,6 @@ export default function LLMGatewayPage() {
         )}
       >
         <Form form={modelForm} layout="vertical">
-          <Form.Item
-            label={zh ? '智能配置' : 'Smart config'}
-            name="smart_config"
-            valuePropName="checked"
-            tooltip={zh ? '开启：配置由平台按上游目录自动填充；关闭：填入推荐配置后手动调整' : 'On: auto-fill from catalog; Off: fill recommended values'}
-          >
-            <Switch onChange={(next) => { if (!next) fillRecommendedModelCfg() }} />
-          </Form.Item>
           <Form.Item name="model_id" label={zh ? '模型 ID' : 'Model ID'} rules={[{ required: true, message: zh ? '请输入模型 ID' : 'Model ID required' }]}>
             <Input placeholder="deepseek-chat" />
           </Form.Item>

@@ -144,7 +144,8 @@ def chat_stream2(
 
         thinking = None if thinking_level in (None, "off") else thinking_level
         messages = _assemble_messages(system_prompt, message, context, history, attachments)
-        url, headers, body = _build_llm_request(config, messages, temperature, 2000, thinking)
+        # 输出预算不显式传 → 走档案「最大输出 Token」（config.max_tokens）
+        url, headers, body = _build_llm_request(config, messages, temperature, config.max_tokens, thinking)
         started = time.perf_counter()
         usage: dict = {}
         cache: dict | None = None

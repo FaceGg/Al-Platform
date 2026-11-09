@@ -108,6 +108,9 @@ class GatewayLLMConfig:
     provider: str = "openai_compatible"
     # ZCode 风格模型配置（上下文窗口/最大输出/推理等级与映射等）；可空
     model_config: dict | None = None
+    # 「最大输出 Token」（编辑模型配置）——调用方未显式指定 max_tokens 时
+    # 网关用它作为请求输出预算（此前只存档案从未消费，实测缺口）
+    max_tokens: int | None = None
 
 
 def resolve_profile(
@@ -150,6 +153,7 @@ def resolve_profile(
         profile_name=profile.name,
         provider=profile.provider or "openai_compatible",
         model_config=getattr(profile, "model_config_json", None),
+        max_tokens=profile.max_tokens,
     )
 
 
@@ -165,7 +169,7 @@ def _data_url_parts(url: str) -> tuple[str, str] | None:
 
 
 def _anthropic_content(content) -> str | list:
-    """OpenAI 多模态 content 数组 → anthropic content 块（text/image）。"""
+    """OpenAI 多模态 content 数组 → anthropic content 块（text/image/pdf）。"""
     if not isinstance(content, list):
         return content or ""
     blocks = []
@@ -180,6 +184,20 @@ def _anthropic_content(content) -> str | list:
                 blocks.append({
                     "type": "image",
                     "source": {"type": "base64", "media_type": parts[0], "data": parts[1]},
+                })
+        elif block.get("type") == "document_url":
+            # PDF 附件（前端 document_url 形态 data:application/pdf;base64,...）
+            # → anthropic 官方 document 块（PDF 输入；openai 系无此块，由
+            #   上传侧按所选模型 provider 过滤，不造假发送）
+            url = (block.get("document_url") or {}).get("url") or ""
+            if url.startswith("data:application/pdf;base64,"):
+                blocks.append({
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": url.split(",", 1)[1],
+                    },
                 })
     return blocks or ""
 
@@ -751,7 +769,7 @@ def chat_completion(
     config: GatewayLLMConfig,
     messages: list[dict],
     temperature: float | None = None,
-    max_tokens: int | None = 2000,
+    max_tokens: int | None = None,
     purpose: str = "chat",
     actor=None,
     request=None,
@@ -787,6 +805,9 @@ def chat_completion(
     # 推理型思考余量（自动，零配置）：请求体 max_tokens 放大为正文预算×4
     # ——思考通常 2-4 倍于正文长度；非推理型多给的余量不产出额外正文
     # （生成完自然停），无副作用。REASONING_TOKEN_HEADROOM 见常量定义。
+    # 调用方未显式指定时用档案「最大输出 Token」（此前只存档案从未消费），
+    # 仍缺省 2000。
+    max_tokens = max_tokens if max_tokens is not None else (config.max_tokens or 2000)
     requested_max_tokens = max_tokens
     amplified_max_tokens = (
         int(max_tokens) * REASONING_TOKEN_HEADROOM if max_tokens else max_tokens

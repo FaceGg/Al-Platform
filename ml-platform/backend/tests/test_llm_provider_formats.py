@@ -200,6 +200,49 @@ class TestWebSearchAndStructuredOutput(unittest.TestCase):
         self.assertNotIn("response_format", body)
 
 
+class TestMaxOutputTokensConsumption(unittest.TestCase):
+    """「最大输出 Token」真实消费：config.max_tokens 作为调用方缺省预算。
+
+    此前只存档案从未进请求（恒 2000）。"""
+
+    def test_config_max_tokens_used_when_caller_omits(self):
+        config = _config("openai_compatible")
+        config.max_tokens = 12345
+        _u, _h, body = _build_llm_request(config, MESSAGES, 0.7, config.max_tokens)
+        self.assertEqual(body["max_tokens"], 12345)
+
+    def test_anthropic_uses_config_max_tokens(self):
+        config = _config("anthropic")
+        config.max_tokens = 7777
+        _u, _h, body = _build_llm_request(config, MESSAGES, 0.7, config.max_tokens)
+        self.assertEqual(body["max_tokens"], 7777)
+
+
+class TestPdfDocumentBlock(unittest.TestCase):
+    """PDF 附件（document_url）→ anthropic document 块；chat completions 透传。"""
+
+    PDF_MESSAGES = [
+        {"role": "system", "content": "你是助手"},
+        {"role": "user", "content": [
+            {"type": "text", "text": "总结这份 PDF"},
+            {"type": "document_url", "document_url": {"url": "data:application/pdf;base64,aGVsbG8="}},
+        ]},
+    ]
+
+    def test_anthropic_maps_to_document_block(self):
+        _u, _h, body = _build_llm_request(_config("anthropic"), self.PDF_MESSAGES, 0.7, 1000)
+        content = body["messages"][0]["content"]
+        self.assertEqual(content[0], {"type": "text", "text": "总结这份 PDF"})
+        self.assertEqual(content[1], {
+            "type": "document",
+            "source": {"type": "base64", "media_type": "application/pdf", "data": "aGVsbG8="},
+        })
+
+    def test_chat_completions_passthrough_document_url(self):
+        _u, _h, body = _build_llm_request(_config("openai_compatible"), self.PDF_MESSAGES, 0.7, 1000)
+        self.assertEqual(body["messages"][1]["content"], self.PDF_MESSAGES[1]["content"])
+
+
 class TestMultimodalContentByFormat(unittest.TestCase):
     """附件图片（OpenAI content 数组）按 provider 映射：openai 原样、
     anthropic → image/base64 块、responses → input_image 块。"""
