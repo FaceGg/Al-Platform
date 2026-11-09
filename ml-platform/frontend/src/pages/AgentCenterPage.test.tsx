@@ -87,7 +87,7 @@ describe("AgentCenterPage (design four-tab agent center)", () => {
 
     expect(await screen.findByText(/新建任务/)).toBeInTheDocument();
     expect(screen.getAllByText(/数据分析/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/服务化发布/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/启动与服务化/).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("switch", { name: /逐步确认模式/ }).length).toBeGreaterThan(0);
   });
 
