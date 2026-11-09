@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button, Modal, Popconfirm, message } from "antd";
 import { DeleteOutlined, EyeOutlined } from "@ant-design/icons";
+import { parseBackendTime } from "../utils/time";
 import {
   deleteRecipe,
   getRecipeDetail,
@@ -241,9 +242,11 @@ export default function RecipeRow({
 
 function relative(value: string | null, zh: boolean): string {
   if (!value) return "-";
-  const timestamp = new Date(value).getTime();
-  if (!Number.isFinite(timestamp)) return value;
-  const delta = Date.now() - timestamp;
+  // 后端时间为不带时区的 UTC ISO——必须经 parseBackendTime 补 Z 再解析，
+  // 否则被当成本地时间，相对时间偏差一个时区（更新时间列 8 小时错位）。
+  const parsed = parseBackendTime(value);
+  if (!parsed) return value;
+  const delta = Date.now() - parsed.getTime();
   const minutes = Math.floor(delta / 60000);
   if (minutes < 1) return zh ? "刚刚" : "just now";
   if (minutes < 60) return zh ? `${minutes} 分钟前` : `${minutes}m ago`;
