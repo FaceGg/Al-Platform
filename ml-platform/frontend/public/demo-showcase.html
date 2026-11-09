@@ -173,6 +173,7 @@
     background: rgba(23, 42, 76, .9); color: #d7e6f5; border: 1px solid rgba(90, 140, 200, .35);
     border-radius: 9px; padding: 6px 12px; font-size: 12px; outline: none; cursor: pointer; }
   #controls button:hover { border-color: #5cb2ff; box-shadow: 0 0 10px rgba(92, 178, 255, .35); }
+  #controls button.rmd { padding: 6px 10px; }
   #controls button.primary { background: linear-gradient(160deg, #1d4ed8, #2f9bf5); border: none; font-weight: 700; }
   #controls input { cursor: text; width: 210px; }
   #controls .sep { width: 1px; height: 22px; background: rgba(90, 140, 200, .3); }
@@ -223,6 +224,10 @@
     <button class="spd" data-s="1" style="border-color:#5cb2ff">×1</button>
     <button class="spd" data-s="2">×2</button>
     <button class="spd" data-s="4">×4</button>
+    <div class="sep"></div>
+    <span style="font-size:11px;color:#7d95b5">重训</span>
+    <button id="btnRmAgent" class="rmd" style="border-color:#8f7bff;color:#b8a8ff">智能体</button>
+    <button id="btnRmEngine" class="rmd">AutoML</button>
     <div class="sep"></div>
     <button id="btnMode">模式：模拟</button>
     <button id="btnOrch" style="border-color:#ffd166;color:#ffd166">编排 API 实时</button>
@@ -1037,6 +1042,23 @@ document.querySelectorAll(".spd").forEach(b => b.onclick = () => {
   document.querySelectorAll(".spd").forEach(x => x.style.borderColor = "rgba(90,140,200,.35)");
   b.style.borderColor = "#5cb2ff";
 });
+/* 重训模式切换（模拟默认智能体；实时连接后被真实配置覆盖）：
+   切节点文案/模拟与换模提示语义；已连实时时切模拟仅影响未再刷新的本地显示 */
+const btnRmAgent = document.getElementById("btnRmAgent");
+const btnRmEngine = document.getElementById("btnRmEngine");
+function paintRmButtons() {
+  const on = "rgba(92,178,255,.35)";
+  btnRmAgent.style.borderColor = sim.retrainMode === "agent" ? "#8f7bff" : on;
+  btnRmEngine.style.borderColor = sim.retrainMode === "engine" ? "#5cb2ff" : on;
+}
+btnRmAgent.onclick = () => { setRetrainMode("agent"); paintRmButtons();
+  toast("已切换：智能体重训（配方重放 → S4 验收 → 引擎铸造 → 换模）", C.purple, 3200); };
+btnRmEngine.onclick = () => { setRetrainMode("engine"); paintRmButtons();
+  toast("已切换：AutoML 引擎重训（搜索最优 → 注册批准 → 换模）", C.blue, 3200); };
+/* 默认智能体：平台当前主推的重训形态，打开即见（此前默认 engine 导致
+   用户打开大屏看到的仍是「自动建模」旧文案——只改了实时连接分支） */
+setRetrainMode("agent");
+paintRmButtons();
 const btnMode = document.getElementById("btnMode");
 btnMode.onclick = () => {
   const panel = document.getElementById("livePanel");
