@@ -857,10 +857,7 @@ export default function LLMGatewayPage() {
                               </>
                             )
                           })()}
-                          {/* 档案名/格式/默认徽标已去掉：模型行只保留模型 ID + 配置徽标（上下文/输入类型） */}
-                          {(profile.purpose_tags || []).map((tag) => (
-                            <span key={tag} className="v2-badge v2-bgray">{tag}</span>
-                          ))}
+                          {/* 档案名/格式/默认徽标/用途标签已去掉：模型行只保留模型 ID + 配置徽标（上下文/输入类型） */}
                           <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
                             <Button
                               type="text" size="small"
