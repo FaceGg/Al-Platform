@@ -98,7 +98,8 @@ describe("LLMGatewayPage", () => {
   });
 
   it("adds a provider from a template card and hints to fill the key", async () => {
-    mocks.createLlmProfile.mockResolvedValue(makeProfile({ id: "p2", name: "DeepSeek" }));
+    mocks.createLlmProfile.mockImplementation((payload: any) =>
+      Promise.resolve(makeProfile({ id: "p2", name: payload.name, model_id: payload.model_id, provider_group: payload.provider_group || "grp-1" })));
     render(
       <AntApp>
         <LLMGatewayPage />
@@ -106,18 +107,29 @@ describe("LLMGatewayPage", () => {
     );
     await screen.findByTestId("provider-detail");
     fireEvent.click(screen.getByText("添加供应商"));
-    // 模板卡自动添加（无表单）：裸 base + 模板默认模型，无 Key
+    // 模板卡自动添加（无表单）：裸 base + 模板全部默认模型（含默认参数），无 Key
     const picker = screen.getByTestId("provider-picker");
     await waitFor(() => expect(within(picker).getByText("DeepSeek", { selector: "span" })).toBeInTheDocument());
     fireEvent.click(within(picker).getByText("DeepSeek", { selector: "span" }));
     await waitFor(() => expect(mocks.createLlmProfile).toHaveBeenCalled());
+    // 首模型主档案（默认参数：上下文/等级/映射随模板）
     expect(mocks.createLlmProfile.mock.calls[0][0]).toMatchObject({
       name: "DeepSeek",
       provider: "anthropic",
       api_url: "https://api.deepseek.com/anthropic",
-      model_id: "deepseek-chat",
+      model_id: "deepseek-flash",
+      max_tokens: 384000,
     });
     expect(mocks.createLlmProfile.mock.calls[0][0].api_key).toBeUndefined();
+    const firstCfg = mocks.createLlmProfile.mock.calls[0][0].model_config_json;
+    expect(firstCfg).toMatchObject({ context_window: 1000000, max_output_tokens: 384000, reasoning_levels: ["disabled", "low", "high", "max"] });
+    expect(firstCfg.reasoning_mapping).toContain('reasoningLevel == "disabled"');
+    // 同组第二个模型（克隆档案 ·model_id，同 provider_group）
+    expect(mocks.createLlmProfile.mock.calls[1][0]).toMatchObject({
+      name: "DeepSeek·deepseek-v4-pro",
+      model_id: "deepseek-v4-pro",
+    });
+    expect(mocks.createLlmProfile.mock.calls[1][0].provider_group).toBeTruthy();
     // 自定义供应商卡：仍走表单（含 Key）
     fireEvent.click(screen.getByText("添加供应商"));
     fireEvent.click(within(screen.getByTestId("provider-picker")).getByText("创建自定义供应商")); screen.debug(undefined, 40000);
@@ -133,8 +145,9 @@ describe("LLMGatewayPage", () => {
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: fixtureKey } });
     const okButton = await screen.findByRole("button", { name: /保\s*存|Save|OK|确\s*定/ });
     fireEvent.click(okButton);
-    await waitFor(() => expect(mocks.createLlmProfile).toHaveBeenCalledTimes(2));
-    expect(mocks.createLlmProfile.mock.calls[1][0]).toMatchObject({
+    // DeepSeek 整组（2 个模型档案）之后，自定义表单是第 3 次创建
+    await waitFor(() => expect(mocks.createLlmProfile).toHaveBeenCalledTimes(3));
+    expect(mocks.createLlmProfile.mock.calls[2][0]).toMatchObject({
       name: "glm-backup",
       api_url: "https://api.backup.com/v1/chat/completions",
       api_key: fixtureKey,

@@ -19,11 +19,20 @@ import { effectiveModelConfig, fmtContextTokens } from '../utils/llmModelConfig'
 
 const PURPOSE_OPTIONS = ['chat', 'agent', 'embedding']
 
-// 供应商模板目录：选卡预填 Base URL/默认模型/API 格式，用户补 API Key 即可。
-// URL 为「base + 协议后缀」的完整端点：anthropic → /v1/messages（base 已含
-// /v1 则拼 /messages）、chat completions → /chat/completions、responses →
-// /responses。默认配置对齐用户提供的官方文档（2026-11）；模型名以「获取」
-// 按钮拉上游目录为准，模板里的默认值仅供起步。
+// 供应商模板目录：选卡预填 Base URL/API 格式与**全部默认模型**（含上下文
+// 窗口/最大输出/输入类型/能力/推理等级/映射），用户补 API Key 即用。
+// URL 为裸 base（协议路径调用时内部拼接）。默认配置对齐用户提供的
+// 《模型默认配置》（2026-11-09）；模型名仍可用「获取」按钮拉上游目录覆盖。
+interface ProviderTemplateModel {
+  model_id: string
+  context_window?: number
+  max_output_tokens?: number
+  input_types?: string[]
+  capabilities?: string[]
+  reasoning_levels?: string[]
+  reasoning_mapping?: string
+}
+
 interface ProviderTemplate {
   name: string
   short: string
@@ -33,24 +42,204 @@ interface ProviderTemplate {
   provider: 'openai_compatible' | 'responses' | 'anthropic'
   group: 'domestic' | 'international'
   key_url?: string
+  models?: ProviderTemplateModel[]
 }
 
+// 推理参数映射（供应商文档原样；网关递归下降求值器直接支持）
+const MAP_DEEPSEEK = `reasoningLevel == "disabled"
+  ? {
+      "thinking": {
+        "type": "disabled"
+      }
+    }
+  : {
+      "thinking": {
+        "type": "enabled"
+      },
+      "output_config": {
+        "effort": reasoningLevel
+      }
+    }`
+const MAP_ZHIPU = `{
+  "thinking": {
+    "type": reasoningLevel == "disabled" || reasoningLevel == "none" ? "disabled" : "enabled"
+  },
+  "enable_thinking": reasoningLevel != "disabled" && reasoningLevel != "none",
+  "reasoning_effort": reasoningLevel == "disabled" ? "none" : reasoningLevel == "enabled" ? "high" : reasoningLevel,
+  "reasoning": {
+    "effort": reasoningLevel == "disabled" ? "none" : reasoningLevel == "enabled" ? "high" : reasoningLevel
+  }
+}`
+const MAP_KIMI_EFFORT = `{
+  "output_config": {
+    "effort": reasoningLevel
+  }
+}`
+const MAP_KIMI_TOGGLE = `{
+  "thinking": {
+    "type": reasoningLevel == "enabled" ? "enabled" : "disabled"
+  }
+}`
+const MAP_QWEN = `{
+  "thinking": {
+    "type": "enabled"
+  },
+  "output_config": {
+    "effort": reasoningLevel
+  }
+}`
+const MAP_DOUBAO = `reasoningLevel == "none"
+  ? {
+      "thinking": {
+        "type": "disabled"
+      }
+    }
+  : {
+      "output_config": {
+        "effort": reasoningLevel
+      }
+    }`
+const MAP_MINIMAX_FLASH = `{
+  "thinking": {
+    "type": "adaptive"
+  },
+  "output_config": {
+    "effort": reasoningLevel
+  }
+}`
+const MAP_MINIMAX_M3 = `reasoningLevel == "disabled"
+  ? {
+      "thinking": {
+        "type": "disabled"
+      }
+    }
+  : {
+      "thinking": {
+        "type": "adaptive"
+      },
+      "output_config": {
+        "effort": reasoningLevel == "enabled" ? "high" : reasoningLevel
+      }
+    }`
+const MAP_SILICON_DS = `reasoningLevel == "disabled" ? {"enable_thinking": false} : {"enable_thinking": true, "reasoning_effort": reasoningLevel}`
+const MAP_EFFORT = `{"reasoning_effort": reasoningLevel}`
+const MAP_OPENAI = `{
+  "reasoning": {
+    "effort": reasoningLevel
+  }
+}`
+const MAP_GROK_TOGGLE = `{
+  "reasoning": {
+    "effort": reasoningLevel == "disabled" ? "none" : reasoningLevel == "enabled" ? "high" : reasoningLevel
+  }
+}`
+const MAP_CLAUDE = `{
+  "thinking": {
+    "type": "adaptive"
+  },
+  "output_config": {
+    "effort": reasoningLevel
+  }
+}`
+
 const PROVIDER_TEMPLATES: ProviderTemplate[] = [
-  // —— 国内（Base URL 填裸 base，协议路径调用时内部拼接；文档默认配置）——
-  { name: 'DeepSeek', short: 'DS', color: '#4D6BFE', api_url: 'https://api.deepseek.com/anthropic', model_id: 'deepseek-chat', provider: 'anthropic', group: 'domestic', key_url: 'https://platform.deepseek.com/api_keys' },
-  { name: '智谱 GLM', short: '智', color: '#3859FF', api_url: 'https://open.bigmodel.cn/api/paas/v4', model_id: 'glm-4.6', provider: 'openai_compatible', group: 'domestic', key_url: 'https://open.bigmodel.cn/usercenter/apikeys' },
-  { name: 'Kimi（月之暗面）', short: 'K', color: '#171D26', api_url: 'https://api.moonshot.cn/anthropic', model_id: 'kimi-k2-0905-preview', provider: 'anthropic', group: 'domestic', key_url: 'https://platform.moonshot.cn/console/api-keys' },
-  { name: '阿里云百炼', short: '百', color: '#FF6A00', api_url: 'https://dashscope.aliyuncs.com/apps/anthropic', model_id: '', provider: 'anthropic', group: 'domestic', key_url: 'https://bailian.console.aliyun.com/' },
-  { name: '火山方舟（豆包）', short: '火', color: '#1664FF', api_url: 'https://ark.cn-beijing.volces.com/api/compatible', model_id: '', provider: 'anthropic', group: 'domestic', key_url: 'https://console.volcengine.com/ark/' },
-  { name: '硅基流动', short: '硅', color: '#7C3AED', api_url: 'https://api.siliconflow.cn/v1', model_id: 'deepseek-ai/DeepSeek-V3', provider: 'openai_compatible', group: 'domestic', key_url: 'https://cloud.siliconflow.cn/account/ak' },
-  { name: '腾讯 TokenHub', short: '腾', color: '#0052D9', api_url: 'https://tokenhub.tencentmaas.com/v1', model_id: '', provider: 'openai_compatible', group: 'domestic', key_url: 'https://cloud.tencent.com/login?s_url=https%3A%2F%2Fconsole.cloud.tencent.com%2Ftokenhub' },
-  { name: 'MiniMax', short: 'M', color: '#F23F5D', api_url: 'https://api.minimaxi.com/anthropic', model_id: 'MiniMax-M2', provider: 'anthropic', group: 'domestic', key_url: 'https://platform.minimaxi.com/' },
-  { name: 'Xiaomi MiMo', short: 'Mi', color: '#FF6900', api_url: 'https://api.xiaomimimo.com/v1', model_id: '', provider: 'openai_compatible', group: 'domestic', key_url: 'https://platform.xiaomimimo.com/token-plan' },
-  // —— 国外（文档默认配置）——
-  { name: 'OpenAI', short: 'AI', color: '#10A37F', api_url: 'https://api.openai.com/v1', model_id: 'gpt-4o', provider: 'responses', group: 'international', key_url: 'https://platform.openai.com/api-keys' },
+  // —— 国内（Base URL 填裸 base，协议路径调用时内部拼接；《模型默认配置》2026-11-09）——
+  {
+    name: 'DeepSeek', short: 'DS', color: '#4D6BFE', api_url: 'https://api.deepseek.com/anthropic', model_id: 'deepseek-flash', provider: 'anthropic', group: 'domestic', key_url: 'https://platform.deepseek.com/api_keys',
+    models: [
+      { model_id: 'deepseek-flash', context_window: 1000000, max_output_tokens: 384000, input_types: ['text', 'image'], capabilities: ['web_search', 'system_message'], reasoning_levels: ['disabled', 'low', 'high', 'max'], reasoning_mapping: MAP_DEEPSEEK },
+      { model_id: 'deepseek-v4-pro', context_window: 1000000, max_output_tokens: 384000, input_types: ['text'], capabilities: ['web_search', 'system_message'], reasoning_levels: ['disabled', 'low', 'high', 'max'], reasoning_mapping: MAP_DEEPSEEK },
+    ],
+  },
+  {
+    name: '智谱 GLM', short: '智', color: '#3859FF', api_url: 'https://open.bigmodel.cn/api/paas/v4', model_id: 'GLM-5.3', provider: 'openai_compatible', group: 'domestic', key_url: 'https://open.bigmodel.cn/usercenter/apikeys',
+    models: [
+      { model_id: 'GLM-5.3', context_window: 1000000, max_output_tokens: 128000, input_types: ['text'], capabilities: [], reasoning_levels: ['low', 'high', 'max'], reasoning_mapping: MAP_ZHIPU },
+      { model_id: 'GLM-5.3-Flash', context_window: 1000000, max_output_tokens: 128000, input_types: ['text', 'image', 'video', 'pdf'], capabilities: [], reasoning_levels: ['low', 'high', 'max'], reasoning_mapping: MAP_ZHIPU },
+    ],
+  },
+  {
+    name: 'Kimi（月之暗面）', short: 'K', color: '#171D26', api_url: 'https://api.moonshot.cn/anthropic', model_id: 'kimi-k3.1-pro', provider: 'anthropic', group: 'domestic', key_url: 'https://platform.moonshot.cn/console/api-keys',
+    models: [
+      { model_id: 'kimi-k3.1-pro', context_window: 1048576, max_output_tokens: 131072, input_types: ['text', 'image', 'video'], capabilities: [], reasoning_levels: ['low', 'high', 'max'], reasoning_mapping: MAP_KIMI_EFFORT },
+      { model_id: 'kimi-k3.1-pro-highspeed', context_window: 1048576, max_output_tokens: 131072, input_types: ['text', 'image', 'video'], capabilities: [], reasoning_levels: ['low', 'high', 'max'], reasoning_mapping: MAP_KIMI_EFFORT },
+      { model_id: 'kimi-k3', context_window: 1048576, max_output_tokens: 131072, input_types: ['text', 'image', 'video'], capabilities: [], reasoning_levels: ['low', 'high', 'max'], reasoning_mapping: MAP_KIMI_EFFORT },
+      { model_id: 'kimi-k2.7-code', context_window: 262144, max_output_tokens: 98304, input_types: ['text', 'image', 'video'], capabilities: [], reasoning_levels: ['enabled'], reasoning_mapping: MAP_KIMI_TOGGLE },
+      { model_id: 'kimi-k2.6', context_window: 262144, max_output_tokens: 98304, input_types: ['text', 'image', 'video'], capabilities: [], reasoning_levels: ['disabled', 'enabled'], reasoning_mapping: MAP_KIMI_TOGGLE },
+    ],
+  },
+  {
+    name: '阿里云百炼', short: '百', color: '#FF6A00', api_url: 'https://dashscope.aliyuncs.com/apps/anthropic', model_id: 'qwen3.8-max', provider: 'anthropic', group: 'domestic', key_url: 'https://bailian.console.aliyun.com/',
+    models: [
+      { model_id: 'qwen3.8-max', context_window: 1000000, max_output_tokens: 131072, input_types: ['text', 'image', 'video'], capabilities: ['structured_output'], reasoning_levels: ['low', 'medium', 'xhigh'], reasoning_mapping: MAP_QWEN },
+      { model_id: 'qwen3.8-flash', context_window: 1000000, max_output_tokens: 131072, input_types: ['text', 'image', 'video'], capabilities: ['structured_output'], reasoning_levels: ['low', 'medium', 'xhigh'], reasoning_mapping: MAP_QWEN },
+    ],
+  },
+  {
+    name: '火山方舟（豆包）', short: '火', color: '#1664FF', api_url: 'https://ark.cn-beijing.volces.com/api/compatible', model_id: 'doubao-seed-evolving', provider: 'anthropic', group: 'domestic', key_url: 'https://console.volcengine.com/ark/',
+    models: [
+      { model_id: 'doubao-seed-evolving', context_window: 1024000, max_output_tokens: 256000, input_types: ['text', 'image'], capabilities: [], reasoning_levels: ['none', 'low', 'medium', 'high'], reasoning_mapping: MAP_DOUBAO },
+      { model_id: 'doubao-seed-2-1-pro-260915', context_window: 1024000, max_output_tokens: 256000, input_types: ['text', 'image'], capabilities: [], reasoning_levels: ['none', 'low', 'medium', 'high'], reasoning_mapping: MAP_DOUBAO },
+      { model_id: 'doubao-seed-2-1-lite-260915', context_window: 1024000, max_output_tokens: 256000, input_types: ['text', 'image'], capabilities: [], reasoning_levels: ['none', 'low', 'medium', 'high'], reasoning_mapping: MAP_DOUBAO },
+      { model_id: 'doubao-seed-2-1-turbo-260628', context_window: 256000, max_output_tokens: 256000, input_types: ['text', 'image'], capabilities: [], reasoning_levels: ['none', 'low', 'medium', 'high'], reasoning_mapping: MAP_DOUBAO },
+    ],
+  },
+  {
+    name: '硅基流动', short: '硅', color: '#7C3AED', api_url: 'https://api.siliconflow.cn/v1', model_id: 'zai-org/GLM-5.3', provider: 'openai_compatible', group: 'domestic', key_url: 'https://cloud.siliconflow.cn/account/ak',
+    models: [
+      { model_id: 'zai-org/GLM-5.3', context_window: 1048576, max_output_tokens: 128000, input_types: ['text'], capabilities: [], reasoning_levels: ['enabled'], reasoning_mapping: '{"enable_thinking": true}' },
+      { model_id: 'deepseek-ai/DeepSeek-V4-Flash', context_window: 1048576, max_output_tokens: 393216, input_types: ['text'], capabilities: [], reasoning_levels: ['disabled', 'high', 'max'], reasoning_mapping: MAP_SILICON_DS },
+      { model_id: 'moonshotai/Kimi-K2.7-Code', context_window: 262144, max_output_tokens: 98304, input_types: ['text', 'image'], capabilities: [], reasoning_levels: ['enabled'], reasoning_mapping: '{"enable_thinking": true}' },
+    ],
+  },
+  {
+    name: '腾讯 TokenHub', short: '腾', color: '#0052D9', api_url: 'https://tokenhub.tencentmaas.com/v1', model_id: 'hy3', provider: 'openai_compatible', group: 'domestic', key_url: 'https://cloud.tencent.com/login?s_url=https%3A%2F%2Fconsole.cloud.tencent.com%2Ftokenhub',
+    models: [
+      { model_id: 'hy3', context_window: 256000, max_output_tokens: 128000, input_types: ['text'], capabilities: [], reasoning_levels: ['none', 'high'], reasoning_mapping: MAP_EFFORT },
+      { model_id: 'hy4-preview', context_window: 1024000, max_output_tokens: 64000, input_types: ['text'], capabilities: [], reasoning_levels: ['none', 'high'], reasoning_mapping: MAP_EFFORT },
+    ],
+  },
+  {
+    name: 'MiniMax', short: 'M', color: '#F23F5D', api_url: 'https://api.minimaxi.com/anthropic', model_id: 'MiniMax-M3.1-Flash', provider: 'anthropic', group: 'domestic', key_url: 'https://platform.minimaxi.com/',
+    models: [
+      { model_id: 'MiniMax-M3.1-Flash', context_window: 1000000, max_output_tokens: 524288, input_types: ['text', 'image', 'video'], capabilities: [], reasoning_levels: ['low', 'medium', 'high', 'xhigh', 'max'], reasoning_mapping: MAP_MINIMAX_FLASH },
+      { model_id: 'MiniMax-M3', context_window: 1000000, max_output_tokens: 32000, input_types: ['text', 'image', 'video'], capabilities: [], reasoning_levels: ['disabled', 'enabled'], reasoning_mapping: MAP_MINIMAX_M3 },
+    ],
+  },
+  {
+    name: 'Xiaomi MiMo', short: 'Mi', color: '#FF6900', api_url: 'https://api.xiaomimimo.com/anthropic', model_id: 'mimo-v2.6-pro', provider: 'anthropic', group: 'domestic', key_url: 'https://platform.xiaomimimo.com/token-plan',
+    models: [
+      { model_id: 'mimo-v2.6-pro', context_window: 1000000, max_output_tokens: 131072, input_types: ['text', 'image', 'video'], capabilities: [], reasoning_levels: ['disabled', 'enabled'], reasoning_mapping: MAP_KIMI_TOGGLE },
+      { model_id: 'mimo-v2.6-flash', context_window: 1000000, max_output_tokens: 131072, input_types: ['text', 'image', 'video'], capabilities: [], reasoning_levels: ['disabled', 'enabled'], reasoning_mapping: MAP_KIMI_TOGGLE },
+    ],
+  },
+  // —— 国外（《模型默认配置》2026-11-09）——
+  {
+    name: 'OpenAI', short: 'AI', color: '#10A37F', api_url: 'https://api.openai.com/v1', model_id: 'gpt-6-astra', provider: 'responses', group: 'international', key_url: 'https://platform.openai.com/api-keys',
+    models: [
+      { model_id: 'gpt-6-astra', context_window: 1050000, max_output_tokens: 128000, input_types: ['text', 'image', 'pdf'], capabilities: ['structured_output'], reasoning_levels: ['low', 'medium', 'high', 'xhigh', 'max'], reasoning_mapping: MAP_OPENAI },
+      { model_id: 'gpt-5.6-terra', context_window: 1050000, max_output_tokens: 128000, input_types: ['text', 'image', 'pdf'], capabilities: ['structured_output'], reasoning_levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'], reasoning_mapping: MAP_OPENAI },
+      { model_id: 'gpt-6.1-sol', context_window: 1050000, max_output_tokens: 128000, input_types: ['text', 'image', 'pdf'], capabilities: ['structured_output'], reasoning_levels: ['low', 'medium', 'high', 'xhigh', 'max'], reasoning_mapping: MAP_OPENAI },
+      { model_id: 'gpt-6-luna', context_window: 1050000, max_output_tokens: 128000, input_types: ['text', 'image', 'pdf'], capabilities: ['structured_output'], reasoning_levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'], reasoning_mapping: MAP_OPENAI },
+    ],
+  },
   { name: 'OpenRouter', short: 'OR', color: '#8B5CF6', api_url: 'https://openrouter.ai/api/v1', model_id: '', provider: 'anthropic', group: 'international', key_url: 'https://openrouter.ai/settings/keys' },
-  { name: 'xAI（Grok）', short: '𝕏', color: '#111111', api_url: 'https://api.x.ai/v1', model_id: 'grok-4', provider: 'responses', group: 'international', key_url: 'https://console.x.ai/' },
-  { name: 'Anthropic', short: 'Cl', color: '#D97757', api_url: 'https://api.anthropic.com/v1', model_id: 'claude-sonnet-4-5', provider: 'anthropic', group: 'international', key_url: 'https://console.anthropic.com/settings/keys' },
+  {
+    name: 'xAI（Grok）', short: '𝕏', color: '#111111', api_url: 'https://api.x.ai/v1', model_id: 'grok-build-0.1', provider: 'responses', group: 'international', key_url: 'https://console.x.ai/',
+    models: [
+      { model_id: 'grok-build-0.1', context_window: 256000, max_output_tokens: 128000, input_types: ['text', 'image'], capabilities: ['structured_output'], reasoning_levels: ['disabled', 'enabled'], reasoning_mapping: MAP_GROK_TOGGLE },
+      { model_id: 'grok-4.7', context_window: 500000, max_output_tokens: 128000, input_types: ['text', 'image'], capabilities: ['structured_output'], reasoning_levels: ['low', 'medium', 'high', 'xhigh'], reasoning_mapping: MAP_OPENAI },
+    ],
+  },
+  {
+    name: 'Anthropic', short: 'Cl', color: '#D97757', api_url: 'https://api.anthropic.com/v1', model_id: 'claude-fable-5-1', provider: 'anthropic', group: 'international', key_url: 'https://console.anthropic.com/settings/keys',
+    models: [
+      { model_id: 'claude-fable-5-1', context_window: 1000000, max_output_tokens: 128000, input_types: ['text', 'image', 'pdf'], capabilities: ['structured_output', 'web_search', 'system_message'], reasoning_levels: ['low', 'medium', 'high', 'xhigh', 'max'], reasoning_mapping: MAP_CLAUDE },
+      { model_id: 'claude-opus-5-5', context_window: 1000000, max_output_tokens: 128000, input_types: ['text', 'image', 'pdf'], capabilities: ['structured_output', 'system_message'], reasoning_levels: ['low', 'medium', 'high', 'xhigh', 'max'], reasoning_mapping: MAP_CLAUDE },
+      { model_id: 'claude-sonnet-5-5', context_window: 1000000, max_output_tokens: 128000, input_types: ['text', 'image', 'pdf'], capabilities: ['structured_output'], reasoning_levels: ['low', 'medium', 'high', 'xhigh', 'max'], reasoning_mapping: MAP_CLAUDE },
+      { model_id: 'claude-haiku-5-5', context_window: 1000000, max_output_tokens: 128000, input_types: ['text', 'image', 'pdf'], capabilities: ['structured_output'], reasoning_levels: ['low', 'medium', 'high', 'xhigh', 'max'], reasoning_mapping: MAP_CLAUDE },
+    ],
+  },
 ]
 
 const hostOf = (url: string): string => {
@@ -246,7 +435,9 @@ export default function LLMGatewayPage() {
     setModalOpen(true)
   }
 
-  // 添加供应商（模板卡）：自动创建并出现在左栏，提示填写 API Key（不走表单）
+  // 添加供应商（模板卡）：自动创建并出现在左栏，提示填写 API Key（不走表单）。
+  // 模板带 models 清单时一键创建整组模型档案（首模型主档案，其余同组克隆，
+  // 各自带上下文窗口/推理等级/映射等默认参数——对齐《模型默认配置》）。
   const quickAddProvider = async (tpl: ProviderTemplate) => {
     const taken = new Set(profiles.map((p) => p.name))
     let name = tpl.name
@@ -256,22 +447,47 @@ export default function LLMGatewayPage() {
       serial += 1
     }
     try {
-      await createLlmProfile({
-        name,
-        provider: tpl.provider,
-        api_url: tpl.api_url,
-        model_id: tpl.model_id,
-        deployment: 'cloud',
-        timeout_seconds: 60,
-        temperature: 0.7,
-        max_tokens: 2000,
-        purpose_tags: ['chat', 'agent'],
-        is_default: profiles.length === 0, // 第一个供应商自动设为平台默认
-      })
+      const models: ProviderTemplateModel[] = tpl.models?.length
+        ? tpl.models
+        : [{ model_id: tpl.model_id }]
+      const baseName = name
+      let groupId: string | undefined
+      for (let index = 0; index < models.length; index += 1) {
+        const model = models[index]
+        const created = await createLlmProfile({
+          name: index === 0 ? baseName : `${baseName}·${model.model_id}`,
+          provider: tpl.provider,
+          api_url: tpl.api_url,
+          model_id: model.model_id,
+          deployment: 'cloud',
+          timeout_seconds: 60,
+          temperature: 0.7,
+          max_tokens: model.max_output_tokens || 2000,
+          purpose_tags: ['chat', 'agent'],
+          is_default: profiles.length === 0 && index === 0, // 第一个供应商自动设为平台默认
+          provider_group: groupId,
+          model_config_json: model.context_window
+            ? {
+                context_window: model.context_window,
+                max_output_tokens: model.max_output_tokens ?? null,
+                input_types: model.input_types ?? ['text'],
+                capabilities: model.capabilities ?? ['system_message'],
+                reasoning_levels: model.reasoning_levels ?? [],
+                reasoning_mapping: model.reasoning_mapping ?? '',
+              }
+            : undefined,
+        })
+        groupId = groupId || (created as { provider_group?: string }).provider_group
+      }
       setPickerOpen(false)
       setManualKey(`tpl:${tpl.name}`) // 新供应商出现在左栏并自动选中
       load()
-      message.info(zh ? '供应商已添加，请在右侧填写 API Key' : 'Provider added — fill the API Key', 6)
+      message.info(
+        models.length > 1
+          ? (zh ? `供应商已添加（${models.length} 个模型），请填写 API Key` : `Provider added with ${models.length} models — fill the API Key`)
+          : (zh ? '供应商已添加，请在右侧填写 API Key' : 'Provider added — fill the API Key'),
+        6,
+      )
     } catch (error) {
       message.error(formatApiError(error, zh ? '添加失败' : 'Failed to add'))
     }

@@ -37,6 +37,8 @@ export interface LLMProfilePayload {
   is_default?: boolean;
   enabled?: boolean;
   model_config_json?: Record<string, unknown> | null;
+  /** 供应商组：同组档案聚合为同一供应商（克隆/模板批量创建时传入源组） */
+  provider_group?: string;
 }
 
 export interface LLMConnectivity {
