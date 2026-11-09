@@ -6,6 +6,7 @@ import {
   fixateRecipe,
   servitizeDraft,
   servitizeActivate,
+  servitizePublish,
 } from "../api/agentCenter";
 
 /**
@@ -70,6 +71,9 @@ export default function ServitizeActions({
   const [castPhase, setCastPhase] = useState<CastPhase>("idle");
   const [castNote, setCastNote] = useState("");
   const castTimer = useRef<number | null>(null);
+  // ④ 发布目标开关（默认全发：API+闭环 / 应用编排）
+  const [publishApi, setPublishApi] = useState(true);
+  const [publishOrch, setPublishOrch] = useState(true);
 
   const fixate = async () => {
     setBusy(true);
@@ -245,10 +249,22 @@ export default function ServitizeActions({
     setBusy(true);
     setError("");
     try {
-      await servitizeActivate(draft.model_api_id);
+      // 三目标一键发布：API+闭环（activate）+编排（实例化模板发布），
+      // 开关默认全选；闭环随 API 开关（无 API 的闭环无流量来源）
+      const result = await servitizePublish({
+        model_api_id: draft.model_api_id,
+        project_id: projectId ?? "",
+        publish_api: publishApi,
+        publish_orchestration: publishOrch,
+      });
       setPublished(true);
+      if (result.orchestration) {
+        setCastNote(zh
+          ? `编排 API 已发布（工作流 ${result.orchestration.workflow_id.slice(0, 8)}）`
+          : `Orchestration API published`);
+      }
     } catch (caught) {
-      setError(String(caught));
+      setError(String((caught as { response?: { data?: { detail?: { message?: string } } } })?.response?.data?.detail?.message ?? caught));
     } finally {
       setBusy(false);
     }
@@ -514,15 +530,26 @@ export default function ServitizeActions({
           </span>
         ) : null}
         {draft && !published && (stateOf(4) === "active" || stateOf(4) === "busy") ? (
-          <button
-            type="button"
-            className="v2-btn primary"
-            style={{ padding: "4px 14px", fontSize: 12 }}
-            disabled={busy}
-            onClick={() => void approve()}
-          >
-            {zh ? "④ 批准发布" : "④ Approve"}
-          </button>
+          <>
+            {/* 发布目标开关（默认全选）：API+闭环 / 应用编排 */}
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, cursor: "pointer" }}>
+              <input type="checkbox" checked={publishApi} onChange={(e) => setPublishApi(e.target.checked)} />
+              {zh ? "API + 闭环任务" : "API + closed loop"}
+            </label>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, cursor: "pointer" }}>
+              <input type="checkbox" checked={publishOrch} onChange={(e) => setPublishOrch(e.target.checked)} />
+              {zh ? "应用编排（实例化闭环模板）" : "Orchestration"}
+            </label>
+            <button
+              type="button"
+              className="v2-btn primary"
+              style={{ padding: "4px 14px", fontSize: 12 }}
+              disabled={busy || (!publishApi && !publishOrch)}
+              onClick={() => void approve()}
+            >
+              {zh ? "④ 批准发布" : "④ Approve"}
+            </button>
+          </>
         ) : null}
 
         {published ? (

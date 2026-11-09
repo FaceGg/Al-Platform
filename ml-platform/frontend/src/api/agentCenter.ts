@@ -203,6 +203,28 @@ export async function servitizeDraft(payload: {
   return response.data;
 }
 
+// ④ 一键发布（三目标开关，默认全发）
+export interface ServitizePublishResult {
+  model_api_id: string;
+  api_status?: string;
+  orchestration?: {
+    api_id: string;
+    status: string;
+    workflow_id: string;
+    endpoint?: string;
+  };
+}
+
+export async function servitizePublish(payload: {
+  model_api_id: string;
+  project_id: string;
+  publish_api: boolean;
+  publish_orchestration: boolean;
+}): Promise<ServitizePublishResult> {
+  const response = await apiClient.post("/agent/servitize/publish", payload);
+  return response.data;
+}
+
 export async function servitizeActivate(modelApiId: string): Promise<{ status: string }> {
   const response = await apiClient.post("/agent/servitize/activate", {
     model_api_id: modelApiId,

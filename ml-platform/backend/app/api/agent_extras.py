@@ -912,3 +912,115 @@ def servitize_activate(
         raise HTTPException(409, detail={"code": "SERVITIZE_STATE_INVALID",
                                          "message": str(error)})
     return {"model_api_id": str(api.id), "status": api.status}
+
+
+class PublishTargetsRequest(BaseModel):
+    """④ 批准发布的三目标开关（默认全发）：api+loop 走既有 activate，
+    orchestration 实例化闭环服务模板并发布编排 API。"""
+    model_api_id: str = Field(min_length=1, max_length=64)
+    project_id: str = Field(min_length=1, max_length=64)
+    publish_api: bool = True
+    publish_orchestration: bool = True
+
+
+@router.post("/servitize/publish")
+def servitize_publish(
+    payload: PublishTargetsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """④ 一键发布（默认 API+闭环+编排三目标全发）。
+
+    api+loop：activate_servitize（既有）；orchestration：从服务化草稿绑定的
+    闭环任务读全部参数（部署/配方/特征脚本/阈值/白名单/集成），实例化
+    「闭环服务模板」→参数替换→发布工作流 v1→发布编排 API（幂等复用）。"""
+    from app.models.api_model import PlatformAPI
+    from app.models.demo_loop import DemoLoopConfig
+    from app.services.agent.orchestration_publish import (
+        publish_orchestration_from_recipe,
+    )
+    from app.services.agent.servitize import activate_servitize
+
+    api = db.get(PlatformAPI, uuid_module.UUID(payload.model_api_id))
+    if api is None:
+        raise HTTPException(404, detail={"code": "MODEL_API_NOT_FOUND"})
+    result: dict = {"model_api_id": str(api.id)}
+
+    if payload.publish_api:
+        try:
+            activated = activate_servitize(
+                db, model_api_id=payload.model_api_id, actor_id=current_user.id)
+            result["api_status"] = activated.status
+        except ValueError as error:
+            raise HTTPException(409, detail={"code": "SERVITIZE_STATE_INVALID",
+                                             "message": str(error)})
+
+    if payload.publish_orchestration:
+        loop_id = (api.showcase_state or {}).get("loop_config_id")
+        loop = db.get(DemoLoopConfig, uuid_module.UUID(str(loop_id))) \
+            if loop_id else None
+        if loop is None:
+            raise HTTPException(422, detail={
+                "code": "ORCHESTRATION_LOOP_MISSING",
+                "message": "服务化草稿未绑定闭环任务，无法推导编排参数"})
+        if not loop.deployment_id:
+            raise HTTPException(422, detail={
+                "code": "ORCHESTRATION_DEPLOYMENT_MISSING",
+                "message": "闭环任务未绑定部署"})
+        from app.services.agent.recipe import get_current_version
+
+        recipe_uuid = uuid_module.UUID(str(loop.retrain_agent_recipe_id)) \
+            if getattr(loop, "retrain_agent_recipe_id", None) else None
+        if recipe_uuid is None:
+            raise HTTPException(422, detail={
+                "code": "ORCHESTRATION_RECIPE_MISSING",
+                "message": "闭环任务未绑定固化配方（agent 重训模式），无法生成编排"})
+        version = get_current_version(db, recipe_uuid)
+        content = dict(version.content_json or {})
+        guidance = dict(content.get("guidance") or {})
+        feature_guidance = dict(guidance.get("feature") or {})
+        # 回流/累积数据集：闭环报错集优先，缺省回落配置数据集
+        accum_id = str(loop.error_artifact_id) if loop.error_artifact_id else ""
+        if not accum_id:
+            ids = list(getattr(loop, "retrain_dataset_artifact_ids", None) or [])
+            if not ids and loop.retrain_dataset_artifact_id:
+                ids = [loop.retrain_dataset_artifact_id]
+            accum_id = str(ids[0]) if ids else ""
+        retrain_ids = list(getattr(loop, "retrain_dataset_artifact_ids", None) or [])
+        if not retrain_ids and loop.retrain_dataset_artifact_id:
+            retrain_ids = [loop.retrain_dataset_artifact_id]
+        retrain_dataset_id = (str(retrain_ids[0]) if retrain_ids else accum_id)
+        try:
+            orch_api, workflow = publish_orchestration_from_recipe(
+                db,
+                project_id=payload.project_id,
+                actor_id=current_user.id,
+                recipe_id=recipe_uuid,
+                deployment_id=loop.deployment_id,
+                feature_script=str(content.get("feature_script") or ""),
+                target_column=loop.retrain_target_column or "",
+                error_classes=list(loop.error_classes or []),
+                threshold_rows=int(loop.retrain_threshold_rows or 12),
+                retrain_dataset_id=retrain_dataset_id,
+                accum_dataset_id=accum_id,
+                error_dataset_id=accum_id,
+                ensemble_enabled=bool(getattr(loop, "retrain_ensemble_enabled", False)),
+                algorithm_ids=[
+                    str(item) for item in
+                    (content.get("retrain_algorithm_ids")
+                     or getattr(loop, "retrain_algorithm_ids", None) or [])
+                ],
+                input_columns=list(
+                    getattr(loop, "retrain_input_columns", None) or []),
+            )
+            result["orchestration"] = {
+                "api_id": str(orch_api.id),
+                "status": orch_api.status,
+                "workflow_id": str(workflow.id),
+                "endpoint": orch_api.endpoint,
+            }
+        except ValueError as error:
+            raise HTTPException(422, detail={
+                "code": "ORCHESTRATION_PUBLISH_FAILED",
+                "message": str(error)})
+    return result
