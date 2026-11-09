@@ -333,38 +333,122 @@ export default function ServitizeActions({
         ) : null}
       </div>
 
-      {/* 步骤条：每步状态徽标 + 名称；locked 步灰色不可点 */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+      {/* 步骤条：圆形节点 + 箭头连线（完成段绿色，未到段灰色），
+          节点下方步骤名；当前步蓝色高亮、进行中转圈、锁定步灰显 */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          margin: "4px 0 12px",
+        }}
+      >
         {stepLabels.map((label, index) => {
           const n = index + 1;
           const st = stateOf(n);
+          const nextDone = index < 3 && stateOf(n + 1) === "done";
+          const connectorDone = st === "done" && (nextDone || n === currentStep - 1 || n === 4);
+          const nodeColor =
+            st === "done" ? "#52c41a"
+              : st === "active" || st === "busy" ? "#1677ff"
+                : "#c3c3c3";
           return (
-            <span
+            <div
               key={label}
               style={{
-                display: "inline-flex",
+                display: "flex",
                 alignItems: "center",
-                gap: 6,
-                fontSize: 12,
-                padding: "3px 10px",
-                borderRadius: 12,
-                border: `1px solid ${
-                  st === "active" || st === "busy"
-                    ? "var(--v2-blue, #1677ff)"
-                    : st === "done"
-                      ? "var(--v2-go, #52c41a)"
-                      : "var(--v2-line, #ddd)"
-                }`,
-                background:
-                  st === "active" || st === "busy" ? "rgba(22,119,255,.08)" : "transparent",
-                color:
-                  st === "locked" ? "var(--v2-dim, #aaa)"
-                    : st === "done" ? "var(--v2-go, #389e0d)" : "var(--v2-txt)",
+                flex: index < 3 ? "1 1 auto" : "0 0 auto",
+                minWidth: 0,
               }}
             >
-              {stepBadge(st, n)}
-              {label}
-            </span>
+              {/* 节点列：圆 + 名称 */}
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 5,
+                  minWidth: 76,
+                }}
+              >
+                <div
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: "50%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    border: `2px solid ${nodeColor}`,
+                    background:
+                      st === "done" ? "rgba(82,196,26,.12)"
+                        : st === "active" || st === "busy" ? "rgba(22,119,255,.10)"
+                          : "transparent",
+                    boxShadow:
+                      st === "active" || st === "busy"
+                        ? "0 0 0 4px rgba(22,119,255,.10)"
+                        : "none",
+                    transition: "all .3s ease",
+                  }}
+                >
+                  {st === "done" ? (
+                    <span style={{ color: "#52c41a", lineHeight: 1 }}>✓</span>
+                  ) : st === "busy" ? (
+                    <StepSpinner />
+                  ) : (
+                    <span style={{ color: st === "active" ? "#1677ff" : "#b5b5b5", lineHeight: 1 }}>{n}</span>
+                  )}
+                </div>
+                <span
+                  style={{
+                    fontSize: 12,
+                    whiteSpace: "nowrap",
+                    color:
+                      st === "locked" ? "var(--v2-dim, #aaa)"
+                        : st === "done" ? "#389e0d"
+                          : st === "active" || st === "busy" ? "#1677ff"
+                            : "var(--v2-txt)",
+                    fontWeight: st === "active" || st === "busy" ? 600 : 400,
+                  }}
+                >
+                  {label}
+                </span>
+              </div>
+              {/* 箭头连线（最后一步之后无） */}
+              {index < 3 ? (
+                <div
+                  style={{
+                    flex: 1,
+                    display: "flex",
+                    alignItems: "center",
+                    margin: "0 8px 18px",
+                    minWidth: 28,
+                  }}
+                  aria-hidden
+                >
+                  <div
+                    style={{
+                      flex: 1,
+                      height: 2,
+                      background: connectorDone ? "#52c41a" : "var(--v2-line, #ddd)",
+                      transition: "background .3s ease",
+                    }}
+                  />
+                  <div
+                    style={{
+                      width: 0,
+                      height: 0,
+                      borderTop: "5px solid transparent",
+                      borderBottom: "5px solid transparent",
+                      borderLeft: `7px solid ${connectorDone ? "#52c41a" : "var(--v2-line, #ddd)"}`,
+                      transition: "border-color .3s ease",
+                    }}
+                  />
+                </div>
+              ) : null}
+            </div>
           );
         })}
       </div>
