@@ -288,7 +288,10 @@ export async function castDeploymentStatus(
 // 页面恢复：配方当前铸造状态（无在途时 status=idle）
 export async function castDeploymentCurrent(
   recipeId: string,
-): Promise<CastDeploymentStatusResult & { job_id?: string }> {
+): Promise<CastDeploymentStatusResult & {
+  job_id?: string;
+  servitize?: { status: string; model_api_id?: string; model_api_name?: string };
+}> {
   const response = await apiClient.get(
     `/agent/servitize/cast-deployment/current?recipe_id=${recipeId}`,
   );

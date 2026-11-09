@@ -690,10 +690,33 @@ def cast_deployment_current(
     if dep_key and _is_uuid(dep_key):
         dep = db.get(InferenceDeployment, uuid_module.UUID(dep_key))
         if dep is not None:
+            # 附带该部署的服务化条目状态（published/offline/none）——前端
+            # 恢复时据此把③④步直接置为完成/草稿态，已发布的不再让用户
+            # 重复点③触发 "already published" 防护报错。
+            from app.models.api_model import PlatformAPI
+
+            api_row = (
+                db.query(PlatformAPI)
+                .filter(
+                    PlatformAPI.source_kind == "servitize",
+                    PlatformAPI.source_id == uuid_module.UUID(dep_key),
+                )
+                .first()
+            )
+            servitize_state = (
+                {
+                    "status": api_row.status,
+                    "model_api_id": str(api_row.id),
+                    "model_api_name": api_row.name,
+                }
+                if api_row is not None
+                else {"status": "none"}
+            )
             return {"status": "deployed", "job_id": meta.get("job_id"),
                     "deployment_id": dep_key,
                     "model_version_id": str(dep.model_version_id),
-                    "deployment_state": dep.observed_state}
+                    "deployment_state": dep.observed_state,
+                    "servitize": servitize_state}
     job_key = str(meta.get("job_id") or "")
     if job_key and _is_uuid(job_key):
         job = db.get(TrainingJob, uuid_module.UUID(job_key))

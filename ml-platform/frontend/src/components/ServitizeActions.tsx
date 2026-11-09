@@ -180,6 +180,27 @@ export default function ServitizeActions({
           setCastPhase("deployed");
           setDeploymentId(state.deployment_id);
           setCastNote(zh ? `铸造部署已就绪（${state.deployment_state ?? "running"}）` : "Cast deployment ready");
+          // 服务化条目状态恢复：已发布 → ③④直接置完成；有草稿 → ④可点
+          // （否则已发布的部署再点③会撞 already-published 防护报错）
+          if (state.servitize?.status === "published") {
+            setDraft((prev) => prev ?? {
+              model_api_id: state.servitize?.model_api_id ?? "",
+              model_api_name: state.servitize?.model_api_name ?? "",
+              error_classes: [],
+              ambiguous_labels: [],
+              smoke: {},
+            });
+            setPublished(true);
+            setCastNote(zh ? "该部署的服务化条目已发布" : "Servitize entry already published");
+          } else if (state.servitize?.status === "offline" && state.servitize.model_api_id) {
+            setDraft((prev) => prev ?? {
+              model_api_id: state.servitize?.model_api_id ?? "",
+              model_api_name: state.servitize?.model_api_name ?? "",
+              error_classes: [],
+              ambiguous_labels: [],
+              smoke: {},
+            });
+          }
         } else if (["pending", "queued", "running", "cancel_requested"].includes(state.status) && state.job_id) {
           setCastPhase("casting");
           setBusy(true);
