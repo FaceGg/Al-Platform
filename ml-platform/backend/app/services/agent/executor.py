@@ -366,6 +366,11 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
         # 训练数据保真度：全量（full_data=True）或显式抽样的行数事实——
         # 随 S3 digest/验收报告落档案，指标语义对用户永远透明
         "data_fidelity": fidelity,
+        # 冠军模型运行时对象 + 特征列（进程内传递给 runner；验收通过时
+        # 物化为 joblib 工件供「直接部署 S3 模型」——不进 JSON 档案）
+        "champion_model": champ_model,
+        "champion_features": [str(name) for name in X.columns],
+        "champion_algorithm": champ_name,
     }
     if ensemble_info is not None:
         result["ensemble"] = ensemble_info

@@ -576,6 +576,28 @@ class ModelRegistryService:
         if artifact is None:
             raise ModelRegistryError("MODEL_SOURCE_NOT_FOUND")
         metadata = artifact.metadata_ or {}
+        if metadata.get("source") == "agent_s3_champion":
+            # 智能体 S3 冠军（验收即物化）：信任锚 = 源 run 必须是本项目
+            # accepted 终态（平台自己训练物化的工件，无 TrainingJob 载体）。
+            run_key = metadata.get("run_id")
+            try:
+                run_uuid = uuid.UUID(str(run_key))
+            except (TypeError, ValueError, AttributeError):
+                raise ModelRegistryError("MODEL_SOURCE_UNTRUSTED") from None
+            from app.models.agent_run import AgentRun as _AgentRun
+
+            source_run = db.query(_AgentRun).filter(
+                _AgentRun.id == run_uuid,
+                _AgentRun.project_id == model.project_id,
+                _AgentRun.status == "accepted",
+            ).first()
+            if source_run is None or library.status != "completed" or library.format != "joblib":
+                raise ModelRegistryError("MODEL_SOURCE_UNTRUSTED")
+            # 跳过 training/automl 的 job 校验，直接进入转换注册
+            return self._register_trusted_library_version(
+                db, model=model, library=library, artifact=artifact,
+                actor_id=actor_id, commit=commit,
+            )
         if metadata.get("source") not in {"training", "automl"}:
             raise ModelRegistryError("MODEL_SOURCE_UNTRUSTED")
         job_id = metadata.get("training_job_id")
@@ -611,7 +633,18 @@ class ModelRegistryService:
             trusted = job.model_artifact_id == artifact.id and job.model_library_id == library.id
         if not trusted:
             raise ModelRegistryError("MODEL_SOURCE_UNTRUSTED")
+        return self._register_trusted_library_version(
+            db, model=model, library=library, artifact=artifact,
+            actor_id=actor_id, commit=commit,
+        )
 
+    def _register_trusted_library_version(
+        self, db, *, model, library, artifact, actor_id, commit: bool = True,
+    ) -> ModelVersion:
+        """信任校验通过后的公共转换注册段（ONNX 端口提取+版本落库）。
+
+        training/automl 与 agent_s3_champion 两类来源共用——差异只在
+        上游的信任锚（TrainingJob 链 vs accepted run 链）。"""
         onnx_artifact = None
         with tempfile.TemporaryDirectory(prefix="registry-conversion-") as temporary:
             destination = Path(temporary) / f"{model.id}.onnx"

@@ -60,6 +60,8 @@ class AgentRunner:
         self.actor = actor
         self.memory: dict = {"rounds": []}
         self._usage_total = 0
+        # S3 冠军模型运行时持有（accepted 时物化；失败/升级即随进程丢弃）
+        self._s3_champion: dict | None = None
 
     # ------------------------------------------------------------------ util
     def _absorb_usage(self, usage: dict) -> bool:
@@ -211,9 +213,66 @@ class AgentRunner:
         self._finalize_reports()
         return self.run
 
+    def _persist_s3_champion(self, trainer_result: dict) -> str | None:
+        """验收通过的 S3 冠军模型物化为 joblib 工件（「直接部署本次模型」）。
+
+        工件 metadata 带 feature_schema/算法/指标——cast-deployment 的 s3
+        模式据此走 ModelLibrary→注册→ONNX 端口→部署链。任何失败只记日志，
+        不改 accepted 终态（回落引擎铸造路径仍可用）。
+        """
+        champion = self._s3_champion or {}
+        model = champion.get("model")
+        if model is None:
+            return None
+        try:
+            import joblib as _joblib
+            import tempfile
+            from pathlib import Path
+
+            from app.services.artifact_service import build_artifact_service
+
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / f"s3-champion-{str(self.run.id)[:8]}.joblib"
+                _joblib.dump(
+                    {
+                        # onnx_worker 平台包合同：{model, feature_schema,
+                        # target_schema}——与平台训练链产物同构，转换器
+                        # 直接可用（algorithm 仅入 metadata 不进包）
+                        "model": model,
+                        "feature_schema": [
+                            {"name": str(name), "dtype": "float64"}
+                            for name in (champion.get("features") or [])
+                        ],
+                        "target_schema": {
+                            "name": self.run.target_column,
+                            "dtype": "int64",
+                            "task": "classification",
+                        },
+                    },
+                    path,
+                )
+                artifact_service = build_artifact_service(self.db)
+                artifact = artifact_service.create_from_file(
+                    self.run.project_id,
+                    path,
+                    f"智能体S3冠军-{str(self.run.id)[:8]}",
+                    "model",
+                    metadata={
+                        "source": "agent_s3_champion",
+                        "run_id": str(self.run.id),
+                        "algorithm": champion.get("algorithm") or "",
+                        "metrics": dict(trainer_result.get("metrics") or {}),
+                        "feature_schema": champion.get("features") or [],
+                        "row_count": int((trainer_result.get("data_fidelity") or {}).get("total_rows") or 0),
+                    },
+                )
+            return str(artifact.id)
+        except Exception:  # noqa: BLE001 - 物化失败不阻断验收终态
+            logger.warning("s3 champion persist failed for run %s", self.run.id, exc_info=True)
+            return None
+
     def _l2_references(self) -> list[dict]:
         """§10.4 任务启动/S1 注入：检索 L2 top-k active 经验（独立引述块）。
-
         检索失败静默降级为空——经验注入是增益，不是依赖。"""
         from app.services.agent.experience import retrieve_for_task
 
@@ -677,6 +736,13 @@ class AgentRunner:
                 # 留痕：评审与排障能看到"特征表里的标签列已被平台剥离"。
                 s3_digest["target_excluded_from_features"] = target
             self._stage_digest(round_number, "s3", s3_digest)
+            # 运行时对象立即取走并从 trainer_result 剥离——后续任何
+            # memory/result JSON 化都不会撞到不可序列化的模型对象。
+            self._s3_champion = {
+                "model": trainer_result.pop("champion_model", None),
+                "features": trainer_result.pop("champion_features", []),
+                "algorithm": trainer_result.pop("champion_algorithm", ""),
+            }
 
             # ---- S4 hard gates (before any LLM sees the numbers) ----
             self.run.current_stage = "s4"
@@ -778,6 +844,11 @@ class AgentRunner:
                 fidelity = trainer_result.get("data_fidelity")
                 if fidelity:
                     accepted_result["data_fidelity"] = fidelity
+                # 验收即物化 S3 冠军模型工件：「直接部署本次模型」的输入
+                # （秒级上线，无需引擎重训）。失败不阻断 accepted 终态。
+                champion_artifact_id = self._persist_s3_champion(trainer_result)
+                if champion_artifact_id:
+                    accepted_result["s3_champion_artifact_id"] = champion_artifact_id
                 self.run.result_json = accepted_result
                 self.db.commit()
                 self._auto_servitize_if_requested()

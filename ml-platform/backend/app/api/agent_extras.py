@@ -407,12 +407,13 @@ def _deploy_s3_champion(
     from app.services.artifact_service import build_artifact_service
     from app.services.model_registry import ModelRegistryService
 
-    content = dict((getattr(recipe_row, "versions", None) and {}) or {})
     from app.services.agent.recipe import get_current_version
 
     version_row = get_current_version(db, recipe_row.id)
     meta = dict((version_row.content_json or {}).get("cast_deployment") or {})
-    existing = str(meta.get("deployment_id") or "")
+    # s3 直部署的幂等锚独立于 engine 铸造（deployment_id）——两种模式
+    # 各自的产物互不顶替：s3 部署记 s3_deployment_id，重复调用复用。
+    existing = str(meta.get("s3_deployment_id") or "")
     if existing and _is_uuid(existing):
         dep = db.get(InferenceDeployment, uuid_module.UUID(existing))
         if dep is not None:
@@ -427,6 +428,7 @@ def _deploy_s3_champion(
         project_id=project_uuid,
         owner_id=actor_id,
         status="completed",
+        format="joblib",
         framework="sklearn",
         backbone=str(artifact_meta.get("algorithm") or "s3-champion"),
         metrics=dict(artifact_meta.get("metrics") or {}),
@@ -474,10 +476,10 @@ def _deploy_s3_champion(
         name=f"智能体部署-{str(run_row.id)[:8]}", commit=True)
     dep_service.start(db, deployment.id)
     db.refresh(deployment)
-    # 配方锚定（幂等）+ 留档
+    # 配方锚定（幂等）+ 留档：s3 部署写独立锚，不覆盖 engine 铸造锚
     updated = dict(version_row.content_json or {})
     cast_meta = dict(updated.get("cast_deployment") or {})
-    cast_meta["deployment_id"] = str(deployment.id)
+    cast_meta["s3_deployment_id"] = str(deployment.id)
     cast_meta["mode"] = "s3"
     cast_meta["s3_run_id"] = str(run_row.id)
     updated["cast_deployment"] = cast_meta
@@ -683,7 +685,8 @@ def cast_deployment_current(
     except Exception:
         raise HTTPException(404, detail={"code": "RECIPE_NOT_FOUND"}) from None
     meta = dict((version.content_json or {}).get("cast_deployment") or {})
-    dep_key = str(meta.get("deployment_id") or "")
+    # s3 直部署锚优先（新默认路径），回落 engine 铸造锚
+    dep_key = str(meta.get("s3_deployment_id") or meta.get("deployment_id") or "")
     if dep_key and _is_uuid(dep_key):
         dep = db.get(InferenceDeployment, uuid_module.UUID(dep_key))
         if dep is not None:

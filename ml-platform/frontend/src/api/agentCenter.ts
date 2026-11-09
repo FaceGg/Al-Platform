@@ -250,6 +250,9 @@ export interface CastDeploymentStartResult {
   recipe_id: string;
   status: string;
   max_trials: number;
+  mode?: "s3" | "engine";
+  deployment_id?: string;
+  resumed?: boolean;
 }
 
 export interface CastDeploymentStatusResult {
@@ -266,6 +269,7 @@ export async function castDeploymentStart(payload: {
   run_id?: string | null;
   dataset_artifact_id?: string | null;
   max_trials?: number;
+  mode?: "s3" | "engine";
 }): Promise<CastDeploymentStartResult> {
   const response = await apiClient.post("/agent/servitize/cast-deployment", payload);
   return response.data;
