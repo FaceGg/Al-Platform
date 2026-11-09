@@ -359,7 +359,7 @@ const NODES = {
                  <span class="gate-count" id="gateCount">0 / 12</span>
                  <span class="sub">达到即建模</span>
                </div>` },
-  swap:    { x: 175,  y: 490, c: C.gold,   cls: "",           title: "模型替换",   sub: "最优版本上线" },
+  swap:    { x: 175,  y: 490, c: C.gold,   cls: "",           title: "特征工程/模型 替换",   sub: "配方重放产物上线" },
 };
 
 const nodesEl = document.getElementById("nodes");
@@ -601,7 +601,7 @@ const sim = {
   invoked: 0, ok: 0, errors: 0, alerts: 0, dataset: 0, version: 1,
   alertEvery: 5, retrainAt: 12,
   retrain: "idle", retrainT: 0, fault: 0,
-  retrainMode: "engine",   /* engine=AutoML 重训（默认/模拟）；agent=智能体重训 */
+  retrainMode: "engine",   /* engine=AutoML 重训（默认/模拟）；agent=智能体重构 */
   rowTimer: .5,
 };
 function resetSim() {
@@ -687,7 +687,7 @@ function gateCheck() {
 }
 function startRetrain() {
   sim.retrain = "running"; sim.retrainT = 0;
-  toast(`报错数据达 ${sim.dataset} 行，达到重训阈值，${sim.retrainMode === "agent" ? "智能体重训已触发（配方重放→验收→铸造）" : "自动建模已触发（AutoML）"}`, C.purple, 3000);
+  toast(`报错数据达 ${sim.dataset} 行，达到重训阈值，${sim.retrainMode === "agent" ? "智能体重构已触发（配方重放→验收→铸造）" : "自动建模已触发（AutoML）"}`, C.purple, 3000);
   for (let i = 0; i < 4; i++) {
     setTimeout(() => { if (sim.playing) spawn("e15", C.purple, { speed: 1, size: 3.2 }); }, i * 380 / sim.speed);
   }
@@ -711,8 +711,22 @@ function applySwap() {
   document.getElementById("sub_infer").textContent = "ONNX 运行时 · 已热更新";
   shockwave(NODES.infer.x, NODES.infer.y, C.gold);
   shockwave(NODES.infer.x, NODES.infer.y, "#ffffff");
+  // agent 轮换模同时更新特征工程+模型：swap 节点飞一条金色粒子到特征工程
+  // 节点并让其脉动（视觉上"特征工程也被替换"），5 秒后恢复副标题
+  if (sim.retrainMode === "agent" && NODES.features && NODES.features.el) {
+    const feEl = NODES.features.el;
+    feEl.classList.add("flip");
+    setTimeout(() => feEl.classList.remove("flip"), 5200);
+    const feSubEl = feEl.querySelector(".sub");
+    if (feSubEl) {
+      const oldSub = feSubEl.textContent;
+      feSubEl.textContent = `v${sim.version} 配方重放特征集`;
+      setTimeout(() => { feSubEl.textContent = oldSub; }, 5200);
+    }
+    spawn("e13", C.gold, { speed: 1.15, size: 6, glow: 1, onArrive: () => pulse("features", 900) });
+  }
   toast(sim.retrainMode === "agent"
-    ? `模型与特征工程已更新为 v${sim.version}（配方重放产物），闭环生效`
+    ? `特征工程/模型 已更新为 v${sim.version}（配方重放产物），闭环生效`
     : `推理模型已替换为 v${sim.version}，闭环生效`, C.gold, 3400);
   setTimeout(() => { document.getElementById("sub_infer").textContent = "ONNX 运行时"; }, 5200);
 }
@@ -729,7 +743,7 @@ function setRetrainThreshold(n) {
   sim.retrainAt = n;
   updateGateVisual();
 }
-/* 重训模式感知（实时闭环）：agent=智能体重训（配方重放→S4 验收→引擎铸造→
+/* 重训模式感知（实时闭环）：agent=智能体重构（配方重放→S4 验收→引擎铸造→
    换模，特征工程随配方一起更新），engine=AutoML 直接重训换模。切换
    automl 节点文案与副标题，事件分支见 applyLiveStatus。 */
 function setRetrainMode(mode) {
@@ -738,7 +752,7 @@ function setRetrainMode(mode) {
   if (!el) return;
   const title = el.querySelector(".title");
   const sub = el.querySelector(".sub");
-  if (title) title.textContent = sim.retrainMode === "agent" ? "智能体重训" : "自动建模";
+  if (title) title.textContent = sim.retrainMode === "agent" ? "智能体重构" : "自动建模";
   if (sub) sub.textContent = sim.retrainMode === "agent" ? "配方重放 · 验收 · 铸造" : "AutoML · 搜索最优";
 }
 /* 实时轮询跑在专用 Web Worker：页面后台/被遮挡时浏览器会把主线程
@@ -977,7 +991,7 @@ function applyLiveStatus(st) {
       case "alert_triggered": pulse("monitor"); pulse("alert"); toast(ev.message, C.orange); break;
       case "review_task_created": spawn("e9", C.orange, { speed: 2 }); spawn("e10", C.orange, { speed: 2 }); toast(ev.message, C.orange); break;
       case "retrain_triggered": case "retrain_running": startRetrainLive(); toast(ev.message, C.purple); break;
-      /* 智能体重训链（agent 模式）：重放触发→验收→铸造→换模；
+      /* 智能体重构链（agent 模式）：重放触发→验收→铸造→换模；
          验收否决/失败/超时/熔断为红色告警 toast，节点脉动区分阶段 */
       case "retrain_agent_triggered": startRetrainLive(); toast(ev.message, C.purple, 3400); break;
       case "retrain_agent_accepted": pulse("automl", 900); toast(ev.message, C.green, 3200); break;
@@ -1052,7 +1066,7 @@ function paintRmButtons() {
   btnRmEngine.style.borderColor = sim.retrainMode === "engine" ? "#5cb2ff" : on;
 }
 btnRmAgent.onclick = () => { setRetrainMode("agent"); paintRmButtons();
-  toast("已切换：智能体重训（配方重放 → S4 验收 → 引擎铸造 → 换模）", C.purple, 3200); };
+  toast("已切换：智能体重构（配方重放 → S4 验收 → 引擎铸造 → 换模）", C.purple, 3200); };
 btnRmEngine.onclick = () => { setRetrainMode("engine"); paintRmButtons();
   toast("已切换：AutoML 引擎重训（搜索最优 → 注册批准 → 换模）", C.blue, 3200); };
 /* 默认智能体：平台当前主推的重训形态，打开即见（此前默认 engine 导致
