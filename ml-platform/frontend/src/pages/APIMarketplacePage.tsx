@@ -272,7 +272,7 @@ export default function APIMarketplacePage() {
           {r.source_kind === "custom" && !r.source_id && (
             <Button size="small" icon={<EditOutlined />} onClick={() => openEditor(r)}>{tr.edit}</Button>
           )}
-          {(r.source_kind === "custom" || r.source_kind === "orchestration" || r.source_kind === "chat" || r.source_kind === "model") && (
+          {(r.source_kind === "custom" || r.source_kind === "orchestration" || r.source_kind === "chat" || r.source_kind === "model" || r.source_kind === "servitize") && (
             <DeleteConfirmation label={`${tr.delete_confirm || "删除 "}${r.name}`} targetName={r.name} onConfirm={() => void handleDelete(r.id)} />
           )}
         </Space>

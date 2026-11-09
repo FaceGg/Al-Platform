@@ -82,7 +82,9 @@ const EVENT_LABELS: Record<string, string> = {
   retrain_agent_rejected: "智能体重放未通过验收", retrain_agent_failed: "智能体重放失败",
   retrain_agent_timeout: "智能体重放超时", retrain_agent_circuit_break: "智能体重训熔断",
   retrain_casting_started: "部署模型铸造中", retrain_reservitize_manual: "建议重新服务化",
-  model_swapped: "推理模型已替换", swap_failed: "模型替换失败", loop_reset: "闭环重置",
+  // 换模语义按模式区分：agent 轮特征工程+模型一起更新（配方重放产物），
+  // engine 轮只换模型。事件流文案在渲染处按 isAgentMode 动态取。
+  model_swapped: "模型与特征工程已更新", swap_failed: "模型替换失败", loop_reset: "闭环重置",
 };
 
 export default function DemoLoopDetailPage() {
@@ -269,6 +271,9 @@ export default function DemoLoopDetailPage() {
   const totalCount = status?.total_count ?? 0;
   const alertThreshold = loop?.alert_threshold_rows ?? 1;
   const retrainThreshold = loop?.retrain_threshold_rows ?? 0;
+  // 重训模式感知：agent=智能体全流程重训（重放验收后换模，特征工程随配方更新）；
+  // engine=引擎直接重训换模。状态卡/事件文案/换模提示按模式区分。
+  const isAgentMode = (loop?.retrain_mode ?? status?.retrain_mode ?? "engine") === "agent";
   const lastEvent = status?.events?.[status.events.length - 1];
   const lastEventAgeMs = lastEvent ? (Date.now() - (parseBackendTime(lastEvent.created_at)?.getTime() ?? Number.NaN)) : Number.NaN;
   const alertActive = (status?.alert_count ?? 0) > 0 && loop?.alert_threshold_rows === 1
@@ -384,13 +389,13 @@ export default function DemoLoopDetailPage() {
                 <Col span={6}><Statistic title={tr.stat_reflow || "回流行数"} value={errorCount} valueStyle={{ color: errorCount ? "#cf1322" : undefined }} /></Col>
                 <Col span={6}><Statistic title={tr.stat_alerts || "告警次数"} value={status?.alert_count ?? 0} /></Col>
                 <Col span={6}>
-                  <Statistic title={tr.stat_retrain || "自动建模"} valueRender={() => (
+                  <Statistic title={isAgentMode ? (tr.stat_agent_retrain || "智能体重训") : (tr.stat_retrain || "自动建模")} valueRender={() => (
                     <Tag color={status?.retrain_status === "completed" ? "green"
                       : status?.retrain_status === "failed" ? "red"
                         : status?.retrain_status === "agent_running" ? "geekblue"
                           : status?.retrain_status === "running" || status?.retrain_status === "queued" ? "blue" : "default"}
                       style={{ marginTop: 8 }}>
-                      {status?.retrain_status === "completed" ? (tr.retrain_done || "已完成") : status?.retrain_status === "failed" ? (tr.retrain_failed || "失败")
+                      {status?.retrain_status === "completed" ? (isAgentMode ? (tr.retrain_done_agent || "已验收换模") : (tr.retrain_done || "已完成")) : status?.retrain_status === "failed" ? (tr.retrain_failed || "失败")
                         : status?.retrain_status === "agent_running" ? (tr.retrain_agent_running || "智能体重训中") : status?.retrain_status === "running" ? (tr.retrain_running || "执行中") : status?.retrain_status === "queued" ? (tr.retrain_queued || "已排队") : (tr.retrain_idle || "空闲")}
                     </Tag>
                   )} />
@@ -416,7 +421,7 @@ export default function DemoLoopDetailPage() {
                 <Alert type="info" showIcon message={<a href="/annotations">{tr.review_created || "人工审核任务已创建，前往标注工作台"}</a>} />
               )}
               {status?.retrain_job_id && (
-                <Alert type="info" showIcon message={<a href={`/automl/task/${status.retrain_job_id}`}>{tr.view_retrain || "查看自动建模任务"}</a>} />
+                <Alert type="info" showIcon message={<a href={`/automl/task/${status.retrain_job_id}`}>{isAgentMode ? (tr.view_casting || "查看铸造任务（重放验收后的部署模型）") : (tr.view_retrain || "查看自动建模任务")}</a>} />
               )}
               <div style={{ maxHeight: 320, overflowY: "auto" }}>
                 <Timeline
@@ -424,7 +429,11 @@ export default function DemoLoopDetailPage() {
                     color: EVENT_COLORS[event.event_type] || "gray",
                     children: (
                       <div className={event.event_type === "model_swapped" ? "demo-swap-card" : undefined}>
-                        <Text strong style={{ fontSize: 13 }}>{tr[`ev_${event.event_type}`] || EVENT_LABELS[event.event_type] || event.event_type}</Text>
+                        <Text strong style={{ fontSize: 13 }}>
+                          {event.event_type === "model_swapped" && !isAgentMode
+                            ? (tr.ev_model_swapped_engine || "推理模型已替换")
+                            : tr[`ev_${event.event_type}`] || EVENT_LABELS[event.event_type] || event.event_type}
+                        </Text>
                         <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
                           {event.message}
                           {event.created_at ? ` · ${parseBackendTime(event.created_at)?.toLocaleTimeString() ?? ""}` : ""}

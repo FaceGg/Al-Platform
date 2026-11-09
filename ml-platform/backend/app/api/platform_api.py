@@ -274,6 +274,21 @@ def delete_api(api_id: str, db: Session = Depends(get_db), current_user: User = 
                 detail={"code": "DEPLOYMENT_STILL_RUNNING",
                         "message": "该 API 由运行中的推理部署生成；请先在市场对该 API 执行「下线」（停止部署）后再删除"},
             )
+    # 服务化条目（servitize）：连带删除绑定的闭环任务——条目删除后闭环
+    # 无流量来源（饿死但留脏数据），一并清理保持数据一致。
+    if api.source_kind == "servitize":
+        loop_id = (api.showcase_state or {}).get("loop_config_id")
+        if loop_id:
+            try:
+                from app.models.demo_loop import DemoLoopConfig
+
+                loop = db.query(DemoLoopConfig).filter(
+                    DemoLoopConfig.id == uuid.UUID(str(loop_id)),
+                ).first()
+                if loop is not None:
+                    db.delete(loop)
+            except (TypeError, ValueError):
+                pass
     db.delete(api)
     db.commit()
     return {"status": "deleted"}
