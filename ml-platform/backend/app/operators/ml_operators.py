@@ -389,7 +389,12 @@ class ApplyModelOp(BaseOperator):
     description = "Apply a trained model to data and append predictions"
     inputs = [PortSpec("model", "Model", "Trained Model"), PortSpec("data", "DataTable", "Data to predict")]
     outputs = [PortSpec("data", "DataTable", "Data with predictions")]
-    parameters = []
+    # feature_columns：可选的显式特征子集。训练侧若以 numpy 喂入（估计器无
+    # feature_names_in_），apply_model 无法自行选列，整帧预测会因列数不匹配
+    # 而失败——发布链（servitize 编排模板）会把模型版本的 feature_schema
+    # 注入该参数，运行期按名选列后再 predict。
+    parameters = [ParamSpec("feature_columns", "list", required=False,
+                            label="模型特征列（可选，按名选列后再预测）")]
     def validate(self, inputs): return True
     def _predict_pytorch(self, pkg, df):
         import torch; X = torch.tensor(df.values, dtype=torch.float32)

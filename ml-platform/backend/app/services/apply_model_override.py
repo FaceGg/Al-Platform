@@ -44,6 +44,18 @@ def install_apply_model_override():
             lambda col: col.astype("category").cat.codes
             if str(col.dtype) in ("object", "category") else col
         )
+        # 显式特征子集：模型包若未携带 feature_names_in_（numpy 训练），
+        # 依赖发布链把模型版本 feature_schema 注入 params.feature_columns。
+        wanted = [str(c) for c in (params.get("feature_columns") or [])]
+        if wanted:
+            avail = [c for c in wanted if c in frame.columns]
+            missing = [c for c in wanted if c not in frame.columns]
+            if missing:
+                raise RuntimeError(
+                    f"模型预测失败：缺少模型特征列 {missing[:10]}"
+                    "（apply_model.feature_columns）。请核对特征变换输出或调用 record"
+                )
+            frame = frame[avail]
         predictions = predict_with_hint(model, frame)
         rows = frame.to_dict(orient="records")
         return OperatorResult(outputs={

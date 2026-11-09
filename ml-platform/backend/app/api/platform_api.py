@@ -598,17 +598,33 @@ def invoke_orchestration_api(    version_id: str,
         (
             (node.get("params") or {}).get("swap_deployment_id")
             for node in nodes_snapshot
-            if node.get("operator_id") == "retrain_threshold"
+            if node.get("operator_id") in ("retrain_threshold", "agent_retrain_threshold")
         ),
         None,
     )
-    # 报错行判定：条件分支节点 true 分支有输出即命中（输出节点的 branch 恒为 null）
+    # 报错行判定：条件分支节点 true 分支有输出即命中（输出节点的 branch 恒为 null）；
+    # 智能体链无条件分支——改由报错回流节点（append_error_dataset）的结果行
+    # error_matched 判定。
     error_row_hit = False
     if condition_node_id and condition_node_id in results:
         condition_results = results[condition_node_id] or {}
         if "true_branch" in condition_results:
             error_row_hit = bool(_as_rows(condition_results, "true_branch"))
     alert_fired = bool(notify_node_id and results.get(notify_node_id))
+    reflow_node_id = next(
+        (node.get("id") for node in nodes_snapshot if node.get("operator_id") == "append_error_dataset"),
+        None,
+    )
+    if not condition_node_id and reflow_node_id and reflow_node_id in results:
+        reflow_results = results[reflow_node_id] or {}
+        for port in ("data", "output"):
+            if port in reflow_results:
+                reflow_rows = _as_rows(reflow_results, port)
+                error_row_hit = any(
+                    isinstance(row, dict) and bool(row.get("error_matched"))
+                    for row in reflow_rows
+                )
+                break
     if alert_fired:
         # 告警管理员的阈值节流：notified=0 表示本次累计行数未达通知阈值
         notify_metrics = (node_completions.get(notify_node_id) or {}).get("metrics") or {}
@@ -647,6 +663,32 @@ def invoke_orchestration_api(    version_id: str,
                            "severity": "info",
                            "message": f"错误积累达阈值，自动建模已触发（{retrain_job.name}）",
                            "created_at": now_iso})
+        else:
+            # 智能体链：重放 run 记录在累积数据集工件 metadata.agent_run_id
+            from app.models.artifact import Artifact
+            from app.services.agent.loop_retrain import get_replay_run
+
+            accum_node = next(
+                ((node.get("params") or {}).get("dataset_artifact_id")
+                 for node in nodes_snapshot
+                 if node.get("operator_id") == "agent_retrain_threshold"),
+                None,
+            )
+            agent_run_id = None
+            if accum_node:
+                try:
+                    artifact = db.get(Artifact, uuid.UUID(str(accum_node)))
+                    agent_run_id = (artifact.metadata or {}).get("agent_run_id") if artifact else None
+                except (TypeError, ValueError, AttributeError):
+                    agent_run_id = None
+            replay_run = get_replay_run(db, agent_run_id)
+            if replay_run is not None:
+                state["last_retrain_job_id"] = str(replay_run.id)
+                state["last_retrain_kind"] = "agent"
+                events.append({"id": str(uuid.uuid4()), "event_type": "retrain_triggered",
+                               "severity": "info",
+                               "message": "错误积累达阈值，智能体自动建模已触发（配方重放）",
+                               "created_at": now_iso})
     if swap_deployment_id:
         state["swap_deployment_id"] = str(swap_deployment_id)
         from app.models.model_registry import InferenceDeployment
@@ -689,7 +731,9 @@ def invoke_orchestration_api(    version_id: str,
     }
 
 
-# 实时大屏仅面向"通用闭环服务模板"原样结构：七算子缺一不可、不得增减。
+# 实时大屏仅面向"通用闭环服务模板"原样结构：算子缺一不可、不得增减。
+# 两套受支持模板：引擎七算子（retrain_threshold 链）与智能体六算子
+# （servitize 发布的 agent_retrain_threshold 链）。
 SHOWCASE_OPERATOR_SET = frozenset({
     "api_input",
     "load_model_artifact",
@@ -700,6 +744,17 @@ SHOWCASE_OPERATOR_SET = frozenset({
     "retrain_threshold",
 })
 
+SHOWCASE_OPERATOR_SET_AGENT = frozenset({
+    "api_input",
+    "python_script",
+    "load_deployment_model",
+    "apply_model",
+    "append_error_dataset",
+    "agent_retrain_threshold",
+})
+
+_SHOWCASE_OPERATOR_SETS = (SHOWCASE_OPERATOR_SET, SHOWCASE_OPERATOR_SET_AGENT)
+
 
 def _showcase_eligible(nodes_snapshot) -> bool:
     operators = {
@@ -707,17 +762,20 @@ def _showcase_eligible(nodes_snapshot) -> bool:
         for node in (nodes_snapshot or [])
         if isinstance(node, dict)
     }
-    return operators == SHOWCASE_OPERATOR_SET
+    return operators in _SHOWCASE_OPERATOR_SETS
 
 
 def _threshold_rows(nodes_snapshot) -> int:
-    for node in nodes_snapshot or []:
-        if node.get("operator_id") == "retrain_threshold":
-            value = (node.get("params") or {}).get("threshold_rows")
-            try:
-                return max(1, int(value))
-            except (TypeError, ValueError):
-                return 3
+    # 两种模板的重训阈值参数：引擎链 retrain_threshold.threshold_rows，
+    # 智能体链 agent_retrain_threshold.threshold_rows。
+    for op_id in ("retrain_threshold", "agent_retrain_threshold"):
+        for node in nodes_snapshot or []:
+            if (node.get("operator_id") or "") == op_id:
+                value = (node.get("params") or {}).get("threshold_rows")
+                try:
+                    return max(1, int(value))
+                except (TypeError, ValueError):
+                    return 3
     return 3
 
 
@@ -775,28 +833,45 @@ def orchestration_showcase_status(
     total = int(api.total_calls or 0)
     errors = int(api.error_calls or 0)
 
-    # 惰性合成重训事件：重训任务的创建与 invoke 响应存在时序差，轮询侧兜底
-    latest_retrain = db.query(TrainingJob).filter(
-        TrainingJob.project_id == workflow.project_id,
-        TrainingJob.name.like("编排闭环-自动建模-%"),
-    ).order_by(TrainingJob.created_at.desc()).first()
-    if latest_retrain is not None and str(latest_retrain.id) != state.get("last_retrain_job_id"):
-        events.append({"id": str(uuid.uuid4()), "event_type": "retrain_triggered",
-                       "severity": "info",
-                       "message": f"错误积累达阈值，自动建模已触发（{latest_retrain.name}）",
-                       "created_at": (latest_retrain.created_at or utcnow()).isoformat()})
-        state["last_retrain_job_id"] = str(latest_retrain.id)
-        api.showcase_state = state
-        db.commit()
+    # 惰性合成重训事件：重训任务的创建与 invoke 响应存在时序差，轮询侧兜底。
+    # 智能体链（last_retrain_kind=agent）的重训引用是配方重放 AgentRun，
+    # invoke 期已写入 state——不做引擎 TrainingJob 的兜底合成。
+    if (state.get("last_retrain_kind") or "engine") != "agent":
+        latest_retrain = db.query(TrainingJob).filter(
+            TrainingJob.project_id == workflow.project_id,
+            TrainingJob.name.like("编排闭环-自动建模-%"),
+        ).order_by(TrainingJob.created_at.desc()).first()
+        if latest_retrain is not None and str(latest_retrain.id) != state.get("last_retrain_job_id"):
+            events.append({"id": str(uuid.uuid4()), "event_type": "retrain_triggered",
+                           "severity": "info",
+                           "message": f"错误积累达阈值，自动建模已触发（{latest_retrain.name}）",
+                           "created_at": (latest_retrain.created_at or utcnow()).isoformat()})
+            state["last_retrain_job_id"] = str(latest_retrain.id)
+            api.showcase_state = state
+            db.commit()
 
     retrain_status = "idle"
     retrain_job_id = state.get("last_retrain_job_id")
     retrain_job = None
+    retrain_kind = state.get("last_retrain_kind") or "engine"
     if retrain_job_id:
         try:
             retrain_job = db.query(TrainingJob).filter(
                 TrainingJob.id == uuid.UUID(str(retrain_job_id)),
             ).first()
+            if retrain_job is None:
+                # 智能体链的重训引用是配方重放 AgentRun
+                from app.models.agent_run import AgentRun
+
+                replay = db.query(AgentRun).filter(
+                    AgentRun.id == uuid.UUID(str(retrain_job_id)),
+                ).first()
+                if replay is not None:
+                    retrain_kind = "agent"
+                    retrain_status = replay.status if replay.status in {
+                        "pending", "running", "accepted", "failed",
+                        "waiting_escalate", "cancelled",
+                    } else "running"
         except (TypeError, ValueError, AttributeError):
             retrain_job = None
     if retrain_job is not None:

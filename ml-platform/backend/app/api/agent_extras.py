@@ -396,98 +396,7 @@ def cast_deployment(
                 "deployment_id": deployment_id,
                 "recipe_id": str(recipe_uuid)}
 
-
-def _deploy_s3_champion(
-    db, *, project_uuid, champion_artifact_id: str, actor_id, recipe_row, run_row,
-) -> str:
-    """S3 冠军工件 → 库 → 注册（ONNX 端口）→ 批准 → 新建部署 → 启动。幂等：
-    同工件重复部署复用已建部署（配方 cast_deployment 元数据锚定）。"""
-    from app.models.model_library import ModelLibrary
-    from app.models.model_registry import InferenceDeployment, RegisteredModel
-    from app.services.artifact_service import build_artifact_service
-    from app.services.model_registry import ModelRegistryService
-
-    from app.services.agent.recipe import get_current_version
-
-    version_row = get_current_version(db, recipe_row.id)
-    meta = dict((version_row.content_json or {}).get("cast_deployment") or {})
-    # s3 直部署的幂等锚独立于 engine 铸造（deployment_id）——两种模式
-    # 各自的产物互不顶替：s3 部署记 s3_deployment_id，重复调用复用。
-    existing = str(meta.get("s3_deployment_id") or "")
-    if existing and _is_uuid(existing):
-        dep = db.get(InferenceDeployment, uuid_module.UUID(existing))
-        if dep is not None:
-            return str(dep.id)
-
-    artifact_service = build_artifact_service(db)
-    artifact = artifact_service.resolve(
-        uuid_module.UUID(champion_artifact_id), project_uuid, expected_type="model")
-    artifact_meta = dict(artifact.metadata_ or {})
-    library = ModelLibrary(
-        name=f"智能体S3-{str(run_row.id)[:8]}",
-        project_id=project_uuid,
-        owner_id=actor_id,
-        status="completed",
-        format="joblib",
-        framework="sklearn",
-        backbone=str(artifact_meta.get("algorithm") or "s3-champion"),
-        metrics=dict(artifact_meta.get("metrics") or {}),
-        params={},
-    )
-    db.add(library)
-    db.flush()
-    library.model_artifact_id = artifact.id
-    db.commit()
-
-    registered = RegisteredModel(
-        project_id=project_uuid, name=f"agent-s3-{str(run_row.id)[:8]}",
-        created_by_id=actor_id)
-    db.add(registered)
-    db.flush()
-    registry = ModelRegistryService(artifact_service=artifact_service)
-    try:
-        version = registry.register_platform_version(
-            db, model_id=registered.id,
-            source_model_library_id=library.id, actor_id=actor_id)
-    except Exception as error:  # noqa: BLE001 - 转换失败原样上抛（422 呈现）
-        db.rollback()
-        raise HTTPException(422, detail={
-            "code": "S3_DEPLOY_CONVERSION_FAILED",
-            "message": f"S3 冠军模型注册/ONNX 转换失败：{error}",
-        }) from error
-    if version.approval_status != "approved":
-        registry.transition_model_version(db, version.id, "approve", actor_id)
-
-    from app.services.demo_loop import _deployment_service
-
-    dep_service = _deployment_service()
-    if dep_service is None:
-        from app.config import settings
-        from app.services.inference_deployment import InferenceDeploymentService
-        from app.services.inference_runtime import InferenceRuntimeClient
-
-        dep_service = InferenceDeploymentService(
-            InferenceRuntimeClient(
-                settings.inference_runtime_url,
-                settings.resolved_inference_internal_secret.get_secret_value(),
-            ), SessionLocal_)
-    deployment = dep_service.create(
-        db, project_id=project_uuid, version_id=version.id, actor_id=actor_id,
-        name=f"智能体部署-{str(run_row.id)[:8]}", commit=True)
-    dep_service.start(db, deployment.id)
-    db.refresh(deployment)
-    # 配方锚定（幂等）+ 留档：s3 部署写独立锚，不覆盖 engine 铸造锚
-    updated = dict(version_row.content_json or {})
-    cast_meta = dict(updated.get("cast_deployment") or {})
-    cast_meta["s3_deployment_id"] = str(deployment.id)
-    cast_meta["mode"] = "s3"
-    cast_meta["s3_run_id"] = str(run_row.id)
-    updated["cast_deployment"] = cast_meta
-    from app.services.agent.recipe import update_recipe
-
-    update_recipe(db, recipe_row.id, content=updated,
-                  change_note="s3 champion deployed (direct)")
-    return str(deployment.id)
+    # ---- engine 慢路径：按配方触发 AutoML 重铸（两段式轮询） ----
     try:
         version = get_current_version(db, recipe_uuid)
     except Exception:
@@ -662,6 +571,101 @@ def _deploy_s3_champion(
                   change_note="cast-deployment requested (servitize)")
     return {"job_id": str(job.id), "recipe_id": str(recipe_uuid),
             "status": job.status, "max_trials": payload.max_trials}
+
+
+
+
+def _deploy_s3_champion(
+    db, *, project_uuid, champion_artifact_id: str, actor_id, recipe_row, run_row,
+) -> str:
+    """S3 冠军工件 → 库 → 注册（ONNX 端口）→ 批准 → 新建部署 → 启动。幂等：
+    同工件重复部署复用已建部署（配方 cast_deployment 元数据锚定）。"""
+    from app.models.model_library import ModelLibrary
+    from app.models.model_registry import InferenceDeployment, RegisteredModel
+    from app.services.artifact_service import build_artifact_service
+    from app.services.model_registry import ModelRegistryService
+
+    from app.services.agent.recipe import get_current_version
+
+    version_row = get_current_version(db, recipe_row.id)
+    meta = dict((version_row.content_json or {}).get("cast_deployment") or {})
+    # s3 直部署的幂等锚独立于 engine 铸造（deployment_id）——两种模式
+    # 各自的产物互不顶替：s3 部署记 s3_deployment_id，重复调用复用。
+    existing = str(meta.get("s3_deployment_id") or "")
+    if existing and _is_uuid(existing):
+        dep = db.get(InferenceDeployment, uuid_module.UUID(existing))
+        if dep is not None:
+            return str(dep.id)
+
+    artifact_service = build_artifact_service(db)
+    artifact = artifact_service.resolve(
+        uuid_module.UUID(champion_artifact_id), project_uuid, expected_type="model")
+    artifact_meta = dict(artifact.metadata_ or {})
+    library = ModelLibrary(
+        name=f"智能体S3-{str(run_row.id)[:8]}",
+        project_id=project_uuid,
+        owner_id=actor_id,
+        status="completed",
+        format="joblib",
+        framework="sklearn",
+        backbone=str(artifact_meta.get("algorithm") or "s3-champion"),
+        metrics=dict(artifact_meta.get("metrics") or {}),
+        params={},
+    )
+    db.add(library)
+    db.flush()
+    library.model_artifact_id = artifact.id
+    db.commit()
+
+    registered = RegisteredModel(
+        project_id=project_uuid, name=f"agent-s3-{str(run_row.id)[:8]}",
+        created_by_id=actor_id)
+    db.add(registered)
+    db.flush()
+    registry = ModelRegistryService(artifact_service=artifact_service)
+    try:
+        version = registry.register_platform_version(
+            db, model_id=registered.id,
+            source_model_library_id=library.id, actor_id=actor_id)
+    except Exception as error:  # noqa: BLE001 - 转换失败原样上抛（422 呈现）
+        db.rollback()
+        raise HTTPException(422, detail={
+            "code": "S3_DEPLOY_CONVERSION_FAILED",
+            "message": f"S3 冠军模型注册/ONNX 转换失败：{error}",
+        }) from error
+    if version.approval_status != "approved":
+        registry.transition_model_version(db, version.id, "approve", actor_id)
+
+    from app.services.demo_loop import _deployment_service
+
+    dep_service = _deployment_service()
+    if dep_service is None:
+        from app.config import settings
+        from app.services.inference_deployment import InferenceDeploymentService
+        from app.services.inference_runtime import InferenceRuntimeClient
+
+        dep_service = InferenceDeploymentService(
+            InferenceRuntimeClient(
+                settings.inference_runtime_url,
+                settings.resolved_inference_internal_secret.get_secret_value(),
+            ), SessionLocal_)
+    deployment = dep_service.create(
+        db, project_id=project_uuid, version_id=version.id, actor_id=actor_id,
+        name=f"智能体部署-{str(run_row.id)[:8]}", commit=True)
+    dep_service.start(db, deployment.id)
+    db.refresh(deployment)
+    # 配方锚定（幂等）+ 留档：s3 部署写独立锚，不覆盖 engine 铸造锚
+    updated = dict(version_row.content_json or {})
+    cast_meta = dict(updated.get("cast_deployment") or {})
+    cast_meta["s3_deployment_id"] = str(deployment.id)
+    cast_meta["mode"] = "s3"
+    cast_meta["s3_run_id"] = str(run_row.id)
+    updated["cast_deployment"] = cast_meta
+    from app.services.agent.recipe import update_recipe
+
+    update_recipe(db, recipe_row.id, content=updated,
+                  change_note="s3 champion deployed (direct)")
+    return str(deployment.id)
 
 
 @router.get("/servitize/cast-deployment/current")
@@ -990,6 +994,37 @@ def servitize_publish(
         if not retrain_ids and loop.retrain_dataset_artifact_id:
             retrain_ids = [loop.retrain_dataset_artifact_id]
         retrain_dataset_id = (str(retrain_ids[0]) if retrain_ids else accum_id)
+        if not accum_id:
+            # 报错数据集由闭环预测首次回流时惰性创建（DemoLoopService
+            # ._error_artifact）；为空说明闭环从未回流过。静默发布会让
+            # 编排图节点带空 dataset_artifact_id，invoke 期必然失败——
+            # 这里显式拒绝，给出可操作指引。
+            raise HTTPException(422, detail={
+                "code": "ORCHESTRATION_ERROR_DATASET_MISSING",
+                "message": "闭环任务尚无报错数据集（error_artifact_id 为空），"
+                           "无法发布编排：请先执行一次闭环预测触发报错回流，"
+                           "或在闭环自动化中配置报错数据集后重试"})
+        # 模型特征列：注入 apply_model.feature_columns（模型包无
+        # feature_names_in_ 时运行期按名选列的唯一依据）。
+        model_feature_names: list[str] = []
+        if loop.deployment_id:
+            from app.models.model_registry import InferenceDeployment, ModelVersion
+
+            dep_row = db.get(InferenceDeployment, loop.deployment_id)
+            if dep_row is not None and dep_row.model_version_id:
+                mv_row = db.get(ModelVersion, dep_row.model_version_id)
+                if mv_row is not None:
+                    # feature_schema 兼容两种形态：[{name, dtype}] 列表
+                    # 或 {feature_names: [...]} 字典。
+                    schema = mv_row.feature_schema
+                    if isinstance(schema, list):
+                        model_feature_names = [
+                            str(item.get("name")) for item in schema
+                            if isinstance(item, dict) and item.get("name")
+                        ]
+                    elif isinstance(schema, dict):
+                        model_feature_names = [
+                            str(n) for n in (schema.get("feature_names") or [])]
         try:
             orch_api, workflow = publish_orchestration_from_recipe(
                 db,
@@ -1012,6 +1047,7 @@ def servitize_publish(
                 ],
                 input_columns=list(
                     getattr(loop, "retrain_input_columns", None) or []),
+                model_feature_names=model_feature_names,
             )
             result["orchestration"] = {
                 "api_id": str(orch_api.id),

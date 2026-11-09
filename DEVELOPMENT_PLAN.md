@@ -581,3 +581,24 @@ fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失�
 2. **pending 孤儿任务永久排队**：批量创建 8 条 run 中 3 条卡 pending 数小时（heartbeat NULL，派发线程未成功提交首跳）。旧恢复清扫（lifespan 启动 + beat `ml_platform.recover_stale_agent_runs`）只覆盖 running，pending 孤儿永久无人认领。[executor.py](ml-platform/backend/app/services/agent/executor.py) 新增 `relaunch_orphaned_pending_agent_runs`（pending 且 heartbeat 空/陈旧 + 创建超 120s 宽限 → DB 级 CAS pending→running 抢占后重派；不可执行落 waiting_escalate/AGENT_RUN_NOT_EXECUTABLE 与创建端点同口径），接线至 backend lifespan 启动清扫与 beat 周期清扫；CAS 保证启动/beat/多进程并发不双跑。
 3. **测试**：新增回归 6 个（配方列表混合 current_version 不重复/多版本配方状态取自身当前版本；孤儿重派/新鲜 pending 不误抢/不可执行落升级态，共享 dev 库用例内保护并还原既有孤儿行）；test_agent_executor + test_agent_center_api 全绿 30、test_celery_workflows 19。镜像重建后 backend lifespan 即重派孤儿（用户已自行清理卡死任务，新批次 run 正常流转 accepted）。
 4. **浏览器真实验证**：修复后配方列表每配方恰一行；点删除→Popconfirm→确认→toast「配方已删除」→恰一行消失；测试残留配方已清理。
+
+## 2026-11-09 智能体任务点焊全链 E2E（train_v2__full 建模→一键部署三件套→大屏/本地 Python 双验证）+ 五项缺陷修复
+
+用户任务：用点焊项目 train_v2__full.csv 新建智能体任务，验收通过后一键部署 API/闭环自动化/应用编排，大屏验证闭环与编排，本地 Python 解析 train_v2_test.csv 调预测 API。全链完成，链路证据：run af96f7c6（recall_minority 0.986/precision 0.921/f1 0.952，S4 评审 escalate 人工 accept）→ 配方 7d90306f v1 → 铸造 job fbe7ec1e → 部署 b7f06a6b running（模型版本 66bcce68，36 特征=13 原始+23 派生）→ 闭环 loop f8b0d721（模型 API 96a0dbf5，绑 agent 重训）→ 编排 API v4（87e5c0c6，版本端点 f92de32d，v1/v2/v3 offline）。
+
+**缺陷修复五项**（均为本次 E2E 真实暴露）：
+1. **cast-deployment mode=engine 死代码**：e532aef2 把 `_deploy_s3_champion` 插进 s3 分支与 engine 分支之间，engine 触发逻辑落入 return 后永不执行（POST 返回 201+null 不建 job）。[agent_extras.py](ml-platform/backend/app/api/agent_extras.py) 将死代码块搬回 cast_deployment 内（现 349-573，helper 578-668）。
+2. **编排模板 error_classes 参数非法**：orchestration_publish.py 模板给 append_error_dataset 节点塞 error_classes，但算子参数封闭集未声明 → invoke DAG 校验拒绝。模板与替换循环移除该参数（语义本就在 loop.error_classes）。
+3. **空报错数据集静默发布**：servitize_publish 在闭环尚未回流（error_artifact_id 空）时发布 dataset_artifact_id 为空串的编排。改为抛 422 ORCHESTRATION_ERROR_DATASET_MISSING（报错数据集由闭环 predict 首次回流惰性创建，现 b6889b93）；同时注入 model_feature_names（兼容 feature_schema 列表/字典两形态）。
+4. **apply_model 整帧列数不匹配**：numpy 训练无 feature_names_in_，75 列整帧喂 36 特征模型崩溃。ml_operators.py ApplyModelOp 加可选 ParamSpec feature_columns；apply_model_override.py run_with_feature_hint 按参选列（缺列明确报错）；orchestration_publish.py 注入 __MODEL_FEATURES__ 占位。
+5. **agent 六算子模板大屏 409**：showcase-status 只认可引擎七算子白名单。[platform_api.py](ml-platform/backend/app/api/platform_api.py) 新增 SHOWCASE_OPERATOR_SET_AGENT（api_input/python_script/load_deployment_model/apply_model/append_error_dataset/agent_retrain_threshold）双集合准入；_threshold_rows 兼容 agent_retrain_threshold；invoke 留痕兼容 agent 节点（error_matched 由回流节点判定、triggered 时查累积工件 metadata.agent_run_id → AgentRun，state 记 last_retrain_kind）；重训状态/惰性合成事件兼容 AgentRun。
+
+**服务脚本适配**：配方 S2 特征脚本批量分支含滚动特征与常量剔除，单行调用会丢全部列。单行回退路径落地（dt_prev_log=0/seq_in_day=0/shift_id=hour//8/ma10=ma50 等按可用前缀兜底/dress fillna 0），同步至闭环配置与编排工作流 21b838ad（v4 快照重新发布）。
+
+**测试**：新增 3 个测试文件共 20 用例全绿（test_agent_cast_engine_reachable 2：AST 死代码检查+engine 分支可达；test_apply_model_feature_columns 4：选列/缺列/旧行为；test_showcase_agent_template 14：双白名单准入/变异图拒绝/error_matched 回退/agent 阈值行读取/AgentRun 留痕）。容器内跑套件需 `-e DATABASE_URL= -e APP_MODE=local` 密封 sqlite（容器环境变量指向共享 dev 库会污染状态——test_demo_loop 6 败假阳性根因）；7 个无关文件收集错误为既有问题（CI/k8s/notebook 等）。
+
+**验证**：①showcase-status v4 200（showcase_eligible=true，阈值 rows=12，事件留痕）；②浏览器大屏：闭环任务源与编排 API 源均 PASS——编排源选中「智能体闭环-7d90306f v4」，connDot 常绿，已推理 23→27 实时递增（外部 4 次 invoke 全部反映），阈值监测 0/12，重训模式「智能体」，零 console 错误；③本地 Python（temp_test/sw_api_test.py，纯标准库）：解析 train_v2_test.csv 5000 行→本地按 S2 语义计算 23 派生特征（t1_ratio 训练帧常量被剔除不送；spotposition 按训练帧 cat.codes 字典序编码 {2:0,3:1,4:2,5:3}）→分批调 /api/inference-deployments/{id}/predict→5000/5000 成功，准确率 90.26%（200 行子集 100%）。
+
+**运维坑**：root 身份在容器内跑 pytest 会在 /tmp/ml-platform 留下 root 属主目录，导致重建后应用用户（uid 1000）python_script 落盘 409 权限拒绝（`docker exec -u root chown -R 1000:1000 /tmp/ml-platform` 修复）；登录限流 15min 5 次/IP，脚本批量验证需复用 token 文件。
+
+**未验证/剩余风险**：全量 CI 未跑（本批跑的是定向相关套件）；闭环 agent 重训全轮（回流达 12 行触发重放→换模）未端到端跑完（触发链路各环节已单独验证：agent_retrain_threshold 状态机/闭环绑定/配方重放合同）；大屏 agent 轮换模粒子动画仅在模拟模式验证。

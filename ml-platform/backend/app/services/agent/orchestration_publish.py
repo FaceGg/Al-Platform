@@ -35,6 +35,7 @@ P_RECIPE = "__RECIPE_ID__"
 P_TARGET = "__TARGET_COLUMN__"
 P_SCRIPT = "__FEATURE_SCRIPT__"
 P_THRESHOLD = "__THRESHOLD_ROWS__"
+P_FEATURES = "__MODEL_FEATURES__"
 
 # 模板节点定义：(键, operator_id, label, x, y, params 占位)
 _TEMPLATE_NODES = [
@@ -43,10 +44,10 @@ _TEMPLATE_NODES = [
      {"script": P_SCRIPT, "auto_install": True}),
     ("model", "load_deployment_model", "部署模型（跟随换模）", 460, 120,
      {"deployment_id": P_DEPLOYMENT}),
-    ("predict", "apply_model", "行预测", 640, 200, {}),
+    ("predict", "apply_model", "行预测", 640, 200,
+     {"feature_columns": P_FEATURES}),
     ("reflow", "append_error_dataset", "报错回流", 830, 200,
-     {"dataset_artifact_id": P_ERROR_DATASET,
-      "error_classes": ["__ERROR_CLASSES__"]}),
+     {"dataset_artifact_id": P_ERROR_DATASET}),
     ("retrain", "agent_retrain_threshold", "智能体重训阈值触发", 1030, 200,
      {"dataset_artifact_id": P_ACCUM_DATASET,
       "retrain_dataset_artifact_id": P_RETRAIN_DATASET,
@@ -124,7 +125,7 @@ def publish_orchestration_from_recipe(
     feature_script: str, target_column: str, error_classes: list[str],
     threshold_rows: int, retrain_dataset_id: str, accum_dataset_id: str,
     error_dataset_id: str, ensemble_enabled: bool, algorithm_ids: list[str],
-    input_columns: list[str],
+    input_columns: list[str], model_feature_names: list[str] | None = None,
 ):
     """实例化模板→参数替换→发布工作流 v1→发布编排 API（幂等复用）。
 
@@ -198,6 +199,7 @@ def publish_orchestration_from_recipe(
         P_TARGET: target_column,
         P_SCRIPT: _bridge_feature_script(feature_script),
         P_THRESHOLD: str(max(1, int(threshold_rows))),
+        P_FEATURES: [str(c) for c in (model_feature_names or [])],
     }
     for node in source_nodes:
         params = dict(node.params or {})
@@ -206,12 +208,17 @@ def publish_orchestration_from_recipe(
                 if isinstance(param_value, str) and param_value == key:
                     params[param_key] = value
         # 复合占位（列表/布尔）按算子参数名替换
-        if node.operator_id == "append_error_dataset":
-            params["error_classes"] = list(error_classes)
+        # 注意：append_error_dataset 算子参数集是封闭的（未声明 error_classes，
+        # 报错类语义记录在闭环配置 loop.error_classes，不在图节点上）——向节点
+        # 塞入未声明参数会被 invoke 期 DAG 校验拒绝（Unknown parameters）。
         if node.operator_id == "agent_retrain_threshold":
             params["retrain_ensemble_enabled"] = bool(ensemble_enabled)
             params["retrain_algorithm_ids"] = ", ".join(algorithm_ids)
             params["retrain_input_columns"] = ", ".join(input_columns)
+        if node.operator_id == "apply_model":
+            # 列表型占位：模型版本 feature_schema（numpy 训练的模型包无
+            # feature_names_in_，运行期按名选列依赖该参数）。
+            params["feature_columns"] = list(replacement[P_FEATURES])
         copy = WorkflowNode(
             workflow_id=workflow.id, operator_id=node.operator_id,
             label=node.label, position_x=node.position_x,
