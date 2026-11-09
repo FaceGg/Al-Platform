@@ -7,7 +7,6 @@ import {
   servitizeDraft,
   servitizeActivate,
 } from "../api/agentCenter";
-import { listDeployments } from "../api/modelRegistry";
 
 /**
  * 验收通过任务的操作流尾部（§四 + §12.1）：
@@ -40,7 +39,6 @@ export default function ServitizeActions({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [deployments, setDeployments] = useState<Array<{ id: string; name?: string }>>([]);
   const [deploymentId, setDeploymentId] = useState("");
   const [draft, setDraft] = useState<DraftResult | null>(null);
   const [published, setPublished] = useState(false);
@@ -48,13 +46,6 @@ export default function ServitizeActions({
   const [castPhase, setCastPhase] = useState<CastPhase>("idle");
   const [castNote, setCastNote] = useState("");
   const castTimer = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!projectId) return;
-    listDeployments(projectId)
-      .then((items) => setDeployments(items.map((item) => ({ id: String(item.id), name: (item as { name?: string }).name }))))
-      .catch(() => setDeployments([]));
-  }, [projectId]);
 
   const fixate = async () => {
     setBusy(true);
@@ -88,9 +79,6 @@ export default function ServitizeActions({
         setCastPhase("deployed");
         setDeploymentId(result.deployment_id);
         setCastNote(zh ? "本次模型已直接部署并自动选中" : "Accepted model deployed & selected");
-        listDeployments(projectId)
-          .then((items) => setDeployments(items.map((item) => ({ id: String(item.id), name: (item as { name?: string }).name }))))
-          .catch(() => undefined);
       }
       setBusy(false);
     } catch (caught) {
@@ -137,12 +125,6 @@ export default function ServitizeActions({
             ? `新部署已就绪（${status.deployment_state ?? "running"}）并已自动选中`
             : `New deployment ready (${status.deployment_state ?? "running"}) and selected`);
           setDeploymentId(status.deployment_id);
-          // 刷新下拉让新部署可见
-          if (projectId) {
-            listDeployments(projectId)
-              .then((items) => setDeployments(items.map((item) => ({ id: String(item.id), name: (item as { name?: string }).name }))))
-              .catch(() => undefined);
-          }
           setBusy(false);
         } else if (status.status === "failed" || status.status === "vetoed") {
           window.clearInterval(castTimer.current ?? undefined);
@@ -174,11 +156,6 @@ export default function ServitizeActions({
           setCastPhase("deployed");
           setDeploymentId(state.deployment_id);
           setCastNote(zh ? `铸造部署已就绪（${state.deployment_state ?? "running"}）` : "Cast deployment ready");
-          if (projectId) {
-            listDeployments(projectId)
-              .then((items) => setDeployments(items.map((item) => ({ id: String(item.id), name: (item as { name?: string }).name }))))
-              .catch(() => undefined);
-          }
         } else if (["pending", "queued", "running", "cancel_requested"].includes(state.status) && state.job_id) {
           setCastPhase("casting");
           setBusy(true);
@@ -297,22 +274,6 @@ export default function ServitizeActions({
           {castPhase === "deployed" ? (
             <span className="v2-badge v2-bgo">✓ {zh ? "新部署已就绪" : "deployed"}</span>
           ) : null}
-          <span style={{ fontSize: 11.5, color: "var(--v2-dim)" }}>
-            {zh ? "或绑定既有部署：" : "Or bind existing:"}
-          </span>
-          <select
-            className="v2-select"
-            style={{ maxWidth: 220 }}
-            value={deploymentId}
-            onChange={(event) => setDeploymentId(event.target.value)}
-          >
-            <option value="">{zh ? "选择部署…" : "Pick a deployment…"}</option>
-            {deployments.map((deployment) => (
-              <option key={deployment.id} value={deployment.id}>
-                {deployment.name ?? deployment.id.slice(0, 8)}
-              </option>
-            ))}
-          </select>
           <button
             type="button"
             className="v2-btn"
