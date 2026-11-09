@@ -55,12 +55,12 @@
   @keyframes bob { 50% { transform: translateY(-3px); } }
 
   /* 2 逐行调用：终端窗口 */
-  .n-invoke { border-radius: 7px; padding-top: 15px; }
+  .n-invoke { border-radius: 7px; padding-top: 15px; padding-bottom: 24px; }
   .n-invoke .term-bar { position: absolute; top: 0; left: 0; right: 0; height: 15px; border-radius: 6px 6px 0 0;
     background: rgba(47, 155, 245, .16); display: flex; align-items: center; gap: 4px; padding: 0 7px; }
   .term-bar i { width: 6px; height: 6px; border-radius: 50%; background: #2f9bf5; opacity: .8; }
   .term-bar i:nth-child(2) { background: #d9ac52; } .term-bar i:nth-child(3) { background: #e66f75; }
-  .term-line { position: absolute; left: 14px; bottom: 7px;
+  .term-line { position: absolute; left: 14px; bottom: 3px;
     font: 700 10.5px "JetBrains Mono", "Noto Sans SC", monospace; color: #6fd3a5; letter-spacing: .5px; overflow: hidden;
     white-space: nowrap; width: 0; border-right: 5px solid #47c3a0;
     animation: typing 2.8s steps(16) infinite; }
@@ -140,6 +140,8 @@
   /* 12 模型替换：双向换箭 */
   .swap-arrows { transform-box: fill-box; transform-origin: center; animation: spin 9s linear infinite; }
   .node.active .swap-arrows { animation-duration: 1.1s; }
+  /* 标题「特征工程/模型 替换」较长：缩小字号与字距，避免溢出节点边框 */
+  .n-swap .title { font-size: 13px; letter-spacing: .5px; }
 
   /* 13 重训阈值：圆形判断体 + 进度环 */
   .n-gate { width: 100px; height: 100px; margin: -50px 0 0 -50px; border-radius: 50%;
@@ -359,7 +361,7 @@ const NODES = {
                  <span class="gate-count" id="gateCount">0 / 12</span>
                  <span class="sub">达到即建模</span>
                </div>` },
-  swap:    { x: 175,  y: 490, c: C.gold,   cls: "",           title: "特征工程/模型 替换",   sub: "配方重放产物上线" },
+  swap:    { x: 175,  y: 490, c: C.gold,   cls: "n-swap",     title: "特征工程/模型 替换",   sub: "配方重放产物上线" },
 };
 
 const nodesEl = document.getElementById("nodes");
@@ -471,6 +473,7 @@ const EDGES = [
   { id: "e14", path: [[1007, 490], [845, 490]],                      c: C.purple, w: 1.8, label: "报错数据积累" },
   { id: "e15", path: [[745, 490], [583, 490]],                       c: C.purple, w: 2, label: "达标 · 触发建模" },
   { id: "e16", path: [[847, 512], [950, 548], [1005, 512]],          c: "#6b5a9e", w: 1.4, label: "未达标 · 继续积累", dash: [5, 8] },
+  { id: "e17", path: [[245, 449], [560, 430], [770, 268]],           c: C.gold,   w: 2, label: "闭环 · 新特征上线" },
 ];
 function traceEdge(e) {
   const p = e.path; ctx.beginPath(); ctx.moveTo(p[0][0], p[0][1]);
@@ -526,7 +529,7 @@ function spawn(edgeId, color, opts = {}) {
 }
 const HIT_NODE = { e1:"invoke", e2:"features", e3:"infer", e4:"decide", e5:"invoke", e6:"backflow",
                    e7:"dataset", e8:"monitor", e9:"alert", e10:"review", e11:"automl",
-                   e12:"swap", e13:"infer", e14:"gate", e15:"automl", e16:"dataset" };
+                   e12:"swap", e13:"infer", e14:"gate", e15:"automl", e16:"dataset", e17:"features" };
 function drawParticles(dt) {
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
@@ -711,8 +714,8 @@ function applySwap() {
   document.getElementById("sub_infer").textContent = "ONNX 运行时 · 已热更新";
   shockwave(NODES.infer.x, NODES.infer.y, C.gold);
   shockwave(NODES.infer.x, NODES.infer.y, "#ffffff");
-  // agent 轮换模同时更新特征工程+模型：swap 节点飞一条金色粒子到特征工程
-  // 节点并让其脉动（视觉上"特征工程也被替换"），5 秒后恢复副标题
+  // agent 轮换模同时更新特征工程+模型：沿 e17（swap→特征工程）飞一条金色
+  // 粒子到特征工程节点并让其脉动（视觉上"特征工程也被替换"），5 秒后恢复副标题
   if (sim.retrainMode === "agent" && NODES.features && NODES.features.el) {
     const feEl = NODES.features.el;
     feEl.classList.add("flip");
@@ -723,7 +726,7 @@ function applySwap() {
       feSubEl.textContent = `v${sim.version} 配方重放特征集`;
       setTimeout(() => { feSubEl.textContent = oldSub; }, 5200);
     }
-    spawn("e13", C.gold, { speed: 1.15, size: 6, glow: 1, onArrive: () => pulse("features", 900) });
+    spawn("e17", C.gold, { speed: 1.15, size: 6, glow: 1, onArrive: () => pulse("features", 900) });
   }
   toast(sim.retrainMode === "agent"
     ? `特征工程/模型 已更新为 v${sim.version}（配方重放产物），闭环生效`
@@ -1005,6 +1008,8 @@ function applyLiveStatus(st) {
         NODES.infer.el.classList.add("flip");
         shockwave(NODES.infer.x, NODES.infer.y, C.gold);
         spawn("e13", C.gold, { speed: 1.4, size: 6, glow: 1 });
+        /* agent 重训：特征工程随配方一起更新，金色粒子沿 e17 飞向特征工程节点 */
+        if (sim.retrainMode === "agent") spawn("e17", C.gold, { speed: 1.4, size: 6, glow: 1 });
         toast(ev.message, C.gold, 3400); break;
     }
   }
