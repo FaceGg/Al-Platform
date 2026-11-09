@@ -272,7 +272,7 @@ def _strip_system_messages(messages: list[dict]) -> list[dict]:
 
 def _build_llm_request(
     config, messages: list[dict], temperature: float, max_tokens: int,
-    thinking_level: str | None = None,
+    thinking_level: str | None = None, response_json: bool = False,
 ) -> tuple[str, dict, dict]:
     """按 API 格式构造请求（url/headers/body）。三格式均走 SSE 流式。
 
@@ -298,6 +298,14 @@ def _build_llm_request(
         apply_reasoning_mapping(reasoning_mapping, thinking_level)
         if thinking_level else None
     )
+    # 模型能力（「编辑模型配置」勾选，缺省=无）：
+    # - web_search「原生联网搜索」：anthropic/responses 注入官方 server
+    #   tool（模型按需触发搜索）；chat completions 无统一标准不注入（不造假）
+    # - structured_output「结构化输出」+ response_json 调用标志：openai 系
+    #   格式注入 response_format json_object（智能体 JSON 合同调用启用）
+    capabilities = model_cfg.get("capabilities") if isinstance(model_cfg.get("capabilities"), list) else []
+    wants_web_search = "web_search" in capabilities and provider in ("anthropic", "responses")
+    wants_json = response_json and "structured_output" in capabilities and provider in ("openai_compatible", "responses")
     if provider == "anthropic":
         system_text = "\n\n".join(
             message.get("content") or ""
@@ -329,6 +337,8 @@ def _build_llm_request(
             }
         if mapped_params:
             body.update(mapped_params)
+        if wants_web_search:
+            body["tools"] = [{"type": "web_search_20250305", "name": "web_search"}]
         return config.api_url, headers, body
     if provider == "responses":
         headers = (
@@ -350,6 +360,10 @@ def _build_llm_request(
             body["reasoning"] = {"effort": thinking_level}
         if mapped_params:
             body.update(mapped_params)
+        if wants_web_search:
+            body["tools"] = [{"type": "web_search_preview"}]
+        if wants_json:
+            body["text"] = {"format": {"type": "json_object"}}
         return config.api_url, headers, body
     # 默认：Chat Completions（存量路径行为不变）
     headers = (
@@ -363,6 +377,8 @@ def _build_llm_request(
         "stream": True,
         "stream_options": {"include_usage": True},
     }
+    if wants_json:
+        body["response_format"] = {"type": "json_object"}
     return config.api_url, headers, body
 
 
@@ -741,6 +757,7 @@ def chat_completion(
     request=None,
     timeout_floor: float | None = None,
     thinking_level: str | None = None,
+    response_json: bool = False,
 ) -> tuple[str | None, dict, str | None]:
     """Synchronous completion through the resolved config, with egress audit.
 
@@ -788,7 +805,8 @@ def chat_completion(
     # 三种 API 格式共用同一流式框架：构造器/解析器按 provider 分派
     # （openai_compatible=Chat Completions / responses / anthropic）。
     url, headers, body = _build_llm_request(
-        config, messages, resolved_temperature, amplified_max_tokens, thinking_level
+        config, messages, resolved_temperature, amplified_max_tokens, thinking_level,
+        response_json=response_json,
     )
     reply_parts: list[str] = []
     reasoning_parts: list[str] = []

@@ -155,6 +155,51 @@ class TestSystemMessageCapability(unittest.TestCase):
         self.assertEqual([m["role"] for m in body["messages"]], ["user"])
 
 
+class TestWebSearchAndStructuredOutput(unittest.TestCase):
+    """模型能力「原生联网搜索」/「结构化输出」真实生效（按勾选注入）。"""
+
+    def test_web_search_injected_for_anthropic(self):
+        config = _config_with_caps("anthropic", ["web_search"])
+        _u, _h, body = _build_llm_request(config, MESSAGES, 0.7, 1000)
+        self.assertEqual(body["tools"], [{"type": "web_search_20250305", "name": "web_search"}])
+
+    def test_web_search_injected_for_responses(self):
+        config = _config_with_caps("responses", ["web_search"])
+        _u, _h, body = _build_llm_request(config, MESSAGES, 0.7, 1000)
+        self.assertEqual(body["tools"], [{"type": "web_search_preview"}])
+
+    def test_web_search_not_injected_for_chat_completions(self):
+        """chat completions 无统一搜索标准：不注入（不造假）。"""
+        config = _config_with_caps("openai_compatible", ["web_search"])
+        _u, _h, body = _build_llm_request(config, MESSAGES, 0.7, 1000)
+        self.assertNotIn("tools", body)
+
+    def test_web_search_not_injected_when_unchecked(self):
+        config = _config_with_caps("anthropic", ["system_message"])
+        _u, _h, body = _build_llm_request(config, MESSAGES, 0.7, 1000)
+        self.assertNotIn("tools", body)
+
+    def test_structured_output_injected_for_chat_completions(self):
+        config = _config_with_caps("openai_compatible", ["structured_output"])
+        _u, _h, body = _build_llm_request(config, MESSAGES, 0.7, 1000, response_json=True)
+        self.assertEqual(body["response_format"], {"type": "json_object"})
+
+    def test_structured_output_requires_flag_and_capability(self):
+        # 未勾选能力 → 即使 json 调用也不注入；勾选但非 json 调用 → 也不注入
+        config = _config_with_caps("openai_compatible", [])
+        _u, _h, body = _build_llm_request(config, MESSAGES, 0.7, 1000, response_json=True)
+        self.assertNotIn("response_format", body)
+        config2 = _config_with_caps("openai_compatible", ["structured_output"])
+        _u, _h, body2 = _build_llm_request(config2, MESSAGES, 0.7, 1000)
+        self.assertNotIn("response_format", body2)
+
+    def test_structured_output_not_injected_for_anthropic(self):
+        """anthropic 无标准 json_object 参数：不造假。"""
+        config = _config_with_caps("anthropic", ["structured_output"])
+        _u, _h, body = _build_llm_request(config, MESSAGES, 0.7, 1000, response_json=True)
+        self.assertNotIn("response_format", body)
+
+
 class TestMultimodalContentByFormat(unittest.TestCase):
     """附件图片（OpenAI content 数组）按 provider 映射：openai 原样、
     anthropic → image/base64 块、responses → input_image 块。"""

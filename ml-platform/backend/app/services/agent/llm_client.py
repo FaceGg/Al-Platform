@@ -159,6 +159,10 @@ def chat_completion_with_retry(
                 purpose=purpose,
                 actor=actor,
                 timeout_floor=timeout_floor,
+                # 智能体全链路 JSON 合同调用：档案勾选「结构化输出」时网关
+                # 自动注入 response_format（openai 系格式；anthropic 无标准
+                # 参数则忽略，仍靠提示词约束）
+                response_json=True,
             )
             # 思考文本透传（挂 usage dict 上，不改三层返回签名）：调用方
             # 可选写入 run memory 留档；非推理型为缺省。
