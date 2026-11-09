@@ -596,6 +596,7 @@ const sim = {
   invoked: 0, ok: 0, errors: 0, alerts: 0, dataset: 0, version: 1,
   alertEvery: 5, retrainAt: 12,
   retrain: "idle", retrainT: 0, fault: 0,
+  retrainMode: "engine",   /* engine=AutoML 重训（默认/模拟）；agent=智能体重训 */
   rowTimer: .5,
 };
 function resetSim() {
@@ -681,14 +682,16 @@ function gateCheck() {
 }
 function startRetrain() {
   sim.retrain = "running"; sim.retrainT = 0;
-  toast(`报错数据达 ${sim.dataset} 行，达到重训阈值，自动建模已触发（AutoML）`, C.purple, 3000);
+  toast(`报错数据达 ${sim.dataset} 行，达到重训阈值，${sim.retrainMode === "agent" ? "智能体重训已触发（配方重放→验收→铸造）" : "自动建模已触发（AutoML）"}`, C.purple, 3000);
   for (let i = 0; i < 4; i++) {
     setTimeout(() => { if (sim.playing) spawn("e15", C.purple, { speed: 1, size: 3.2 }); }, i * 380 / sim.speed);
   }
 }
 function finishRetrain() {
   sim.retrain = "done";
-  toast("AutoML 完成 · 最优候选已注册并批准", C.purple, 3000);
+  toast(sim.retrainMode === "agent"
+    ? "智能体重放验收通过 · 引擎铸造完成，模型与特征工程即将更新"
+    : "AutoML 完成 · 最优候选已注册并批准", C.purple, 3000);
   setBadge("swap", "v" + (sim.version + 1));
   spawn("e12", C.purple, { speed: 1.3, size: 5.5, glow: 1, onArrive: () => {
     spawn("e13", C.gold, { speed: 1.15, size: 6, glow: 1, onArrive: () => applySwap() });
@@ -703,7 +706,9 @@ function applySwap() {
   document.getElementById("sub_infer").textContent = "ONNX 运行时 · 已热更新";
   shockwave(NODES.infer.x, NODES.infer.y, C.gold);
   shockwave(NODES.infer.x, NODES.infer.y, "#ffffff");
-  toast(`推理模型已替换为 v${sim.version}，闭环生效`, C.gold, 3400);
+  toast(sim.retrainMode === "agent"
+    ? `模型与特征工程已更新为 v${sim.version}（配方重放产物），闭环生效`
+    : `推理模型已替换为 v${sim.version}，闭环生效`, C.gold, 3400);
   setTimeout(() => { document.getElementById("sub_infer").textContent = "ONNX 运行时"; }, 5200);
 }
 
@@ -718,6 +723,18 @@ function setMonitorThreshold(n) {
 function setRetrainThreshold(n) {
   sim.retrainAt = n;
   updateGateVisual();
+}
+/* 重训模式感知（实时闭环）：agent=智能体重训（配方重放→S4 验收→引擎铸造→
+   换模，特征工程随配方一起更新），engine=AutoML 直接重训换模。切换
+   automl 节点文案与副标题，事件分支见 applyLiveStatus。 */
+function setRetrainMode(mode) {
+  sim.retrainMode = mode === "agent" ? "agent" : "engine";
+  const el = NODES.automl && NODES.automl.el;
+  if (!el) return;
+  const title = el.querySelector(".title");
+  const sub = el.querySelector(".sub");
+  if (title) title.textContent = sim.retrainMode === "agent" ? "智能体重训" : "自动建模";
+  if (sub) sub.textContent = sim.retrainMode === "agent" ? "配方重放 · 验收 · 铸造" : "AutoML · 搜索最优";
 }
 /* 实时轮询跑在专用 Web Worker：页面后台/被遮挡时浏览器会把主线程
    setTimeout 钳到 ≥1s（Chrome 密集节流甚至 1/min），大屏因此在推理
@@ -843,6 +860,7 @@ async function liveConnect() {
       const cfg = await cfgRes.json();
       if (cfg.alert_threshold_rows > 0) setMonitorThreshold(cfg.alert_threshold_rows);
       if (cfg.retrain_threshold_rows > 0) setRetrainThreshold(cfg.retrain_threshold_rows);
+      if (cfg.retrain_mode) setRetrainMode(cfg.retrain_mode);
     }
   } catch (e) { /* 阈值环保持默认值 */ }
   const handleResult = ({ status, body }) => {
@@ -901,6 +919,7 @@ function applyLiveStatus(st) {
   // 重训进度环由 retrain_threshold_rows 驱动
   if (st.alert_threshold_rows) setMonitorThreshold(st.alert_threshold_rows);
   if (st.retrain_threshold_rows) setRetrainThreshold(st.retrain_threshold_rows);
+  if (st.retrain_mode) setRetrainMode(st.retrain_mode);
   // 已推理/正常通过按真实条数直读状态（total=推理行数，ok=未报错行数）。
   // 直写 DOM：rAF 缓动在页面后台/未聚焦时会被暂停，数字会冻结。
   const setNow = (k, v) => { hud[k] = v; shown[k] = v;
@@ -953,6 +972,14 @@ function applyLiveStatus(st) {
       case "alert_triggered": pulse("monitor"); pulse("alert"); toast(ev.message, C.orange); break;
       case "review_task_created": spawn("e9", C.orange, { speed: 2 }); spawn("e10", C.orange, { speed: 2 }); toast(ev.message, C.orange); break;
       case "retrain_triggered": case "retrain_running": startRetrainLive(); toast(ev.message, C.purple); break;
+      /* 智能体重训链（agent 模式）：重放触发→验收→铸造→换模；
+         验收否决/失败/超时/熔断为红色告警 toast，节点脉动区分阶段 */
+      case "retrain_agent_triggered": startRetrainLive(); toast(ev.message, C.purple, 3400); break;
+      case "retrain_agent_accepted": pulse("automl", 900); toast(ev.message, C.green, 3200); break;
+      case "retrain_casting_started": startRetrainLive(); toast(ev.message, C.purple); break;
+      case "retrain_agent_rejected": case "retrain_agent_failed":
+      case "retrain_agent_timeout": case "retrain_agent_circuit_break":
+        toast(ev.message, C.red, 3600); break;
       case "model_swapped":
         sim.version++; setHud("version", sim.version);
         setBadge("infer", "v" + sim.version);
