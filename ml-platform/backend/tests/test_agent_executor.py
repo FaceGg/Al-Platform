@@ -1,9 +1,10 @@
 """Executor + L2 injection + closing-report tests (P0 wiring).
 
 The executor drives a REAL run row end-to-end: dataset artifact → profile →
-runner (LLM faked at the runner-module boundary) → real lightweight trainer →
-terminal state. Closing chain (distill + OptimizationReport) is exercised with
-the gateway call faked at each service module.
+runner (LLM faked at the runner-module boundary) → real S3 acceptance
+trainer (`lightweight_trainer`, 函数名为历史遗留——现为默认全量的验收
+训练) → terminal state. Closing chain (distill + OptimizationReport) is
+exercised with the gateway call faked at each service module.
 """
 
 import io

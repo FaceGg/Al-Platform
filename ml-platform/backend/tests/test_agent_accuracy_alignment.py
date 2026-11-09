@@ -1,4 +1,5 @@
-"""轻量训练器 accuracy 口径对齐回归（点焊/拧紧双域实测踩坑）。
+"""智能体 S3 验收训练器（lightweight_trainer，函数名为历史遗留）accuracy
+口径对齐回归（点焊/拧紧双域实测踩坑）。
 
 合同：accuracy 与 recall/precision/f1 同一布尔口径（1=少数类）。此前
 accuracy_score(y_test, preds) 用原始 LabelEncoder 编码，当少数类编码为

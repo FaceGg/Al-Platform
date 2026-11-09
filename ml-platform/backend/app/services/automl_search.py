@@ -502,7 +502,8 @@ def classification_metrics(
     """Evaluate a fitted model on held-out/CV predictions without training leakage.
 
     返回 ``(auc, f1, recall_minority)``：recall_minority 仅二分类有值
-    （少数类召回，与智能体轻量训练器/配方验收门禁 PRIMARY_METRIC 同口径），
+    （少数类召回，与智能体 S3 验收训练器（lightweight_trainer，历史名）
+    /配方验收门禁 PRIMARY_METRIC 同口径），
     多类/无法判定时为 None——闭环 agent 换模的配方门禁兜底依赖此键与
     引擎候选对齐（missing-veto 死锁修复，E2E 实证）。"""
     if len(np.unique(target)) < 2:
@@ -546,7 +547,8 @@ def classification_metrics(
     recall_minority: float | None = None
     metric_classes = np.unique(np.asarray(metric_target))
     if len(metric_classes) == 2:
-        # 少数类 = 验证集中样本更少的类别（与轻量训练器 minority 语义一致）
+        # 少数类 = 验证集中样本更少的类别（与智能体 S3 训练器 lightweight_trainer
+        # 的 minority 语义一致）
         _, counts = np.unique(np.asarray(metric_target), return_counts=True)
         minority = metric_classes[int(np.argmin(counts))]
         recall_minority = float(recall_score(

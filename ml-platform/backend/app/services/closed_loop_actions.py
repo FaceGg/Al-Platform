@@ -235,9 +235,9 @@ def build_retrain_frame(frames: list[pd.DataFrame], target_column: str) -> pd.Da
     """Merge retrain source frames, auto-label reflow rows and strip leakage.
 
     Shared by the engine retrain path (:func:`trigger_retrain_job`) and the
-    agent retrain mode (app.services.agent.loop_retrain) — the agent-side
-    lightweight trainer has no engine-side lazy labeling, so the merged frame
-    must be fully labeled before it is materialized.
+    agent retrain mode (app.services.agent.loop_retrain) — 智能体侧训练器
+    （lightweight_trainer，函数名为历史遗留，现为默认全量的验收训练）
+    没有引擎侧惰性标注，物化前必须完成整帧标注。
 
     自动标注：回流数据集没有人工标签列，但回流行自带 prediction 列
     （推理结果）。目标列整列缺失时直接由推理结果生成；部分缺失时补齐。

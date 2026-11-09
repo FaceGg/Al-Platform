@@ -3,9 +3,11 @@
 `execute_agent_run` assembles everything a run needs (dataset frame from the
 artifact store, deterministic profile, gateway-resolved LLM config, guidance
 from the submission) and drives :class:`AgentRunner` to a terminal state with
-the real lightweight trainer (stratified split → few sklearn families → best
-by minority recall). `launch_agent_run` does the same on a daemon thread so
-the API returns immediately; status/progress is persisted on the run row.
+the real S3 acceptance trainer（`lightweight_trainer`，函数名为历史遗留而非
+现行语义：默认全量数据参与训练、算法族全谱可选、按少数类召回选优；仅向导
+显式关闭全量时才启用分层抽样保护）. `launch_agent_run` does the same on a
+daemon thread so the API returns immediately; status/progress is persisted
+on the run row.
 """
 
 from __future__ import annotations
@@ -107,6 +109,10 @@ def _ensemble_member_importance(model) -> list[float] | None:
 
 def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
     """S3 验收训练（真实实验合同）：分层切分 + sklearn 家族，按少数类召回选优。
+
+    函数名 lightweight_trainer 是历史遗留（早期版本确为轻量抽样训练）——
+    现行语义是全量验收训练，不要按名字理解；改名牵涉全部调用点与既有
+    测试，暂保留原名。
 
     返回 Runner/S4 需要的形状：metrics / topk_metrics / importance /
     data_fidelity（训练数据保真度事实——全量或显式降采样，绝不静默）。

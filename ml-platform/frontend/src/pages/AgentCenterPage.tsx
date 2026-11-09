@@ -82,8 +82,9 @@ export default function AgentCenterPage() {
   const [agentRunsError, setAgentRunsError] = useState("");
   const [recipes, setRecipes] = useState<PipelineRecipeItem[]>([]);
   const [recipesError, setRecipesError] = useState("");
-  // 智能体 S3 训练（轻量训练器）不是 AutoML 任务——从运行列表合成行，
-  // 让「AutoML」视图能看到智能体触发的每次建模（此前完全不可见，用户报障）
+  // 智能体 S3 训练（lightweight_trainer，函数名为历史遗留——现为默认
+  // 全量的验收训练）不落 TrainingJob 表，不是 AutoML 任务——从运行列表
+  // 合成行，让「AutoML」视图能看到智能体触发的每次建模（此前完全不可见，用户报障）
   const agentTrainingRows = useMemo(() => {
     const rows: Array<Record<string, unknown>> = [];
     for (const run of agentRuns) {

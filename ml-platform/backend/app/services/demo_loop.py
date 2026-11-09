@@ -1368,7 +1368,8 @@ class DemoLoopService:
         # retrain_status 迁移保证调用次数；swapped_model_version_id 仅作
         # 前端换模水印，每轮覆盖为新版本，不能当 once-ever 守卫。
         # agent 重放轮恢复配方门禁兜底：classification_metrics 已补二分类
-        # recall_minority 输出（与轻量训练器/配方门禁 PRIMARY_METRIC 同口径），
+        # recall_minority 输出（与智能体 S3 验收训练器 lightweight_trainer/
+        # 配方门禁 PRIMARY_METRIC 同口径），
         # 引擎候选不再 missing-veto（此前 8 个 f1 0.98+ 候选全被拦的死锁已修）。
         recipe_id = None
         if getattr(config, "retrain_agent_run_id", None) is not None:

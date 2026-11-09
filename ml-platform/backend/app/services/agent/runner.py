@@ -4,8 +4,10 @@ Bounded iteration (≤3 rounds), S2 self-correction (≤8 attempts with a meta
 hint after 3 identical failures), L1 run memory carried into the next round's
 S1 prompt, a token-budget fuse, S4 hard gates evaluated BEFORE the LLM review
 (so a review can never relax them), and mandatory recording of the LLM
-profile/model used. S3 is an injected trainer callable — the P3 milestone
-binds it to the platform AutoML engine; tests inject a deterministic fake.
+profile/model used. S3 is an injected trainer callable — executor 绑定为验收
+训练器 lightweight_trainer（函数名为历史遗留：默认全量训练，非轻量语义；
+平台 AutoML 引擎不参与 S3，引擎铸造只出现在 S5 服务化与闭环重训段），
+tests inject a deterministic fake.
 """
 
 from __future__ import annotations
