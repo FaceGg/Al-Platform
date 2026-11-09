@@ -215,6 +215,61 @@ def _content_chars(content) -> int:
     return len(content or "")
 
 
+def _system_message_supported(config) -> bool:
+    """模型是否支持对话中系统消息（「编辑模型配置」的模型能力勾选）。
+
+    capabilities 缺省（旧档案）= 支持（保持历史行为不回归）；显式给出
+    capabilities 数组时以是否含 system_message 为准——文档能力为空的
+    模型（如智谱）不带 system 角色，系统提示词降级并入首条用户消息。"""
+    model_cfg = getattr(config, "model_config", None) or {}
+    capabilities = model_cfg.get("capabilities")
+    if not isinstance(capabilities, list):
+        return True
+    return "system_message" in capabilities
+
+
+def _strip_system_messages(messages: list[dict]) -> list[dict]:
+    """把 system 消息从对话中移除，内容并入第一条用户消息（保功能不保角色）。
+
+    纯文本 content 直接前缀拼接；多模态 content 数组拼进首个 text 块
+    （无 text 块则新建）。无 system 或无用户消息时原样返回。"""
+    system_parts = [
+        str(message.get("content") or "")
+        for message in messages
+        if message.get("role") == "system" and isinstance(message.get("content"), str)
+    ]
+    if not system_parts:
+        return messages
+    prefix = "[System]\n" + "\n\n".join(part for part in system_parts if part) + "\n\n"
+    rest: list[dict] = []
+    injected = False
+    for message in messages:
+        if message.get("role") == "system":
+            continue
+        if not injected and message.get("role") == "user":
+            content = message.get("content")
+            if isinstance(content, str):
+                message = {**message, "content": prefix + content}
+            elif isinstance(content, list):
+                blocks = list(content)
+                text_index = next(
+                    (i for i, block in enumerate(blocks)
+                     if isinstance(block, dict) and block.get("type") == "text"),
+                    None,
+                )
+                if text_index is None:
+                    blocks.insert(0, {"type": "text", "text": prefix})
+                else:
+                    blocks[text_index] = {
+                        **blocks[text_index],
+                        "text": prefix + str(blocks[text_index].get("text") or ""),
+                    }
+                message = {**message, "content": blocks}
+            injected = True
+        rest.append(message)
+    return rest if injected else messages
+
+
 def _build_llm_request(
     config, messages: list[dict], temperature: float, max_tokens: int,
     thinking_level: str | None = None,
@@ -230,7 +285,12 @@ def _build_llm_request(
     进请求体——映射来自「编辑模型配置」弹窗，与模型能力绑定。
     多模态 content 数组（附件图片）按 provider 映射：openai 原样透传、
     anthropic → image/base64 块、responses → input_image 块；system 恒为纯文本。
+    模型能力「对话中系统消息」（capabilities.system_message）：未勾选的模型
+    不发 system 角色——系统提示词降级并入首条用户消息（capabilities 缺省的
+    旧档案视为支持，行为不回归）。
     """
+    if not _system_message_supported(config):
+        messages = _strip_system_messages(messages)
     provider = config.provider or "openai_compatible"
     model_cfg = getattr(config, "model_config", None) or {}
     reasoning_mapping = model_cfg.get("reasoning_mapping")

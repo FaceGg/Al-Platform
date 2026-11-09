@@ -90,6 +90,71 @@ MULTIMODAL_MESSAGES = [
 ]
 
 
+def _config_with_caps(provider: str, capabilities) -> GatewayLLMConfig:
+    return GatewayLLMConfig(
+        api_url="https://api.example.com/v1/x",
+        api_key="sk-test",
+        model_id="m1",
+        temperature=None,
+        timeout_seconds=60,
+        profile_id=None,
+        profile_name="t",
+        provider=provider,
+        model_config={"capabilities": list(capabilities)},
+    )
+
+
+class TestSystemMessageCapability(unittest.TestCase):
+    """模型能力「对话中系统消息」真实生效：勾选才发 system 角色。
+
+    未勾选（文档能力为空的模型，如智谱）→ system 内容降级并入首条
+    用户消息；capabilities 缺省的旧档案视为支持（行为不回归）。"""
+
+    MESSAGES = [
+        {"role": "system", "content": "你是焊接助手"},
+        {"role": "user", "content": "什么是点焊"},
+    ]
+
+    def test_unchecked_strips_system_into_first_user(self):
+        config = _config_with_caps("anthropic", ["structured_output"])  # 无 system_message
+        _url, _h, body = _build_llm_request(config, self.MESSAGES, 0.7, 1000)
+        self.assertNotIn("system", body)
+        self.assertTrue(body["messages"][0]["content"].startswith("[System]\n你是焊接助手"))
+        self.assertIn("什么是点焊", body["messages"][0]["content"])
+        self.assertEqual(len(body["messages"]), 1)
+
+    def test_checked_keeps_system_field(self):
+        config = _config_with_caps("anthropic", ["system_message", "structured_output"])
+        _url, _h, body = _build_llm_request(config, self.MESSAGES, 0.7, 1000)
+        self.assertEqual(body["system"], "你是焊接助手")
+        self.assertEqual(body["messages"][0]["content"], "什么是点焊")
+
+    def test_missing_capabilities_defaults_to_supported(self):
+        config = _config("anthropic")  # 无 model_config → 旧档案行为不回归
+        _url, _h, body = _build_llm_request(config, self.MESSAGES, 0.7, 1000)
+        self.assertEqual(body["system"], "你是焊接助手")
+
+    def test_unchecked_multimodal_user_gets_prefix_in_text_block(self):
+        config = _config_with_caps("anthropic", [])
+        messages = [
+            {"role": "system", "content": "你是助手"},
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGk="}},
+                {"type": "text", "text": "看这张图"},
+            ]},
+        ]
+        _url, _h, body = _build_llm_request(config, messages, 0.7, 1000)
+        self.assertNotIn("system", body)
+        content = body["messages"][0]["content"]
+        self.assertTrue(content[1]["text"].startswith("[System]\n你是助手"))
+        self.assertIn("image", content[0]["type"])
+
+    def test_chat_completions_unchecked_drops_system_role(self):
+        config = _config_with_caps("openai_compatible", [])
+        _url, _h, body = _build_llm_request(config, self.MESSAGES, 0.7, 1000)
+        self.assertEqual([m["role"] for m in body["messages"]], ["user"])
+
+
 class TestMultimodalContentByFormat(unittest.TestCase):
     """附件图片（OpenAI content 数组）按 provider 映射：openai 原样、
     anthropic → image/base64 块、responses → input_image 块。"""
