@@ -71,6 +71,24 @@ def dataset_profile(
     return _profile_payload(db, artifact_uuid, project_uuid, target)
 
 
+def _numeric_feature_columns(frame, target_column: str | None, drop_set: set | None = None) -> list[str]:
+    """从 frame 推导引擎可用的数值特征列（服务化铸造用）。
+
+    剔除：目标列、drop 集合、非数值列、**全 NaN 数值列**——最后一项是
+    实测坑：全 NaN 列 dtype 恰为 float64 会被当特征带上，引擎
+    dropna(subset=全部特征列) 时把 2180 行清零，报出误导性的
+    「AutoML requires numeric features and at least ten rows」。
+    """
+    return [
+        str(column)
+        for column in frame.columns
+        if column != target_column
+        and (not drop_set or column not in drop_set)
+        and str(frame[column].dtype) in {"int64", "float64", "int32", "float32"}
+        and frame[column].notna().any()
+    ]
+
+
 def _fixation_content(run: AgentRun, memory: dict, db: Session | None = None) -> dict:
     """API 侧固化构造：与 runner 同源（build_fixation_content）+ smoke_row。
 
@@ -320,6 +338,11 @@ class CastDeploymentRequest(BaseModel):
     # 引擎 CV 口径下单模型欠门禁时的补救路径，冠军仍须过配方门禁）
     ensemble_enabled: bool | None = None
     ensemble_top_k: int = Field(default=3, ge=2, le=5)
+    # 显式重铸（跳过触发幂等）：在途/已完成时仍强制新开一轮
+    force: bool = False
+    # 部署模式：s3=直接部署本次验收的冠军模型（默认，秒级零重训）；
+    # engine=按配方触发 AutoML 重铸（两段式轮询，追求更高上限）
+    mode: str = Field(default="s3", pattern="^(s3|engine)$")
 
 
 @router.post("/servitize/cast-deployment", status_code=201)
@@ -328,10 +351,13 @@ def cast_deployment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """铸造段①：按配方当前版本触发引擎 AutoML job（验收成果落地为可部署模型）。
+    """部署段①：把验收成果落地为 running 部署。
 
-    白名单/集成/特征列随配方下发（与闭环智能体重训铸造同参）；数据集默认
-    取源 run 的重放合并工件，缺省回落显式传入或项目最新数据集。"""
+    mode=s3（默认，直接部署本次模型）：源 run 验收时物化的 S3 冠军工件
+    → ModelLibrary → 注册（含 ONNX 端口转换）→ 批准 → 新建部署 → 启动。
+    秒级完成、零重训——部署的就是 S4 验收时评的那个模型。
+    mode=engine（引擎重铸）：按配方触发 AutoML job（全量+搜索+集成终选），
+    两段式轮询——追求更高上限时用。"""
     from datetime import datetime, timezone
 
     from app.models.training import TrainingJob
@@ -346,6 +372,120 @@ def cast_deployment(
     recipe_row = db.get(PipelineRecipe, recipe_uuid)
     if recipe_row is None or str(recipe_row.project_id) != str(project_uuid):
         raise HTTPException(404, detail={"code": "RECIPE_NOT_FOUND"})
+
+    # ---- s3 快路径：直接部署本次验收的冠军模型（无训练） ----
+    if payload.mode == "s3":
+        run_key = payload.run_id
+        run_row = None
+        if run_key and _is_uuid(run_key):
+            run_row = db.get(AgentRun, uuid_module.UUID(run_key))
+        if run_row is None or run_row.project_id != project_uuid:
+            raise HTTPException(404, detail={"code": "AGENT_RUN_NOT_FOUND"})
+        champion_key = str((run_row.result_json or {}).get("s3_champion_artifact_id") or "")
+        if not champion_key or not _is_uuid(champion_key):
+            raise HTTPException(422, detail={
+                "code": "S3_CHAMPION_NOT_PERSISTED",
+                "message": "该任务验收时未物化 S3 冠军模型（旧版本任务）——"
+                           "请用引擎重铸模式，或重新提交任务后再直接部署",
+            })
+        deployment_id = _deploy_s3_champion(
+            db, project_uuid=project_uuid, champion_artifact_id=champion_key,
+            actor_id=current_user.id, recipe_row=recipe_row, run_row=run_row,
+        )
+        return {"mode": "s3", "status": "deployed",
+                "deployment_id": deployment_id,
+                "recipe_id": str(recipe_uuid)}
+
+
+def _deploy_s3_champion(
+    db, *, project_uuid, champion_artifact_id: str, actor_id, recipe_row, run_row,
+) -> str:
+    """S3 冠军工件 → 库 → 注册（ONNX 端口）→ 批准 → 新建部署 → 启动。幂等：
+    同工件重复部署复用已建部署（配方 cast_deployment 元数据锚定）。"""
+    from app.models.model_library import ModelLibrary
+    from app.models.model_registry import InferenceDeployment, RegisteredModel
+    from app.services.artifact_service import build_artifact_service
+    from app.services.model_registry import ModelRegistryService
+
+    content = dict((getattr(recipe_row, "versions", None) and {}) or {})
+    from app.services.agent.recipe import get_current_version
+
+    version_row = get_current_version(db, recipe_row.id)
+    meta = dict((version_row.content_json or {}).get("cast_deployment") or {})
+    existing = str(meta.get("deployment_id") or "")
+    if existing and _is_uuid(existing):
+        dep = db.get(InferenceDeployment, uuid_module.UUID(existing))
+        if dep is not None:
+            return str(dep.id)
+
+    artifact_service = build_artifact_service(db)
+    artifact = artifact_service.resolve(
+        uuid_module.UUID(champion_artifact_id), project_uuid, expected_type="model")
+    artifact_meta = dict(artifact.metadata_ or {})
+    library = ModelLibrary(
+        name=f"智能体S3-{str(run_row.id)[:8]}",
+        project_id=project_uuid,
+        owner_id=actor_id,
+        status="completed",
+        framework="sklearn",
+        backbone=str(artifact_meta.get("algorithm") or "s3-champion"),
+        metrics=dict(artifact_meta.get("metrics") or {}),
+        params={},
+    )
+    db.add(library)
+    db.flush()
+    library.model_artifact_id = artifact.id
+    db.commit()
+
+    registered = RegisteredModel(
+        project_id=project_uuid, name=f"agent-s3-{str(run_row.id)[:8]}",
+        created_by_id=actor_id)
+    db.add(registered)
+    db.flush()
+    registry = ModelRegistryService(artifact_service=artifact_service)
+    try:
+        version = registry.register_platform_version(
+            db, model_id=registered.id,
+            source_model_library_id=library.id, actor_id=actor_id)
+    except Exception as error:  # noqa: BLE001 - 转换失败原样上抛（422 呈现）
+        db.rollback()
+        raise HTTPException(422, detail={
+            "code": "S3_DEPLOY_CONVERSION_FAILED",
+            "message": f"S3 冠军模型注册/ONNX 转换失败：{error}",
+        }) from error
+    if version.approval_status != "approved":
+        registry.transition_model_version(db, version.id, "approve", actor_id)
+
+    from app.services.demo_loop import _deployment_service
+
+    dep_service = _deployment_service()
+    if dep_service is None:
+        from app.config import settings
+        from app.services.inference_deployment import InferenceDeploymentService
+        from app.services.inference_runtime import InferenceRuntimeClient
+
+        dep_service = InferenceDeploymentService(
+            InferenceRuntimeClient(
+                settings.inference_runtime_url,
+                settings.resolved_inference_internal_secret.get_secret_value(),
+            ), SessionLocal_)
+    deployment = dep_service.create(
+        db, project_id=project_uuid, version_id=version.id, actor_id=actor_id,
+        name=f"智能体部署-{str(run_row.id)[:8]}", commit=True)
+    dep_service.start(db, deployment.id)
+    db.refresh(deployment)
+    # 配方锚定（幂等）+ 留档
+    updated = dict(version_row.content_json or {})
+    cast_meta = dict(updated.get("cast_deployment") or {})
+    cast_meta["deployment_id"] = str(deployment.id)
+    cast_meta["mode"] = "s3"
+    cast_meta["s3_run_id"] = str(run_row.id)
+    updated["cast_deployment"] = cast_meta
+    from app.services.agent.recipe import update_recipe
+
+    update_recipe(db, recipe_row.id, content=updated,
+                  change_note="s3 champion deployed (direct)")
+    return str(deployment.id)
     try:
         version = get_current_version(db, recipe_uuid)
     except Exception:
@@ -376,6 +516,29 @@ def cast_deployment(
         if latest is None:
             raise HTTPException(422, detail={"code": "CAST_DATASET_MISSING"})
         dataset_id = str(latest.id)
+
+    # 触发幂等（页面重复点击/退出重进场景）：配方已有在途铸造 job 或已建
+    # 部署时直接返回既有状态，不再新开 job（此前每次点击都新开——DB 堆
+    # 多个 running 的实测根因）。显式 force=True 才允许重铸。
+    existing_cast = dict(content.get("cast_deployment") or {})
+    existing_job_key = str(existing_cast.get("job_id") or "")
+    if existing_job_key and _is_uuid(existing_job_key) and not payload.force:
+        from app.models.training import TrainingJob as _TJ
+
+        existing_job = db.get(_TJ, uuid_module.UUID(existing_job_key))
+        existing_dep_key = str(existing_cast.get("deployment_id") or "")
+        if existing_dep_key and _is_uuid(existing_dep_key):
+            dep_row = db.get(InferenceDeployment, uuid_module.UUID(existing_dep_key))
+            if dep_row is not None:
+                return {"job_id": existing_job_key, "recipe_id": str(recipe_uuid),
+                        "status": "deployed", "deployment_id": existing_dep_key,
+                        "max_trials": payload.max_trials, "resumed": True}
+        if existing_job is not None and existing_job.status in {
+            "pending", "queued", "running", "cancel_requested",
+        }:
+            return {"job_id": existing_job_key, "recipe_id": str(recipe_uuid),
+                    "status": existing_job.status,
+                    "max_trials": payload.max_trials, "resumed": True}
 
     retrain_ensemble = dict(content.get("retrain_ensemble") or {})
     if payload.ensemble_enabled is True:
@@ -428,12 +591,7 @@ def cast_deployment(
                                   "column_count": int(len(cast_frame.columns))},
                     )
                 cast_dataset_id = str(cast_artifact.id)
-                input_columns = [
-                    str(column)
-                    for column in cast_frame.columns
-                    if column != target_column
-                    and str(cast_frame[column].dtype) in {"int64", "float64", "int32", "float32"}
-                ]
+                input_columns = _numeric_feature_columns(cast_frame, target_column)
         except Exception:  # noqa: BLE001 - 特征变换失败回落原始数据集+列推导
             cast_dataset_id = dataset_id
             input_columns = input_columns or []
@@ -455,13 +613,20 @@ def cast_deployment(
                 import pandas as pd_frame
 
                 probe = pd_frame.read_csv(dataset_path, nrows=5)
-            input_columns = [
-                str(column)
-                for column in probe.columns
-                if column != target_column
-                and column not in drop_set
-                and str(probe[column].dtype) in {"int64", "float64", "int32", "float32"}
-            ]
+                input_columns = _numeric_feature_columns(probe, target_column, drop_set)
+                # probe 前 5 行全空的数值列不能直接判死（可能是偶发缺失），
+                # 全量复核后剔除真全 NaN 列（dropna 清空全部行的元凶）
+                suspicious = [
+                    column for column in input_columns
+                    if probe[column].notna().sum() == 0
+                ]
+                if suspicious:
+                    full = pd_frame.read_csv(dataset_path)
+                    input_columns = [
+                        column for column in input_columns
+                        if column not in suspicious
+                        or full[column].notna().any()
+                    ]
         except Exception:  # noqa: BLE001 - 推导失败回落引擎默认全 numeric
             input_columns = []
 
@@ -495,6 +660,50 @@ def cast_deployment(
                   change_note="cast-deployment requested (servitize)")
     return {"job_id": str(job.id), "recipe_id": str(recipe_uuid),
             "status": job.status, "max_trials": payload.max_trials}
+
+
+@router.get("/servitize/cast-deployment/current")
+def cast_deployment_current(
+    recipe_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """页面恢复入口：配方当前铸造状态（无/job 态/deployed/failed）。
+
+    进入任务页时调用——退出重进后前端据此恢复铸造 UI（在途自动续轮询、
+    已部署自动选中），不必重新点「② 铸造新部署」。"""
+    from app.models.model_registry import InferenceDeployment
+    from app.models.training import TrainingJob
+    from app.services.agent.recipe import get_current_version
+
+    if not _is_uuid(recipe_id):
+        raise HTTPException(422, detail={"code": "IDENTIFIER_INVALID"})
+    try:
+        version = get_current_version(db, uuid_module.UUID(recipe_id))
+    except Exception:
+        raise HTTPException(404, detail={"code": "RECIPE_NOT_FOUND"}) from None
+    meta = dict((version.content_json or {}).get("cast_deployment") or {})
+    dep_key = str(meta.get("deployment_id") or "")
+    if dep_key and _is_uuid(dep_key):
+        dep = db.get(InferenceDeployment, uuid_module.UUID(dep_key))
+        if dep is not None:
+            return {"status": "deployed", "job_id": meta.get("job_id"),
+                    "deployment_id": dep_key,
+                    "model_version_id": str(dep.model_version_id),
+                    "deployment_state": dep.observed_state}
+    job_key = str(meta.get("job_id") or "")
+    if job_key and _is_uuid(job_key):
+        job = db.get(TrainingJob, uuid_module.UUID(job_key))
+        if job is not None:
+            payload_out = {"status": job.status, "job_id": job_key}
+            if job.status == "failed":
+                payload_out["error"] = job.error_message or job.error_code
+            if job.status == "completed":
+                # job 完成但无部署：补一轮收尾（幂等）再返回
+                return cast_deployment_status(
+                    job_key, recipe_id=recipe_id, db=db, current_user=current_user)
+            return payload_out
+    return {"status": "idle"}
 
 
 @router.get("/servitize/cast-deployment/{job_id}")
