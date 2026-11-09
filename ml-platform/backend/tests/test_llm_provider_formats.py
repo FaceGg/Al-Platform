@@ -206,14 +206,16 @@ class TestMaxOutputTokensConsumption(unittest.TestCase):
     此前只存档案从未进请求（恒 2000）。"""
 
     def test_config_max_tokens_used_when_caller_omits(self):
-        config = _config("openai_compatible")
-        config.max_tokens = 12345
+        import dataclasses
+
+        config = dataclasses.replace(_config("openai_compatible"), max_tokens=12345)
         _u, _h, body = _build_llm_request(config, MESSAGES, 0.7, config.max_tokens)
         self.assertEqual(body["max_tokens"], 12345)
 
     def test_anthropic_uses_config_max_tokens(self):
-        config = _config("anthropic")
-        config.max_tokens = 7777
+        import dataclasses
+
+        config = dataclasses.replace(_config("anthropic"), max_tokens=7777)
         _u, _h, body = _build_llm_request(config, MESSAGES, 0.7, config.max_tokens)
         self.assertEqual(body["max_tokens"], 7777)
 
