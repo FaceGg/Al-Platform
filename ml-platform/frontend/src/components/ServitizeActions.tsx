@@ -9,9 +9,10 @@ import {
 } from "../api/agentCenter";
 
 /**
- * 验收通过任务的操作流尾部（§四 + §12.1）：
- * 「固化配方」→「铸造新部署」（按配方最优/集成落地为 running 部署）→
- * 「一键服务化」草稿 →「批准发布」。任一步失败就地显示错误，不弹全局框。
+ * 验收通过任务的服务化操作流（§四 + §12.1），分步进度呈现：
+ * ① 固化配方 → ② 部署模型（S3 冠军直部署/引擎重铸）→ ③ 服务化草稿
+ * → ④ 批准发布。每步 25% 进度；当前步高亮可操作、后续步置灰锁定、
+ * 进行中的步显示旋转圆圈；完成自动进入下一步。任一步失败就地显示。
  */
 
 interface DraftResult {
@@ -23,6 +24,29 @@ interface DraftResult {
 }
 
 type CastPhase = "idle" | "casting" | "deployed" | "failed";
+
+// 步骤状态：done=已完成 ✓ / active=当前可操作（蓝色）/ locked=未到（灰色）
+// / busy=执行中（转圈，按钮锁定）
+type StepState = "done" | "active" | "locked" | "busy";
+
+function StepSpinner() {
+  // 与 v2 风格一致的旋转圆圈（内联 SVG，无外部依赖）
+  return (
+    <span
+      role="status"
+      aria-label="loading"
+      style={{
+        display: "inline-block",
+        width: 13,
+        height: 13,
+        borderRadius: "50%",
+        border: "2px solid var(--v2-line, #d9d9d9)",
+        borderTopColor: "var(--v2-blue, #1677ff)",
+        animation: "v2-step-spin 0.8s linear infinite",
+      }}
+    />
+  );
+}
 
 export default function ServitizeActions({
   runId,
@@ -209,6 +233,41 @@ export default function ServitizeActions({
     }
   };
 
+  // ---- 分步进度派生（4 步 × 25%）----
+  const step1Done = Boolean(recipeId);
+  const step2Done = castPhase === "deployed" && Boolean(deploymentId);
+  const step3Done = Boolean(draft);
+  const step4Done = published;
+  const doneCount = [step1Done, step2Done, step3Done, step4Done].filter(Boolean).length;
+  const percent = Math.round((doneCount / 4) * 100);
+  // 当前步 = 第一个未完成步；其之前的步全 done、之后的全 locked
+  const currentStep = step1Done ? (step2Done ? (step3Done ? (step4Done ? 5 : 4) : 3) : 2) : 1;
+  const stepBusy = (n: number): boolean => {
+    if (n === 1) return busy && !step1Done;
+    if (n === 2) return castPhase === "casting";
+    if (n === 3) return busy && step2Done && !step3Done;
+    if (n === 4) return busy && step3Done && !step4Done;
+    return false;
+  };
+  const stateOf = (n: number): StepState => {
+    const done = n === 1 ? step1Done : n === 2 ? step2Done : n === 3 ? step3Done : step4Done;
+    if (done) return "done";
+    if (n === currentStep) return stepBusy(n) ? "busy" : "active";
+    return "locked";
+  };
+
+  const stepLabels = zh
+    ? ["固化配方", "部署模型", "服务化草稿", "批准发布"]
+    : ["Fixate recipe", "Deploy model", "Servitize draft", "Approve"];
+
+  const stepBadge = (state: StepState, n: number) => {
+    if (state === "done") return <span style={{ color: "var(--v2-go, #52c41a)", fontWeight: 700 }}>✓</span>;
+    if (state === "busy") return <StepSpinner />;
+    if (state === "active")
+      return <span style={{ color: "var(--v2-blue, #1677ff)", fontWeight: 700 }}>{n}</span>;
+    return <span style={{ color: "var(--v2-dim, #bbb)", fontWeight: 700 }}>{n}</span>;
+  };
+
   return (
     <div
       style={{
@@ -217,104 +276,160 @@ export default function ServitizeActions({
         borderRadius: 10,
         background: "var(--v2-bg)",
         padding: "10px 14px",
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        flexWrap: "wrap",
       }}
     >
-      <b style={{ fontSize: 13, color: "var(--v2-txt)" }}>
-        {zh ? "服务化操作流" : "Servitization"}
-      </b>
-
-      {recipeId ? (
-        <span className="v2-badge v2-bg">recipe ✓ {recipeId.slice(0, 8)}</span>
-      ) : (
-        <button
-          type="button"
-          className="v2-btn primary"
-          style={{ padding: "4px 14px", fontSize: 12 }}
-          disabled={busy}
-          onClick={() => void fixate()}
+      <style>{`@keyframes v2-step-spin { to { transform: rotate(360deg); } }`}</style>
+      {/* 进度条（4 步各 25%） */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+        <b style={{ fontSize: 13, color: "var(--v2-txt)", whiteSpace: "nowrap" }}>
+          {zh ? "服务化操作流" : "Servitization"}
+        </b>
+        <div
+          style={{
+            flex: 1,
+            minWidth: 120,
+            height: 8,
+            borderRadius: 4,
+            background: "var(--v2-line, #eee)",
+            overflow: "hidden",
+          }}
         >
-          {zh ? "① 固化配方" : "① Fixate recipe"}
-        </button>
-      )}
+          <div
+            style={{
+              width: `${percent}%`,
+              height: "100%",
+              borderRadius: 4,
+              background: "linear-gradient(90deg, #52c41a, #389e0d)",
+              transition: "width .4s ease",
+            }}
+          />
+        </div>
+        <span style={{ fontSize: 12, color: "var(--v2-sub)", whiteSpace: "nowrap" }}>
+          {percent}%
+        </span>
+        {published ? (
+          <span className="v2-badge v2-bgo">✓ {zh ? "已发布" : "Published"}</span>
+        ) : null}
+      </div>
 
-      {recipeId && !draft && !published ? (
-        <>
-          {/* ② 直接部署本次模型：S3 验收冠军秒级上线（推荐）+引擎重铸次选项 */}
+      {/* 步骤条：每步状态徽标 + 名称；locked 步灰色不可点 */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+        {stepLabels.map((label, index) => {
+          const n = index + 1;
+          const st = stateOf(n);
+          return (
+            <span
+              key={label}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 12,
+                padding: "3px 10px",
+                borderRadius: 12,
+                border: `1px solid ${
+                  st === "active" || st === "busy"
+                    ? "var(--v2-blue, #1677ff)"
+                    : st === "done"
+                      ? "var(--v2-go, #52c41a)"
+                      : "var(--v2-line, #ddd)"
+                }`,
+                background:
+                  st === "active" || st === "busy" ? "rgba(22,119,255,.08)" : "transparent",
+                color:
+                  st === "locked" ? "var(--v2-dim, #aaa)"
+                    : st === "done" ? "var(--v2-go, #389e0d)" : "var(--v2-txt)",
+              }}
+            >
+              {stepBadge(st, n)}
+              {label}
+            </span>
+          );
+        })}
+      </div>
+
+      {/* 当前步操作区 */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        {stateOf(1) === "active" ? (
           <button
             type="button"
             className="v2-btn primary"
-            style={{
-              padding: "4px 14px",
-              fontSize: 12,
-              ...(castPhase === "deployed"
-                ? { borderColor: "var(--v2-gold, #d4a72c)" }
-                : {}),
-            }}
-            disabled={busy || castPhase === "casting" || castPhase === "deployed"}
-            onClick={() => void deployS3()}
-          >
-            {zh ? "② 直接部署本次模型（秒级）" : "② Deploy accepted model"}
-          </button>
-          <button
-            type="button"
-            className="v2-btn"
             style={{ padding: "4px 14px", fontSize: 12 }}
-            disabled={busy || castPhase === "casting" || castPhase === "deployed"}
-            onClick={() => void startCast()}
+            disabled={busy}
+            onClick={() => void fixate()}
           >
-            {zh ? "引擎重铸（全量搜索）" : "Engine recast"}
+            {zh ? "① 固化配方" : "① Fixate recipe"}
           </button>
-          {castNote ? (
-            <span style={{ fontSize: 12, color: "var(--v2-sub)" }}>{castNote}</span>
-          ) : null}
-          {castPhase === "deployed" ? (
-            <span className="v2-badge v2-bgo">✓ {zh ? "新部署已就绪" : "deployed"}</span>
-          ) : null}
+        ) : null}
+
+        {recipeId && !draft && !published && (stateOf(2) === "active" || stateOf(2) === "busy") ? (
+          <>
+            <button
+              type="button"
+              className="v2-btn primary"
+              style={{ padding: "4px 14px", fontSize: 12 }}
+              disabled={busy || castPhase === "casting"}
+              onClick={() => void deployS3()}
+            >
+              {zh ? "② 直接部署本次模型（秒级）" : "② Deploy accepted model"}
+            </button>
+            <button
+              type="button"
+              className="v2-btn"
+              style={{ padding: "4px 14px", fontSize: 12 }}
+              disabled={busy || castPhase === "casting"}
+              onClick={() => void startCast()}
+            >
+              {zh ? "引擎重铸（全量搜索）" : "Engine recast"}
+            </button>
+          </>
+        ) : null}
+        {castNote ? (
+          <span style={{ fontSize: 12, color: "var(--v2-sub)" }}>{castNote}</span>
+        ) : null}
+
+        {recipeId && !draft && !published && (stateOf(3) === "active" || stateOf(3) === "busy") ? (
           <button
             type="button"
-            className="v2-btn"
+            className="v2-btn primary"
             style={{ padding: "4px 14px", fontSize: 12 }}
             disabled={busy || !deploymentId}
             onClick={() => void draftServitize()}
           >
             {zh ? "③ 一键服务化（草稿+冒烟）" : "③ Servitize draft"}
           </button>
-        </>
-      ) : null}
+        ) : null}
 
-      {draft && !published ? (
-        <span style={{ fontSize: 12, color: "var(--v2-sub)" }}>
-          {zh ? "草稿就绪：" : "Draft: "}
-          {draft.model_api_name} · {zh ? "缺陷类" : "error classes"}
-          [{draft.error_classes.join(",")}] · smoke {draft.smoke?.prediction ?? "-"}
-          {draft.smoke?.error_matched ? (zh ? "（命中回流类，dry_run 未写入）" : " (dry-run, no backflow)") : ""}
-        </span>
-      ) : null}
-      {draft && !published ? (
-        <button
-          type="button"
-          className="v2-btn primary"
-          style={{ padding: "4px 14px", fontSize: 12 }}
-          disabled={busy}
-          onClick={() => void approve()}
-        >
-          {zh ? "④ 批准发布" : "④ Approve"}
-        </button>
-      ) : null}
+        {draft && !published ? (
+          <span style={{ fontSize: 12, color: "var(--v2-sub)" }}>
+            {zh ? "草稿就绪：" : "Draft: "}
+            {draft.model_api_name} · {zh ? "缺陷类" : "error classes"}
+            [{draft.error_classes.join(",")}] · smoke {draft.smoke?.prediction ?? "-"}
+            {draft.smoke?.error_matched ? (zh ? "（命中回流类，dry_run 未写入）" : " (dry-run, no backflow)") : ""}
+          </span>
+        ) : null}
+        {draft && !published && (stateOf(4) === "active" || stateOf(4) === "busy") ? (
+          <button
+            type="button"
+            className="v2-btn primary"
+            style={{ padding: "4px 14px", fontSize: 12 }}
+            disabled={busy}
+            onClick={() => void approve()}
+          >
+            {zh ? "④ 批准发布" : "④ Approve"}
+          </button>
+        ) : null}
 
-      {published ? (
-        <span className="v2-badge v2-bgo">
-          ✓ {zh ? "已发布（模型 API 已上市场）" : "Published"}
-        </span>
-      ) : null}
+        {published ? (
+          <span className="v2-badge v2-bgo">
+            ✓ {zh ? "模型 API 已上市场" : "Published to market"}
+          </span>
+        ) : null}
 
-      {error ? (
-        <span style={{ fontSize: 12, color: "var(--v2-red, #e66f75)" }}>注意：{error}</span>
-      ) : null}
+        {error ? (
+          <span style={{ fontSize: 12, color: "var(--v2-red, #e66f75)" }}>注意：{error}</span>
+        ) : null}
+      </div>
     </div>
   );
 }
