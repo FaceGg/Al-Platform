@@ -819,6 +819,84 @@ def test_configuration_update_creates_new_revision_and_invalidates_old_preview()
         app.dependency_overrides.clear(); db.close(); engine.dispose()
 
 
+def test_configuration_update_narrows_scope_to_strategy_hits_and_restores_full():
+    """标注范围=仅策略命中：配置保存即把新 revision 冻结范围收窄到命中样本；
+    切回全量时范围从初始 revision 恢复（上一 revision 可能已收窄）。"""
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, expire_on_commit=False)()
+    user = User(username=f"scope-hits-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(user); db.flush()
+    project = Project(name="Scope hits project", owner_id=user.id)
+    db.add(project); db.flush()
+    version = DatasetVersion(project_id=project.id, operator_id=user.id, version=1, row_count=3, column_count=2, content_hash="sha256:scope-hits-data", schema_hash="sha256:scope-hits-schema")
+    db.add(version); db.flush()
+    db.add_all([
+        DatasetSchemaColumn(dataset_version_id=version.id, name="feature", position=0, dtype="float", nullable=False),
+        DatasetSchemaColumn(dataset_version_id=version.id, name="score", position=1, dtype="float", nullable=False),
+        DatasetSample(dataset_version_id=version.id, sample_id="sample-1", row_index=0, values={"feature": 1.0, "score": 1.0}),
+        DatasetSample(dataset_version_id=version.id, sample_id="sample-2", row_index=1, values={"feature": 2.0, "score": 2.0}),
+        DatasetSample(dataset_version_id=version.id, sample_id="sample-3", row_index=2, values={"feature": 3.0, "score": 3.0}),
+    ])
+    model_version, _source_artifact = _enabled_annotation_model(db, project, user, columns=[{"name": "label", "dtype": "object", "task": "classification"}])
+    db.commit()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    client = TestClient(app)
+
+    def scope_rows(revision):
+        rows = db.query(AnnotationTaskScopeSample).filter_by(
+            task_id=uuid.UUID(task_id), task_revision=revision,
+        ).order_by(AnnotationTaskScopeSample.row_index.asc()).all()
+        return [(item.sample_id, item.row_index) for item in rows]
+
+    try:
+        created = client.post("/api/annotation-tasks", headers={"X-Request-ID": str(uuid.uuid4()), "Idempotency-Key": str(uuid.uuid4())}, json={
+            "project_id": str(project.id), "dataset_version_id": str(version.id),
+            "model_version_id": str(model_version.id), "mode": "automatic",
+            "sample_scope": {"kind": "all"}, "configuration": {"strategy": "model"},
+        })
+        assert created.status_code == 201, created.text
+        task_id = created.json()["id"]
+        assert scope_rows(0) == [("sample-1", 0), ("sample-2", 1), ("sample-3", 2)]
+        db.get(GenericAnnotationTask, uuid.UUID(task_id)).status = "needs_review"
+        db.commit()
+
+        rule_config = {
+            "clustering": True, "strategy": "rule", "annotation_scope": "strategy_hits",
+            "rules": [{"id": "r1", "when": {"score": {"gte": 2}}, "values": {"label": "x"}}],
+        }
+        narrowed = client.put(f"/api/annotation-tasks/{task_id}/configuration", json={
+            "task_revision": 0, "visible_columns": ["feature"], "configuration": rule_config,
+        })
+        assert narrowed.status_code == 200, narrowed.text
+        assert narrowed.json()["task_revision"] == 1
+        assert narrowed.json()["task_snapshot"]["configuration"]["annotation_scope"] == "strategy_hits"
+        assert narrowed.json()["task_snapshot"]["scope"]["sample_count"] == 2
+        # 新 revision 只冻结命中样本（保留源行号），初始 revision 仍为全量
+        assert scope_rows(1) == [("sample-2", 1), ("sample-3", 2)]
+        assert scope_rows(0) == [("sample-1", 0), ("sample-2", 1), ("sample-3", 2)]
+
+        empty = client.put(f"/api/annotation-tasks/{task_id}/configuration", json={
+            "task_revision": 1, "visible_columns": ["feature"],
+            "configuration": {**rule_config, "rules": [{"id": "r1", "when": {"score": {"gte": 99}}, "values": {"label": "x"}}]},
+        })
+        assert empty.status_code == 422, empty.text
+        assert empty.json()["detail"]["code"] == "ANNOTATION_SCOPE_EMPTY"
+
+        full = client.put(f"/api/annotation-tasks/{task_id}/configuration", json={
+            "task_revision": 1, "visible_columns": ["feature"],
+            "configuration": {**rule_config, "annotation_scope": "all", "other_values": {"label": "x"}},
+        })
+        assert full.status_code == 200, full.text
+        assert full.json()["task_revision"] == 2
+        assert full.json()["task_snapshot"]["scope"]["sample_count"] == 3
+        # 全量从初始 revision 恢复，而不是从已收窄的 revision 1 复制
+        assert scope_rows(2) == [("sample-1", 0), ("sample-2", 1), ("sample-3", 2)]
+    finally:
+        app.dependency_overrides.clear(); db.close(); engine.dispose()
+
+
 def test_preview_detail_is_owner_scoped():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)

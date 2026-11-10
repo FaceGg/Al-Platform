@@ -427,6 +427,7 @@ test("creates, configures, previews, and assigns a clustered automatic task", as
     configuration: {
       clustering: true,
       strategy: "cluster",
+      annotation_scope: "all",
       selected_clusters: ["0"],
       cluster_labels: { "0": { "quality": "clustered" } },
       other_values: { "quality": "other" },

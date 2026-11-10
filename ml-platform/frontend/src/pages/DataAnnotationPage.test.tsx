@@ -1000,6 +1000,7 @@ describe("DataAnnotationPage", () => {
         configuration: {
           clustering: true,
           strategy: "cluster",
+          annotation_scope: "all",
           selected_clusters: ["0"],
           cluster_labels: { "0": { "label": "cluster-a" } },
           other_values: { "label": "fallback" },
@@ -1008,7 +1009,7 @@ describe("DataAnnotationPage", () => {
     ));
   });
 
-  it("saves the cluster strategy without other fallback values when the toggle is off", async () => {
+  it("narrows the annotation task to strategy hits when the annotation scope is strategy hits", async () => {
     datasetVersions.mockResolvedValue([{
       id: "version-1",
       project_id: "project-1",
@@ -1096,8 +1097,8 @@ describe("DataAnnotationPage", () => {
     expect(await screen.findByLabelText("自动标注策略")).toHaveValue("cluster");
     fireEvent.click(screen.getByRole("checkbox", { name: "簇 0 · 2 个样本" }));
     fireEvent.change(screen.getByLabelText("簇 0 label"), { target: { value: "cluster-a" } });
-    // 关闭"其他兜底值"后不再强制填写每列兜底值
-    fireEvent.click(screen.getByRole("checkbox", { name: "使用其他兜底值" }));
+    // 标注范围=仅策略命中：只标注策略命中的样本，其他兜底值不再需要
+    fireEvent.click(screen.getByRole("radio", { name: "仅策略命中" }));
     expect(screen.queryByLabelText("其他兜底值 label")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "保存策略并完成" }));
 
@@ -1109,6 +1110,7 @@ describe("DataAnnotationPage", () => {
         configuration: expect.objectContaining({
           clustering: true,
           strategy: "cluster",
+          annotation_scope: "strategy_hits",
           selected_clusters: ["0"],
           cluster_labels: { "0": { "label": "cluster-a" } },
           other_values: {},
@@ -1333,6 +1335,8 @@ describe("DataAnnotationPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "导入策略" }));
     await waitFor(() => expect(screen.getByLabelText("自动标注策略")).toHaveValue("rule"));
     expect(screen.getByLabelText("其他兜底值 label")).toHaveValue("imported-fallback");
+    // 旧策略没有标注范围字段：导入后落全量（兜底值显示且必填）
+    expect(screen.getByRole("radio", { name: "全量" })).toBeChecked();
     expect(screen.getByLabelText("规则 1 优先级")).toBeInTheDocument();
   });
 
@@ -1438,6 +1442,7 @@ describe("DataAnnotationPage", () => {
         configuration: {
           clustering: true,
           strategy: "rule",
+          annotation_scope: "all",
           other_values: { "label": "fallback" },
           rules: [expect.objectContaining({ when: { feature: { gte: 0.5 } }, values: { "label": "positive" } })],
         },
@@ -1588,6 +1593,7 @@ describe("DataAnnotationPage", () => {
         configuration: expect.objectContaining({
           clustering: true,
           strategy: "cluster_rule",
+          annotation_scope: "all",
           selected_clusters: ["0"],
           cluster_labels: { "0": { label: "clustered" } },
           other_values: { label: "other" },

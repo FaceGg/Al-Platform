@@ -142,33 +142,6 @@ def persist_scope_entries(
     return count
 
 
-def copy_scope_revision(
-    db,
-    task: GenericAnnotationTask,
-    *,
-    from_revision: int,
-    to_revision: int,
-    source_snapshot: Mapping[str, object],
-    target_snapshot: Mapping[str, object],
-) -> int:
-    """Freeze a new configuration revision against the same source scope."""
-    return persist_scope_entries(
-        db,
-        task.id,
-        to_revision,
-        (
-            entry
-            for batch in iter_scope_batches(
-                db,
-                task,
-                task_revision=from_revision,
-                snapshot=source_snapshot,
-            )
-            for entry in batch
-        ),
-    )
-
-
 def missing_scope_sample_ids(
     db,
     task: GenericAnnotationTask,

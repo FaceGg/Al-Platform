@@ -340,7 +340,7 @@ function strategyDraftFromTask(task: AnnotationTask, columns: AnnotationOutputCo
   return {
     strategy: ["cluster", "rule", "cluster_rule"].includes(String(configuration.strategy)) ? configuration.strategy as AutomaticStrategyDraft["strategy"] : "cluster",
     selectedClusters,
-    useOtherValues: configuration.other_values === undefined ? true : Object.keys(rawOtherValues).length > 0,
+    annotationScope: configuration.annotation_scope === "strategy_hits" ? "strategy_hits" : "all",
     otherValues: Object.fromEntries(columns.map((column) => [column.machine_key, valueText(rawOtherValues[column.machine_key])])),
     clusterLabels: Object.fromEntries(Object.entries(rawClusterLabels).map(([clusterId, values]) => [clusterId, Object.fromEntries(columns.map((column) => [column.machine_key, valueText(values?.[column.machine_key])]))])),
     rules: rules.length ? rules : [createAutomaticRule(columns)],
@@ -399,9 +399,10 @@ function automaticConfigurationFromDraft(
 ): { configuration?: GenericAutomaticConfiguration; error?: string } {
   if (!clustering) return { configuration: { clustering: false, strategy: "model" } };
   if (discovery) return { configuration: { clustering: true, cluster_discovery: true, cluster_method: clusterMethod } };
-  const useOtherValues = draft.useOtherValues !== false;
+  // 标注范围：全量=未命中样本用其他兜底值标注（必填）；仅策略命中=未命中样本不进入任务，无需兜底值
+  const strategyHits = draft.annotationScope === "strategy_hits";
   const otherValues: Record<string, string | number> = {};
-  if (useOtherValues) {
+  if (!strategyHits) {
     for (const column of columns) {
       const result = typedAutomaticValue(column, draft.otherValues[column.machine_key] || "");
       if (result.error) return { error: result.error };
@@ -440,6 +441,7 @@ function automaticConfigurationFromDraft(
   const configuration: GenericAutomaticConfiguration = {
     clustering: true,
     strategy: draft.strategy,
+    annotation_scope: strategyHits ? "strategy_hits" : "all",
     other_values: otherValues,
     ...(rules.length ? { rules } : {}),
   };
@@ -1931,7 +1933,7 @@ export default function DataAnnotationPage() {
     setGenericAutomaticDraft({
       strategy: payload.strategy,
       selectedClusters: payload.selectedClusters || [],
-      useOtherValues: payload.useOtherValues !== false,
+      annotationScope: payload.annotationScope === "strategy_hits" ? "strategy_hits" : "all",
       otherValues: { ...base.otherValues, ...(payload.otherValues || {}) },
       clusterLabels: payload.clusterLabels || {},
       rules: payload.rules?.length ? payload.rules : base.rules,

@@ -37,6 +37,7 @@ from app.services.annotation_strategies import (
     StrategyConfigError,
     _config_from_snapshot,
     label_schema_contract_from_snapshot,
+    strategy_matched_scope_entries,
     validate_strategy_config,
 )
 from app.services.label_schema import (
@@ -46,7 +47,7 @@ from app.services.label_schema import (
     source_column_label_type,
 )
 from app.services.annotation_concurrency import AssignmentError, create_assignments
-from app.services.annotation_scope import copy_scope_revision, persist_scope_entries, scope_descriptor, scope_digest
+from app.services.annotation_scope import iter_scope_batches, persist_scope_entries, scope_descriptor, scope_digest
 from app.services.rule_dsl import RuleEvaluationError, evaluate_rule
 from app.schemas.annotator import AssignmentCreate, AssignmentPatchRequest
 
@@ -755,13 +756,18 @@ def _snapshot_with_configuration(
     configuration: dict,
     visible_columns: list[str],
     label_schema: dict | None = None,
+    scope_entries: list[tuple[str, int]] | None = None,
 ) -> dict:
-    scope = dict(previous.get("scope") or {})
-    if not scope:
-        scope = scope_descriptor(*scope_digest(
-            (str(sample_id), index)
-            for index, sample_id in enumerate(previous.get("sample_ids") or [])
-        ))
+    if scope_entries is not None:
+        # 标注范围=仅策略命中：新 revision 的范围描述符取自命中样本
+        scope = scope_descriptor(*scope_digest(scope_entries))
+    else:
+        scope = dict(previous.get("scope") or {})
+        if not scope:
+            scope = scope_descriptor(*scope_digest(
+                (str(sample_id), index)
+                for index, sample_id in enumerate(previous.get("sample_ids") or [])
+            ))
     snapshot = {
         "dataset_version": dict(previous.get("dataset_version") or {}),
         "scope": scope,
@@ -1031,6 +1037,10 @@ def update_generic_annotation_task_configuration(
         ) from error
     previous = current_annotation_task_snapshot(db, task)
     configuration = deepcopy(data.configuration)
+    # 标注范围=仅策略命中（仅自动任务）：先按初始冻结范围算出命中样本，新
+    # revision 的范围行只写这些样本（预览/执行/指派随之只覆盖命中样本）；
+    # 命中为空直接拒绝，任务不能没有任何样本。
+    narrowed_scope_entries: list[tuple[str, int]] | None = None
     # Labels defined after clustering replace the discovery placeholder
     # schema; the frozen snapshot and config hash follow the new binding.
     effective_schema_snapshot = dict(previous.get("label_schema") or task.label_snapshot or {})
@@ -1076,6 +1086,33 @@ def update_generic_annotation_task_configuration(
             )
         except StrategyConfigError as error:
             raise _contract_error(request, error.code, str(error), status_code=422) from error
+        if configuration.get("annotation_scope") == "strategy_hits":
+            try:
+                narrowed_scope_entries = strategy_matched_scope_entries(
+                    db,
+                    task,
+                    configuration,
+                    snapshot=previous,
+                )
+            except StrategyConfigError as error:
+                raise _contract_error(request, error.code, str(error), status_code=422) from error
+            if not narrowed_scope_entries:
+                raise _contract_error(
+                    request,
+                    "ANNOTATION_SCOPE_EMPTY",
+                    "The annotation strategy matched no sample in the frozen scope.",
+                    status_code=422,
+                )
+    # 新 revision 的冻结范围：仅策略命中=命中样本；全量/手动=始终取初始
+    # revision（0）的范围——上一 revision 可能已被收窄，不能作为全量来源。
+    if narrowed_scope_entries is not None:
+        revision_scope_entries = narrowed_scope_entries
+    else:
+        revision_scope_entries = [
+            (str(sample_id), int(row_index))
+            for batch in iter_scope_batches(db, task, task_revision=0, snapshot=previous)
+            for sample_id, row_index in batch
+        ]
     snapshot = _snapshot_with_configuration(
         task,
         data,
@@ -1083,6 +1120,7 @@ def update_generic_annotation_task_configuration(
         configuration,
         visible_columns,
         label_schema=effective_schema_snapshot,
+        scope_entries=revision_scope_entries,
     )
     if data.name is not None:
         task.name = _unique_task_name(db, task.project_id, data.name.strip(), exclude_task_id=task.id)
@@ -1103,15 +1141,8 @@ def update_generic_annotation_task_configuration(
     task.task_revision += 1
     if task.status != "draft":
         task.status = "draft"
-    copy_scope_revision(
-        db,
-        task,
-        from_revision=data.task_revision,
-        to_revision=task.task_revision,
-        source_snapshot=previous,
-        target_snapshot=snapshot,
-    )
     db.add(AnnotationTaskRevisionSnapshot(task_id=task.id, task_revision=task.task_revision, snapshot=snapshot))
+    persist_scope_entries(db, task.id, task.task_revision, revision_scope_entries)
     db.add(AuditEvent(
         project_id=task.project_id,
         actor_id=current_user.id,

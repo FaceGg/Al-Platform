@@ -1,18 +1,30 @@
 from dataclasses import dataclass
+import uuid
 
 import numpy as np
 import pandas as pd
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
+from app.database import Base
+from app.models.data_version import DatasetSample, DatasetSchemaColumn, DatasetVersion
+from app.models.labeling import AnnotationStrategyArtifact, AnnotationStrategyDecision, LabelColumn, LabelSchema
+from app.models.platform_models import GenericAnnotationTask
+from app.models.project import Project
+from app.models.user import User
 from app.services import weighted_clustering
 from app.services.annotation_strategies import (
     AnnotationDecision,
     AutomaticAnnotationConfig,
     StrategyConfigError,
     apply_annotation_strategy,
+    strategy_matched_scope_entries,
     validate_strategy_config,
     _model_outputs_from_package,
 )
+from app.services.annotation_scope import persist_scope_entries
 from app.services.label_schema import LabelColumnContract, LabelSchemaContract
 from app.services.rule_dsl import RuleEvaluationError, evaluate_rule
 from app.services.weighted_clustering import (
@@ -23,6 +35,18 @@ from app.services.weighted_clustering import (
     build_weighted_clusters,
     deterministic_sample_indices,
 )
+
+
+@pytest.fixture
+def db():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine, expire_on_commit=False)()
+    try:
+        yield session
+    finally:
+        session.close()
+        engine.dispose()
 
 
 @pytest.fixture
@@ -146,6 +170,36 @@ def test_unselected_cluster_does_not_enter_rule_scope(schema):
     assert result.matched_rule_ids == ()
 
 
+def test_cluster_rule_requires_rule_match_for_cluster_labels(schema):
+    """簇加规则：簇与规则同时命中才算命中——仅簇命中的样本不能按簇映射打标。"""
+    config = AutomaticAnnotationConfig(
+        clustering=True,
+        strategy="cluster_rule",
+        selected_clusters=["2"],
+        cluster_labels={"2": {"label_a": "a", "label_b": 2}},
+        rules=[{"id": "r1", "when": {"score": {"gte": 0.5}}, "values": {"label_a": "b"}}],
+        other_values={"label_a": "other", "label_b": 0},
+    )
+    hit = apply_annotation_strategy({"label_a": "a", "label_b": 1}, 2, {"score": 0.9}, config, schema)
+    assert hit.status == "ready"
+    assert hit.values == {"label_a": "b", "label_b": 2}
+    # 仅簇命中但规则不匹配：走兜底值，而不是簇映射
+    missed = apply_annotation_strategy({"label_a": "a", "label_b": 1}, 2, {"score": 0.1}, config, schema)
+    assert missed.values == {"label_a": "other", "label_b": 0}
+    assert missed.provenance["label_a"]["source"] == "other"
+    # 无兜底值 → needs_review（转人工）
+    bare = AutomaticAnnotationConfig(
+        clustering=True,
+        strategy="cluster_rule",
+        selected_clusters=["2"],
+        cluster_labels={"2": {"label_a": "a", "label_b": 2}},
+        rules=[{"id": "r1", "when": {"score": {"gte": 0.5}}, "values": {"label_a": "b"}}],
+    )
+    unresolved = apply_annotation_strategy({"label_a": "a", "label_b": 1}, 2, {"score": 0.1}, bare, schema)
+    assert unresolved.status == "needs_review"
+    assert unresolved.values == {"label_a": None, "label_b": None}
+
+
 def test_selected_cluster_requires_every_frozen_label_value(schema):
     with pytest.raises(StrategyConfigError) as error:
         validate_strategy_config(
@@ -169,6 +223,114 @@ def test_cluster_discovery_is_a_separate_incomplete_configuration(schema):
         ),
         schema,
     )
+
+
+def test_annotation_scope_validation(schema):
+    valid = dict(clustering=True, strategy="cluster", selected_clusters=["1"], cluster_labels={"1": {"label_a": "a", "label_b": 1}})
+    validate_strategy_config(AutomaticAnnotationConfig(**valid, annotation_scope="strategy_hits"), schema)
+    validate_strategy_config(AutomaticAnnotationConfig(**valid, annotation_scope="all"), schema)
+    with pytest.raises(StrategyConfigError) as error:
+        validate_strategy_config(AutomaticAnnotationConfig(**valid, annotation_scope="bogus"), schema)
+    assert error.value.code == "ANNOTATION_SCOPE_INVALID"
+    # 模型原始输出路径（无策略）与簇发现阶段没有「策略命中」概念
+    with pytest.raises(StrategyConfigError) as error:
+        validate_strategy_config(AutomaticAnnotationConfig(clustering=False, annotation_scope="strategy_hits"), schema)
+    assert error.value.code == "ANNOTATION_SCOPE_INVALID"
+    with pytest.raises(StrategyConfigError) as error:
+        validate_strategy_config(AutomaticAnnotationConfig(clustering=True, cluster_discovery=True, annotation_scope="strategy_hits"), schema)
+    assert error.value.code == "ANNOTATION_SCOPE_INVALID"
+
+
+def _matched_scope_fixture(db):
+    user = User(username=f"scope-{uuid.uuid4().hex}", password_hash="hash")
+    db.add(user)
+    db.flush()
+    project = Project(name="Scope project", owner_id=user.id)
+    db.add(project)
+    db.flush()
+    version = DatasetVersion(
+        project_id=project.id, operator_id=user.id, version=1,
+        row_count=5, column_count=1, content_hash="sha256:scope-data", schema_hash="sha256:scope-schema",
+    )
+    db.add(version)
+    db.flush()
+    db.add(DatasetSchemaColumn(dataset_version_id=version.id, name="score", position=0, dtype="float", nullable=False))
+    db.flush()
+    # s1/s2 → 簇 0；s3/s4 → 簇 1；s5 → 噪声（不属于任何簇）；score 决定规则命中
+    scores = {"s-1": 1.0, "s-2": 2.0, "s-3": 3.0, "s-4": 4.0, "s-5": 5.0}
+    for index, (sample_id, score) in enumerate(scores.items()):
+        db.add(DatasetSample(dataset_version_id=version.id, sample_id=sample_id, row_index=index, values={"score": score}))
+    db.flush()
+    schema = LabelSchema(project_id=project.id, name="scope-labels", version=1, status="active")
+    db.add(schema)
+    db.flush()
+    db.add(LabelColumn(schema_id=schema.id, machine_key="label_a", display_name="A", ordinal=0, value_type="string"))
+    task = GenericAnnotationTask(
+        project_id=project.id, dataset_version_id=version.id, label_schema_id=schema.id,
+        owner_id=user.id, mode="automatic", status="draft", task_revision=2,
+        sample_scope={"kind": "all"},
+        task_snapshot={"config_hash": "sha256:scope-task", "visible_columns": ["score"]},
+    )
+    db.add(task)
+    db.flush()
+    # 初始 revision（0）冻结全量 5 条；当前 revision（2）模拟已被此前保存收窄过
+    persist_scope_entries(db, task.id, 0, [(sample_id, index) for index, sample_id in enumerate(scores)])
+    persist_scope_entries(db, task.id, 2, [("s-1", 0), ("s-2", 1)])
+    artifact = AnnotationStrategyArtifact(
+        task_id=task.id, task_revision=0, config_hash="sha256:discovery",
+        strategy="cluster_discovery", created_by=user.id,
+        artifact={"configuration_complete": False, "cluster_artifact": {"assignment_storage": "annotation_strategy_decisions"}},
+    )
+    db.add(artifact)
+    db.flush()
+    cluster_of = {"s-1": 0, "s-2": 0, "s-3": 1, "s-4": 1, "s-5": None}
+    for sample_id, cluster_id in cluster_of.items():
+        db.add(AnnotationStrategyDecision(
+            strategy_artifact_id=artifact.id, sample_id=sample_id, row_index=0,
+            status="pending_configuration", values={}, provenance={}, model_output={},
+            cluster_id=cluster_id, matched_rule_ids=[], decision_hash=f"sha256:{sample_id}",
+        ))
+    db.commit()
+    return task, version
+
+
+def test_strategy_matched_scope_entries_follows_cluster_selection_and_rules(db):
+    task, _version = _matched_scope_fixture(db)
+    snapshot = {"config_hash": "sha256:scope-task", "scope": {"storage": "annotation_task_scope_samples", "sample_count": 5, "scope_hash": "sha256:x"}}
+    # 簇策略：命中=属于选中簇；即便当前 revision 已被收窄，也按初始全量范围求值
+    cluster_config = {
+        "clustering": True, "strategy": "cluster", "selected_clusters": ["0"],
+        "cluster_labels": {"0": {"label_a": "a"}}, "annotation_scope": "strategy_hits",
+    }
+    assert strategy_matched_scope_entries(db, task, cluster_config, snapshot=snapshot) == [("s-1", 0), ("s-2", 1)]
+    # 切换选中簇 → 命中随之变化
+    other = {**cluster_config, "selected_clusters": ["1"]}
+    assert strategy_matched_scope_entries(db, task, other, snapshot=snapshot) == [("s-3", 2), ("s-4", 3)]
+    # 规则策略：命中=任一规则在冻结源数据上匹配（score>=3 → s-3/s-4/s-5）
+    rule_config = {
+        "clustering": True, "strategy": "rule",
+        "rules": [{"id": "r1", "when": {"score": {"gte": 3}}, "values": {"label_a": "b"}}],
+        "annotation_scope": "strategy_hits",
+    }
+    assert strategy_matched_scope_entries(db, task, rule_config, snapshot=snapshot) == [("s-3", 2), ("s-4", 3), ("s-5", 4)]
+    # 规则不命中任何样本 → 空列表（调用方以 ANNOTATION_SCOPE_EMPTY 拒绝）
+    no_match = {**rule_config, "rules": [{"id": "r1", "when": {"score": {"gte": 99}}, "values": {"label_a": "b"}}]}
+    assert strategy_matched_scope_entries(db, task, no_match, snapshot=snapshot) == []
+    # 簇加规则：簇与规则必须同时命中——选中簇 0 的 s-1/s-2 里只有 score>=2 的 s-2 命中；
+    # 仅簇命中但规则不匹配的 s-1 不算命中，不能只按簇收窄
+    cluster_rule_config = {
+        "clustering": True, "strategy": "cluster_rule", "selected_clusters": ["0"],
+        "cluster_labels": {"0": {"label_a": "a"}},
+        "rules": [{"id": "r1", "when": {"score": {"gte": 2}}, "values": {"label_a": "b"}}],
+        "annotation_scope": "strategy_hits",
+    }
+    assert strategy_matched_scope_entries(db, task, cluster_rule_config, snapshot=snapshot) == [("s-2", 1)]
+    # 规则放宽到全部命中 → 等价于按簇
+    loose = {**cluster_rule_config, "rules": [{"id": "r1", "when": {"score": {"gte": 0}}, "values": {"label_a": "b"}}]}
+    assert strategy_matched_scope_entries(db, task, loose, snapshot=snapshot) == [("s-1", 0), ("s-2", 1)]
+    # 选中簇内无任何规则匹配 → 空
+    strict = {**cluster_rule_config, "rules": [{"id": "r1", "when": {"score": {"gte": 99}}, "values": {"label_a": "b"}}]}
+    assert strategy_matched_scope_entries(db, task, strict, snapshot=snapshot) == []
 
 
 def test_rule_configuration_rejects_string_number_for_numeric_source(schema):

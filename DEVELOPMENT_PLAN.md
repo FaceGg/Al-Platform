@@ -612,3 +612,17 @@ fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失�
 **推送**：week_manifest 修复 + 本节补录随积压 fea478da（E2E 操作手册）推送 origin/main；CI run 结果以 Actions 为准。
 
 **保留未提交**：app/api/generic_tasks.py、app/services/annotation_strategies.py、tests/test_annotation_strategies.py（「标注范围=仅策略命中」功能 257 行）为既有未提交改动，按纪律保留不动。
+
+## 2026-11-10 自动标注「标注范围」落地（仅策略命中/全量）+ 簇加规则命中语义收紧
+
+**用户需求**：新建自动标注任务第二步「标注范围」二选一——**仅策略命中**=只有策略命中的样本进入标注任务（未命中不进任务，无需兜底值）；**全量**=全部样本进入，命中用命中标签、未命中用「其他兜底值」（必填）。按簇/按规则/簇加规则三种策略都要适配。**语义澄清（用户补充）**：按簇=仅按簇命中；按簇加规则=簇**且**规则同时命中，「不能仅仅使用按簇」。
+
+**实现**：配置新增 `annotation_scope`（all/strategy_hits，默认 all 向后兼容）。**范围收窄发生在配置保存时**：任务每个 revision 有独立的冻结范围行（`annotation_task_scope_samples`），保存「仅策略命中」时新 revision 只写入命中样本（保留源行号）——预览/执行/指派/容量预检读当前 revision 范围，自然只覆盖命中样本，无需动预览/执行代码。命中计算零模型推理：簇与簇加规则直接复用发现阶段持久化的逐样本簇分配（`AnnotationStrategyDecision.cluster_id`，噪声=NULL 不命中）；按规则对冻结源数据现场求值规则。命中始终按**初始 revision（0）**的全量范围求值——重复保存、切换选中簇/范围都稳定（此前 `copy_scope_revision` 从上一 revision 复制，收窄后再切回全量会错误地复制收窄范围，已改为两路径都从 revision 0 解析+`persist_scope_entries`；`copy_scope_revision` 随之无调用方删除）。空命中 → 422 `ANNOTATION_SCOPE_EMPTY`。
+
+**簇加规则语义收紧**：`apply_annotation_strategy` 中选中簇但无规则匹配的样本此前会用簇映射打标（等于退化成按簇）；现改为簇映射不作为其列值来源——走兜底值，无兜底值转 needs_review。命中计算同步取「簇命中 ∩ 规则命中（含规则自身 cluster_ids 过滤）」。
+
+**前端**：策略编辑器「其他兜底值」区块重构为「标注范围」卡片（radio 全量/仅策略命中，三种策略统一显示；仅策略命中隐藏兜底值输入；全量必填兜底值——原「使用其他兜底值」勾选框退役，`useOtherValues` 字段删除）；`strategyDraftFromTask`/策略库导入对旧数据（无 annotation_scope）回落全量；策略取值校验沿用 `typedAutomaticValue`（枚举/范围受标签列定义约束）。
+
+**测试**：后端 strategy 校验（非法值/模型路径/发现阶段拒 strategy_hits）、`strategy_matched_scope_entries`（簇/规则/簇加规则 AND 语义/空命中/切簇稳定）、API 级收窄+空命中 422+切回全量从 revision 0 恢复；簇加规则打标语义（同时命中=规则值优先+簇映射补齐、仅簇命中=兜底值、无兜底=needs_review）。前端编辑器范围切换（三策略可见/兜底值显隐）、页面载荷断言（strategy_hits 含 annotation_scope 且 other_values={}、全量含 annotation_scope:"all"）、导入旧策略落全量。e2e 断言补 annotation_scope。
+
+**遗留/注意**：①全量模式下兜底值从「可选」变「必填」，旧已保存策略（勾掉兜底值的）导入后需补兜底值或改仅策略命中才能保存。②闭环/智能体等后端配置创建方未传 annotation_scope → 默认全量，行为不变。③任务快照列表页 `sample_scope` 列仍显示步骤 1 的原始范围，收窄后的实际样本数看最终预览 summary（sample_count）。

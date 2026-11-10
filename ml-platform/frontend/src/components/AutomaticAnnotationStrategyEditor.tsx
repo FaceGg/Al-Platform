@@ -17,10 +17,13 @@ export type AutomaticRuleDraft = {
   clusterIds: string;
 };
 
+/** 标注范围：all=全量（未命中的样本用其他兜底值标注）；strategy_hits=仅策略命中（未命中的样本不进入标注任务） */
+export type AnnotationScope = "all" | "strategy_hits";
+
 export type AutomaticStrategyDraft = {
   strategy: "cluster" | "rule" | "cluster_rule";
   selectedClusters: string[];
-  useOtherValues?: boolean;
+  annotationScope: AnnotationScope;
   otherValues: Record<string, string>;
   clusterLabels: Record<string, Record<string, string>>;
   rules: AutomaticRuleDraft[];
@@ -105,7 +108,7 @@ export function createAutomaticStrategyDraft(columns: AnnotationOutputColumn[]):
   return {
     strategy: "cluster",
     selectedClusters: [],
-    useOtherValues: true,
+    annotationScope: "all",
     otherValues: Object.fromEntries(columns.map((column) => [column.machine_key, ""])),
     clusterLabels: {},
     rules: [createAutomaticRule(columns)],
@@ -123,7 +126,7 @@ type Props = {
 
 export default function AutomaticAnnotationStrategyEditor({ idPrefix, columns, sourceColumns, value, onChange, clusters = [] }: Props) {
   const hasClusterMappings = clusters.length > 0 && (value.strategy === "cluster" || value.strategy === "cluster_rule");
-  const useOtherValues = value.useOtherValues !== false;
+  const strategyHits = value.annotationScope === "strategy_hits";
   const updateRule = (ruleIdValue: string, update: Partial<AutomaticRuleDraft>) => {
     onChange({ ...value, rules: value.rules.map((rule) => rule.id === ruleIdValue ? { ...rule, ...update } : rule) });
   };
@@ -189,20 +192,18 @@ export default function AutomaticAnnotationStrategyEditor({ idPrefix, columns, s
         </div>}
       </div>)}
     </section>}
-    <section className="data-annotation__automatic-other" aria-label="其他兜底值">
-      <div className="data-annotation__rules-head">
-        <h3>其他兜底值</h3>
-        <label>
-          <input
-            type="checkbox"
-            aria-label="使用其他兜底值"
-            checked={useOtherValues}
-            onChange={(event) => onChange({ ...value, useOtherValues: event.target.checked })}
-          />
-          使用其他兜底值
-        </label>
+    {/* 标注范围对按簇/按规则/簇加规则三种策略统一生效：
+        仅策略命中=只有命中的样本进入标注任务；全量=全部样本进入，未命中的用其他兜底值 */}
+    <section className="data-annotation__automatic-other" aria-label="标注范围">
+      <div className="data-annotation__rules-head"><h3>标注范围</h3></div>
+      <div className="data-annotation__scope-mode" role="radiogroup" aria-label="标注范围">
+        <label><input type="radio" name={`${idPrefix}-annotation-scope`} checked={!strategyHits} onChange={() => onChange({ ...value, annotationScope: "all" })} />全量</label>
+        <label><input type="radio" name={`${idPrefix}-annotation-scope`} checked={strategyHits} onChange={() => onChange({ ...value, annotationScope: "strategy_hits" })} />仅策略命中</label>
       </div>
-      {useOtherValues && <div className="data-annotation__automatic-values">
+      <small>{strategyHits
+        ? "只把「自动标注策略」命中的样本加入标注任务并自动打标，未命中的样本不进入任务，无需其他兜底值。"
+        : "全部样本进入标注任务：命中的用命中标签标注，未命中的用「其他兜底值」标注（必填）。"}</small>
+      {!strategyHits && <div className="data-annotation__automatic-values">
         {columns.map((column) => <div className="data-annotation__setup-field" key={column.machine_key}>
           <label htmlFor={`${idPrefix}-other-${column.machine_key}`}>其他 · {column.display_name}</label>
           <LabelValueInput

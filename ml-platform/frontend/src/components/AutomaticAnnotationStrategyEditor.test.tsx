@@ -41,6 +41,49 @@ describe("AutomaticAnnotationStrategyEditor label constraints", () => {
     expect(input).toHaveAttribute("max", "1.5");
     expect(input).toHaveAttribute("placeholder", "0.5 ~ 1.5");
   });
+
+  it("switches the annotation scope and hides the fallback for strategy hits", () => {
+    const columns = [enumColumn];
+    const onChange = vi.fn();
+    const { rerender } = render(<AutomaticAnnotationStrategyEditor
+      idPrefix="test"
+      columns={columns}
+      sourceColumns={[]}
+      value={createAutomaticStrategyDraft(columns)}
+      onChange={onChange}
+    />);
+    // 默认全量：兜底值输入显示且必填
+    expect(screen.getByRole("radio", { name: "全量" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "仅策略命中" })).not.toBeChecked();
+    expect(screen.getByRole("combobox", { name: "其他兜底值 等级" })).toBeInTheDocument();
+    // 三种策略下标注范围都可见
+    for (const strategy of ["cluster", "rule", "cluster_rule"] as const) {
+      rerender(<AutomaticAnnotationStrategyEditor
+        idPrefix="test"
+        columns={columns}
+        sourceColumns={[]}
+        value={{ ...createAutomaticStrategyDraft(columns), strategy }}
+        onChange={onChange}
+      />);
+      expect(screen.getByRole("radio", { name: "仅策略命中" })).toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole("radio", { name: "仅策略命中" }));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ annotationScope: "strategy_hits" }));
+
+    rerender(<AutomaticAnnotationStrategyEditor
+      idPrefix="test"
+      columns={columns}
+      sourceColumns={[]}
+      value={{ ...createAutomaticStrategyDraft(columns), annotationScope: "strategy_hits" }}
+      onChange={onChange}
+    />);
+    // 仅策略命中：兜底值输入隐藏，提示不进入任务的样本无需兜底值
+    expect(screen.getByRole("radio", { name: "仅策略命中" })).toBeChecked();
+    expect(screen.queryByRole("combobox", { name: "其他兜底值 等级" })).not.toBeInTheDocument();
+    expect(screen.getByText(/未命中的样本不进入任务/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "全量" }));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ annotationScope: "all" }));
+  });
 });
 
 describe("typedAutomaticValue", () => {

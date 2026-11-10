@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from app.models.artifact import Artifact
+from app.models.data_version import DatasetSample
 from app.models.labeling import AnnotationStrategyArtifact, AnnotationStrategyDecision
 from app.services.label_schema import LabelColumnContract, LabelSchemaContract, validate_label_value
 from app.services.rule_dsl import RuleEvaluationError, evaluate_rule
@@ -48,6 +49,9 @@ class AutomaticAnnotationConfig:
     selected_clusters: Sequence[str] | None = None
     cluster_discovery: bool = False
     cluster_method: str = "weighted_kmeans"
+    # all = 全部样本进入标注任务（未命中的用兜底值或转人工）；strategy_hits = 只有
+    # 策略命中的样本进入标注任务（配置保存时任务范围即收窄到命中样本）
+    annotation_scope: str = "all"
 
 
 @dataclass(frozen=True)
@@ -150,17 +154,28 @@ def validate_strategy_config(
     source_column_types: Mapping[str, object] | None = None,
 ) -> None:
     if not config.clustering:
+        if config.annotation_scope not in {"all", "strategy_hits"}:
+            raise StrategyConfigError("annotation scope must be all or strategy_hits", "ANNOTATION_SCOPE_INVALID")
         if config.cluster_discovery:
             raise StrategyConfigError("cluster discovery requires clustering", "STRATEGY_CONFIG_INVALID")
         if config.strategy not in (None, "model"):
             raise StrategyConfigError("strategy is ignored when clustering is disabled")
+        if config.annotation_scope == "strategy_hits":
+            # 模型原始输出路径没有「策略命中」概念：每个样本都得到模型标签
+            raise StrategyConfigError("strategy hits scope requires a clustering strategy", "ANNOTATION_SCOPE_INVALID")
         return
     if config.cluster_discovery:
+        if config.annotation_scope not in {"all", "strategy_hits"}:
+            raise StrategyConfigError("annotation scope must be all or strategy_hits", "ANNOTATION_SCOPE_INVALID")
         if config.strategy is not None or config.cluster_labels or config.rules or config.other_values or config.selected_clusters is not None:
             raise StrategyConfigError("cluster discovery must run before strategy configuration", "CLUSTER_DISCOVERY_CONFIG_INVALID")
+        if config.annotation_scope == "strategy_hits":
+            raise StrategyConfigError("annotation scope applies to the strategy configuration, not cluster discovery", "ANNOTATION_SCOPE_INVALID")
         if config.cluster_method not in CLUSTER_METHODS:
             raise StrategyConfigError("cluster method must be weighted_kmeans or umap_hdbscan", "CLUSTER_METHOD_INVALID")
         return
+    if config.annotation_scope not in {"all", "strategy_hits"}:
+        raise StrategyConfigError("annotation scope must be all or strategy_hits", "ANNOTATION_SCOPE_INVALID")
     if config.cluster_method not in CLUSTER_METHODS:
         raise StrategyConfigError("cluster method must be weighted_kmeans or umap_hdbscan", "CLUSTER_METHOD_INVALID")
     if config.strategy not in {"cluster", "rule", "cluster_rule"}:
@@ -233,6 +248,109 @@ def _matching_rules(config: AutomaticAnnotationConfig, row: Mapping[str, object]
     return matches, ids
 
 
+def strategy_matched_scope_entries(
+    db,
+    task,
+    configuration: Mapping[str, object],
+    *,
+    snapshot: Mapping[str, object],
+) -> list[tuple[str, int]]:
+    """按初始冻结范围顺序返回「自动标注策略」命中的样本 (sample_id, row_index)。
+
+    标注范围=仅策略命中（annotation_scope="strategy_hits"）时，配置保存即把
+    任务新 revision 的冻结范围收窄到这些样本，预览/执行/指派随之只覆盖命中
+    样本。命中语义与 apply_annotation_strategy 的打标来源一致：簇与簇加规则
+    策略=样本属于选中簇（直接复用发现阶段持久化的逐样本簇分配，零推理）；
+    规则策略=任一规则在冻结源数据上匹配。空命中由调用方拒绝（任务不能为空）。
+    始终基于初始 revision 的范围求值，重复保存或切换选中簇/范围都稳定。
+    """
+    from app.services.annotation_scope import iter_scope_batches
+
+    config = _config_from_snapshot(configuration)
+    entries = [
+        (str(sample_id), int(row_index))
+        for batch in iter_scope_batches(db, task, task_revision=0, snapshot=snapshot)
+        for sample_id, row_index in batch
+    ]
+    hit: set[str] = set()
+    cluster_hit: set[str] = set()
+    if config.strategy in {"cluster", "cluster_rule"}:
+        frozen = _frozen_discovery_artifact(db, task.id)
+        if frozen is None:
+            raise StrategyConfigError("run a cluster discovery preview before saving mappings", "CLUSTER_DISCOVERY_REQUIRED")
+        discovery_payload, discovery_artifact = frozen
+        # 逐样本簇分配来自发现阶段持久化的决策；密度聚类噪声（cluster_id 为空）
+        # 不属于任何簇 → 不命中。与 _frozen_cluster_ids 不同，这里不允许因噪声
+        # 样本中断：命中计算只筛「属于选中簇」的样本。
+        cluster_ids: dict[str, int | None] = {}
+        scope_ids = [sample_id for sample_id, _ in entries]
+        for start in range(0, len(scope_ids), 500):
+            batch = scope_ids[start:start + 500]
+            for item in db.query(AnnotationStrategyDecision).filter(
+                AnnotationStrategyDecision.strategy_artifact_id == discovery_artifact.id,
+                AnnotationStrategyDecision.sample_id.in_(batch),
+            ).all():
+                cluster_ids[str(item.sample_id)] = int(item.cluster_id) if item.cluster_id is not None else None
+        legacy_artifact = discovery_payload.get("cluster_artifact")
+        legacy_assignments = legacy_artifact.get("assignments") if isinstance(legacy_artifact, Mapping) else None
+        if isinstance(legacy_assignments, Mapping):
+            # 决策表之前的旧产物：assignments 直接映射 sample_id → 簇 id
+            for sample_id in scope_ids:
+                if sample_id not in cluster_ids and sample_id in legacy_assignments:
+                    value = legacy_assignments[sample_id]
+                    cluster_ids[sample_id] = int(value) if value is not None else None
+        selected = {str(value) for value in config.selected_clusters or ()}
+        cluster_hit = {
+            sample_id
+            for sample_id, cluster_id in cluster_ids.items()
+            if cluster_id is not None and str(cluster_id) in selected
+        }
+        # 按簇：簇命中即命中；按规则：见下方规则求值；簇加规则：必须簇与规则同时命中
+        if config.strategy == "cluster":
+            hit |= cluster_hit
+    if config.strategy == "rule":
+        rule_hit: set[str] = set()
+        batch_size = 500
+        for start in range(0, len(entries), batch_size):
+            batch = entries[start:start + batch_size]
+            rows = db.query(DatasetSample).filter(
+                DatasetSample.dataset_version_id == task.dataset_version_id,
+                DatasetSample.sample_id.in_([sample_id for sample_id, _ in batch]),
+            ).all()
+            values_by_id = {str(row.sample_id): dict(row.values or {}) for row in rows}
+            for sample_id, _row_index in batch:
+                matches, _rule_ids = _matching_rules(config, values_by_id.get(sample_id, {}))
+                if matches:
+                    rule_hit.add(sample_id)
+        hit |= rule_hit
+    if config.strategy == "cluster_rule":
+        # 簇加规则：簇命中且规则匹配（与 apply_annotation_strategy 的打标来源
+        # 一致——规则未匹配的选中簇样本不算命中，走兜底值/人工）。
+        selected = {str(value) for value in config.selected_clusters or ()}
+        rule_hit: set[str] = set()
+        batch_size = 500
+        for start in range(0, len(entries), batch_size):
+            batch = entries[start:start + batch_size]
+            rows = db.query(DatasetSample).filter(
+                DatasetSample.dataset_version_id == task.dataset_version_id,
+                DatasetSample.sample_id.in_([sample_id for sample_id, _ in batch]),
+            ).all()
+            values_by_id = {str(row.sample_id): dict(row.values or {}) for row in rows}
+            for sample_id, _row_index in batch:
+                if sample_id not in cluster_hit:
+                    continue
+                cluster_id = cluster_ids.get(sample_id)
+                matches, _rule_ids = _matching_rules(config, values_by_id.get(sample_id, {}))
+                matches = [
+                    rule for rule in matches
+                    if rule.get("cluster_ids") is None or (cluster_id is not None and str(cluster_id) in {str(value) for value in rule["cluster_ids"]})
+                ]
+                if matches:
+                    rule_hit.add(sample_id)
+        hit |= cluster_hit & rule_hit
+    return [(sample_id, row_index) for sample_id, row_index in entries if sample_id in hit]
+
+
 def _internal_model_output_value(value: object) -> object:
     """Lighten model outputs to finite scalars for internal provenance storage."""
     if hasattr(value, "item") and not isinstance(value, (str, bytes)):
@@ -302,6 +420,11 @@ def apply_annotation_strategy(
     rule_ids = [str(rule["id"]) for rule in matched_rules]
     cluster_values = config.cluster_labels.get(str(cluster_id), {}) if cluster_id is not None else {}
     if not selected:
+        cluster_values = {}
+    if config.strategy == "cluster_rule" and not matched_rules:
+        # 簇加规则要求「簇」与「规则」同时命中：只落在选中簇但没有任何规则
+        # 匹配的样本不算命中——簇映射不作为其列值来源，样本走兜底值或人工
+        # （needs_review）。不能仅按簇打标。
         cluster_values = {}
     values: dict[str, object] = {}
     provenance: dict[str, dict[str, object]] = {}
@@ -374,6 +497,7 @@ def _config_from_snapshot(configuration: Mapping[str, object]) -> AutomaticAnnot
         selected_clusters=configuration.get("selected_clusters"),
         cluster_discovery=bool(configuration.get("cluster_discovery", False)),
         cluster_method=str(configuration.get("cluster_method") or "weighted_kmeans"),
+        annotation_scope=str(configuration.get("annotation_scope") or "all"),
     )
 
 
