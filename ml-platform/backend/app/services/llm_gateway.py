@@ -112,6 +112,16 @@ class _StallGuardedLines:
             try:
                 item = lines.get(timeout=timeout)
             except queue.Empty:
+                # timeout 是 stall 与墙限剩余时间的较小者：墙限先到必须报
+                # Overran（涓流形态的兜底路径），不能误报成 Stalled。
+                if (
+                    deadline is not None
+                    and self._monotonic() >= deadline
+                ):
+                    raise LLMStreamOverran(
+                        f"stream attempt exceeded {self._wall_seconds:.0f}s wall "
+                        "limit (slow trickle upstream)"
+                    ) from None
                 raise LLMStreamStalled(
                     f"upstream stream stalled: no data for {self._stall_seconds:.0f}s "
                     "after output began"

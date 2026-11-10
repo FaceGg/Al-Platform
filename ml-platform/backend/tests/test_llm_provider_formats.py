@@ -26,6 +26,12 @@ from app.services.llm_gateway import (  # noqa: E402
     normalize_llm_endpoint,
 )
 
+# run_suite 按模块独立子进程注入 DATABASE_URL：停用档案守卫用例直接落库，
+# 必须与其他 DB 测试模块一样在导入期建表（CI 曾因此 no such table: llm_profiles）。
+from app.database import Base, engine  # noqa: E402
+
+Base.metadata.create_all(bind=engine)
+
 MESSAGES = [
     {"role": "system", "content": "你是助手"},
     {"role": "user", "content": "你好"},
