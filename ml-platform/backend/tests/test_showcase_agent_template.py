@@ -60,6 +60,19 @@ class TestShowcaseAgentTemplate(unittest.TestCase):
         self.assertEqual(_threshold_rows(nodes), 12)
         self.assertEqual(_threshold_rows([{"operator_id": "other"}]), 3)
 
+    def test_publish_strips_stale_template_params(self):
+        """模板行先于算子参数改动创建时遗留未声明参数（实测 error_classes），
+        实例化必须按算子当前参数集防御性过滤——invoke DAG 校验曾每次失败。"""
+        src = (BACKEND / "app" / "services" / "agent" / "orchestration_publish.py").read_text(encoding="utf-8")
+        self.assertIn("OperatorRegistry.get(node.operator_id)", src)
+        # 剔除逻辑出现在 publish 的节点拷贝循环里（而非仅 import）
+        self.assertIn("unknown", src)
+        # 根契约：append_error_dataset 参数封闭集不含 error_classes
+        from app.engine.registry import OperatorRegistry
+        operator = OperatorRegistry.get("append_error_dataset")
+        declared = {spec.name for spec in (operator.parameters or [])}
+        self.assertNotIn("error_classes", declared)
+
 
 if __name__ == "__main__":
     unittest.main()

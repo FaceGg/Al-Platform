@@ -219,6 +219,18 @@ def publish_orchestration_from_recipe(
             # 列表型占位：模型版本 feature_schema（numpy 训练的模型包无
             # feature_names_in_，运行期按名选列依赖该参数）。
             params["feature_columns"] = list(replacement[P_FEATURES])
+        # 防御性剔除未声明参数：模板行先于算子参数改动创建时（ensure 幂等
+        # 早退），旧节点会带着算子已删除的参数（实测 error_classes 残留让
+        # 每次 invoke DAG 校验失败）——实例化时按算子当前参数集过滤。
+        from app.engine.registry import OperatorRegistry
+
+        operator = OperatorRegistry.get(node.operator_id)
+        if operator is not None:
+            declared = {spec.name for spec in (operator.parameters or [])}
+            unknown = [key for key in params if key not in declared]
+            if unknown:
+                params = {key: value for key, value in params.items()
+                          if key in declared}
         copy = WorkflowNode(
             workflow_id=workflow.id, operator_id=node.operator_id,
             label=node.label, position_x=node.position_x,
