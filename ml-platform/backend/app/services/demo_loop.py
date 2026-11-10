@@ -1330,10 +1330,12 @@ class DemoLoopService:
 
             if poll_agent_retrain(self.db, config, actor_id):
                 return
-        # 空闲追赶评估：轮次终态（换模成功/失败）或冷却到期后，下一次状态
-        # 轮询/回流都会按增量判据再评估——覆盖「报错停了也要追平一轮」场景
-        # （部署完成后用全量积累补一轮，而非等下一个阈值额度）。
-        if config.retrain_status in {"idle", ""} and config.retrain_job_id is None:
+        # 空闲/失败追赶评估：轮次终态（换模成功/失败）或冷却到期后，下一次
+        # 状态轮询/回流都会按增量判据再评估——覆盖「报错停了也要追平一轮」
+        # 场景（部署完成后用全量积累补一轮，而非等下一个阈值额度）。failed
+        # 也参与：失败轮曾有冷却兜底，若无新报错流入，failed 态永远不会被
+        # 轮询唤醒（实测冷却到期后卡死不重试）。
+        if config.retrain_status in {"idle", "", "failed"} and config.retrain_job_id is None:
             self._maybe_trigger_retrain(config, actor_id)
         # 收敛入口：job 挂着就必须检查（cancel_requested/终态卡住也在此自愈），
         # 否则取消/失败/完成后 retrain_job_id 残留会永久挡住下一轮触发。
