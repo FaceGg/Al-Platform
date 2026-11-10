@@ -258,6 +258,14 @@ class TestDisabledProfileGuard(unittest.TestCase):
         import uuid as _uuid
 
         db = SessionLocal()
+        # 单默认唯一约束：造测试默认前把现有默认临时让位（清理时恢复）
+        self._previous_default: str | None = None
+        if is_default:
+            current = db.query(LLMProfile).filter(LLMProfile.is_default.is_(True)).first()
+            if current is not None:
+                self._previous_default = str(current.id)
+                current.is_default = False
+                db.commit()
         row = LLMProfile(
             name=f"{name}-{_uuid.uuid4().hex[:8]}", provider="anthropic",
             api_url="https://api.example.com/anthropic", model_id="m-ut",
@@ -303,12 +311,24 @@ class TestDisabledProfileGuard(unittest.TestCase):
         try:
             db = __import__("app.database", fromlist=["SessionLocal"]).SessionLocal()
             config = resolve_profile(db, purpose="ut")
-            # 解析到启用档案而非停用的默认（api_url/名字细节随档案，只断言不落 env fallback 的特征：profile_id 非空）
+            # 解析到启用档案而非停用的默认（不落 env fallback：profile_id 非空）
             self.assertTrue(config.profile_id)
             db.close()
         finally:
             self._cleanup(disabled_default)
             self._cleanup(enabled_backup)
+            # 恢复原默认档案
+            if self._previous_default:
+                from app.models.llm_profile import LLMProfile
+                from app.database import SessionLocal
+                import uuid as _uuid
+
+                db = SessionLocal()
+                row = db.get(LLMProfile, _uuid.UUID(self._previous_default))
+                if row is not None:
+                    row.is_default = True
+                    db.commit()
+                db.close()
 
 
 class TestMultimodalContentByFormat(unittest.TestCase):

@@ -5,6 +5,7 @@
 无调用日期缺桶致趋势图断续失真。
 """
 import sys, os, unittest
+import uuid
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, ".")
@@ -37,9 +38,11 @@ class TestUsageStatsDaily(unittest.TestCase):
     def test_today_is_single_local_natural_day_bucket(self):
         """days=1「今天」：单桶、桶名为本地今天日期（此前滚动 24h 出两个 UTC 桶）。"""
         from app.models.platform_audit import PlatformAuditEvent
+        from app.models.user import User
         from app.database import SessionLocal
 
         db = SessionLocal()
+        admin = db.query(User).filter(User.username == "admin").first()
         today = _local_today()
         # 本地今天 09:00 = UTC 01:00（同日）；本地今天 23:00 = UTC 15:00（同日）
         probe_name = f"ut-usage-today-{today}"
@@ -48,7 +51,11 @@ class TestUsageStatsDaily(unittest.TestCase):
                 action="llm_gateway.egress",
                 created_at=datetime.now(timezone.utc).replace(
                     hour=hour_utc, minute=0, second=0, microsecond=0),
-                actor_id=None,
+                actor_id=admin.id if admin else None,
+                actor_username="admin",
+                resource_type="llm_profile",
+                resource_id=admin.id,
+                request_id=uuid.uuid4(),
                 result="success",
                 changes={"model": probe_name, "purpose": "ut", "prompt_tokens": 10, "completion_tokens": 5},
             ))
@@ -58,7 +65,8 @@ class TestUsageStatsDaily(unittest.TestCase):
             self.assertEqual(r.status_code, 200)
             by_day = r.json()["by_day"]
             self.assertEqual([d["date"] for d in by_day], [today])  # 单桶且为本地今天
-            self.assertEqual(by_day[0]["calls"], 2)
+            # 共享生产库：今天桶含真实流量，只断言造的 2 条计入（≥2）
+            self.assertGreaterEqual(by_day[0]["calls"], 2)
         finally:
             db.query(PlatformAuditEvent).filter(
                 PlatformAuditEvent.action == "llm_gateway.egress",
