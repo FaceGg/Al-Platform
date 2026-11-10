@@ -371,6 +371,7 @@ def orchestration_agent_retrain_execute(context, inputs, params):
                 "agent_failed": True,
                 "agent_cool_until": (now + cooldown).isoformat(),
             })
+            _release_loop_slot("failed")
             _save_meta()
             if run.status == "waiting_escalate":
                 _notify("【编排闭环】智能体重训未通过验收",
@@ -382,6 +383,7 @@ def orchestration_agent_retrain_execute(context, inputs, params):
             max_age = int(getattr(settings, "agent_retrain_poll_max_age_seconds", 7200))
             if started is not None and (now - started).total_seconds() > max_age:
                 meta.update({"agent_run_id": None, "agent_started_at": None, "agent_failed": True})
+                _release_loop_slot("failed")
                 _save_meta()
                 _notify("【编排闭环】智能体重训超时",
                         f"重放超过 {max_age // 60} 分钟未终态，按失败处理（任务留档，不换模）。",
@@ -396,6 +398,7 @@ def orchestration_agent_retrain_execute(context, inputs, params):
                 "agent_failed": True,
                 "agent_cool_until": (now + cooldown).isoformat(),
             })
+            _release_loop_slot("failed")
             _save_meta()
             _notify("【编排闭环】部署模型铸造失败",
                     "引擎铸造任务失败，不换模，旧模型继续服务。",
@@ -415,9 +418,11 @@ def orchestration_agent_retrain_execute(context, inputs, params):
                 meta["agent_retrained_baseline"] = total
                 meta["agent_swapped_model_version_id"] = str(version.id)
                 meta["agent_cool_until"] = (now + cooldown).isoformat()
+                _release_loop_slot("idle")
             else:
                 meta["agent_failed"] = True
                 meta["agent_cool_until"] = (now + cooldown).isoformat()
+                _release_loop_slot("failed")
             _save_meta()
 
     # ---- 触发段：增量边沿 + 护栏（在途单飞/冷却/熔断）与闭环同语义
@@ -425,6 +430,44 @@ def orchestration_agent_retrain_execute(context, inputs, params):
     in_flight = bool(meta.get("agent_run_id") or meta.get("casting_job_id"))
     cool_until = _parse_iso(meta.get("agent_cool_until"))
     cycle_rows = total - baseline
+
+    # 跨状态机共享单飞：编排（工件 metadata）与闭环自动化（demo_loop_configs）
+    # 是两套重训状态机，互不可见——同部署双触发曾并行烧两轮 LLM（实测
+    # 578642ea/044eb775）。编排触发前 CAS 抢占同部署闭环的槽位；闭环占着
+    # （agent_running/queued）则本轮静默跳过；终端态负责放回。
+    from sqlalchemy import update as sa_update
+
+    _loop_row = None
+    try:
+        _loop_row = db.query(DemoLoopConfig).filter(
+            DemoLoopConfig.deployment_id == uuid.UUID(str(deployment_key)),
+        ).first()
+    except (TypeError, ValueError):
+        _loop_row = None
+
+    def _release_loop_slot(status: str = "idle") -> None:
+        if _loop_row is None:
+            return
+        _loop_row.retrain_status = status
+        _loop_row.retrain_agent_started_at = None
+        db.commit()
+
+    def _claim_loop_slot() -> bool:
+        if _loop_row is None:
+            return True  # 该部署没有闭环自动化在管：无需跨状态机协调
+        claimed = db.execute(
+            sa_update(DemoLoopConfig)
+            .where(
+                DemoLoopConfig.id == _loop_row.id,
+                DemoLoopConfig.retrain_status.in_(["idle", "failed", ""]),
+                DemoLoopConfig.retrain_job_id.is_(None),
+                DemoLoopConfig.retrain_agent_run_id.is_(None),
+            )
+            .values(retrain_status="agent_running", retrain_agent_started_at=now)
+        ).rowcount
+        db.commit()
+        return bool(claimed)
+
     triggered_row = {
         "triggered": False, "total_rows": total,
         "cycle_rows": cycle_rows, "threshold_rows": threshold,
@@ -452,6 +495,12 @@ def orchestration_agent_retrain_execute(context, inputs, params):
                         "请人工评估后再恢复。",
                         "orchestration.agent_retrain_break")
         else:
+            if not _claim_loop_slot():
+                # 闭环自动化正在重训/铸造：让路（共享单飞），不双触发
+                return OperatorResult(
+                    outputs={"triggered": [triggered_row], "continue": [continue_row]},
+                    metrics={"total_rows": float(total)},
+                )
             try:
                 guidance, source_run_id = load_replay_contract(db, recipe_key)
                 replay_guidance = _prepare_replay_guidance(guidance)
@@ -468,6 +517,7 @@ def orchestration_agent_retrain_execute(context, inputs, params):
                 )
                 if run.status == "waiting_escalate":
                     meta["agent_failed"] = True
+                    _release_loop_slot("failed")
                     _save_meta()
                 else:
                     times.append(now)
@@ -485,6 +535,7 @@ def orchestration_agent_retrain_execute(context, inputs, params):
                     _save_meta()
             except AgentRetrainError as error:
                 meta["agent_failed"] = True
+                _release_loop_slot("failed")
                 _save_meta()
                 _notify("【编排闭环】智能体重训触发失败",
                         f"{error}；不换模，旧模型继续服务。",
