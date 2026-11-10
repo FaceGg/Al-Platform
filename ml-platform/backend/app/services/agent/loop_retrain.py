@@ -680,6 +680,7 @@ def poll_agent_retrain(db: Session, config: DemoLoopConfig, actor_id) -> bool:
     from app.services.agent.recipe import (
         build_fixation_content,
         create_recipe,
+        get_current_version,
     )
     from app.services.closed_loop_actions import trigger_retrain_job
 
@@ -731,6 +732,58 @@ def poll_agent_retrain(db: Session, config: DemoLoopConfig, actor_id) -> bool:
             [str(run.dataset_artifact_id)] if run.dataset_artifact_id is not None
             else _resolve_dataset_ids(config)
         )
+        input_columns = list(getattr(config, "retrain_input_columns", None) or []) or None
+        # 配方带 S2 特征脚本 → 先把合并原始表变换为特征帧再铸（与 S4 验收
+        # 同一张表；部署模型吃派生特征，直接喂原始列既会因稀疏行 dropna 后
+        # <10 行失败（实测 3165 行全灭），练成也与线上推理输入不兼容）。
+        # 失败回落原始数据集（引擎模式旧形态）。
+        recipe_feature_script = str(
+            (get_current_version(db, _as_uuid(config.retrain_agent_recipe_id))
+             .content_json or {}).get("feature_script") or ""
+        ) if config.retrain_agent_recipe_id else ""
+        if recipe_feature_script.strip():
+            try:
+                import tempfile
+                from pathlib import Path as _Path
+
+                import pandas as _pd
+
+                from app.services.agent.sandbox import run_sandbox as _run_sandbox
+                from app.services.artifact_service import build_artifact_service as _bas
+
+                _service = _bas(db)
+                _frames = []
+                for _raw_id in casting_ids:
+                    with _service.materialize(
+                        _as_uuid(_raw_id), config.project_id, expected_type="dataset",
+                    ) as _path:
+                        _frames.append(_pd.read_csv(_path))
+                _raw = _pd.concat(_frames, ignore_index=True) if len(_frames) > 1 else _frames[0]
+                _sandbox = _run_sandbox(recipe_feature_script, _raw, timeout_seconds=300)
+                if _sandbox.ok and getattr(_sandbox, "output", None) is not None:
+                    _cast_frame = _sandbox.output
+                    _target = config.retrain_target_column or run.target_column
+                    if _target and _target not in _cast_frame.columns and _target in _raw.columns:
+                        _cast_frame[_target] = _raw[_target].values
+                    with tempfile.TemporaryDirectory() as _tmp:
+                        _path_out = _Path(_tmp) / "loop-cast-features.csv"
+                        _cast_frame.to_csv(_path_out, index=False)
+                        _cast_artifact = _service.create_from_file(
+                            config.project_id, _path_out,
+                            f"{config.name}-铸造特征集-{cycle}",
+                            "dataset",
+                            metadata={"source": "agent-loop-cast-features",
+                                      "recipe_id": str(config.retrain_agent_recipe_id),
+                                      "row_count": int(len(_cast_frame)),
+                                      "column_count": int(len(_cast_frame.columns))},
+                        )
+                    casting_ids = [str(_cast_artifact.id)]
+                    input_columns = [
+                        str(col) for col in _cast_frame.columns
+                        if col != _target and _pd.api.types.is_numeric_dtype(_cast_frame[col])
+                    ] or None
+            except Exception:  # noqa: BLE001 - 变换失败回落原始数据集
+                logger.warning("loop cast feature transform failed", exc_info=True)
         job = trigger_retrain_job(
             db,
             project_id=config.project_id,
@@ -742,7 +795,7 @@ def poll_agent_retrain(db: Session, config: DemoLoopConfig, actor_id) -> bool:
             max_trials=config.retrain_max_trials,
             ensemble=ensemble,
             algorithm_ids=algorithm_ids,
-            input_columns=list(getattr(config, "retrain_input_columns", None) or []) or None,
+            input_columns=input_columns,
         )
         config.retrain_job_id = job.id
         config.retrain_status = "queued"
