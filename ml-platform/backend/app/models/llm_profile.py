@@ -31,7 +31,9 @@ class LLMProfile(Base):
     __tablename__ = "llm_profiles"
     __table_args__ = (
         CheckConstraint(
-            "provider IN ('openai_compatible', 'custom')",
+            # 与 API 层 LLMProfileUpdate 的 pattern 及 PG 生产约束一致——
+            # 此前缺 responses/anthropic，SQLite 按元数据建表即拦合法档案
+            "provider IN ('openai_compatible', 'responses', 'anthropic', 'custom')",
             name="ck_llm_profiles_provider",
         ),
         CheckConstraint(

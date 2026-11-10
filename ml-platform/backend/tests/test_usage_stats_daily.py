@@ -52,9 +52,10 @@ class TestUsageStatsDaily(unittest.TestCase):
                 created_at=datetime.now(timezone.utc).replace(
                     hour=hour_utc, minute=0, second=0, microsecond=0),
                 actor_id=admin.id if admin else None,
-                actor_username="admin",
+                actor_username="admin" if admin else "anonymous",
                 resource_type="llm_profile",
-                resource_id=admin.id,
+                # resource_id 是 String 列：传 UUID 对象在 SQLite 直接绑定失败
+                resource_id=str(admin.id) if admin else "",
                 request_id=uuid.uuid4(),
                 result="success",
                 changes={"model": probe_name, "purpose": "ut", "prompt_tokens": 10, "completion_tokens": 5},

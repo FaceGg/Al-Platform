@@ -124,11 +124,18 @@ class TestSkillRevision(unittest.TestCase):
             versions = (
                 db.query(PipelineRecipeVersion)
                 .join(PipelineRecipe, PipelineRecipe.id == PipelineRecipeVersion.recipe_id)
-                .filter(PipelineRecipeVersion.status == "current")
+                .filter(
+                    PipelineRecipeVersion.status == "current",
+                    # 只喂本用例建的配方：共享库里有其他模块的 current 版本
+                    # （域不同），混进来会改变抽样构成（跨模块合跑假失败）
+                    PipelineRecipe.id.in_(created),
+                )
                 .all()
             )
             sample = select_representative_recipes(versions, limit=10)
         self.assertEqual(len(sample), 10)
+        # 样本必须全部来自本用例的配方（喂别的模块配方会破坏域构成断言）
+        self.assertLessEqual({str(v.recipe_id) for v in sample}, {str(r) for r in created})
         domains = {(v.content_json or {}).get("domain") for v in sample}
         self.assertEqual(domains, {"tightening", "welding"})
 
