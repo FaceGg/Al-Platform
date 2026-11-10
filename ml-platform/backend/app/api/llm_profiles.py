@@ -117,14 +117,29 @@ def usage_stats(
     功能上线起记录——此前事件无 tokens，仅计入调用/延迟。
     重置基线（llm_usage_reset_at）之前的事件不计入——审计记录保留，
     统计口径从基线重新开始。"""
-    from datetime import timedelta
+    from datetime import timedelta, timezone
 
     from app.models.platform_audit import PlatformAuditEvent
     from app.models.platform_option import get_option
     from app.tasks.time_utils import utcnow
 
+    # 业务时区固定 UTC+8（中国区部署，容器 TZ 为 UTC）：按天分桶与
+    # 「今天」语义都以本地自然日为准——此前按 UTC strftime 分桶，桶错位
+    # 8 小时（用户白天调用落 UTC 当天、凌晨落前一天），趋势图不准确。
+    platform_tz = timezone(timedelta(hours=8))
+
+    def _local_date(value) -> str:
+        aware = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+        return aware.astimezone(platform_tz).strftime("%Y-%m-%d")
+
     days = min(max(days, 1), 365)
-    since = utcnow() - timedelta(days=days)
+    now = utcnow()
+    since = now - timedelta(days=days)
+    if days == 1:
+        # 「今天」= 本地自然日零点起（而非滚动 24 小时）
+        since = now.astimezone(platform_tz).replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        ).astimezone(timezone.utc)
     reset_at = get_option(db, "llm_usage_reset_at")
     if reset_at:
         # 基线晚于窗口起点时收窄窗口（重置后历史事件不再计入）
@@ -175,7 +190,7 @@ def usage_stats(
                 latencies.append(float(changes["latency_ms"]))
             except (TypeError, ValueError):
                 pass
-        day = (event.created_at or since).strftime("%Y-%m-%d")
+        day = _local_date(event.created_at or since)
         model = str(changes.get("model") or "-")
         purpose = str(changes.get("purpose") or "-")
         failed = event.result != "success"
@@ -188,6 +203,18 @@ def usage_stats(
             entry["prompt_tokens"] += prompt_tokens
             entry["completion_tokens"] += completion_tokens
 
+    # 趋势图逐日补零：窗口内无调用的日期也出桶（此前 bar 断续显得失真）。
+    # 「今天」（days=1）只有一个桶；滚动窗口按本地自然日序列填充。
+    day_count = 1 if days == 1 else days
+    local_today = now.astimezone(platform_tz).date()
+    date_series = [
+        (local_today - timedelta(days=offset)).strftime("%Y-%m-%d")
+        for offset in range(day_count - 1, -1, -1)
+    ]
+    by_day_full = {
+        date: by_day.get(date, {"calls": 0, "failed": 0, "prompt_tokens": 0, "completion_tokens": 0})
+        for date in date_series
+    }
     return {
         "days": days,
         "since": since.isoformat(),
@@ -200,7 +227,7 @@ def usage_stats(
             "avg_latency_ms": round(sum(latencies) / len(latencies), 1) if latencies else None,
         },
         "by_day": [
-            {"date": key, **value} for key, value in sorted(by_day.items())
+            {"date": key, **value} for key, value in sorted(by_day_full.items())
         ],
         "by_model": sorted(
             ({"model": key, **value} for key, value in by_model.items()),
