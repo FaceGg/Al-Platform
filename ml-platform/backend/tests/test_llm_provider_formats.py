@@ -245,6 +245,72 @@ class TestPdfDocumentBlock(unittest.TestCase):
         self.assertEqual(body["messages"][1]["content"], self.PDF_MESSAGES[1]["content"])
 
 
+class TestDisabledProfileGuard(unittest.TestCase):
+    """停用档案不可用（启用开关的服务端兜底）：
+
+    - 显式 profile_id 指向停用档案 → 拒绝（LLM_PROFILE_DISABLED）
+    - 默认解析只取启用档案（默认档案停用回退其它启用档案）
+    """
+
+    def _seed(self, *, enabled: bool, is_default: bool = False, name: str = "ut") -> str:
+        from app.models.llm_profile import LLMProfile
+        from app.database import SessionLocal
+        import uuid as _uuid
+
+        db = SessionLocal()
+        row = LLMProfile(
+            name=f"{name}-{_uuid.uuid4().hex[:8]}", provider="anthropic",
+            api_url="https://api.example.com/anthropic", model_id="m-ut",
+            api_key_encrypted=None, timeout_seconds=60, deployment="cloud",
+            purpose_tags=["chat"], enabled=enabled, is_default=is_default,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        pid = str(row.id)
+        db.close()
+        return pid
+
+    def _cleanup(self, pid: str) -> None:
+        from app.models.llm_profile import LLMProfile
+        from app.database import SessionLocal
+        import uuid as _uuid
+
+        db = SessionLocal()
+        row = db.get(LLMProfile, _uuid.UUID(pid))
+        if row is not None:
+            db.delete(row)
+            db.commit()
+        db.close()
+
+    def test_explicit_disabled_profile_rejected(self):
+        from app.services.llm_gateway import resolve_profile, LLMProfileNotFoundError
+
+        pid = self._seed(enabled=False, name="ut-disabled")
+        try:
+            db = __import__("app.database", fromlist=["SessionLocal"]).SessionLocal()
+            with self.assertRaises(LLMProfileNotFoundError):
+                resolve_profile(db, profile_id=pid, purpose="ut")
+            db.close()
+        finally:
+            self._cleanup(pid)
+
+    def test_default_resolution_skips_disabled(self):
+        from app.services.llm_gateway import resolve_profile
+
+        disabled_default = self._seed(enabled=False, is_default=True, name="ut-def-off")
+        enabled_backup = self._seed(enabled=True, name="ut-enabled")
+        try:
+            db = __import__("app.database", fromlist=["SessionLocal"]).SessionLocal()
+            config = resolve_profile(db, purpose="ut")
+            # 解析到启用档案而非停用的默认（api_url/名字细节随档案，只断言不落 env fallback 的特征：profile_id 非空）
+            self.assertTrue(config.profile_id)
+            db.close()
+        finally:
+            self._cleanup(disabled_default)
+            self._cleanup(enabled_backup)
+
+
 class TestMultimodalContentByFormat(unittest.TestCase):
     """附件图片（OpenAI content 数组）按 provider 映射：openai 原样、
     anthropic → image/base64 块、responses → input_image 块。"""

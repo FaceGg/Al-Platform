@@ -64,7 +64,7 @@ const METRIC_ROWS: { key: string; label: string }[] = [
 
 interface ProjectOption { id: string; name?: string }
 interface DatasetOption { id: string; name?: string; filename?: string; row_count?: number; column_count?: number }
-interface ProfileOption { id: string; name: string; model_id: string; is_default?: boolean }
+interface ProfileOption { id: string; name: string; model_id: string; is_default?: boolean; enabled?: boolean }
 
 export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () => void }) {
   const { lang } = useI18n();
@@ -164,7 +164,9 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
     apiClient.get("/llm-profiles").then((res) => {
       const items = Array.isArray(res.data) ? res.data : res.data?.items || [];
       setProfiles(items);
-      const preferred = items.find((p: ProfileOption) => p.is_default) ?? items[0];
+      // 默认选中限启用档案（默认优先；默认被停用则取第一个启用的）
+      const enabledItems = items.filter((p: ProfileOption) => p.enabled !== false);
+      const preferred = enabledItems.find((p: ProfileOption) => p.is_default) ?? enabledItems[0];
       if (preferred) setLlmProfileId(String(preferred.id));
     }).catch(() => setProfiles([]));
   }, []);
@@ -363,8 +365,9 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5 }}>
           {zh ? "模型" : "Model"}
           <select className="v2-select" style={{ minWidth: 170 }} value={llmProfileId} onChange={(e) => setLlmProfileId(e.target.value)} aria-label={zh ? "选择大模型档案" : "LLM profile"}>
-            {profiles.length === 0 ? <option value="">{zh ? "（无档案）" : "(none)"}</option> : null}
-            {profiles.map((p) => (
+            {/* 只列启用的模型档案：未启用的供应商/模型不可在新建任务中使用 */}
+            {profiles.filter((p) => p.enabled !== false).length === 0 ? <option value="">{zh ? "（无启用的模型档案）" : "(no enabled profiles)"}</option> : null}
+            {profiles.filter((p) => p.enabled !== false).map((p) => (
               <option key={String(p.id)} value={String(p.id)}>{p.name}-{p.model_id}{p.is_default ? (zh ? "（默认）" : " (default)") : ""}</option>
             ))}
           </select>

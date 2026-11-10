@@ -130,9 +130,18 @@ def resolve_profile(
         profile = db.get(LLMProfile, pid)
         if profile is None:
             raise LLMProfileNotFoundError("LLM_PROFILE_NOT_FOUND")
+        # 停用的档案不可用（启用开关的服务端兜底）：显式指定已停用档案时
+        # 拒绝——前端下拉过滤是第一层，这里保证绕过前端也无法调用。
+        if profile.enabled is False:
+            raise LLMProfileNotFoundError("LLM_PROFILE_DISABLED")
     else:
+        # 默认解析只取启用档案：默认优先，无默认则取最老的启用档案
+        # （默认档案被停用时不至于无 LLM 可用；全停 → env fallback）
         profile = (
-            db.query(LLMProfile).filter(LLMProfile.is_default.is_(True)).first()
+            db.query(LLMProfile)
+            .filter(LLMProfile.enabled.is_not(False))
+            .order_by(LLMProfile.is_default.desc(), LLMProfile.created_at.asc())
+            .first()
         )
     if profile is None:
         return _env_fallback_config()

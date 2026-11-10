@@ -285,7 +285,8 @@ export default function AIChatPage() {
       temperature,
       history,
       thinking_level: thinkingLevel,
-      profile_id: profileId || undefined,
+      // profile_id 指向已停用/已删除档案时不传 → 后端默认解析（仅启用档案）
+      profile_id: (profiles.find(p => p.id === profileId && p.enabled !== false)?.id) || undefined,
       kb_id: kbId || undefined,
       attachments: attachments.map(({ name, kind, data }) => ({ name, kind, data })),
       tool_context: pendingToolCall ?? undefined,
@@ -696,9 +697,11 @@ export default function AIChatPage() {
                     placement="topRight"
                     content={(() => {
                       // 供应商分组（provider_group 优先，无组按档案名兜底）；
-                      // 组名取组内最短档案名（克隆体名带 ·model_id 后缀，主档案最短）
+                      // 组名取组内最短档案名（克隆体名带 ·model_id 后缀，主档案最短）。
+                      // 组内无启用模型的供应商不出现（未启用的供应商不可选）。
                       const providerGroups: Array<{ key: string; label: string; items: any[] }> = [];
                       for (const p of profiles) {
+                        if (p.enabled === false) continue;
                         const key = p.provider_group || `n:${p.name}`;
                         let bucket = providerGroups.find((g) => g.key === key);
                         if (!bucket) {
@@ -708,7 +711,9 @@ export default function AIChatPage() {
                         if (p.name && p.name.length < bucket.label.length) bucket.label = p.name;
                         bucket.items.push(p);
                       }
-                      const activeProfile = profiles.find((p) => p.id === profileId) ?? profiles.find((p) => p.is_default) ?? null;
+                      // 当前选中档案限启用（存档的 profileId 指向已停用档案时归位）
+                      const enabledProfiles = profiles.filter((p) => p.enabled !== false);
+                      const activeProfile = enabledProfiles.find((p) => p.id === profileId) ?? enabledProfiles.find((p) => p.is_default) ?? enabledProfiles[0] ?? null;
                       const activeKey = activeProfile ? (activeProfile.provider_group || `n:${activeProfile.name}`) : providerGroups[0]?.key;
                       const activeGroup = providerGroups.find((g) => g.key === activeKey) ?? providerGroups[0] ?? null;
                       // 模型列表只显示所选供应商下「开启」的模型（ZCode 语义）
