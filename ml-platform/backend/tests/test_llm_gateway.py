@@ -26,9 +26,11 @@ from app.models.knowledge import KnowledgeBase  # noqa: E402
 from app.models.llm_profile import LLMProfile  # noqa: E402
 from app.models.platform_audit import PlatformAuditEvent  # noqa: E402
 from app.models.user import User  # noqa: E402
+from app.services import llm_gateway  # noqa: E402
 from app.services.llm_gateway import (  # noqa: E402
     GatewayLLMConfig,
     LLMProfileNotFoundError,
+    LLMStreamStalled,
     _HTTP_CLIENT,
     chat_completion,
     resolve_profile,
@@ -198,6 +200,68 @@ class TestLLMGateway(unittest.TestCase):
         self.assertEqual(usage.get("prompt_tokens"), 120)
         self.assertEqual(usage.get("completion_tokens"), 30)
         self.assertEqual(usage.get("total_tokens"), 150)
+
+    def _stream_with(self, lines_factory):
+        @contextmanager
+        def fake_stream(method, url, **kwargs):
+            response = mock.MagicMock()
+            response.status_code = 200
+            response.iter_lines.return_value = lines_factory()
+            yield response
+
+        return fake_stream
+
+    def test_stall_after_output_began_fails_fast(self):
+        """开始出字后上游静默：看门狗按 STREAM_STALL_SECONDS 判卡死（此前干等
+        整段读超时 240s+重连 60s，单次卡死白丢约 5 分钟）。"""
+        import threading
+        import time
+
+        release = threading.Event()
+
+        def lines():
+            yield 'data: {"choices": [{"delta": {"content": "po"}}]}'
+            release.wait(5)  # 上游卡住：连接仍在但不再来数据
+
+        config = _fake_config()
+        started = time.monotonic()
+        try:
+            with SessionLocal() as db, mock.patch.object(
+                llm_gateway, "STREAM_STALL_SECONDS", 0.3
+            ), mock.patch.object(_HTTP_CLIENT, "stream", side_effect=self._stream_with(lines)):
+                with self.assertRaises(LLMStreamStalled):
+                    chat_completion(db, config=config,
+                                    messages=[{"role": "user", "content": "hi"}],
+                                    purpose="test")
+        finally:
+            release.set()
+        self.assertLess(time.monotonic() - started, 3.0)
+
+    def test_silence_before_first_delta_is_not_a_stall(self):
+        """首字前的静默（推理型隐藏思考/长 prefill）不触发看门狗，由读超时兜底。"""
+        import time
+
+        def lines():
+            yield 'data: {"choices": [{"delta": {"role": "assistant"}}]}'
+            time.sleep(0.6)  # > 看门狗阈值，但尚未出字
+            yield 'data: {"choices": [{"delta": {"content": "ok"}}]}'
+            yield 'data: {"choices": [{}], "usage": {"prompt_tokens": 2, "completion_tokens": 1}}'
+            yield "data: [DONE]"
+
+        config = _fake_config()
+        with SessionLocal() as db, mock.patch.object(
+            llm_gateway, "STREAM_STALL_SECONDS", 0.3
+        ), mock.patch.object(_HTTP_CLIENT, "stream", side_effect=self._stream_with(lines)):
+            reply, usage, _reasoning = chat_completion(
+                db, config=config, messages=[{"role": "user", "content": "hi"}],
+                purpose="test")
+        self.assertEqual(reply, "ok")
+        self.assertEqual(usage.get("total_tokens"), 3)
+
+    def test_stream_stall_is_retryable(self):
+        from app.services.agent.llm_client import _is_retryable_error
+
+        self.assertTrue(_is_retryable_error(LLMStreamStalled("stalled")))
 
     def test_usage_stats_aggregates_egress_events(self):
         # 管理端点聚合合同：汇总/按天/按模型/按用途，tokens 只计带用量的记录

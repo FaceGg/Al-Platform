@@ -40,6 +40,60 @@ _HTTP_CLIENT = httpx.Client(
 # 非推理型模型生成完自然停，多给的余量无副作用。
 REASONING_TOKEN_HEADROOM = 4
 
+# 流卡死看门狗：首个增量（正文/思考）到达后，超过该秒数无新数据即判上游流
+# 卡死、立即断开交给重连。健康流的增量间隔是亚秒级；此前只能干等整段读
+# 超时（智能体阶段 240s）+ 重连间隔 60s，单次卡死白丢约 5 分钟（2026-11-10
+# 实测出网链路不稳时段 S1 连卡 3 次、S2 一次尝试耗尽 5 次重连）。首字之前的
+# 静默（推理型隐藏思考、私有部署长 prefill）仍由读超时兜底，不受影响。
+STREAM_STALL_SECONDS = 60
+
+
+class LLMStreamStalled(httpx.ReadTimeout):
+    """流中途卡死（已开始出字后长时间无新数据）——归为传输层超时，走重连。"""
+
+
+class _StallGuardedLines:
+    """逐行读取 SSE；``armed`` 置位（首个增量到达）后按 stall_seconds 看门。
+
+    阻塞读放在后台线程，消费方按超时取行：卡死即抛 LLMStreamStalled，由
+    外层 stream 上下文关闭连接；后台线程最迟随该连接的读超时退出。"""
+
+    def __init__(self, response, stall_seconds: float):
+        self._response = response
+        self._stall_seconds = stall_seconds
+        self.armed = False
+
+    def __iter__(self):
+        import queue
+        import threading
+
+        lines: queue.Queue = queue.Queue()
+        end = object()
+
+        def pump() -> None:
+            try:
+                for line in self._response.iter_lines():
+                    lines.put(line)
+            except Exception as error:  # noqa: BLE001 - 交给消费方原样抛出
+                lines.put(error)
+            finally:
+                lines.put(end)
+
+        threading.Thread(target=pump, daemon=True, name="llm-stream-pump").start()
+        while True:
+            try:
+                item = lines.get(timeout=self._stall_seconds if self.armed else None)
+            except queue.Empty:
+                raise LLMStreamStalled(
+                    f"upstream stream stalled: no data for {self._stall_seconds:.0f}s "
+                    "after output began"
+                ) from None
+            if item is end:
+                return
+            if isinstance(item, Exception):
+                raise item
+            yield item
+
 
 class LLMProfileNotFoundError(LookupError):
     """Explicit profile_id does not resolve to an existing profile."""
@@ -866,7 +920,8 @@ def chat_completion(
                 except ValueError:
                     data = {"raw": error_body[:500]}
             else:
-                for line in response.iter_lines():
+                lines = _StallGuardedLines(response, STREAM_STALL_SECONDS)
+                for line in lines:
                     if not line.startswith("data:") and not line.startswith("event:"):
                         continue
                     if line.startswith("event:"):
@@ -881,6 +936,8 @@ def chat_completion(
                     delta, event_usage, reasoning_delta = _parse_llm_stream_event(
                         config.provider, event
                     )
+                    if delta or reasoning_delta:
+                        lines.armed = True
                     if delta:
                         reply_parts.append(delta)
                     if reasoning_delta:
