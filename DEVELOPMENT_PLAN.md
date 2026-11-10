@@ -602,3 +602,13 @@ fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失�
 **运维坑**：root 身份在容器内跑 pytest 会在 /tmp/ml-platform 留下 root 属主目录，导致重建后应用用户（uid 1000）python_script 落盘 409 权限拒绝（`docker exec -u root chown -R 1000:1000 /tmp/ml-platform` 修复）；登录限流 15min 5 次/IP，脚本批量验证需复用 token 文件。
 
 **未验证/剩余风险**：全量 CI 未跑（本批跑的是定向相关套件）；闭环 agent 重训全轮（回流达 12 行触发重放→换模）未端到端跑完（触发链路各环节已单独验证：agent_retrain_threshold 状态机/闭环绑定/配方重放合同）；大屏 agent 轮换模粒子动画仅在模拟模式验证。
+
+## 2026-11-10 CI 修复：week_manifest 登记缺位收口 + 容器内 4 模块 IndexError 假回归溯源
+
+**CI 报错与修复**：faa57379 新增 3 个测试文件（test_agent_cast_engine_reachable / test_apply_model_feature_columns / test_showcase_agent_template）未登记 [week_manifest.py](ml-platform/backend/tests/week_manifest.py)，CI 的 test_suite_manifest::test_every_backend_test_module_has_one_week_owner 必挂（quality job 红）。修复：PHASE_TEST_MODULES p6 补 3 项。容器 /app 同步 manifest 后复跑 test_suite_manifest：Ran 5 tests OK，PASSED。
+
+**容器内 4 模块 IndexError: 3 = 路径深度假回归（非代码缺陷）**：容器 /app 复跑 CI 套件时 test_database_production / test_kubernetes_job_api / test_notebook_api / test_multi_cluster_scheduler 齐报 `IndexError: 3`，且基线（a831471f 全仓拷贝至 /tmp/baseline，保留仓库层级）通过、/app 败，一度疑似 mock/环境回归。完整堆栈定案：四文件模块导入期 `PROJECT_ROOT = Path(__file__).resolve().parents[3]`（假定 `<repo>/ml-platform/backend/tests` 四层布局），容器内 `/app/tests` 仅两层，pathlib `parents[3]` 越界 raise IndexError(idx)。CI 干净 checkout 保持全仓层级，不受影响。**教训：这四个模块在容器 /app 内跑必假失败**；容器内复现需按仓库层级目录摆放或对比基线时保持相同深度。基线其余 18 个失败模块为此前已判定的容器环境既有问题（缺依赖/共享状态），与 CI 无关。
+
+**推送**：week_manifest 修复 + 本节补录随积压 fea478da（E2E 操作手册）推送 origin/main；CI run 结果以 Actions 为准。
+
+**保留未提交**：app/api/generic_tasks.py、app/services/annotation_strategies.py、tests/test_annotation_strategies.py（「标注范围=仅策略命中」功能 257 行）为既有未提交改动，按纪律保留不动。

@@ -253,6 +253,9 @@ PHASE_TEST_MODULES: dict[str, list[str]] = {
         "test_agent_cast_features",
         "test_agent_llm_retry",
         "test_agent_accuracy_alignment",
+        "test_agent_cast_engine_reachable",
+        "test_apply_model_feature_columns",
+        "test_showcase_agent_template",
     ],
 }
 
