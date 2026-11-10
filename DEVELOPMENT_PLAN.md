@@ -658,3 +658,14 @@ fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失�
 2. **test_usage_stats_daily 夹具类型错**：`resource_id=admin.id` 传 UUID 对象，但该列是 String(128)——SQLite 绑定 ProgrammingError（合跑时报 NOT NULL actor_username 是 executemany 批量路径的误导性报错；网关链路 resource_id 恒为字符串所以从未暴露）。改 `str(admin.id)`；actor_username 同步判空。
 3. **test_agent_skill_revision 抽样跨模块污染**：夹具把共享库里**所有** current 配方版本喂给抽样器，其他模块造的异域配方混入改变样本构成（此前合跑必挂、单跑/CI 模块隔离全绿）。改为只喂本用例创建的配方（`PipelineRecipe.id.in_(created)`）+ 样本来源断言。
 验证：单跑+此前必挂组合（loop_retrain+skill_revision+usage_daily+provider_formats）80 passed。backend/worker/scheduler 镜像重建（含 69d8b1b4 看门狗）并替换容器，`grep STREAM_STALL` 确认在容器内。
+
+**同日 16-17 点 收尾批次二：流总时长上限 + 闭环并发两处竞态根修 + 干净链 E2E 推进**
+
+1. **单次流式尝试总时长上限 600s**（`STREAM_ATTEMPT_WALL_SECONDS`，081dd98d）：S2 单次调用爬行 20+ 分钟不收敛（连接存活、持续掉字节——断流看门狗与读超时都不触发），`_StallGuardedLines` 增加 wall 约束，超限抛 `LLMStreamOverran` 走重连。测试：涓流 1s 上限快速判超。
+2. **闭环并发计数竞态**（真 bug，4 并发批量实测暴露）：`total_count/error_count/alert_count` 读-改-写在 uvicorn 双进程+线程池下丢更新（total 严重少计 → 大屏故障率显示 55% 的假象；报错数据集本体经 wldindex 回对测试文件验证 **271 行里 270 行是真缺陷**，模型与链路无误）。改 SQL 原子自增 + expire 重读。
+3. **重训触发无原子抢占**（真 bug，同批实测一轮变两轮 error 20/21 各触发一次）：`trigger_agent_retrain` 入口加 DB 级 CAS（`UPDATE ... WHERE retrain_status IN (idle,failed,'') AND job IS NULL AND agent_run_id IS NULL`），输者静默；冷却/熔断/并发让路路径放回 idle；物化失败放回 failed（否则槽位永久卡死）。未绑配方场景状态语义 idle→failed（更准确，仍可重触发）。
+4. 测试：CAS 过期内存视图不二触发/物化失败放槽/计数原子性 + 既有单飞/冷却/熔断全过（closed-loop 系 150 passed）。
+
+**干净链 E2E 进度**：任务 413baa69（45 列剔除：22 原始 + 23 焊后结果列 spatter*/spot*/evaluestatus/ai_rlt/stationip/extraData/weldgun 等）→ S4 升级（评审无 hints 的保守意见，硬门禁 recall 0.9718、Top 特征全物理量）人工采纳 → ①配方 40cce111 → ② s3 直接部署报 S3_CHAMPION_NOT_PERSISTED（**升级采纳路径不物化冠军**——冠军对象只在验收线程内存，设计限制，走 engine 重铸）→ 首次 engine 铸造被配方门禁否决（**全候选 3 折 CV 召回 0.54-0.77 < 0.85，诚实不可达**；引擎 best ensemble CV 召回 0.7676/F1 0.9599）→ 门禁校准 0.75 发配方新版本（留出口径 0.9718 留档）→ 重铸通过部署 dc695786 → ③ 服务化草稿（真实冒烟 pred=0 零回流，缺陷类=[1] 少数类）→ ④三目标发布（闭环 ea431b41 + 编排 API dbbba013/workflow a4f0a357）。大屏闭环源连通、计数实时、阈值 0→20 触发智能体重训（两次重放均因链路抖动窗口 S1 失败升级，按设计不换模旧模型继续服务）。本地 Python 客户端须用 127.0.0.1 且 Git Bash 传中文 JSON body 必须走文件（--data-binary @file）。
+
+**待完成**：修复部署后清理两次失败重放 + 重置闭环 → 全量 5000 行批量 → 观察单次触发→重放→铸造→换模 v2 → 大屏编排源验证 → 操作手册重写。

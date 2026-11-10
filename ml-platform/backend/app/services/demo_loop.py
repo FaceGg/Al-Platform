@@ -502,7 +502,16 @@ class DemoLoopService:
                 "alert_count": int(getattr(config, "alert_count", 0) or 0),
                 "retrain_status": config.retrain_status,
             }
-        config.total_count = int(getattr(config, "total_count", 0) or 0) + 1
+        # 并发计数用 SQL 原子自增：读-改-写在 uvicorn 双进程 + 线程池下丢
+        # 更新（4 并发批量实测 total_count 严重少计）。响应值随后重读。
+        from sqlalchemy import update as sa_update
+
+        self.db.execute(
+            sa_update(DemoLoopConfig)
+            .where(DemoLoopConfig.id == config.id)
+            .values(total_count=DemoLoopConfig.total_count + 1)
+        )
+        self.db.expire(config, ["total_count", "error_count", "alert_count"])
         self._emit(
             config,
             "error_row" if is_error else "row_predicted",
@@ -953,10 +962,24 @@ class DemoLoopService:
     # ---------------------------------------------------------------- thresholds
 
     def _after_error_append(self, config: DemoLoopConfig, predicted: str, actor_id) -> None:
-        config.error_count = int(config.error_count or 0) + 1
+        # error_count 同样原子自增（与 total_count 同一竞态面）；随后重读供
+        # 告警取模与重训阈值评估使用。
+        from sqlalchemy import update as sa_update
+
+        self.db.execute(
+            sa_update(DemoLoopConfig)
+            .where(DemoLoopConfig.id == config.id)
+            .values(error_count=DemoLoopConfig.error_count + 1)
+        )
+        self.db.expire(config, ["error_count", "alert_count"])
         threshold = max(1, int(config.alert_threshold_rows or 1))
-        if config.error_count % threshold == 0:
-            config.alert_count = int(config.alert_count or 0) + 1
+        if int(config.error_count or 0) % threshold == 0:
+            self.db.execute(
+                sa_update(DemoLoopConfig)
+                .where(DemoLoopConfig.id == config.id)
+                .values(alert_count=DemoLoopConfig.alert_count + 1)
+            )
+            self.db.expire(config, ["alert_count"])
             self._emit(
                 config, "alert_triggered",
                 f"报错数据达到 {config.error_count} 行，触发第 {config.alert_count} 次管理员告警",

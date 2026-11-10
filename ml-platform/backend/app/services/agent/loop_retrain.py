@@ -553,8 +553,35 @@ def trigger_agent_retrain(db: Session, config: DemoLoopConfig, actor_id) -> None
     快照缺失 / 数据缺失 → AgentRetrainError（调用方转 retrain_failed 事件）。
     """
     now = _naive_utcnow()
+    # DB 级 CAS 抢占重训槽：并发逐行回流（uvicorn 双进程 + 线程池）曾同时
+    # 通过内存状态检查，一轮触发变成两轮（error 20/21 各触发一次实测）。
+    # 原子占用 idle/failed 槽位，输者静默返回；失败收尾统一把状态放回
+    # failed（等待下一次增量追赶评估）。
+    from sqlalchemy import update as sa_update
+
+    claimed = db.execute(
+        sa_update(DemoLoopConfig)
+        .where(
+            DemoLoopConfig.id == config.id,
+            DemoLoopConfig.retrain_status.in_(["idle", "failed", ""]),
+            DemoLoopConfig.retrain_job_id.is_(None),
+            DemoLoopConfig.retrain_agent_run_id.is_(None),
+        )
+        .values(retrain_status="agent_running", retrain_agent_started_at=now)
+    ).rowcount
+    db.commit()
+    if not claimed:
+        return
+
+    def _release_claim(status: str = "idle") -> None:
+        """CAS 已占槽但本轮不进行（冷却/熔断/并发让路）→ 放回槽位。"""
+        config.retrain_status = status
+        config.retrain_agent_started_at = None
+        db.commit()
+
     cool_until = getattr(config, "retrain_cool_until", None)
     if cool_until is not None and now < cool_until:
+        _release_claim()
         return
     triggered = _circuit_break_state(db, config)
     if triggered >= int(settings.agent_retrain_daily_limit):
@@ -583,6 +610,7 @@ def trigger_agent_retrain(db: Session, config: DemoLoopConfig, actor_id) -> None
                 payload={"config_id": str(config.id), "triggered": triggered},
             )
             db.commit()
+        _release_claim()
         return
     # 项目级并发上限（跨部署资源护栏）：同项目其他闭环正在重放 → 让路。
     busy = (
@@ -596,20 +624,29 @@ def trigger_agent_retrain(db: Session, config: DemoLoopConfig, actor_id) -> None
         .count()
     )
     if busy >= int(settings.agent_retrain_project_concurrency):
+        _release_claim()
         return
 
-    guidance = _prepare_replay_guidance(_load_guidance_snapshot(db, config))
-    target_column = _resolve_target_column(db, config)
-    artifact = _materialize_merged_artifact(
-        db, config, f"{config.name}-智能体重训-{config.error_count}")
+    try:
+        guidance = _prepare_replay_guidance(_load_guidance_snapshot(db, config))
+        target_column = _resolve_target_column(db, config)
+        artifact = _materialize_merged_artifact(
+            db, config, f"{config.name}-智能体重训-{config.error_count}")
 
-    # 源 run 的 LLM 档案/预算沿用（配方快照的 source_run_id；缺省走平台默认）。
-    _guidance, source_run_id = load_replay_contract(db, config.retrain_agent_recipe_id)
-    run = create_replay_run(
-        db, project_id=config.project_id, actor_id=actor_id,
-        dataset_artifact_id=artifact.id, target_column=target_column,
-        guidance=guidance, source_run_id=source_run_id,
-    )
+        # 源 run 的 LLM 档案/预算沿用（配方快照的 source_run_id；缺省走平台默认）。
+        _guidance, source_run_id = load_replay_contract(db, config.retrain_agent_recipe_id)
+        run = create_replay_run(
+            db, project_id=config.project_id, actor_id=actor_id,
+            dataset_artifact_id=artifact.id, target_column=target_column,
+            guidance=guidance, source_run_id=source_run_id,
+        )
+    except AgentRetrainError:
+        # 槽位已被 CAS 占用：物化/合同失败必须放回 failed，否则槽位永久卡死
+        # （下一次增量评估因状态非 idle 永不再触发）。
+        config.retrain_status = "failed"
+        config.retrain_agent_started_at = None
+        db.commit()
+        raise
     config.retrain_status = "agent_running"
     config.retrain_agent_run_id = run.id
     config.retrain_agent_started_at = now

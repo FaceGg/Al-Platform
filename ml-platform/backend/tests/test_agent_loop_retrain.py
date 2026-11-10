@@ -351,14 +351,15 @@ class AgentLoopRetrain(unittest.TestCase):
             db.close()
 
     def test_02_agent_trigger_requires_bound_recipe(self):
-        """agent 模式未绑定配方：fail-closed 事件，不创建重放。"""
+        """agent 模式未绑定配方：fail-closed 事件，不创建重放。状态落 failed
+        （CAS 抢占后失败放回；failed 仍可被下次增量评估重新触发）。"""
         db = self._db()
         try:
             config = self._create_config(db, retrain_mode="agent")
             service = DemoLoopService(db)
             service.predict(config, {"f1": 5.4, "f2": -1.2, "label": ""}, self.user_id)
             db.refresh(config)
-            self.assertEqual(config.retrain_status, "idle")
+            self.assertEqual(config.retrain_status, "failed")
             self.assertIsNone(config.retrain_agent_run_id)
             types = self._events(db, config)
             self.assertIn("retrain_failed", types)
@@ -432,6 +433,95 @@ class AgentLoopRetrain(unittest.TestCase):
             db.refresh(config)
             self.assertEqual(config.retrain_agent_run_id, first_run_id)
             db.refresh(config)
+        finally:
+            db.close()
+
+    def test_04b_cas_claim_blocks_stale_memory_trigger(self):
+        """触发 CAS：会话内存状态过期（仍显示 idle）而 DB 已 agent_running 时，
+        直接触发不得创建第二个重放（并发逐行回流实测曾一轮变两轮）。"""
+        from sqlalchemy import update as sa_update
+
+        from app.services.agent.loop_retrain import trigger_agent_retrain
+
+        db = self._db()
+        try:
+            recipe = self._create_recipe(db)
+            dataset = self._error_dataset(db, [("f1,f2,label"), ("1.0,2.0,0")])
+            config = self._create_config(
+                db,
+                retrain_mode="agent",
+                retrain_agent_recipe_id=recipe.id,
+                retrain_dataset_artifact_id=dataset.id,
+                error_count=25,
+            )
+            # 模拟另一进程已抢占：DB 置 agent_running，本会话对象保持旧值
+            db.execute(
+                sa_update(DemoLoopConfig)
+                .where(DemoLoopConfig.id == config.id)
+                .values(retrain_status="agent_running")
+            )
+            db.commit()
+            db.expire(config)
+            config.retrain_status = "idle"  # 过期内存视图
+            with patch("app.services.agent.executor.launch_agent_run") as launch:
+                trigger_agent_retrain(db, config, self.user_id)
+            launch.assert_not_called()
+            db.expire(config)
+            self.assertEqual(config.retrain_status, "agent_running")
+            self.assertIsNone(config.retrain_agent_run_id)
+        finally:
+            db.close()
+
+    def test_04c_materialize_failure_releases_claimed_slot(self):
+        """配方快照缺失：CAS 已占槽后物化失败必须放回 failed——否则槽位卡死，
+        后续增量评估永不再触发。"""
+        db = self._db()
+        try:
+            recipe = self._create_recipe(db, content={
+                "domain": "t", "inputs": {"target_column": "label"},
+            })  # 无 guidance 快照 → 重放合同缺失 fail-closed
+            dataset = self._error_dataset(db, [("f1,f2,label"), ("1.0,2.0,0")])
+            config = self._create_config(
+                db,
+                retrain_mode="agent",
+                retrain_agent_recipe_id=recipe.id,
+                retrain_dataset_artifact_id=dataset.id,
+                error_count=25,
+            )
+            service = DemoLoopService(db)
+            with patch("app.services.agent.executor.launch_agent_run") as launch:
+                service.predict(config, {"f1": 5.4, "f2": -1.2, "label": ""}, self.user_id)
+            db.expire(config)
+            self.assertEqual(config.retrain_status, "failed")
+            self.assertIsNone(config.retrain_agent_run_id)
+            launch.assert_not_called()
+            self.assertIn("retrain_failed", self._events(db, config))
+        finally:
+            db.close()
+
+    def test_04d_counters_increment_atomically(self):
+        """total/error 计数走 SQL 原子自增（并发丢更新实测根因）：逐行调用
+        后计数与真实行数一致。"""
+        db = self._db()
+        try:
+            recipe = self._create_recipe(db)
+            dataset = self._error_dataset(db, [("f1,f2,label"), ("1.0,2.0,0")])
+            config = self._create_config(
+                db,
+                retrain_mode="agent",
+                retrain_agent_recipe_id=recipe.id,
+                retrain_dataset_artifact_id=dataset.id,
+                retrain_threshold_rows=100,
+            )
+            service = DemoLoopService(db)
+            with patch("app.services.agent.executor.launch_agent_run"):
+                # fault=1 预测命中报错类（{"1"}）→ 回流；fault=0 正常
+                service.predict(config, {"f1": 5.4, "f2": -1.2, "label": 1}, self.user_id)
+                service.predict(config, {"f1": 5.4, "f2": -1.2, "label": 1}, self.user_id)
+                service.predict(config, {"f1": 0.2, "f2": 1.0, "label": 0}, self.user_id)
+            db.expire(config)
+            self.assertEqual(int(config.total_count), 3)
+            self.assertEqual(int(config.error_count), 2)
         finally:
             db.close()
 
