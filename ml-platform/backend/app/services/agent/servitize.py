@@ -53,7 +53,8 @@ def _bridge_feature_script(script: str | None) -> str:
     return text + "\n\nresult = transform(df)\n"
 
 
-def derive_error_classes(target_semantics: dict | None) -> tuple[list[str], list[str]]:
+def derive_error_classes(target_semantics: dict | None,
+                         minority_label: str | None = None) -> tuple[list[str], list[str]]:
     """Derive defect-class labels from S1 target semantics (§12.2).
 
     Returns ``(error_classes, ambiguous_labels)`` — labels whose semantic
@@ -70,9 +71,14 @@ def derive_error_classes(target_semantics: dict | None) -> tuple[list[str], list
         else:
             ambiguous.append(str(label))
     if not error_classes and semantics:
-        # No semantic match: fall back to the lexicographically smallest label
-        # but flag everything as ambiguous so the wizard preview shows it.
-        error_classes.append(sorted(str(label) for label in semantics)[0])
+        # 无语义命中：兜底取少数类（缺陷天然稀少，与验收 recall_minority 口径
+        # 一致）；缺少数类信息（旧配方）退回字典序最小。全部标 ambiguous 供
+        # 发布批准时核对。
+        labels = [str(label) for label in semantics]
+        if minority_label is not None and str(minority_label) in labels:
+            error_classes.append(str(minority_label))
+        else:
+            error_classes.append(sorted(labels)[0])
     return error_classes, ambiguous
 
 
@@ -185,7 +191,8 @@ def servitize_recipe(
             ambiguous: list[str] = []
         else:
             error_classes, ambiguous = derive_error_classes(
-                recipe_content.get("target_semantics")
+                recipe_content.get("target_semantics"),
+                recipe_content.get("minority_label"),
             )
         if not error_classes:
             raise ValueError(

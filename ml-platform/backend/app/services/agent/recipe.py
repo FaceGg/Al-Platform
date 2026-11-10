@@ -316,8 +316,12 @@ def build_fixation_content(run, memory: dict, smoke_row: dict | None = None,
         # S5 服务化 dry-run 冒烟行（servitize_recipe 的 zero-backflow 冒烟输入）
         "smoke_row": dict(smoke_row or {}),
         # 目标列取值语义（servitize derive_error_classes 的推导输入；空描述
-        # 走字典序最小标签兜底 + 全量 ambiguous，发布批准时人工核对）
+        # 走少数类兜底 + 全量 ambiguous，发布批准时人工核对）
         "target_semantics": {str(label): "" for label in (target_values or [])[:20]},
+        # 少数类（target_values 按频次升序，首个即少数类）：缺陷类兜底依据——
+        # 缺陷天然稀少，且与验收链路 recall_minority 口径一致。此前兜底取字典
+        # 序最小标签：拧紧 0=不合格碰巧对，点焊 0=正常则把正常焊点全判报错回流
+        "minority_label": str(target_values[0]) if target_values else None,
         "baseline_metrics": (run.result_json or {}).get("metrics", {}),
         "analysis_digest": "run %s" % str(run.id)[:8],
         "optimization_report": (run.result_json or {}).get("optimization_report"),

@@ -67,6 +67,17 @@ class TestDeriveErrorClasses(unittest.TestCase):
         self.assertEqual(classes, ["A"])
         self.assertEqual(sorted(ambiguous), ["A", "B"])
 
+    def test_no_match_prefers_minority_label(self):
+        # 点焊 fault：1=缺陷（少数类）/0=正常——无描述时取少数类，而非字典序最小
+        classes, ambiguous = derive_error_classes({"1": "", "0": ""}, "1")
+        self.assertEqual(classes, ["1"])
+        self.assertEqual(sorted(ambiguous), ["0", "1"])
+        # 语义命中优先于少数类兜底
+        classes, _ = derive_error_classes({"0": "不合格", "1": "合格"}, "1")
+        self.assertEqual(classes, ["0"])
+        # 少数类标签不在取值里（脏数据）→ 退回字典序最小
+        self.assertEqual(derive_error_classes({"A": "", "B": ""}, "Z")[0], ["A"])
+
 
 class TestServitize(unittest.TestCase):
     @classmethod
@@ -197,6 +208,23 @@ class TestServitize(unittest.TestCase):
         )
         self.assertEqual(example_record(content), {"f1": 5.0, "f2": -1.0})
         self.assertEqual(example_record({}), {})
+
+    def test_semantics_without_descriptions_use_minority_as_error_class(self):
+        """固化配方的目标语义只有取值无描述（真实形态）：闭环缺陷类取少数类。"""
+        content = dict(_RECIPE_CONTENT, target_semantics={"1": "", "0": ""},
+                       minority_label="1")
+        with SessionLocal() as db:
+            draft = servitize_recipe(
+                db,
+                project_id=self.project_id,
+                actor_id=self.admin_id,
+                deployment_id=self.deployment_id,
+                recipe_content=content,
+                model_api_name="s5-minority-%s" % uuid4().hex[:6],
+            )
+            loop = db.get(DemoLoopConfig, uuid.UUID(draft.loop_config_id))
+            self.assertEqual(draft.error_classes, ["1"])
+            self.assertEqual(loop.error_classes, ["1"])
 
     def _source_run(self, db, *, dataset_exists=True):
         """配方源 run：其数据集就是部署模型的原始训练集。"""

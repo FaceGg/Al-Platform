@@ -121,6 +121,29 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     expect(payload.guidance.evaluation.metric_gates).toEqual({});
   });
 
+  it("previews the minority class as the error-backflow class on step 5", async () => {
+    // 点焊形态：目标 1=缺陷（少数类）/0=正常——预览不得写死「0（不合格）」
+    agentCenterMocks.fetchDatasetProfile.mockResolvedValueOnce({
+      row_count: 10,
+      column_count: 2,
+      columns: [
+        { name: "F1", base_name: "F1", semantic: null, missing_rate: 0, cardinality: 10, constant: false },
+      ],
+      mutual_info_top: [],
+      target: { distribution: { "0": 9, "1": 1 }, imbalance_ratio: 9 },
+    });
+    renderWizard();
+    fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });
+    fireEvent.change(await screen.findByLabelText("选择数据集"), { target: { value: "d1" } });
+    await waitFor(() => expect(screen.getByLabelText("选择目标列").querySelectorAll("option").length).toBeGreaterThan(1));
+    await waitFor(() => expect(agentCenterMocks.fetchDatasetProfile).toHaveBeenCalled());
+    for (let i = 0; i < 4; i += 1) {
+      fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
+    }
+    expect(await screen.findByText("将把「1」（少数类）判为报错回流")).toBeInTheDocument();
+    expect(screen.queryByText(/将把「0」（不合格）/)).not.toBeInTheDocument();
+  });
+
   it("sends ensemble config when weighted-voting training is enabled", async () => {
     renderWizard();
     fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });

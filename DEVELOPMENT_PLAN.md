@@ -646,3 +646,5 @@ fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失�
 **测试**：后端受影响套件 205 passed（servitize/loop_retrain/demo_loop/llm_gateway/provider_formats/chat_stream/closed_loop_ensemble/showcase/ci_workflow 等），前端 APIMarketplacePage 14 passed + tsc 通过。既有失败（与本批无关，登记）：test_llm_provider_formats::TestDisabledProfileGuard×2（ORM CHECK `ck_llm_profiles_provider` 仍只允许 openai_compatible/custom，SQLite 按模型建表即炸，PG 走迁移不暴露）；test_usage_stats_daily::test_today_is_single_local_natural_day_bucket（a80a6708 新测试，夹具插审计事件缺 actor_username，单独跑也失败）；test_agent_skill_revision 抽样用例跨模块合跑失败（查全库当前配方被其他模块 test-domain 配方污染，CI 按模块隔离不暴露）。
 
 **E2E 进度**：进行中——证据链随验证完成补录本节。
+
+**追加第八项（同日）：闭环缺陷类兜底取字典序最小 → 点焊正常焊点全判报错**：固化配方的 target_semantics 只有取值无描述（`{"0":"","1":""}`），derive_error_classes 无语义命中时兜底取字典序最小——拧紧 DECIDE 0=不合格碰巧对，点焊 fault 0=正常则闭环会把约九成正常焊点当报错回流（告警/重训全部失真）；向导第五步预览还写死「将把「0」（不合格）判为报错回流」。修：`_target_values` 按频次升序返回、固化 content 记 `minority_label`（首个=少数类），推导兜底优先少数类（缺陷天然稀少，且与验收 recall_minority 口径一致；旧配方无此键退回字典序、全部仍标 ambiguous 供发布核对）；向导第五步按画像目标分布动态显示少数类。测试：derive 少数类/语义优先/脏标签回退 + 服务化端到端缺陷类=少数类 + test_15 改新语义并保留旧配方回退断言（后端 57 passed）；向导预览用例（8 passed）+ tsc。

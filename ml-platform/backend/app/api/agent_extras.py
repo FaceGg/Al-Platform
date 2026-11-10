@@ -122,7 +122,8 @@ def _fixation_content(run: AgentRun, memory: dict, db: Session | None = None) ->
 
 
 def _target_values(db: Session | None, run: AgentRun) -> list | None:
-    """源数据集目标列取值（target_semantics 生产输入）；失败返回 None。"""
+    """源数据集目标列取值（target_semantics 生产输入），按出现频次升序——
+    首个即少数类（缺陷类兜底依据，见 derive_error_classes）；失败返回 None。"""
     if db is None or run.dataset_artifact_id is None:
         return None
     try:
@@ -135,7 +136,7 @@ def _target_values(db: Session | None, run: AgentRun) -> list | None:
             run.dataset_artifact_id, run.project_id, expected_type="dataset",
         ) as dataset_path:
             series = pd.read_csv(dataset_path, usecols=[run.target_column])[run.target_column]
-        return [value for value in series.dropna().unique()]
+        return list(series.dropna().value_counts(ascending=True).index)
     except Exception:  # noqa: BLE001
         return None
 

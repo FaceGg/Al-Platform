@@ -121,10 +121,12 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  // sp-1 画像（缺失率/互信息排名——列级出域，无行样例）
+  // sp-1 画像（缺失率/互信息排名——列级出域，无行样例）；minority=目标列少数类
+  // （第五步缺陷类预览：无语义描述时按少数类判报错回流，与验收口径一致）
   const [profileStats, setProfileStats] = useState<{
     missing: Record<string, number>;
     miRank: Record<string, number>;
+    minority?: string;
   }>({ missing: {}, miRank: {} });
   const [templateSaved, setTemplateSaved] = useState("");
 
@@ -148,7 +150,11 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
         profile.mutual_info_top.forEach((item, index) => {
           miRank[item.column] = index + 1;
         });
-        setProfileStats({ missing, miRank });
+        const distribution = Object.entries(profile.target?.distribution ?? {});
+        const minority = distribution.length >= 2
+          ? distribution.reduce((least, item) => (item[1] < least[1] ? item : least))[0]
+          : undefined;
+        setProfileStats({ missing, miRank, minority });
       })
       .catch(() => setProfileStats({ missing: {}, miRank: {} }));
     return () => {
@@ -718,9 +724,13 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
                   <span className="v2-badge v2-bb">{zh ? "将创建" : "will create"}</span>
                 </div>
                 <div style={{ fontSize: 12, color: "var(--v2-sub)", lineHeight: 1.7 }}>
-                  {zh ? "按配方创建（特征脚本 script 模式）；缺陷类从目标语义自动推导："
-                    : "Created from the recipe (script-mode features); defect classes derived from target semantics: "}
-                  <b style={{ color: "var(--v2-gold)" }}>{zh ? "将把「0」（不合格）判为报错回流" : "「0」 will be treated as error backflow"}</b>
+                  {zh ? "按配方创建（特征脚本 script 模式）；缺陷类从目标语义推导（无语义描述时取少数类，发布前可在服务化草稿核对）："
+                    : "Created from the recipe (script-mode features); defect classes derived from target semantics (minority class when undescribed): "}
+                  <b style={{ color: "var(--v2-gold)" }}>
+                    {profileStats.minority !== undefined
+                      ? (zh ? `将把「${profileStats.minority}」（少数类）判为报错回流` : `「${profileStats.minority}」 (minority) will be treated as error backflow`)
+                      : (zh ? "将把少数类判为报错回流" : "the minority class will be treated as error backflow")}
+                  </b>
                 </div>
               </div>
               <div style={{ flex: 1, minWidth: 240, border: "1px solid var(--v2-line)", borderRadius: 10, padding: 12 }}>

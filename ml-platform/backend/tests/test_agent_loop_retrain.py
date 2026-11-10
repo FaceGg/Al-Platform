@@ -798,8 +798,9 @@ class AgentLoopRetrain(unittest.TestCase):
 
     def test_15_fixation_target_semantics_enables_servitize_draft(self):
         """target_semantics 生产方：固化 content 带目标列取值，servitize 推导
-        不再「cannot derive error classes」降级（无语义描述走字典序兜底 +
-        全量 ambiguous，发布批准人工核对）。"""
+        不再「cannot derive error classes」降级。无语义描述时兜底取少数类
+        （target_values 按频次升序，首个=少数类）+ 全量 ambiguous——此前取
+        字典序最小，点焊 fault（1=缺陷/0=正常）会把正常焊点全判报错回流。"""
         import pandas as pd
 
         from app.services.agent.recipe import build_fixation_content
@@ -816,11 +817,14 @@ class AgentLoopRetrain(unittest.TestCase):
             smoke_row={"f1": 1.0},
         )
         self.assertEqual(content["target_semantics"], {"1": "", "0": ""})
-        error_classes, ambiguous = derive_error_classes(content["target_semantics"])
-        # 无语义描述 → 字典序最小标签兜底为报错类；ambiguous 保持全量
-        # （发布批准时逐标签人工核对）
-        self.assertEqual(error_classes, ["0"])
+        self.assertEqual(content["minority_label"], "1")
+        error_classes, ambiguous = derive_error_classes(
+            content["target_semantics"], content["minority_label"])
+        # 无语义描述 → 少数类兜底为报错类；ambiguous 保持全量（发布批准时人工核对）
+        self.assertEqual(error_classes, ["1"])
         self.assertEqual(ambiguous, ["1", "0"])
+        # 旧配方无 minority_label：退回字典序最小（行为不变）
+        self.assertEqual(derive_error_classes(content["target_semantics"])[0], ["0"])
 
 
 if __name__ == "__main__":
