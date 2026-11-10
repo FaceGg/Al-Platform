@@ -563,6 +563,30 @@ def _complete_retrain_swap_locked(
         ).first()
         if deployment is not None:
             deployment.model_version_id = version.id
+            # 换模跟随的另一半：闭环的特征脚本必须跟到新配方的 S2 脚本——
+            # 新模型吃新派生特征，回流行仍按旧脚本变换会缺特征列（实测换模
+            # 后 predict 全量 422「缺少模型特征列：ron_delta, …」）。
+            if recipe_id is not None:
+                from app.models.demo_loop import DemoLoopConfig as _Loop
+
+                _loop = db.query(_Loop).filter(
+                    _Loop.deployment_id == deployment.id,
+                ).first()
+                if _loop is not None:
+                    from app.services.agent.recipe import get_current_version as _gcv
+                    from app.services.agent.servitize import (
+                        _bridge_feature_script as _bridge,
+                    )
+
+                    try:
+                        _content = dict(_gcv(db, _as_uuid(recipe_id)).content_json or {})
+                    except Exception:  # noqa: BLE001 - 脚本跟随失败不影响换模
+                        _content = {}
+                    _script = str(_content.get("feature_script") or "").strip()
+                    if _script:
+                        _loop.feature_script = _bridge(_script)
+                        _loop.feature_engineering_mode = "script"
+                        db.flush()
             # 运行时规格与路由都从最新 stable revision 的 target 取模，revision
             # 与其 runtime_key 不可变；换模必须轮换 revision，否则运行时永远
             # 指向旧模型。若最新 stable 已指向该版本（幂等重放）则不再轮换。
