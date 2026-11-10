@@ -864,7 +864,12 @@ export default function LLMGatewayPage() {
     },
   } : null
 
-  const headerSwitchChecked = !!selected?.profiles.some((p) => p.is_default)
+  // 供应商头开关显示状态绑定组内 enabled（与点击切换的字段一致）：
+  // 此前错绑 is_default——非默认供应商的开关永远显示「关」，点击启用
+  // 只是把本就 true 的 enabled 再设一遍，刷新后依旧显示关（用户实测
+  // 「DeepSeek 不能启用」的根因）。
+  const headerSwitchChecked = !!selected?.profiles.length
+    && selected.profiles.every((p) => p.enabled !== false)
 
   return (
     <AppLayout>
