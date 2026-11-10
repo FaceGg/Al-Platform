@@ -181,7 +181,12 @@ def chat_stream2(
                     if delta:
                         yield _sse({"type": "delta", "text": delta})
                     if event_usage:
-                        usage = event_usage
+                        # 分段合并（Anthropic 输入在 message_start、输出在
+                        # message_delta），与网关 chat_completion 同口径
+                        usage.update({
+                            key: value for key, value in event_usage.items()
+                            if value is not None
+                        })
                     raw_usage = event.get("usage") if isinstance(event, dict) else None
                     extracted = _extract_cache(raw_usage)
                     if extracted is not None:

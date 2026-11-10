@@ -27,6 +27,9 @@ DEFECT_SEMANTIC_KEYWORDS = (
 )
 _PROJECT_LOCKS: dict[str, threading.Lock] = {}
 _PROJECT_LOCKS_GUARD = threading.Lock()
+# 服务化闭环的重训触发行数默认值，与闭环配置界面 LoopConfigModal 初值一致
+# （模型列缺省 0 = 回流永不触发，一键服务化的闭环因此从不重训）。
+DEFAULT_LOOP_RETRAIN_THRESHOLD = 20
 
 
 def servitize_lock(project_id) -> threading.Lock:
@@ -85,6 +88,51 @@ class ServitizeDraft:
     activated: bool = False
 
 
+def example_record(recipe_content: dict) -> dict:
+    """市场调用示例行：配方冒烟行（训练集首行）剔除目标列——调用方不持有标签。"""
+    target = str((recipe_content.get("inputs") or {}).get("target_column") or "")
+    return {
+        key: value
+        for key, value in (recipe_content.get("smoke_row") or {}).items()
+        if key != target
+    }
+
+
+def _agent_retrain_binding(db: Session, project_id, recipe_id, recipe_content: dict,
+                           loop: DemoLoopConfig | None) -> dict:
+    """一键服务化闭环的智能体重训绑定（配方重放 + 合并重训数据 + 阈值）。
+
+    原先服务化闭环停在模型缺省（engine 模式、未绑配方、阈值 0、无重训数据
+    集）：④ 发布编排必 422，闭环重训退化为引擎搜索，且合并集只剩报错行
+    （几乎单类）。原始训练集取自配方源 run——部署模型正是用它训练的；复用
+    草稿时用户已改过的阈值/数据集不覆盖；源数据集已删则不绑（不阻断服务化）。"""
+    from app.models.agent_run import AgentRun
+    from app.models.artifact import Artifact
+
+    binding: dict = {
+        "retrain_mode": "agent",
+        "retrain_agent_recipe_id": str(recipe_id),
+    }
+    if loop is None or not int(loop.retrain_threshold_rows or 0):
+        binding["retrain_threshold_rows"] = DEFAULT_LOOP_RETRAIN_THRESHOLD
+    configured = loop is not None and bool(
+        loop.retrain_dataset_artifact_ids or loop.retrain_dataset_artifact_id)
+    source_run_id = recipe_content.get("source_run_id")
+    if not configured and source_run_id:
+        try:
+            source_run = db.get(AgentRun, uuid.UUID(str(source_run_id)))
+        except (TypeError, ValueError):
+            source_run = None
+        dataset_id = source_run.dataset_artifact_id if source_run is not None else None
+        if dataset_id is not None and db.query(Artifact.id).filter(
+            Artifact.id == dataset_id,
+            Artifact.project_id == project_id,
+            Artifact.type == "dataset",
+        ).first() is not None:
+            binding["retrain_dataset_artifact_ids"] = [str(dataset_id)]
+    return binding
+
+
 def servitize_recipe(
     db: Session,
     *,
@@ -95,6 +143,7 @@ def servitize_recipe(
     model_api_name: str | None = None,
     loop_name: str | None = None,
     error_classes_override: list[str] | None = None,
+    recipe_id=None,
 ) -> ServitizeDraft:
     """Create the three S5 assets in draft state (§12.1 ①–④).
 
@@ -103,6 +152,10 @@ def servitize_recipe(
     until the model API is listed); ③ model API entry ``offline``;
     ④ dry-run smoke — zero backflow by construction. ⑤ activation is a
     separate explicit call (:func:`activate_servitize`).
+
+    ``recipe_id`` given (one-click / auto servitize) → the loop is bound to
+    agent retrain (recipe replay) with the recipe's source training dataset
+    merged into every retrain; without it the loop keeps the engine default.
     """
     from app.models.model_registry import InferenceDeployment
 
@@ -188,9 +241,6 @@ def servitize_recipe(
         if reusing:
             number = "".join(ch for ch in str(api.version or "v1") if ch.isdigit())
             api.version = "v%d" % (int(number or 1) + 1)
-            api.request_schema = {
-                "feature_script": recipe_content.get("feature_script") or "",
-            }
             api_name = api.name
         elif api is not None:
             raise ValueError(
@@ -206,6 +256,9 @@ def servitize_recipe(
         loop = None
         if reusing and loop_id:
             loop = db.get(DemoLoopConfig, uuid.UUID(str(loop_id)))
+        if recipe_id:
+            loop_data.update(_agent_retrain_binding(
+                db, project_id, recipe_id, recipe_content, loop))
         if loop is not None:
             loop_service.update_config(loop, project_id, loop_data)
         else:
@@ -221,14 +274,20 @@ def servitize_recipe(
                 model_id=library_id,
                 owner_id=actor_id,
                 description="AutoML Agent S5 服务化草稿（待发布批准）",
-                request_schema={
-                    "feature_script": recipe_content.get("feature_script") or "",
-                },
                 showcase_state={"loop_config_id": str(loop.id)},
             )
             db.add(api)
         else:
             api.showcase_state = {"loop_config_id": str(loop.id)}
+        # 调用入口 = 闭环 scoped predict（送原始行：闭环内 S2 特征变换→推理→
+        # 报错回流）。条目曾不写 endpoint，市场「调用示例/在线测试」只剩裸
+        # 域名无从调用。
+        api.endpoint = f"/api/projects/{project_id}/demo-loop/loops/{loop.id}/predict"
+        api.method = "POST"
+        api.request_schema = {
+            "feature_script": recipe_content.get("feature_script") or "",
+            "record": example_record(recipe_content),
+        }
         db.commit()
         db.refresh(api)
 

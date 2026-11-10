@@ -176,6 +176,133 @@ class TestServitize(unittest.TestCase):
         self.assertEqual(int(loop.total_count or 0), 0)
         # 旧配方无 retrain_ensemble 键：闭环重训集成默认关闭（行为不变）
         self.assertFalse(loop.retrain_ensemble_enabled)
+        # 未传配方 id 的服务化保持引擎默认（不擅自绑智能体重训）
+        self.assertEqual(loop.retrain_mode or "engine", "engine")
+        self.assertIsNone(loop.retrain_agent_recipe_id)
+        # 市场条目调用入口 = 闭环 scoped predict（曾为空串，调用示例无从调用）
+        self.assertEqual(
+            api.endpoint,
+            f"/api/projects/{self.project_id}/demo-loop/loops/{loop.id}/predict",
+        )
+        self.assertEqual(api.method, "POST")
+        self.assertEqual(api.request_schema.get("record"), {"f1": 5.0, "f2": -1.0})
+
+    def test_marketplace_example_record_excludes_target(self):
+        """示例行取冒烟行（训练集首行，真实形态带目标列）但剔除目标列。"""
+        from app.services.agent.servitize import example_record
+
+        content = dict(
+            _RECIPE_CONTENT,
+            smoke_row={"f1": 5.0, "f2": -1.0, "DECIDE(判定结果)": 1},
+        )
+        self.assertEqual(example_record(content), {"f1": 5.0, "f2": -1.0})
+        self.assertEqual(example_record({}), {})
+
+    def _source_run(self, db, *, dataset_exists=True):
+        """配方源 run：其数据集就是部署模型的原始训练集。"""
+        from app.models.agent_run import AgentRun
+
+        dataset_id = uuid4()
+        if dataset_exists:
+            service = build_artifact_service(db)
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "s5-train.csv"
+                path.write_text("f1,f2,DECIDE(判定结果)\n0.0,1.0,0\n5.0,-1.0,1\n",
+                                encoding="utf-8")
+                dataset = service.create_from_file(
+                    self.project_id, path, "s5-train-%s" % uuid4().hex[:6], "dataset")
+            dataset_id = uuid.UUID(str(dataset.id))
+        run = AgentRun(
+            project_id=self.project_id,
+            dataset_artifact_id=dataset_id,
+            target_column="DECIDE(判定结果)",
+            status="accepted",
+            created_by=self.admin_id,
+        )
+        db.add(run)
+        db.commit()
+        return run, dataset_id
+
+    def _bound_servitize(self, db, run, name):
+        from app.services.agent.recipe import create_recipe
+
+        content = dict(_RECIPE_CONTENT, source_run_id=str(run.id))
+        recipe = create_recipe(
+            db, project_id=self.project_id, name="s5-recipe-%s" % uuid4().hex[:6],
+            content=content, created_by=self.admin_id,
+        )
+        db.commit()
+        draft = servitize_recipe(
+            db,
+            project_id=self.project_id,
+            actor_id=self.admin_id,
+            deployment_id=self.deployment_id,
+            recipe_content=content,
+            model_api_name=name,
+            recipe_id=recipe.id,
+        )
+        return recipe, draft
+
+    def test_recipe_bound_servitize_enables_agent_retrain(self):
+        """一键服务化（带配方）：闭环绑智能体重训+配方、阈值缺省 20、重训
+        数据含配方源 run 的原始训练集——此前停在引擎/未绑配方/阈值 0/无
+        重训集：④ 发布编排必 422，合并重训集只剩报错行（近乎单类）。"""
+        with SessionLocal() as db:
+            run, dataset_id = self._source_run(db)
+            recipe, draft = self._bound_servitize(db, run, "s5-bind-%s" % uuid4().hex[:6])
+            loop = db.get(DemoLoopConfig, uuid.UUID(draft.loop_config_id))
+            db.refresh(loop)
+            self.assertEqual(loop.retrain_mode, "agent")
+            self.assertEqual(loop.retrain_agent_recipe_id, recipe.id)
+            self.assertEqual(loop.retrain_threshold_rows, 20)
+            self.assertTrue(loop.retrain_enabled)
+            self.assertEqual(loop.retrain_dataset_artifact_ids, [str(dataset_id)])
+
+    def test_reservitize_keeps_user_tuned_threshold(self):
+        """复用草稿重新服务化：用户已调的阈值不被缺省值覆盖。"""
+        name = "s5-tune-%s" % uuid4().hex[:6]
+        with SessionLocal() as db:
+            run, _dataset_id = self._source_run(db)
+            _recipe, first = self._bound_servitize(db, run, name)
+            loop = db.get(DemoLoopConfig, uuid.UUID(first.loop_config_id))
+            loop.retrain_threshold_rows = 50
+            db.commit()
+            _recipe, second = self._bound_servitize(db, run, name)
+            self.assertEqual(first.loop_config_id, second.loop_config_id)
+            loop = db.get(DemoLoopConfig, uuid.UUID(second.loop_config_id))
+            db.refresh(loop)
+            self.assertEqual(loop.retrain_threshold_rows, 50)
+
+    def test_missing_source_dataset_does_not_block_servitize(self):
+        """源 run 数据集已删：只是不绑重训集，服务化本身照常完成。"""
+        with SessionLocal() as db:
+            run, _dataset_id = self._source_run(db, dataset_exists=False)
+            _recipe, draft = self._bound_servitize(db, run, "s5-gone-%s" % uuid4().hex[:6])
+            loop = db.get(DemoLoopConfig, uuid.UUID(draft.loop_config_id))
+            db.refresh(loop)
+            self.assertEqual(loop.retrain_mode, "agent")
+            self.assertFalse(loop.retrain_dataset_artifact_ids)
+
+    def test_error_dataset_precreated_before_first_backflow(self):
+        """④ 发布编排需在首次回流前拿到报错集 id：预建（幂等）后首次真实
+        回流直接追加进同一数据集，不另起新集。"""
+        from app.services.demo_loop import DemoLoopService
+
+        draft = self.servitize(model_api_name="s5-err-%s" % uuid4().hex[:6])
+        with SessionLocal() as db:
+            loop = db.get(DemoLoopConfig, uuid.UUID(draft.loop_config_id))
+            self.assertIsNone(loop.error_artifact_id)
+            service = DemoLoopService(db)
+            artifact = service.ensure_error_dataset(
+                loop, ["confidence", "f1", "f2", "prediction"])
+            db.refresh(loop)
+            self.assertEqual(loop.error_artifact_id, artifact.id)
+            self.assertEqual(service.ensure_error_dataset(loop, ["f1"]).id, artifact.id)
+            # {0.0, 1.0} 预测为 0，命中报错类别 "0" → 真实回流
+            service.predict(loop, {"f1": 0.0, "f2": 1.0}, self.admin_id)
+            db.refresh(loop)
+            self.assertEqual(int(loop.error_count or 0), 1)
+            self.assertEqual(loop.error_artifact_id, artifact.id)
 
     def test_recipe_ensemble_choice_flows_into_loop_retrain(self):
         """向导第三步的集成选项随配方固化 → 服务化闭环重训沿用。"""

@@ -167,6 +167,38 @@ class TestLLMGateway(unittest.TestCase):
             self.assertEqual(events[0].changes.get("completion_tokens"), 1)
             self.assertEqual(events[0].changes.get("total_tokens"), 4)
 
+    def test_anthropic_stream_usage_merged_with_total(self):
+        """Anthropic 流：输入 token 在 message_start、输出在 message_delta
+        （不带 input_tokens）——合并后补 total_tokens。智能体 runner 按
+        total_tokens 累计任务用量，曾因缺它（覆盖式取最后一段）恒记 0。"""
+        config = _fake_config(provider="anthropic")
+
+        @contextmanager
+        def fake_stream(method, url, **kwargs):
+            response = mock.MagicMock()
+            response.status_code = 200
+            response.iter_lines.return_value = iter([
+                "event: message_start",
+                'data: {"type": "message_start", "message": {"usage": {"input_tokens": 120, "output_tokens": 1}}}',
+                'data: {"type": "content_block_delta", "delta": {"text": "ok"}}',
+                'data: {"type": "message_delta", "usage": {"output_tokens": 30}}',
+            ])
+            yield response
+
+        with SessionLocal() as db, mock.patch.object(
+            _HTTP_CLIENT, "stream", side_effect=fake_stream
+        ):
+            reply, usage, _reasoning = chat_completion(
+                db,
+                config=config,
+                messages=[{"role": "user", "content": "hi"}],
+                purpose="test",
+            )
+        self.assertEqual(reply, "ok")
+        self.assertEqual(usage.get("prompt_tokens"), 120)
+        self.assertEqual(usage.get("completion_tokens"), 30)
+        self.assertEqual(usage.get("total_tokens"), 150)
+
     def test_usage_stats_aggregates_egress_events(self):
         # 管理端点聚合合同：汇总/按天/按模型/按用途，tokens 只计带用量的记录
         import uuid as _uuid

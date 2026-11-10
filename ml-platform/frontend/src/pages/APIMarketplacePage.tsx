@@ -149,6 +149,11 @@ export default function APIMarketplacePage() {
     } else if (api.api_type === "orchestration") {
       const sample = api.request_schema?.record;
       body = { record: sample && typeof sample === "object" && !Array.isArray(sample) ? sample : { feature1: 0, feature2: 0 } };
+    } else if (api.source_kind === "servitize") {
+      // 智能体闭环：送原始行（闭环内做 S2 特征变换→推理→报错回流），
+      // 不走模型 API 的 records 特征向量形态
+      const sample = api.request_schema?.record;
+      body = { record: sample && typeof sample === "object" && !Array.isArray(sample) ? sample : { feature1: 0, feature2: 0 } };
     } else if (api.api_type === "model") {
       const feats = Array.isArray(api.request_schema?.records) ? api.request_schema.records : [];
       // Feature entries may be plain names or {name, dtype} schema dicts.

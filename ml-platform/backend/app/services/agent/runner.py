@@ -389,6 +389,7 @@ class AgentRunner:
                     actor_id=self.actor,
                     deployment_id=deployment.id,
                     recipe_content=dict(version.content_json or {}),
+                    recipe_id=recipe_uuid,
                 )
                 note["servitize"] = {
                     "deployment_id": str(draft.deployment_id),

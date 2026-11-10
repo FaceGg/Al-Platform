@@ -406,6 +406,15 @@ class TestStreamParsingByFormat(unittest.TestCase):
         )
         self.assertEqual(usage, {"prompt_tokens": 2, "completion_tokens": 4})
 
+    def test_anthropic_message_start_carries_input_tokens(self):
+        # 官方协议输入 token 只在 message_start.message.usage
+        _d, usage, _r = _parse_llm_stream_event(
+            "anthropic",
+            {"type": "message_start",
+             "message": {"usage": {"input_tokens": 120, "output_tokens": 1}}},
+        )
+        self.assertEqual(usage, {"prompt_tokens": 120, "completion_tokens": 1})
+
 
 class TestListUpstreamModels(unittest.TestCase):
     def test_endpoint_derivation(self):

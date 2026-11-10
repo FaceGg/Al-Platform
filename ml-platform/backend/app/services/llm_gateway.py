@@ -429,6 +429,14 @@ def _parse_llm_stream_event(provider: str, event: dict) -> tuple[str | None, dic
             if thinking:
                 return (None, None, thinking)
             return (None, None, None)
+        if event.get("type") == "message_start":
+            # 输入 token 只在 message_start（message.usage）给出；官方协议的
+            # message_delta 只带累计 output_tokens——两段合并才是完整用量
+            usage_event = (event.get("message") or {}).get("usage") or {}
+            return None, {
+                "prompt_tokens": usage_event.get("input_tokens"),
+                "completion_tokens": usage_event.get("output_tokens"),
+            }, None
         if event.get("type") == "message_delta":
             usage_event = event.get("usage") or {}
             return None, {
@@ -878,7 +886,12 @@ def chat_completion(
                     if reasoning_delta:
                         reasoning_parts.append(reasoning_delta)
                     if event_usage:
-                        usage = event_usage
+                        # 分段合并（Anthropic 输入在 message_start、输出在
+                        # message_delta），后到的非空值覆盖先到的
+                        usage.update({
+                            key: value for key, value in event_usage.items()
+                            if value is not None
+                        })
     except httpx.HTTPError:
         # 传输层异常统一归一为非 200 形态，走下方既有的失败审计路径
         latency_ms = round((time.perf_counter() - started) * 1000, 1)
@@ -912,6 +925,16 @@ def chat_completion(
         raise
     latency_ms = round((time.perf_counter() - started) * 1000, 1)
     if status_code == 200:
+        # Anthropic/Responses 归一后只有 prompt/completion 两项：补 total_tokens
+        # （智能体 runner 按它累计任务 token 用量，缺它任务详情恒为 0）
+        if usage.get("total_tokens") is None and (
+            usage.get("prompt_tokens") is not None
+            or usage.get("completion_tokens") is not None
+        ):
+            usage["total_tokens"] = (
+                int(usage.get("prompt_tokens") or 0)
+                + int(usage.get("completion_tokens") or 0)
+            )
         message_content: dict = {"content": "".join(reply_parts)}
         # 思考文本随响应带出（截断留档 8k 字符——审计/任务档案可见推理过程；
         # 调用方不读不影响，S1/S2/S4 由 llm_client 写入 run memory）

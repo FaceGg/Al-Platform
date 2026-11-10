@@ -367,9 +367,12 @@ class DemoLoopService:
             if mode not in {"engine", "agent"}:
                 raise DemoLoopError(
                     "DEMO_LOOP_CONFIG_INVALID", "retrain_mode 必须是 engine 或 agent")
+            # 新建行的 retrain_status 尚为 None（列默认值 INSERT 时才落，会话
+            # autoflush=False）——None 视同 idle，否则新建 agent 模式闭环恒被
+            # 误判「重训进行中」拒绝。
             if (
                 mode != (config.retrain_mode or "engine")
-                and config.retrain_status not in {"idle", "failed", ""}
+                and (config.retrain_status or "idle") not in {"idle", "failed", ""}
             ):
                 raise DemoLoopError(
                     "DEMO_LOOP_CONFIG_INVALID", "重训进行中不允许切换模式")
@@ -820,6 +823,14 @@ class DemoLoopService:
                    payload={"artifact_id": str(artifact.id)})
         return artifact
 
+    def ensure_error_dataset(self, config: DemoLoopConfig, columns: list[str]) -> Artifact:
+        """预建闭环报错数据集（列与回流行同构）。编排发布要在首次回流前拿到
+        报错集 id（append_error_dataset 节点参数）；已存在则原样返回。"""
+        with _lock_for(str(config.id)):
+            artifact = self._error_artifact(config, columns)
+        self.db.commit()
+        return artifact
+
     def _append_error_rows(self, config: DemoLoopConfig, rows: list[dict], actor_id) -> None:
         columns = sorted({key for row in rows for key in row})
         with _lock_for(str(config.id)):
@@ -982,6 +993,11 @@ class DemoLoopService:
         retrain_agent_run_id 三重守卫；agent 模式再过冷却/熔断/项目并发闸门
         （loop_retrain.trigger_agent_retrain），引擎模式行为与历史一致。
         """
+        # 启用+阈值守卫必须在统一入口：状态轮询的追赶评估曾绕过它，阈值 0
+        # （界面语义=关闭）时 0-0<0 不成立 → 大屏每次轮询都对报错集触发重训，
+        # 换模推进基线后再次满足，连环空转。
+        if not config.retrain_enabled or int(config.retrain_threshold_rows or 0) <= 0:
+            return
         if config.retrain_status not in {"idle", "failed", ""}:
             return
         if config.retrain_job_id is not None:

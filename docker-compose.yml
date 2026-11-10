@@ -345,6 +345,9 @@ services:
       - notification_master_key
 
   scheduler:
+    # 周期任务唯一宿主（智能体僵尸清扫/推理部署对账/通知派发等）：缺重启
+    # 策略时宿主或 Docker 守护进程重启后它不会回来，周期任务全部静默停摆
+    restart: unless-stopped
     build:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.worker

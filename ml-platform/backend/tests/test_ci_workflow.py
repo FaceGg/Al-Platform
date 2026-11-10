@@ -450,6 +450,13 @@ test "$first_hash" = "$second_hash"
             mlflow["command"][2],
         )
 
+    def test_long_running_services_restart_after_host_reboot(self):
+        # scheduler（celery beat）曾缺重启策略：WSL/守护进程重启后唯独它不回来，
+        # 智能体僵尸清扫等周期任务静默停摆，中断的任务永远挂在 running
+        compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+        for name in ("backend", "worker", "scheduler", "frontend", "nginx"):
+            self.assertEqual(compose["services"][name].get("restart"), "unless-stopped", name)
+
     def test_production_package_passes_public_frontend_origin_to_backend(self):
         compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
         backend_environment = compose["services"]["backend"]["environment"]

@@ -721,6 +721,33 @@ class AgentLoopRetrain(unittest.TestCase):
         finally:
             db.close()
 
+    def test_13b_catchup_respects_disabled_or_zero_threshold(self):
+        """状态轮询的追赶评估同样受「启用+阈值>0」守卫：阈值 0（界面语义=
+        关闭）或未启用时绝不触发——曾因 5-0<0 不成立被大屏每次轮询触发。"""
+        db = self._db()
+        try:
+            recipe = self._create_recipe(db)
+            dataset = self._error_dataset(db, [("f1,f2,label"), ("1.0,2.0,0")])
+            for overrides in ({"retrain_threshold_rows": 0}, {"retrain_enabled": False}):
+                config = self._create_config(
+                    db,
+                    retrain_mode="agent",
+                    retrain_agent_recipe_id=recipe.id,
+                    retrain_dataset_artifact_id=dataset.id,
+                    error_count=5,
+                    retrain_status="idle",
+                    **overrides,
+                )
+                service = DemoLoopService(db)
+                with patch("app.services.agent.executor.launch_agent_run") as launch:
+                    service.refresh_retrain_status(config, self.user_id)
+                db.refresh(config)
+                self.assertIsNone(config.retrain_agent_run_id, overrides)
+                self.assertEqual(config.retrain_status, "idle", overrides)
+                launch.assert_not_called()
+        finally:
+            db.close()
+
     def test_14_mode_config_validation(self):
         """API 校验：retrain_mode 枚举、agent 需绑定配方、外来配方拒绝。"""
         headers = self.h
@@ -752,6 +779,19 @@ class AgentLoopRetrain(unittest.TestCase):
                 "retrain_agent_recipe_id": str(foreign.id),
             }, headers=headers)
             self.assertEqual(r.status_code, 422, r.text)
+            self.assertIn("不属于本项目", r.text)
+            # 正向：本项目配方可直接新建 agent 模式闭环（新行 retrain_status
+            # 尚为 None，曾被误判「重训进行中不允许切换模式」恒 422）
+            own = self._create_recipe(db)
+            r = client.post(f"/api/projects/{self.project_id}/demo-loop/loops", json={
+                "name": f"本项目配方-{uuid.uuid4().hex[:4]}",
+                "deployment_id": self.deployment_id,
+                "error_classes": ["1"],
+                "retrain_mode": "agent",
+                "retrain_agent_recipe_id": str(own.id),
+            }, headers=headers)
+            self.assertEqual(r.status_code, 201, r.text)
+            self.assertEqual(r.json().get("retrain_mode"), "agent")
         finally:
             db.close()
 

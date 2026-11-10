@@ -626,3 +626,23 @@ fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失�
 **测试**：后端 strategy 校验（非法值/模型路径/发现阶段拒 strategy_hits）、`strategy_matched_scope_entries`（簇/规则/簇加规则 AND 语义/空命中/切簇稳定）、API 级收窄+空命中 422+切回全量从 revision 0 恢复；簇加规则打标语义（同时命中=规则值优先+簇映射补齐、仅簇命中=兜底值、无兜底=needs_review）。前端编辑器范围切换（三策略可见/兜底值显隐）、页面载荷断言（strategy_hits 含 annotation_scope 且 other_values={}、全量含 annotation_scope:"all"）、导入旧策略落全量。e2e 断言补 annotation_scope。
 
 **遗留/注意**：①全量模式下兜底值从「可选」变「必填」，旧已保存策略（勾掉兜底值的）导入后需补兜底值或改仅策略命中才能保存。②闭环/智能体等后端配置创建方未传 annotation_scope → 默认全量，行为不变。③任务快照列表页 `sample_scope` 列仍显示步骤 1 的原始范围，收窄后的实际样本数看最终预览 summary（sample_count）。
+
+## 2026-11-10 点焊智能体全链复验（第二轮）：七项缺陷修复 + DeepSeek Anthropic 端点断流定位
+
+用户任务同 11-09（train_v2__full 新建智能体任务→验收→一键部署 API/闭环/编排三目标→大屏验证闭环与编排→本地 Python 调 API→按实测重整操作手册）。复验暴露并修复：
+
+1. **scheduler（celery beat）缺重启策略**：运行栈里 scheduler 容器根本不在（compose 未配 restart，宿主/守护进程重启后唯独它不回来）→ 智能体僵尸清扫、部署对账、通知派发等周期任务全部静默停摆，被并行重建打断的任务 783cd5f7 永远挂 running。[docker-compose.yml](docker-compose.yml) 补 `restart: unless-stopped`，test_ci_workflow 加常驻五服务重启策略回归；在线 `docker update` 热修后清扫当拍生效。
+2. **一键服务化闭环停在默认值**：servitize_recipe 建的闭环是 engine 模式/未绑配方/阈值 0/无重训数据集 → ④ 发布编排必 422 ORCHESTRATION_RECIPE_MISSING，闭环重训退化引擎搜索，合并重训集只剩报错行（近乎单类）。新增 `recipe_id` 参数（③ 端点与 auto_servitize 传入）：绑 retrain_mode=agent+配方、阈值缺省 20（对齐 LoopConfigModal 初值，复用草稿不覆盖用户已调值）、重训数据集=配方源 run 原始训练集（已删则不绑、不阻断）。
+3. **④ 首发编排必 422（报错集惰性创建）**：发布时按回流行同构列（冒烟行列+prediction/confidence/目标列）预建闭环报错集（`DemoLoopService.ensure_error_dataset`，幂等）；删除「报错集缺省回落重训数据集」——会让编排 append_error_dataset 把报错行写进原始训练集。
+4. **阈值 0 连环重训**：状态轮询的追赶评估绕过「启用+阈值>0」守卫，阈值 0（界面语义=关闭）时 `0-0<0` 不成立 → 大屏每次轮询都触发重训，换模推进基线后再次满足。守卫收进 `_maybe_trigger_retrain` 统一入口（变异验证：去掉守卫即触发重放 run）。
+5. **新建 agent 模式闭环恒 422**：会话 autoflush=False，新行 retrain_status 为 None，被「重训进行中不允许切换模式」误判——LoopConfigModal 直接新建智能体重训闭环不可用（test_14「外来配方 422」实为被这条误报撞对）。None 视同 idle + 正向用例。
+6. **API 市场服务化条目无调用入口**：PlatformAPI.endpoint 从未写入（空串），市场「调用示例/在线测试」只剩裸域名。写入闭环 scoped predict（`/api/projects/{p}/demo-loop/loops/{loop}/predict`，送原始行）+ `request_schema.record`（冒烟行剔除目标列，`example_record`）；前端示例体 servitize 分支走 `{record}`。
+7. **任务 token 用量恒 0（用户报告）**：网关把 Anthropic/Responses 的 usage 归一为 prompt/completion 两项、不带 total_tokens，而 runner `_absorb_usage` 只认 total_tokens；Anthropic 流的输入 token 在 message_start（未解析），且 usage 是覆盖式取最后一段。修：解析 message_start、分段合并（网关与 AI 对话流同口径）、缺 total 补算。修复前创建的任务仍显示 0。
+
+**DeepSeek Anthropic 兼容端点断流（供应商侧，未改代码）**：同 Key 同模型 deepseek-flash 诊断实测——Anthropic 协议流 3/3 在思考中途（约 900~2600 个 thinking_delta 后）彻底静默直至读超时；OpenAI 兼容协议 2/2 完整跑完（45~57s、7~10k tokens、finish=stop）。S1/S2 的 240s 传输超时与长时间停滞即此原因（重连策略按设计工作，S1 第 3 次成功）。LLMGatewayPage 的 DeepSeek 模板默认 Anthropic 端点（`https://api.deepseek.com/anthropic`），是否改默认待用户决策；本次验证另建克隆档案「DeepSeek-OpenAI-E2E」（openai_compatible，`https://api.deepseek.com`），原档案未动。智谱 GLM 档案当前 401（Key 失效）。
+
+**评审升级（正确拦截，不人工采纳）**：fecb7359 硬门禁通过（recall_minority 0.9859）但 S4 escalate——重要性第一为 `pt_date` 独热（日期指纹）、`pt_weekday` 前列；合成数据跨 3 天，日期/时间列对线上数据零泛化。按决策端点驳回，重提时剔除 set_time/creat_time/load_time/pt_date/cvepath（另一任务 586928b0 非本会话创建，同样停在 S4 升级，未动）。
+
+**测试**：后端受影响套件 205 passed（servitize/loop_retrain/demo_loop/llm_gateway/provider_formats/chat_stream/closed_loop_ensemble/showcase/ci_workflow 等），前端 APIMarketplacePage 14 passed + tsc 通过。既有失败（与本批无关，登记）：test_llm_provider_formats::TestDisabledProfileGuard×2（ORM CHECK `ck_llm_profiles_provider` 仍只允许 openai_compatible/custom，SQLite 按模型建表即炸，PG 走迁移不暴露）；test_usage_stats_daily::test_today_is_single_local_natural_day_bucket（a80a6708 新测试，夹具插审计事件缺 actor_username，单独跑也失败）；test_agent_skill_revision 抽样用例跨模块合跑失败（查全库当前配方被其他模块 test-domain 配方污染，CI 按模块隔离不暴露）。
+
+**E2E 进度**：进行中——证据链随验证完成补录本节。

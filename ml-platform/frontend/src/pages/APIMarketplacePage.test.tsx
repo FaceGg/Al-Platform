@@ -269,6 +269,30 @@ describe("APIMarketplacePage", () => {
     localStorage.removeItem("token");
   });
 
+  it("prefills the agent-loop (servitize) body with a raw record, not model feature records", async () => {
+    localStorage.setItem("token", "jwt-test-token");
+    apiGet.mockResolvedValue({
+      items: [
+        { id: "svc-1", name: "智能体闭环", api_type: "model", source_kind: "servitize",
+          source_id: "dep-1", version: "v1", status: "published", method: "POST",
+          endpoint: "/api/projects/p-1/demo-loop/loops/loop-1/predict",
+          request_schema: { feature_script: "def transform(df):\n    return df", record: { wld1c: 9.5, sch: 3 } },
+          total_calls: 0, success_calls: 0 },
+      ],
+    });
+    render(<MemoryRouter><APIMarketplacePage /></MemoryRouter>);
+    const testBtns = await screen.findAllByRole("button", { name: /测试/ });
+    const testBtn = testBtns.find((b) => (b.textContent || "").trim() === "测试");
+    if (!testBtn) throw new Error("row test button not found: " + testBtns.map((b) => b.textContent).join("|"));
+    fireEvent.click(testBtn);
+    const bodyBox = await screen.findAllByRole("textbox");
+    const bodyText = bodyBox.map((b) => b.textContent || "").find((t) => t.includes("record"));
+    expect(bodyText).toContain('"wld1c": 9.5');
+    expect(bodyText).not.toContain("records");
+    expect(bodyText).not.toContain("feature_script");
+    localStorage.removeItem("token");
+  });
+
   it("fills the login token into the call example on demand and hides it again", async () => {    localStorage.setItem("token", "jwt-test-token");
     apiGet.mockResolvedValue({
       items: [

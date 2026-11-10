@@ -875,6 +875,7 @@ def servitize(
             recipe_content=dict(version.content_json or {}),
             model_api_name=payload.model_api_name,
             error_classes_override=payload.error_classes_override,
+            recipe_id=recipe_uuid,
         )
     except LookupError:
         raise HTTPException(404, detail={"code": "DEPLOYMENT_NOT_FOUND"})
@@ -983,20 +984,27 @@ def servitize_publish(
         content = dict(version.content_json or {})
         guidance = dict(content.get("guidance") or {})
         feature_guidance = dict(guidance.get("feature") or {})
-        # 回流/累积数据集：闭环报错集优先，缺省回落配置数据集
+        # 回流/累积数据集只能是闭环专属报错集。它原在首次回流时惰性创建，
+        # 新闭环直接发布编排必缺（一键发布卡 422）——按回流行同构列（原始
+        # 记录列+prediction/confidence/目标列）预建空集，首次回流直接追加。
+        # 绝不回落重训数据集：编排 append_error_dataset 会把报错行写进
+        # 原始训练集（服务化闭环的重训数据集就是用户原始训练集）。
+        if not loop.error_artifact_id:
+            smoke = content.get("smoke_row")
+            if isinstance(smoke, dict) and smoke:
+                from app.services.demo_loop import DemoLoopService
+
+                columns = set(smoke) | {"prediction", "confidence"}
+                if loop.retrain_target_column:
+                    columns.add(loop.retrain_target_column)
+                DemoLoopService(db).ensure_error_dataset(loop, sorted(columns))
         accum_id = str(loop.error_artifact_id) if loop.error_artifact_id else ""
-        if not accum_id:
-            ids = list(getattr(loop, "retrain_dataset_artifact_ids", None) or [])
-            if not ids and loop.retrain_dataset_artifact_id:
-                ids = [loop.retrain_dataset_artifact_id]
-            accum_id = str(ids[0]) if ids else ""
         retrain_ids = list(getattr(loop, "retrain_dataset_artifact_ids", None) or [])
         if not retrain_ids and loop.retrain_dataset_artifact_id:
             retrain_ids = [loop.retrain_dataset_artifact_id]
         retrain_dataset_id = (str(retrain_ids[0]) if retrain_ids else accum_id)
         if not accum_id:
-            # 报错数据集由闭环预测首次回流时惰性创建（DemoLoopService
-            # ._error_artifact）；为空说明闭环从未回流过。静默发布会让
+            # 配方缺冒烟行（无法推导回流列）且闭环从未回流：静默发布会让
             # 编排图节点带空 dataset_artifact_id，invoke 期必然失败——
             # 这里显式拒绝，给出可操作指引。
             raise HTTPException(422, detail={
