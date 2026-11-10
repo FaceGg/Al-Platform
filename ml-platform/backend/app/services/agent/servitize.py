@@ -299,20 +299,19 @@ def servitize_recipe(
         db.refresh(api)
 
         smoke_row = dict(recipe_content.get("smoke_row") or {})
-        # 冒烟降级护栏：S2 特征脚本是批处理假设（nunique/全帧统计过滤），
-        # 单行冒烟帧会被脚本自删特征列（cur_sum 等缺失，run 4f9ffdc7 配方
-        # 实证）。smoke_row 缺部署模型特征列时改用模型 feature_schema 的
-        # 合成零行——dry_run 语义不变（只验 predict 通路+零回流），批处理
-        # 脚本的逐行桥接（S2 生成提示加单行守卫）留独立批次。
-        raw_schema = list(getattr(version, "feature_schema", None) or [])
-        feature_schema = [
-            str(item.get("name") if isinstance(item, dict) else item)
-            for item in raw_schema
-            if (item.get("name") if isinstance(item, dict) else item)
-        ]
-        if feature_schema and any(column not in smoke_row for column in feature_schema):
-            smoke_row = {column: 0.0 for column in feature_schema}
-        smoke = loop_service.predict(loop, smoke_row, actor_id, dry_run=True)
+        # 冒烟必须走真实链路：原始冒烟行 → 闭环特征脚本 → 模型推理（dry_run
+        # 零回流）。此前缺模型特征列时用 feature_schema 合成零行顶替——冒烟行
+        # 是原始列、模型特征是派生列，对任何带 S2 脚本的配方必然触发，冒烟从未
+        # 测过特征工程，单行自毁的脚本也「冒烟通过」后上线全量 422（029ebadb
+        # 实证）。现在失败即报错，坏配方停在草稿不发布。
+        if not smoke_row:
+            raise ValueError("配方缺冒烟行（smoke_row），无法验证线上推理链路：请重新固化配方")
+        try:
+            smoke = loop_service.predict(loop, smoke_row, actor_id, dry_run=True)
+        except ValueError as error:
+            raise ValueError(
+                f"冒烟失败——真实冒烟行走闭环特征工程+推理未通过，草稿不可发布：{error}"
+            ) from error
 
         return ServitizeDraft(
             deployment_id=str(deployment.id),

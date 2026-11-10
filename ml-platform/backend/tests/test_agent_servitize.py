@@ -209,6 +209,37 @@ class TestServitize(unittest.TestCase):
         self.assertEqual(example_record(content), {"f1": 5.0, "f2": -1.0})
         self.assertEqual(example_record({}), {})
 
+    def test_smoke_without_smoke_row_fails_loudly(self):
+        """缺冒烟行不再用合成零行顶替——明确报错，草稿不可发布。"""
+        content = dict(_RECIPE_CONTENT, smoke_row={})
+        with SessionLocal() as db:
+            with self.assertRaises(ValueError) as caught:
+                servitize_recipe(
+                    db,
+                    project_id=self.project_id,
+                    actor_id=self.admin_id,
+                    deployment_id=self.deployment_id,
+                    recipe_content=content,
+                    model_api_name="s5-nosmoke-%s" % uuid4().hex[:6],
+                )
+        self.assertIn("冒烟行", str(caught.exception))
+
+    def test_smoke_failure_blocks_instead_of_masking(self):
+        """真实冒烟行推理失败 → 冒烟失败报错（此前缺特征列时合成零行顶替，
+        对带 S2 脚本的配方必然触发，坏脚本也「冒烟通过」后上线全量 422）。"""
+        content = dict(_RECIPE_CONTENT, smoke_row={"f1": "not-a-number", "f2": -1.0})
+        with SessionLocal() as db:
+            with self.assertRaises(ValueError) as caught:
+                servitize_recipe(
+                    db,
+                    project_id=self.project_id,
+                    actor_id=self.admin_id,
+                    deployment_id=self.deployment_id,
+                    recipe_content=content,
+                    model_api_name="s5-badsmoke-%s" % uuid4().hex[:6],
+                )
+        self.assertIn("冒烟失败", str(caught.exception))
+
     def test_semantics_without_descriptions_use_minority_as_error_class(self):
         """固化配方的目标语义只有取值无描述（真实形态）：闭环缺陷类取少数类。"""
         content = dict(_RECIPE_CONTENT, target_semantics={"1": "", "0": ""},

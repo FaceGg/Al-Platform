@@ -266,3 +266,63 @@ def run_sandbox(
                 violations=["empty_output"],
             )
         return SandboxResult(ok=True, output=output, error=None)
+
+
+def check_single_row(
+    script: str,
+    input_frame: "pd.DataFrame",
+    batch_output: "pd.DataFrame",
+    *,
+    timeout_seconds: int = 60,
+) -> list[str]:
+    """线上逐行合同：闭环/编排推理时 transform 一次只拿到一行。
+
+    单行输入必须产出与批量相同的列，且批量有值的列单行不得变空——批量
+    契约（不得输出常量列）曾诱导脚本末尾按 nunique/notna 动态删列，单行
+    时每列都「常量」被全删，线上调用必然缺模型特征（029ebadb 实证）；
+    groupby/rolling/全列 std 等批内统计在单行为 NaN 同理。返回可回灌给
+    S2 的违例串（空 = 通过）。"""
+    import pandas as pd
+
+    if batch_output is None or input_frame is None or len(input_frame) == 0:
+        return []
+    single = run_sandbox(script, input_frame.head(1), timeout_seconds=timeout_seconds)
+    if not single.ok and str(single.error or "").startswith("empty_output"):
+        # 单行时连一列都不剩（动态删列删光）——按「全部列缺失」反馈，比
+        # 笼统的「单行失败」更能指引模型改写
+        output = pd.DataFrame()
+    elif not single.ok or single.output is None:
+        return [f"single_row_failed（单行输入时脚本失败，线上逐行调用必挂）: "
+                f"{single.error or 'sandbox_failed'}"]
+    else:
+        output = single.output
+    violations: list[str] = []
+    missing = [str(column) for column in batch_output.columns if column not in output.columns]
+    if missing:
+        violations.append(
+            "single_row_missing_columns（单行输入时这些列消失，线上逐行调用会缺模型"
+            "特征——常见原因：按 nunique/notna/方差动态删列；常量列请写死列名剔除）: "
+            + ", ".join(missing[:12])
+        )
+
+    def _has_value(value) -> bool:
+        if value is None or (not isinstance(value, str) and pd.isna(value)):
+            return False
+        try:
+            return abs(float(value)) != float("inf")
+        except (TypeError, ValueError):
+            return True
+
+    emptied = [
+        str(column) for column in batch_output.columns
+        if column in output.columns
+        and _has_value(batch_output[column].iloc[0])
+        and not _has_value(output[column].iloc[0])
+    ]
+    if emptied:
+        violations.append(
+            "single_row_nan_columns（批量有值、单行变空——依赖了 groupby/rolling/"
+            "全列统计等批内统计；请改为逐行可算的特征，或给单行确定性回退）: "
+            + ", ".join(emptied[:12])
+        )
+    return violations

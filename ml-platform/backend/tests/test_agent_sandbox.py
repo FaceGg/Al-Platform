@@ -20,6 +20,7 @@ import pandas as pd  # noqa: E402
 from app.services.agent.sandbox import (  # noqa: E402
     ast_violations,
     check_contract,
+    check_single_row,
     run_sandbox,
 )
 
@@ -179,3 +180,54 @@ class TestOutputContract(unittest.TestCase):
         good = self.frame.copy()
         good["DEV"] = good["ACTUAL_TORQUE"] - good["TARGET_TORQUE"]
         self.assertEqual(check_contract(self.frame, good, leakage_columns=[]), [])
+
+
+class TestSingleRowContract(unittest.TestCase):
+    """线上逐行合同：闭环/编排推理一次只给 transform 一行（029ebadb 实证：
+    批量契约诱导的 nunique>1 动态删列在单行时删光全部派生特征 → 全量 422）。"""
+
+    def _check(self, script):
+        frame = _input_frame()
+        batch = run_sandbox(script, frame, timeout_seconds=120)
+        self.assertTrue(batch.ok, batch.error)
+        return check_single_row(script, frame, batch.output, timeout_seconds=60)
+
+    def test_runtime_constant_pruning_is_flagged(self):
+        script = (
+            "import pandas as pd\n"
+            "def transform(df):\n"
+            "    out = df.copy()\n"
+            "    out['DEV'] = out['ACTUAL_TORQUE'] - out['TARGET_TORQUE']\n"
+            "    keep = out.notna().any(axis=0) & (out.nunique(dropna=True) > 1)\n"
+            "    return out.loc[:, keep]\n"
+        )
+        violations = self._check(script)
+        self.assertTrue(any("single_row_missing_columns" in v and "DEV" in v
+                            for v in violations), violations)
+
+    def test_batch_statistics_turning_nan_are_flagged(self):
+        script = (
+            "import pandas as pd\n"
+            "def transform(df):\n"
+            "    out = df.copy()\n"
+            "    s = out['ACTUAL_TORQUE']\n"
+            "    out['Z'] = (s - s.mean()) / s.std()\n"
+            "    return out\n"
+        )
+        violations = self._check(script)
+        self.assertTrue(any("single_row_nan_columns" in v and "Z" in v
+                            for v in violations), violations)
+
+    def test_single_row_crash_is_flagged(self):
+        script = (
+            "import pandas as pd\n"
+            "def transform(df):\n"
+            "    if len(df) < 2:\n"
+            "        raise ValueError('needs a batch')\n"
+            "    return df.copy()\n"
+        )
+        violations = self._check(script)
+        self.assertTrue(any("single_row_failed" in v for v in violations), violations)
+
+    def test_row_wise_script_passes(self):
+        self.assertEqual(self._check(_LEGAL), [])

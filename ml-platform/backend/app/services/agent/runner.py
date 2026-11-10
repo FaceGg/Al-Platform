@@ -24,7 +24,12 @@ from app.models.agent_run import AgentRun
 from app.services.agent.contracts import AnalysisReport
 from app.services.agent.hard_gates import PRIMARY_METRIC, evaluate_hard_gates
 from app.services.agent.llm_client import run_s1, run_s2, run_s4
-from app.services.agent.sandbox import ast_violations, check_contract, run_sandbox
+from app.services.agent.sandbox import (
+    ast_violations,
+    check_contract,
+    check_single_row,
+    run_sandbox,
+)
 from app.services.agent.wizard import merge_gates, pause_plan
 from app.services.llm_gateway import GatewayLLMConfig
 
@@ -509,6 +514,15 @@ class AgentRunner:
             if out_violations:
                 attempt_record["error"] = "contract_violations"
                 attempt_record["detail"] = out_violations
+                error_history.append(attempt_record)
+                attempts.append(attempt_record)
+                continue
+            # 线上逐行合同：通过批量契约的脚本还须单行同列、不变空，否则部署
+            # 后闭环/编排逐行调用必缺模型特征（冒烟零行顶替曾把它掩盖成通过）
+            row_violations = check_single_row(script.script, sample, result.output)
+            if row_violations:
+                attempt_record["error"] = "row_consistency_violations"
+                attempt_record["detail"] = row_violations
                 error_history.append(attempt_record)
                 attempts.append(attempt_record)
                 continue
