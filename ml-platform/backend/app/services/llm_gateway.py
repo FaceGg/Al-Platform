@@ -47,25 +47,40 @@ REASONING_TOKEN_HEADROOM = 4
 # 静默（推理型隐藏思考、私有部署长 prefill）仍由读超时兜底，不受影响。
 STREAM_STALL_SECONDS = 60
 
+# 单次流式尝试总时长上限：防上游「涓流」（连接存活、持续掉字节但生成极慢）
+# 无限占用——涓流不触发断流看门狗也不触发读超时。正常生成 ≤5 分钟（压缩
+# 输出 + max_tokens 3000），10 分钟上限只拦病态慢的尝试，超时即断开走重连。
+STREAM_ATTEMPT_WALL_SECONDS = 600
+
 
 class LLMStreamStalled(httpx.ReadTimeout):
     """流中途卡死（已开始出字后长时间无新数据）——归为传输层超时，走重连。"""
 
 
+class LLMStreamOverran(httpx.ReadTimeout):
+    """单次流式尝试超过总时长上限（含涓流形态）——归为传输层超时，走重连。"""
+
+
 class _StallGuardedLines:
-    """逐行读取 SSE；``armed`` 置位（首个增量到达）后按 stall_seconds 看门。
+    """逐行读取 SSE；``armed`` 置位（首个增量到达）后按 stall_seconds 看门，
+    整体受 wall_seconds 总时长约束。阻塞读放在后台线程，消费方按超时取行：
+    卡死/超时即抛 LLMStreamStalled/LLMStreamOverran，由外层 stream 上下文关闭
+    连接；后台线程最迟随该连接的读超时退出。"""
 
-    阻塞读放在后台线程，消费方按超时取行：卡死即抛 LLMStreamStalled，由
-    外层 stream 上下文关闭连接；后台线程最迟随该连接的读超时退出。"""
+    def __init__(self, response, stall_seconds: float,
+                 wall_seconds: float | None = None):
+        import time as _time
 
-    def __init__(self, response, stall_seconds: float):
         self._response = response
         self._stall_seconds = stall_seconds
+        self._wall_seconds = wall_seconds
+        self._monotonic = _time.monotonic
         self.armed = False
 
     def __iter__(self):
         import queue
         import threading
+        import time
 
         lines: queue.Queue = queue.Queue()
         end = object()
@@ -80,9 +95,22 @@ class _StallGuardedLines:
                 lines.put(end)
 
         threading.Thread(target=pump, daemon=True, name="llm-stream-pump").start()
+        deadline = (
+            time.monotonic() + self._wall_seconds
+            if self._wall_seconds else None
+        )
         while True:
+            timeout = self._stall_seconds if self.armed else None
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise LLMStreamOverran(
+                        f"stream attempt exceeded {self._wall_seconds:.0f}s wall "
+                        "limit (slow trickle upstream)"
+                    )
+                timeout = remaining if timeout is None else min(timeout, remaining)
             try:
-                item = lines.get(timeout=self._stall_seconds if self.armed else None)
+                item = lines.get(timeout=timeout)
             except queue.Empty:
                 raise LLMStreamStalled(
                     f"upstream stream stalled: no data for {self._stall_seconds:.0f}s "
@@ -920,7 +948,9 @@ def chat_completion(
                 except ValueError:
                     data = {"raw": error_body[:500]}
             else:
-                lines = _StallGuardedLines(response, STREAM_STALL_SECONDS)
+                lines = _StallGuardedLines(
+                    response, STREAM_STALL_SECONDS, STREAM_ATTEMPT_WALL_SECONDS
+                )
                 for line in lines:
                     if not line.startswith("data:") and not line.startswith("event:"):
                         continue

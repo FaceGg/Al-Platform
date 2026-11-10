@@ -82,8 +82,10 @@ def build_s1_messages(
 # ReadError/Errno 104 连接被重置是非流式长生成在中间设备上的典型死法。
 _TRANSIENT_NETWORK_ERRORS = {
     "ReadTimeout",
-    # 网关流卡死看门狗（开始出字后 60s 无新数据）：与读超时同属传输层暂态
+    # 网关流保护（开始出字后 60s 无新数据 / 单次尝试超 600s 总时长）：与读
+    # 超时同属传输层暂态
     "LLMStreamStalled",
+    "LLMStreamOverran",
     "ReadError",
     "ConnectError",
     "ConnectTimeout",

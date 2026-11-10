@@ -262,6 +262,32 @@ class TestLLMGateway(unittest.TestCase):
         from app.services.agent.llm_client import _is_retryable_error
 
         self.assertTrue(_is_retryable_error(LLMStreamStalled("stalled")))
+        self.assertTrue(_is_retryable_error(llm_gateway.LLMStreamOverran("overran")))
+
+    def test_trickling_stream_hits_wall_limit(self):
+        """涓流形态（不断掉字节但生成极慢）：断流看门狗不触发，总时长上限兜底。"""
+        import time
+
+        def lines():
+            for _ in range(200):
+                yield 'data: {"choices": [{"delta": {"content": "x"}}]}'
+                time.sleep(0.05)  # 持续出字（armed），永不结束
+
+        config = _fake_config()
+        started = time.monotonic()
+        try:
+            with SessionLocal() as db, mock.patch.object(
+                llm_gateway, "STREAM_STALL_SECONDS", 5
+            ), mock.patch.object(
+                llm_gateway, "STREAM_ATTEMPT_WALL_SECONDS", 1
+            ), mock.patch.object(_HTTP_CLIENT, "stream", side_effect=self._stream_with(lines)):
+                with self.assertRaises(llm_gateway.LLMStreamOverran):
+                    chat_completion(db, config=config,
+                                    messages=[{"role": "user", "content": "hi"}],
+                                    purpose="test")
+        finally:
+            pass
+        self.assertLess(time.monotonic() - started, 5.0)
 
     def test_usage_stats_aggregates_egress_events(self):
         # 管理端点聚合合同：汇总/按天/按模型/按用途，tokens 只计带用量的记录
