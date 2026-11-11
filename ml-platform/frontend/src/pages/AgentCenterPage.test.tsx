@@ -88,7 +88,8 @@ describe("AgentCenterPage (design four-tab agent center)", () => {
     expect(await screen.findByText(/新建任务/)).toBeInTheDocument();
     expect(screen.getAllByText(/数据分析/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/启动与服务化/).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole("switch", { name: /逐步确认模式/ }).length).toBeGreaterThan(0);
+    // 逐步确认开关已退役（默认开启）：不再渲染 switch
+    expect(screen.queryAllByRole("switch", { name: /逐步确认模式/ }).length).toBe(0);
   });
 
   it("switches to the tasks page with the agent-runs source and live metadata", async () => {

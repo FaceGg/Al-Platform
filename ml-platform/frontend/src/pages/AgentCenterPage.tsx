@@ -82,38 +82,14 @@ export default function AgentCenterPage() {
   const [agentRunsError, setAgentRunsError] = useState("");
   const [recipes, setRecipes] = useState<PipelineRecipeItem[]>([]);
   const [recipesError, setRecipesError] = useState("");
-  // 智能体 S3 训练（lightweight_trainer，函数名为历史遗留——现为默认
-  // 全量的验收训练）不落 TrainingJob 表，不是 AutoML 任务——从运行列表
-  // 合成行，让「AutoML」视图能看到智能体触发的每次建模（此前完全不可见，用户报障）
-  const agentTrainingRows = useMemo(() => {
-    const rows: Array<Record<string, unknown>> = [];
-    for (const run of agentRuns) {
-      if ((run.round_count ?? 0) < 1) continue;
-      rows.push({
-        id: `${run.id}#s3`,
-        name: `智能体S3训练 · ${run.project_name || run.id.slice(0, 8)} · 第${run.round_count}轮`,
-        status: run.status,
-        updated_at: run.updated_at,
-        created_at: run.created_at,
-        agentRunId: run.id,
-        agent: true,
-      });
-    }
-    return rows;
-  }, [agentRuns]);
+  // 「AutoML」视图只列引擎建模作业（TrainingJob：算法平台 AutoML 任务/闭环
+  // 重训铸造/服务化铸造）。智能体 S3 验收训练不落 TrainingJob 表、不是
+  // AutoML 任务——曾经在此视图合成行混排，但智能体作业的详情就是 Agent
+  // 档案页，两个分类详情撞车（用户质疑分类意义），回归纯引擎视图。
   const modelingRows = useMemo(() => {
-    type ModelingRow = {
-      id: unknown; name?: unknown; task_name?: unknown; status?: unknown; state?: unknown;
-      progress?: unknown; updated_at?: unknown; created_at?: unknown;
-      agent: boolean; agentRunId?: string;
-    };
-    const combined = [
-      ...jobs.map((job) => ({ ...job, agent: false, agentRunId: undefined })),
-      ...agentTrainingRows.map((row) => ({ ...row, agent: true })),
-    ] as ModelingRow[];
-    return combined.sort((left, right) =>
+    return [...jobs].sort((left, right) =>
       String(right.updated_at || "").localeCompare(String(left.updated_at || "")));
-  }, [jobs, agentTrainingRows]);
+  }, [jobs]);
 
   const loadJobs = () => {
     setLoading(true);
@@ -182,46 +158,22 @@ export default function AgentCenterPage() {
                 {error ? <tr><td colSpan={5} className="v2-empty">{error}</td></tr> : null}
                 {!error && modelingRows.length === 0 ? (
                   <tr><td colSpan={5} className="v2-empty">{zh
-                    ? "暂无任务 —— 点击右上「新建智能体建模任务」，四步向导即可启动全自动迭代"
+                    ? "暂无引擎建模作业 —— 引擎作业来自算法平台 AutoML 任务、闭环重训铸造与服务化铸造；智能体任务请切到「Agent」视图"
                     : "No jobs yet — start the wizard to launch a fully automated run"}</td></tr>
                 ) : null}
                 {modelingRows.map((job) => {
                   const status = String(job.status ?? job.state ?? "-");
                   const progress = typeof job.progress === "number" ? Math.round(job.progress) : null;
-                  const isAgent = job.agent;
-                  const targetId = isAgent ? String(job.agentRunId) : String(job.id);
                   return (
                     <tr key={String(job.id)}>
-                      <td className="tt">
-                        {isAgent ? <span className="v2-badge v2-bp" style={{ marginRight: 6 }}>智能体</span> : null}
-                        {String(job.name ?? job.task_name ?? job.id)}
-                      </td>
+                      <td className="tt">{String(job.name ?? job.task_name ?? job.id)}</td>
                       <td><span className={`v2-badge ${statusBadge(status)}`}>{status}</span></td>
                       <td>{progress != null ? `${progress}%` : "-"}</td>
                       <td>{relativeTime((job.updated_at ?? job.created_at) as string | null | undefined, zh)}</td>
                       <td>
-                        <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(isAgent ? `/agent/task/${targetId}` : `/automl/task/${targetId}`)}>
+                        <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/automl/task/${String(job.id)}`)}>
                           {zh ? "详情" : "Details"}
                         </Button>
-                        {isAgent && !["pending", "running"].includes(status) ? (
-                          <Popconfirm
-                            title={zh ? "删除该智能体任务？" : "Delete this agent run?"}
-                            description={zh ? "将删除整条运行（含全部轮次档案与 S3 训练记录），不可恢复。" : "The whole run (all rounds and S3 records) will be removed."}
-                            okText={zh ? "删除" : "Delete"}
-                            cancelText={zh ? "取消" : "Cancel"}
-                            okButtonProps={{ danger: true }}
-                            onConfirm={() => {
-                              deleteAgentRun(targetId).then(() => {
-                                message.success(zh ? "已删除" : "Deleted");
-                                loadAgentData();
-                              }).catch(() => message.error(zh ? "删除失败（运行中任务不可删）" : "Delete failed"));
-                            }}
-                          >
-                            <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-                              {zh ? "删除" : "Delete"}
-                            </Button>
-                          </Popconfirm>
-                        ) : null}
                       </td>
                     </tr>
                   );
