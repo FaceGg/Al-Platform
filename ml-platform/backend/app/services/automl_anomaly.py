@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Sequence
 
 import numpy as np
 from scipy.stats import spearmanr
@@ -335,6 +336,47 @@ def evaluate_anomaly_candidate(
         metrics["stability"] = stability
     metrics.update(evaluate_anomaly_gates(metrics, contamination=contamination))
     return metrics
+
+
+def anomaly_top_contributors(
+    pipeline,
+    row: np.ndarray,
+    feature_names: Sequence[str],
+    *,
+    top_k: int = 3,
+    delta: float | None = None,
+) -> list[dict[str, float | str]]:
+    """逐特征归因（技术方案 §3.5）：中心差分数值梯度，方向与人工检查一致。
+
+    贡献 = (score(x+δ·e_i) − score(x−δ·e_i)) / 2δ：离群分数对每个特征的
+    敏感度（「特征梯度」实现，通用 IF/OC-SVM/二期 AE——AE 将来换逐特征
+    重构误差分解）。输出按 |贡献| 降序 top_k，contribution 带符号
+    （正=该特征当前取值推高异常分数）。
+
+    pipeline 必须已拟合；δ 缺省为各特征 std 的 1%（退化列用绝对值兜底）。
+    """
+    base = np.asarray(row, dtype=float).reshape(1, -1)
+    if base.shape[1] != len(feature_names):
+        raise ValueError("AUTOML_ANOMALY_ATTRIBUTION_SHAPE_INVALID")
+    steps = (
+        np.maximum(np.abs(base[0]) * 0.01, 1e-6)
+        if delta is None
+        else np.full(len(feature_names), float(delta))
+    )
+    contributions: list[dict[str, float | str]] = []
+    for index, name in enumerate(feature_names):
+        perturbed_up = base.copy()
+        perturbed_up[0, index] += steps[index]
+        perturbed_down = base.copy()
+        perturbed_down[0, index] -= steps[index]
+        score_up = float(pipeline_anomaly_scores(pipeline, perturbed_up)[0])
+        score_down = float(pipeline_anomaly_scores(pipeline, perturbed_down)[0])
+        contributions.append({
+            "feature": str(name),
+            "contribution": (score_up - score_down) / (2.0 * steps[index]),
+        })
+    contributions.sort(key=lambda item: abs(float(item["contribution"])), reverse=True)
+    return contributions[:top_k]
 
 
 def evaluate_anomaly_gates(metrics: dict[str, object], *, contamination: float) -> dict[str, object]:

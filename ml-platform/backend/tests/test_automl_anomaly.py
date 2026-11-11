@@ -670,3 +670,30 @@ class TestAnomalyAPI(unittest.TestCase):
             assert contract["contamination"] == 0.02
             assert contract["cv_strategy"] == "synthetic_benchmark"
             assert contract["cross_validation_folds"] == 0
+
+
+def test_anomaly_top_contributors_ranks_sensitive_features_first():
+    """归因方向（技术方案 §3.5）：对分数敏感的特征贡献绝对值最大、带符号。
+
+    目标行用分位错配点（锚列 95% 分位、其余 5%）而非包围盒外的极端点——
+    树模型在饱和区梯度为 0（±1% 扰动不跨切分边界），归因语义只在密度
+    空洞附近有效（这正是现场可诊断的场景）。
+    """
+    from app.services.automl_anomaly import anomaly_top_contributors
+
+    rng = np.random.default_rng(42)
+    matrix = rng.normal(size=(400, 3))
+    matrix[:, 1] = matrix[:, 0] * 0.8 + rng.normal(scale=0.3, size=400)
+    train, holdout = matrix[:300], matrix[300:]
+    pipeline = get_algorithm_family("iforest").build("anomaly_detection", {}).fit(train)
+    row = np.array([
+        float(np.quantile(train[:, 0], 0.95)),
+        float(np.quantile(train[:, 1], 0.05)),
+        float(np.quantile(train[:, 2], 0.05)),
+    ])
+    contributions = anomaly_top_contributors(
+        pipeline, row, ["s1", "s2", "s3"], top_k=3,
+    )
+    assert contributions[0]["feature"] == "s1"
+    assert abs(float(contributions[0]["contribution"])) > 0.0
+    assert len(contributions) == 3

@@ -396,5 +396,76 @@ class TestInferenceDeploymentService(unittest.TestCase):
         self.assertIn(str(deployment.id), self.runtime.loaded)
 
 
+class _AnomalyRuntime:
+    """解析式 fake：anomaly_score = f0（probabilities=-score，ONNX 方向）；f1 无关。"""
+
+    def __init__(self):
+        self.calls = 0
+
+    def predict(self, deployment_id, records):
+        self.calls += 1
+        scores = [float(record["f0"]) for record in records]
+        return {
+            "predictions": [-1 if score > 0.5 else 1 for score in scores],
+            "probabilities": [-score for score in scores],
+            "duration_ms": 1,
+        }
+
+
+class TestAnomalyEnrichment(unittest.TestCase):
+    """无监督三要素映射 + 扰动归因（技术方案 §3.5，共享函数合同）。"""
+
+    def test_maps_triad_and_attributes_single_row(self):
+        from app.services.inference_deployment import anomaly_predict_enrichment
+
+        runtime = _AnomalyRuntime()
+        version = type("Version", (), {
+            "feature_schema": [
+                {"name": "f0", "dtype": "float64"},
+                {"name": "f1", "dtype": "float64"},
+            ],
+            "output_schema": {"name": "anomaly", "dtype": "float64", "task": "anomaly"},
+        })()
+        result = {"predictions": [1], "probabilities": [-2.0], "duration_ms": 1}
+        enriched = anomaly_predict_enrichment(
+            runtime, "key", [{"f0": 2.0, "f1": 5.0}], result,
+            feature_schema=version.feature_schema, output_schema=version.output_schema,
+        )
+        # ONNX scores（正=正常）取负 → anomaly_score；label=1（score>0.5）→ False
+        self.assertEqual(enriched["anomaly_score"], [2.0])
+        self.assertEqual(enriched["is_anomaly"], [False])
+        top = enriched["top_contributors"]
+        self.assertEqual(top[0]["feature"], "f0")
+        # f0 贡献解析值恰为 1.0：score(x+δ)-score(x-δ) = 2δ
+        self.assertAlmostEqual(float(top[0]["contribution"]), 1.0, places=6)
+        self.assertAlmostEqual(float(top[1]["contribution"]), 0.0, places=6)
+        # 中心差分 = 每特征 2 次扰动调用（基线 result 由调用方传入，不计数）
+        self.assertEqual(runtime.calls, 4)
+
+    def test_batch_rows_skip_attribution_and_non_anomaly_passthrough(self):
+        from app.services.inference_deployment import anomaly_predict_enrichment
+
+        runtime = _AnomalyRuntime()
+        version = type("Version", (), {
+            "feature_schema": [{"name": "f0", "dtype": "float64"}],
+            "output_schema": {"task": "anomaly"},
+        })()
+        batch = anomaly_predict_enrichment(
+            runtime, "key", [{"f0": 1.0}, {"f0": 2.0}],
+            {"predictions": [1, -1], "probabilities": [-1.0, -2.0]},
+            feature_schema=version.feature_schema, output_schema=version.output_schema,
+        )
+        self.assertEqual(batch["anomaly_score"], [1.0, 2.0])
+        self.assertEqual(batch["is_anomaly"], [False, True])
+        self.assertNotIn("top_contributors", batch)
+
+        supervised = anomaly_predict_enrichment(
+            _AnomalyRuntime(), "key", [{"f0": 1.0}],
+            {"predictions": [1]},
+            feature_schema=version.feature_schema, output_schema={"task": "classification"},
+        )
+        self.assertNotIn("anomaly_score", supervised)
+
+
 if __name__ == "__main__":
     unittest.main()

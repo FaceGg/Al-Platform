@@ -25,7 +25,11 @@ from app.services.inference_api_keys import (
     InferenceApiKeyError,
     InferenceApiKeyService,
 )
-from app.services.inference_deployment import InferenceDeploymentError, InferenceDeploymentService
+from app.services.inference_deployment import (
+    InferenceDeploymentError,
+    InferenceDeploymentService,
+    anomaly_predict_enrichment,
+)
 from app.services.inference_observability import InferenceObservability
 from app.services.inference_rate_limit import RateLimitBackendUnavailable, RedisTokenBucket
 from app.services.inference_rollout import InferenceRolloutError, WeightedTargetRouter
@@ -333,6 +337,17 @@ def build_inference_production_router(
             result = deployment_service_value.runtime.predict(
                 f"{revision_id}:{model_version_id}", data.records,
             )
+            # 无监督三要素（技术方案 §3.5）：anomaly 部署补 anomaly_score/
+            # is_anomaly/top_contributors（与平台端点共用同一映射函数）；
+            # 非 anomaly 部署原样返回。
+            result = anomaly_predict_enrichment(
+                deployment_service_value.runtime,
+                f"{revision_id}:{model_version_id}",
+                data.records,
+                result,
+                feature_schema=version.feature_schema,
+                output_schema=version.output_schema,
+            )
             duration_ms = max(0, int((perf_counter() - started) * 1000))
             if isinstance(observation, InferenceObservability):
                 _schedule_observation(
@@ -359,6 +374,9 @@ def build_inference_production_router(
                 "version_number": int(version.version_number),
                 "predictions": result.get("predictions"),
                 "probabilities": result.get("probabilities"),
+                "anomaly_score": result.get("anomaly_score"),
+                "is_anomaly": result.get("is_anomaly"),
+                "top_contributors": result.get("top_contributors"),
                 "duration_ms": result.get("duration_ms", duration_ms),
             }
         except InferenceDeploymentError as error:

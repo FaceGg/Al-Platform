@@ -190,6 +190,20 @@ class TestProductionInferenceApi(unittest.TestCase):
         schema = self.app.openapi()["components"]["schemas"][schema_name]
         self.assertTrue({"revision_id", "model_version_id"}.issubset(schema["properties"]))
 
+    def test_prediction_response_contract_includes_anomaly_triad(self):
+        """无监督三要素（技术方案 §3.5）：生产响应合同暴露可选字段。"""
+        operation = self.app.openapi()["paths"][
+            "/api/v1/inference/{deployment_id}/predict"
+        ]["post"]
+        reference = operation["responses"]["200"]["content"]["application/json"][
+            "schema"
+        ]["$ref"]
+        schema_name = reference.rsplit("/", 1)[-1]
+        schema = self.app.openapi()["components"]["schemas"][schema_name]
+        self.assertTrue(
+            {"anomaly_score", "is_anomaly", "top_contributors"}.issubset(schema["properties"])
+        )
+
     def test_production_request_over_one_megabyte_is_rejected_before_parsing(self):
         deployment_id = uuid.uuid4()
         key_id = uuid.uuid4()

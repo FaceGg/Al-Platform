@@ -299,6 +299,92 @@ class TestOnnxConversion(unittest.TestCase):
         self.assertEqual(raised.exception.code, "MODEL_CONVERSION_FAILED")
         self.assertFalse(self.destination.exists())
 
+    def _anomaly_package(self, detector):
+        """无监督 bundle（M1 引擎合同）：Pipeline + target_schema=[]（技术方案 §3.5）。"""
+        from sklearn.ensemble import IsolationForest
+        from sklearn.impute import SimpleImputer
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.svm import OneClassSVM
+
+        rng = np.random.default_rng(42)
+        matrix = rng.normal(size=(400, 2))
+        matrix[:, 1] = matrix[:, 0] * 0.8 + rng.normal(scale=0.3, size=400)
+        pipeline = Pipeline([
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+            ("detector", detector),
+        ]).fit(matrix)
+        return {
+            "model": pipeline,
+            "feature_schema": [
+                {"name": "current", "dtype": "float64"},
+                {"name": "voltage", "dtype": "float64"},
+            ],
+            "target_schema": [],
+            "input_contract": {"task_type": "anomaly_detection", "contamination": 0.01},
+            "threshold_policy": {"threshold_score": 0.3, "persisted": True},
+        }
+
+    def _assert_anomaly_conversion(self, detector):
+        import onnxruntime as ort
+
+        from sklearn.ensemble import IsolationForest
+        from sklearn.pipeline import Pipeline
+
+        joblib.dump(self._anomaly_package(detector), self.source)
+        result = convert_platform_joblib(self.source, self.destination, timeout_seconds=120)
+        self.assertEqual(result.converter, "skl2onnx")
+        self.assertEqual(tuple(result.input_names), ("features",))
+        self.assertIn("label", tuple(result.output_names))
+        self.assertIn("scores", tuple(result.output_names))
+        self.assertEqual(result.output_schema.get("task"), "anomaly")
+        # joblib vs onnx 一致性抽验（方案 §3.5 验收）：label 全等、
+        # ONNX scores == sklearn decision_function（正=正常），anomaly_score 取负。
+        package = joblib.load(self.source)
+        pipeline = package["model"]
+        rng = np.random.default_rng(7)
+        sample = rng.normal(size=(6, 2))
+        session = ort.InferenceSession(str(self.destination))
+        outputs = session.run(None, {"features": sample.astype(np.float32)})
+        by_name = dict(zip(result.output_names, outputs))
+        np.testing.assert_array_equal(np.asarray(by_name["label"]).flatten(), pipeline.predict(sample))
+        expected_score = pipeline[-1].decision_function(pipeline[:-1].transform(sample))
+        np.testing.assert_allclose(
+            np.asarray(by_name["scores"]).flatten(), expected_score, atol=1e-4,
+        )
+
+    def test_iforest_pipeline_converts_with_score_label_ports(self):
+        """无监督 IF 管线（技术方案 §3.5）：ai.onnx.ml v3 封顶实测通过。"""
+        from sklearn.ensemble import IsolationForest
+
+        self._assert_anomaly_conversion(
+            IsolationForest(n_estimators=60, max_samples=256, contamination="auto", random_state=42),
+        )
+
+    def test_ocsvm_pipeline_converts_with_score_label_ports(self):
+        """无监督 OC-SVM 管线：float32 输入敏感性实测通过（分数容差 1e-4）。"""
+        from sklearn.svm import OneClassSVM
+
+        self._assert_anomaly_conversion(
+            OneClassSVM(nu=0.05, kernel="rbf", gamma="scale"),
+        )
+
+    def test_unsupported_pipeline_detector_is_rejected(self):
+        """监督 pipeline 伪装（末步非登记检测器）不得借道 anomaly 分支转换。"""
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import make_pipeline
+
+        model = make_pipeline(
+            StandardScaler(), LogisticRegression(max_iter=200, random_state=0),
+        ).fit(np.asarray([[0.0, 1.0], [1.0, 0.0], [8.0, 9.0], [9.0, 8.0]]), [0, 0, 1, 1])
+        package = self._anomaly_package(None)
+        package["model"] = model
+        joblib.dump(package, self.source)
+        with self.assertRaises(ConversionError) as raised:
+            convert_platform_joblib(self.source, self.destination)
+        self.assertEqual(raised.exception.code, "MODEL_CONVERSION_UNSUPPORTED")
+
     def test_worker_timeout_has_stable_code(self):
         self._write_classifier()
         with patch(

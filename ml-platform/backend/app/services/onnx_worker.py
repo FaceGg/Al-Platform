@@ -82,6 +82,23 @@ ALLOWED_MODEL_TYPES = {
     MLPRegressor,
 }
 
+# 无监督异常检测管线（技术方案 §3.5，2026-11-12 实测）：bundle 的 model 是
+# Pipeline[imputer, scaler, detector]，skl2onnx 对 Imputer/Scaler/IF/OC-SVM
+# 均有原生 converter，整管线一次转出；双端口输出 label + scores（scores =
+# sklearn decision_function，正=正常负=异常，推理侧取负映射 anomaly_score）。
+# 仅登记 M3 两族；二期 autoencoder 加入时在此扩展。
+ANOMALY_PIPELINE_DETECTORS: set[type] = set()
+
+
+def _anomaly_pipeline_detector_types() -> set[type]:
+    global ANOMALY_PIPELINE_DETECTORS
+    if not ANOMALY_PIPELINE_DETECTORS:
+        from sklearn.ensemble import IsolationForest
+        from sklearn.svm import OneClassSVM
+
+        ANOMALY_PIPELINE_DETECTORS = {IsolationForest, OneClassSVM}
+    return ANOMALY_PIPELINE_DETECTORS
+
 # 集成合成图按各域最高 opset 声明。低于合成默认域版本的成员，只允许跨
 # opset 9..17 语义不变的默认域算子；Squeeze/Unsqueeze/Clip/Reduce* 等在
 # 11/13/18 改过签名，按高版本声明会静默改语义 → 不在名单内即拒绝转换。
@@ -146,6 +163,10 @@ def _feature_schema(value: object) -> list[dict[str, str]]:
 
 
 def _output_schema(value: object) -> dict[str, object]:
+    # 无监督（anomaly_detection，M1 引擎合同 target_schema=[]）：输出双端口
+    # label + scores；dtype 仅是声明（scores 恒 float）。
+    if isinstance(value, list) and not value:
+        return {"name": "anomaly", "dtype": "float64", "task": "anomaly"}
     if not isinstance(value, dict):
         raise WorkerError("MODEL_CONVERSION_FAILED")
     name = str(value.get("name") or "prediction").strip()
@@ -161,6 +182,14 @@ def _model_family(model: object) -> str:
     model_type = type(model)
     if model_type in ALLOWED_MODEL_TYPES:
         return "skl2onnx"
+    if model_type.__name__ == "Pipeline":
+        from sklearn.pipeline import Pipeline
+
+        if model_type is Pipeline:
+            detector = getattr(model, "steps", [])[-1][1] if getattr(model, "steps", []) else None
+            if type(detector) in _anomaly_pipeline_detector_types():
+                return "skl2onnx"
+        raise WorkerError("MODEL_CONVERSION_UNSUPPORTED")
     if model_type is VotingClassifier:
         return "ensemble"
     module = model_type.__module__.split(".", 1)[0]
@@ -483,8 +512,15 @@ def _convert(source: Path, destination: Path) -> dict[str, object]:
         estimator = Pipeline([("scaler", scaler), ("model", model)])
 
     options = None
+    target_opset: object = 17
     if output["task"] == "classification":
         options = {id(model): {"zipmap": False}}
+    elif output["task"] == "anomaly":
+        # IsolationForest converter 产出 ai.onnx.ml v4 节点，而当前 ORT 运行时
+        # 只支持到 v3（2026-11-12 实测：target_opset=17 时 IF 转换即报
+        # "version 4 of domain 'ai.onnx.ml' not supported"）；ml 域封顶 3、
+        # 默认域保持 17。OC-SVM 对此无感知。
+        target_opset = {"": 17, "ai.onnx.ml": 3}
     try:
         onnx, convert_sklearn, FloatTensorType = _onnx_dependencies()
         _apply_resource_limits()
@@ -493,7 +529,7 @@ def _convert(source: Path, destination: Path) -> dict[str, object]:
             initial_types=[
                 ("features", FloatTensorType([None, len(features)])),
             ],
-            target_opset=17,
+            target_opset=target_opset,
             options=options,
         )
         destination.parent.mkdir(parents=True, exist_ok=True)

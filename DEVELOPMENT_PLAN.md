@@ -757,3 +757,24 @@ M1 同日续作（方案 §3.4）。**范式随 guidance 固化**（零迁移：
 **验证**：test_agent_runner 14 passed（新 3 用例：anomaly 全链 accepted〔断言 anomaly 门禁键+无 target〕/门禁失败打回带 anomaly 指标 hints〔评审未被咨询〕/normal_fpr 反向拦截）；test_agent_hard_gates 16 passed（反向键方向/同过/低 AUC 拒）；test_agent_executor 14 passed（anomaly_trainer 真跑：300 行相关数据全指标+形状合同+whitelist 单族）；test_agent_center_api（anomaly 创建 201 无 target/带 target 400/supervised 缺 target 400/未知 task_type 422——**修出 pydantic ctx 序列化 500**）；test_agent_loop_retrain（anomaly 配方固化：anomaly 段/范式门禁/目标语义置空/重放互斥）；agent 域全量 238 passed（1 个 launch 线程时序 flake 单跑过）；前端向导 10 passed（新 anomaly 用例：目标列隐藏+污染率显出+payload 无 target_column）+ tsc 零错误。
 
 **坑（新）**：①测试 harness 构造 AgentRunner 时漏传 guidance（真实链路由 executor 从 run.guidance_json 读）——范式分支在测试里静默不生效，fake trainer 的 assert 才暴露；照 executor 形态对齐 harness。②无监督 topk 方差守卫不可复用监督阈值：2 个异质族的 AUC 差异（如 iforest 0.92 vs ocsvm 0.88，std=0.02）恰踩 0.02 默认值，把「选型有效」误判为「不稳定」。③pydantic v2 field_validator 的 errors() ctx 含 ValueError 实例——FastAPI 直接 JSON 化会 500，detail 层必须剥 ctx。
+
+## 2026-11-12 无监督异常检测 M3：ONNX 双族登记 + 推理合同三要素 + 逐特征归因
+
+M2 同日续作（方案 §3.5）。**双族转换与一致性按方案要求先实测后落地**。
+
+**实测结论（决定实现方向）**：
+- skl2onnx 对 `Pipeline[imputer, scaler, detector]` 整管线一次转出，双端口输出 `label + scores`；**两族 `scores` 端口统一 = sklearn decision_function（正=正常负=异常）**——IF 因 contamination="auto" 的 offset 语义与 OC-SVM 同向。推理侧映射 `anomaly_score = -scores` 统一「越高越异常」口径。
+- **IF 转换撞 ai.onnx.ml opset v4**：target_opset=17 时 ORT 1.24.4 拒载（"version 4 of domain 'ai.onnx.ml' not supported"）——ml 域封顶 3（`target_opset={"": 17, "ai.onnx.ml": 3}`）后转换成功；OC-SVM 对此无感知。
+- float32/NaN→0 输入冒烟稳健；label 与 joblib predict 全等、scores 与 decision_function 容差 1e-4 内一致。
+
+**实现（8 改 + 0 新）**：
+1. **onnx_worker**：`_model_family` 增 Pipeline 分支（末步 ∈ `ANOMALY_PIPELINE_DETECTORS`={IsolationForest, OneClassSVM}，登记处注释留 autoencoder 二期位）；`_output_schema` 放行 `target_schema=[]`（M1 引擎合同）→ `task="anomaly"`；anomaly 路径 ml 域 opset 封顶 3 + zipmap options 不误套（task 分支天然隔离）。
+2. **onnx_conversion**：`_normalize_output_schema` 同步放行 anomaly task。
+3. **推理三要素**（`inference_deployment.anomaly_predict_enrichment` 共享函数，平台/生产端点同语义）：`anomaly_score=-probabilities`、`is_anomaly=(label==-1)`；**top_contributors 中心差分扰动归因**（每特征 ±1% 各重推理一次=2×n_features 次 session.run，仅单行请求返回——批量成本线性放大一期不做）；平台端点 `predict` 重构为记录实际服务 key（别名/回落两路）→ 按该版本 output_schema 分支 enrich（**修出真实 bug：runtime_key 初值是 UUID 对象与 str 比较恒 False → IndexError**）；生产端点 `POST /api/v1/inference/{id}/predict` 同函数接入（此前直调 runtime 绕过 service）；`ProductionPredictResponse` 增三个可选字段（非 anomaly 恒 None）。
+4. **joblib 归因**（automl_anomaly.`anomaly_top_contributors`）：中心差分数值梯度（「特征梯度」实现，通用 IF/OC-SVM/AE），带符号按 |贡献| 降序 top_k。
+5. **候选注册放行**（model_registry.register_automl_candidate）：`task_type=="anomaly_detection"` 时不再要求 targets 非空（inputs 仍必填）；`_automl_output_contract` 对空 targets 天然安全（columns=[]）。
+6. **测试**：test_onnx_conversion 18 passed（新 4 用例：IF/OC-SVM 转换+label 全等+scores≈decision_function 容差断言+监督 pipeline 伪装拒绝）；test_inference_deployment（enrich 合同：三要素映射解析值/批量跳归因/非 anomaly 透传）；test_automl_anomaly 33 passed（归因方向：分位错配点敏感特征居首——**极端点（4×max）处树模型饱和梯度为 0，归因语义只在密度空洞附近有效，测试改用分位错配点**）；test_api_inference_production（OpenAPI 合同暴露三要素可选字段）。
+
+**验证**：M3 四文件集（onnx 转换/inference 部署/production/automl_anomaly）+ 推理链回归（runtime/production_stack/model_registry_api/model_port）全绿。方案 §3.5 验收三项达成：双族 ONNX 转换实测通过、joblib vs onnx 一致性抽验（label 全等+分数容差 1e-4）、归因方向与构造场景一致（敏感特征居首带符号）。
+
+**坑（新）**：①ONNX `scores` 端口方向必须实测——skl2onnx 各估计器的 scores 语义不统一（IF 是 decision_function 含 offset，非 score_samples 取负），照文档猜方向会上线即反向。②UUID 对象与 str 比较恒 False：predict 路径的 runtime_key 初值是 `deployment.id`（UUID），加分支时用 str() 统一比较，否则条件永不命中且 else 分支 IndexError。③归因/一致性测试的目标行要用「围栏内异常点」（分位错配）而非包围盒外极端点——树模型在饱和区梯度为 0。

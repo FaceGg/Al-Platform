@@ -368,7 +368,16 @@ class ModelRegistryService:
         candidate_metadata = dict((job.metrics or {}).get("input_contract") or metadata.get("input_contract") or {})
         targets = list(candidate_metadata.get("target_columns") or [])
         inputs = list(candidate_metadata.get("input_columns") or [])
-        if not targets or not inputs:
+        # 无监督（anomaly_detection，M1 引擎合同 target_columns=[]）不要求
+        # 目标列；特征列仍必填。范式判定走 metrics.task_type/input_contract。
+        is_anomaly_candidate = (
+            str((job.metrics or {}).get("task_type") or candidate_metadata.get("task_type") or "")
+            == "anomaly_detection"
+        )
+        if is_anomaly_candidate:
+            if not inputs:
+                raise ModelRegistryError("MODEL_CONTRACT_INVALID")
+        elif not targets or not inputs:
             raise ModelRegistryError("MODEL_CONTRACT_INVALID")
         output_contract = self._automl_output_contract(job, candidate_metadata, targets)
         contract_hash = hashlib.sha256(json.dumps(candidate_metadata, sort_keys=True, separators=(",", ":")).encode()).hexdigest()

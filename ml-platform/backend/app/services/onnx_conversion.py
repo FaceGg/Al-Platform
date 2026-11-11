@@ -182,6 +182,10 @@ def _normalize_feature_schema(value: object) -> list[dict[str, str]]:
 
 
 def _normalize_output_schema(value: object) -> dict[str, object]:
+    # 无监督（anomaly_detection）：worker 产出 task="anomaly"（target_schema=[]）
+    if isinstance(value, dict) and str(value.get("task") or "").strip().lower() == "anomaly":
+        name = str(value.get("name") or "anomaly").strip()
+        return {**value, "name": name, "dtype": "float64", "task": "anomaly"}
     if not isinstance(value, dict):
         raise ValueError("output schema is required")
     name = str(value.get("name") or "prediction").strip()

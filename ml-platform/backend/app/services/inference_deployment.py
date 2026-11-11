@@ -24,6 +24,51 @@ class InferenceDeploymentError(RuntimeError):
         self.code = code
 
 
+def anomaly_predict_enrichment(runtime, runtime_key, records, result, *,
+                               feature_schema, output_schema):
+    """无监督三要素映射 + 单行扰动归因（技术方案 §3.5，平台/生产端点共用）。
+
+    ONNX `scores` 端口 = sklearn decision_function（正=正常，2026-11-12
+    双族实测），anomaly_score 取负统一为「越高越异常」；label ∈ {-1,1}
+    映射 is_anomaly。top_contributors 用中心差分扰动归因（每特征 ±1%
+    各重推理一次，共 2×n_features 次 session.run），仅单行请求时返回——
+    批量归因成本线性放大，一期不做。非 anomaly 部署原样返回。
+    """
+    schema = output_schema if isinstance(output_schema, dict) else {}
+    if schema.get("task") != "anomaly":
+        return result
+    probabilities = result.get("probabilities")
+    predictions = result.get("predictions")
+    if probabilities is None or predictions is None:
+        return result
+    result["anomaly_score"] = [-float(value) for value in probabilities]
+    result["is_anomaly"] = [int(value) == -1 for value in predictions]
+    names = [
+        str(item.get("name"))
+        for item in (feature_schema or [])
+        if isinstance(item, dict) and item.get("name")
+    ]
+    if len(records) == 1 and names:
+        row = dict(records[0])
+        contributions: list[dict[str, float | str]] = []
+        for name in names:
+            base_value = float(row.get(name) or 0.0)
+            step = max(abs(base_value) * 0.01, 1e-6)
+            up = dict(row)
+            up[name] = base_value + step
+            down = dict(row)
+            down[name] = base_value - step
+            up_score = -float(runtime.predict(runtime_key, [up])["probabilities"][0])
+            down_score = -float(runtime.predict(runtime_key, [down])["probabilities"][0])
+            contributions.append({
+                "feature": name,
+                "contribution": (up_score - down_score) / (2.0 * step),
+            })
+        contributions.sort(key=lambda item: abs(float(item["contribution"])), reverse=True)
+        result["top_contributors"] = contributions[:3]
+    return result
+
+
 class InferenceDeploymentService:
     def __init__(self, runtime_client, session_factory):
         self.runtime = runtime_client
@@ -321,18 +366,40 @@ class InferenceDeploymentService:
                 ):
                     runtime_key = f"{stable.id}:{deployment.model_version_id}"
             try:
-                return self.runtime.predict(runtime_key, records)
+                result = self.runtime.predict(runtime_key, records)
+                used_key = runtime_key
             except InferenceRuntimeClientError as alias_error:
                 if runtime_key != deployment.id and "DEPLOYMENT_NOT_READY" in str(alias_error):
-                    return self.runtime.predict(deployment.id, records)
-                raise
+                    used_key = deployment.id
+                    result = self.runtime.predict(deployment.id, records)
+                else:
+                    raise
             except InferenceDeploymentError as alias_error:
                 # 仅"别名未载"回落（换模后 ≤60s 窗口）；别名的真实推理错误照常上抛
                 if runtime_key != deployment.id and getattr(alias_error, "code", "") == "DEPLOYMENT_NOT_READY":
-                    return self.runtime.predict(deployment.id, records)
-                raise
+                    used_key = deployment.id
+                    result = self.runtime.predict(deployment.id, records)
+                else:
+                    raise
+            # 无监督三要素（技术方案 §3.5）：按实际服务版本的 output_schema 分支。
+            # runtime_key 初值是 deployment.id（UUID 对象），统一按字符串比较。
+            if str(used_key) == str(deployment.id):
+                served_version_id = deployment.model_version_id
+            else:
+                served_version_id = uuid.UUID(str(used_key).split(":", 1)[1])
+            served_version = db.query(ModelVersion).filter(
+                ModelVersion.id == served_version_id,
+            ).one()
+            return self._anomaly_enrich(used_key, records, result, served_version)
         except (InferenceRuntimeClientError, InferenceDeploymentError) as error:
             raise InferenceDeploymentError(self._runtime_code(error)) from None
+
+    def _anomaly_enrich(self, runtime_key, records, result, version):
+        return anomaly_predict_enrichment(
+            self.runtime, runtime_key, records, result,
+            feature_schema=version.feature_schema,
+            output_schema=version.output_schema,
+        )
 
     def reconcile(self, db, *, include_rollout_aliases=False):
         runtime_items = self.runtime.list().get("items", [])

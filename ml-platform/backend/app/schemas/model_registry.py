@@ -112,4 +112,8 @@ class ProductionPredictResponse(StrictSchema):
     version_number: StrictInt
     predictions: list[object] | None = None
     probabilities: list[object] | None = None
+    # 无监督（anomaly 部署）三要素（技术方案 §3.5）：非 anomaly 部署恒 None
+    anomaly_score: list[object] | None = None
+    is_anomaly: list[object] | None = None
+    top_contributors: list[object] | None = None
     duration_ms: StrictFloat | StrictInt
