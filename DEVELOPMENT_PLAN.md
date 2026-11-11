@@ -695,4 +695,13 @@ fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失�
 
 **验证**：后端 test_agent_center_api 20 passed（决策注必填 422/采纳留痕 error_code/契约新字段/_kb_references 检索+坏 id 降级——知识块需预计算 TF-IDF 缓存 embedding 否则检索路径过滤为空）+ 闭环系 83/88 passed；前端向导 9 passed（新知识源用例：经验精简过滤展示+知识库多选进载荷；逐步确认无开关断言）+ tsc。真实 E2E：任务 2d7243bc（选 1 知识库+平台经验）S1 后 waiting_guidance 暂停 ✓；**档案注入 exp=5/kb=1 落库 ✓**（修复前恒 0）；resume 后 S2 在网络抖动窗口按看门狗节奏磨（S1 亦 4 败 1 成，审计行随 runner 事务批量落库——实时查不到属正常）。评审升级续训（round 2）观察随任务推进补录。
 
+**【评审升级续训补录（同日实测）】**任务 2d7243bc resume 后：round 1 S4 escalate → **按新逻辑自动续训 round 2 → round 2 pass → accepted**（155,869 tokens，recall 0.9859/F1 0.9459；audit 轨迹 r1 S4 → r2 S1/S2/S4 → pass 完整留痕）。「评审升级轮内续训」真实链路验证通过；任务终态蒸馏出 3 条新经验回库。
+
+**追加（2026-11-11 下午，19f177bc）：知识源卡片四点追改**
+1. 配置条「逐步确认：默认开启…」字样移除（开关此前已退役）。
+2. 知识源卡片参数化：注入条数 select（3/4/5，默认 5）+ 最低置信度 number（0.80-1.00 步进 0.05，默认 0.80）。
+3. 「平台经验」勾选文字精简（去掉默认注入长说明）；候选经验条目**逐条勾选框**（默认全选，阈值/条数变化重置勾选）。
+4. 知识库列表排除「平台经验（系统分区）」（SYSTEM_PARTITION_NAME，与平台经验注入重复）。
+后端：guidance 新契约 experience_top_k（3-5）/experience_min_confidence（0.80-1.00）/experience_entry_ids；retrieve_for_task 参数化 min_confidence（shadow 冷静期同阈值）；_l2_references entry_ids 按勾选注入（跳过 top-k 检索，仍校验 active+置信度）。**验证**：真实任务 3f41404f（top4/0.85/勾选 2 条）S1 暂停后档案 injected_experience=恰为勾选 2 条（0.90/0.89）+kb=1，参数回读一致；后端 41 passed（含 L2 参数化/按条目/阈值拦截用例——种子注意 origin CHECK 只收 distilled/human）；前端 9 passed + tsc。
+
 **坑（新）**：①runner 直写 run.memory_json 的字段会被 _stage_digest 的 self.memory 赋值冲掉——凡想进档案的内存态一律写 self.memory。②审计行（llm_gateway.egress）随 runner 事务提交，阶段中途实时查库看不到当轮调用记录。③测试种子知识块必须带 TF-IDF 缓存 embedding（检索 DB 路径只排序有缓存向量的块）。
