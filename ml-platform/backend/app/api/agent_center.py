@@ -345,11 +345,28 @@ def decide_agent_run(
         raise HTTPException(
             409, detail={"code": "AGENT_RUN_NOT_ESCALATED", "status": run.status},
         )
+    note_text = (data.note or "").strip()
+    if (
+        data.decision == "accept"
+        and run.error_code == "AGENT_MAX_ROUNDS"
+        and not note_text
+    ):
+        # 轮数耗尽且硬门禁从未通过的任务：采纳属于例外放行，必须注明实际
+        # 情况（降阈值依据/线下评估结论等）——升级详情里已带最后一轮的
+        # 门禁未过项与实测指标，供决策参考。
+        raise HTTPException(
+            422,
+            detail={
+                "code": "AGENT_DECISION_NOTE_REQUIRED",
+                "message": "轮数耗尽且硬门禁未通过的任务，采纳时必须注明实际情况",
+            },
+        )
     memory = dict(run.memory_json or {})
     escalation = dict(memory.get("escalation") or {})
     escalation["resolved"] = {
         "decision": data.decision,
-        "note": (data.note or "").strip()[:2000] or None,
+        "note": note_text[:2000] or None,
+        "error_code": run.error_code,
         "actor": str(current_user.id),
         "at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
     }

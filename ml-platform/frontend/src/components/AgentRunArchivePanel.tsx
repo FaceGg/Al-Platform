@@ -61,8 +61,8 @@ const ACTIVE_STATUSES = new Set(["pending", "running"]);
 const TERMINAL_EXPLAIN: Record<string, { signal: string; why: string; advice: string }> = {
   AGENT_MAX_ROUNDS: {
     signal: "未达验收标准（自动迭代已达上限）",
-    why: "多轮迭代均未通过硬门禁。常见原因是数据量不足、类别严重不平衡，或门禁阈值高于该数据集能达到的上限。",
-    advice: "建议：放宽门禁阈值（如 recall ≥ 0.6）／换更大数据集／检查目标列语义是否正确。",
+    why: "多轮迭代均未通过硬门禁（升级原因含最后一轮门禁未过项与实测指标）。常见原因是数据量不足、类别严重不平衡，或门禁阈值高于该数据集能达到的上限。",
+    advice: "建议：放宽门禁阈值（如 recall ≥ 0.6）／换更大数据集／检查目标列语义；也可人工采纳例外放行——采纳时必须注明实际情况。",
   },
   AGENT_S1_LLM_FAILED: {
     signal: "大模型服务不可用",
@@ -120,8 +120,14 @@ export default function AgentRunArchivePanel({ runId, archive, archiveError, zh,
   const [decisionError, setDecisionError] = useState("");
   const escalated = archive?.status === "waiting_escalate";
   const resolved = escalation?.resolved;
+  // 轮数耗尽（硬门禁未过）的采纳属于例外放行：备注必填（后端同步强校验）
+  const noteRequired = escalated && archive?.error_code === "AGENT_MAX_ROUNDS";
 
   const decide = async (decision: "accept" | "reject") => {
+    if (decision === "accept" && noteRequired && !decisionNote.trim()) {
+      setDecisionError(zh ? "轮数耗尽且硬门禁未通过：采纳必须注明实际情况" : "A note explaining the actual situation is required");
+      return;
+    }
     setDeciding(decision);
     setDecisionError("");
     try {
@@ -215,14 +221,19 @@ export default function AgentRunArchivePanel({ runId, archive, archiveError, zh,
                 <input
                   className="v2-select"
                   style={{ flex: 1, minWidth: 180 }}
-                  aria-label={zh ? "决策备注（可选）" : "decision note"}
-                  placeholder={zh ? "决策备注（可选，随档案留痕）" : "note (archived)"}
+                  aria-label={noteRequired ? (zh ? "决策备注（必填：注明实际情况）" : "decision note (required)") : (zh ? "决策备注（可选）" : "decision note")}
+                  placeholder={noteRequired
+                    ? (zh ? "必填：注明实际情况（如阈值偏高依据/线下评估结论）" : "required: explain why you accept despite failed gates")
+                    : (zh ? "决策备注（可选，随档案留痕）" : "note (archived)")}
                   value={decisionNote}
                   onChange={(e) => setDecisionNote(e.target.value)}
                 />
                 <button
-                  type="button" className="v2-btn primary sm" disabled={deciding !== null}
-                  title={zh ? "人工确认指标可信：验收通过（采纳最后轮次冠军实测指标）" : "Accept the round champion metrics"}
+                  type="button" className="v2-btn primary sm"
+                  disabled={deciding !== null || (noteRequired && !decisionNote.trim())}
+                  title={noteRequired
+                    ? (zh ? "例外放行：采纳前必须注明实际情况" : "Exceptional accept: a note is required")
+                    : (zh ? "人工确认指标可信：验收通过（采纳最后轮次冠军实测指标）" : "Accept the round champion metrics")}
                   onClick={() => void decide("accept")}
                 >{deciding === "accept" ? (zh ? "提交中…" : "…") : (zh ? "✓ 人工采纳" : "Accept")}</button>
                 <button

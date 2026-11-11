@@ -312,6 +312,43 @@ class AgentRunner:
             for entry in entries
         ]
 
+    def _kb_query(self) -> str:
+        """知识库检索查询串：目标列 + 前若干列名（S1 之前的最佳可用信号）。"""
+        columns = [str(c) for c in getattr(self.frame, "columns", [])[:8]]
+        return " ".join(
+            [str(self.run.target_column or ""), "质量建模 特征工程 数据分析要点"]
+            + columns
+        )[:400]
+
+    def _kb_references(self, kb_ids: list) -> list[dict]:
+        """S1 知识库参考：按向导多选的知识库检索相关块（独立引述块）。
+        单库失败静默跳过——知识注入是增益，不是依赖。"""
+        from app.models.knowledge import KnowledgeBase
+        from app.services.knowledge_retrieval import retrieve_chunks
+
+        refs: list[dict] = []
+        query = self._kb_query()
+        for raw in list(kb_ids)[:4]:
+            try:
+                kb = self.db.get(KnowledgeBase, uuid.UUID(str(raw)))
+            except (TypeError, ValueError):
+                continue
+            if kb is None:
+                continue
+            try:
+                chunks = retrieve_chunks(self.db, kb, query, top_k=3) or []
+            except Exception:  # noqa: BLE001 - 单库故障不阻断建模
+                continue
+            for chunk in chunks[:3]:
+                content = str(chunk.get("content") or "")[:600]
+                if content.strip():
+                    refs.append({
+                        "kb": kb.name,
+                        "doc": str(chunk.get("filename") or "")[:120],
+                        "content": content,
+                    })
+        return refs
+
     def _auto_servitize_if_requested(self) -> None:
         """「启动并服务化」：验收通过后自动固化配方 + 尽力起草 S5 三资产。
 
@@ -604,12 +641,21 @@ class AgentRunner:
             self._check_cancelled()  # 每轮开始检查用户终止（LLM 调用最长 ~12 分钟，边界生效）
 
             # ---- S1 -------------------------------------------------
-            l2_refs = self._l2_references()
+            # 知识源注入（向导第一步选择）：平台经验默认开（L2 检索）；
+            # 知识中心知识库按多选检索相关块。均静默降级。
+            if (self.guidance or {}).get("use_platform_experience", True):
+                l2_refs = self._l2_references()
+            else:
+                l2_refs = []
+            kb_refs = self._kb_references(
+                list((self.guidance or {}).get("knowledge_base_ids") or [])
+            )
             report, error, usage = run_s1(
                 self.db,
                 config=self.config,
                 profile_report=self.profile_report,
                 prior_memory=self._memory_digest(),
+                kb_references=kb_refs,
                 experience_references=l2_refs,
                 guidance=(self.guidance or {}).get("analysis") if isinstance(self.guidance, dict) else None,
                 actor=self.actor,
@@ -630,6 +676,10 @@ class AgentRunner:
             if l2_refs:
                 memory = dict(self.run.memory_json or {})
                 memory["injected_experience"] = l2_refs
+                self.run.memory_json = memory
+            if kb_refs:
+                memory = dict(self.run.memory_json or {})
+                memory["injected_knowledge"] = kb_refs
                 self.run.memory_json = memory
             # 下一轮 L2 检索按本轮域假设聚焦（§10.4 domain 匹配）。
             self._last_domain = str(report.domain_hypothesis)[:32]
@@ -889,7 +939,12 @@ class AgentRunner:
                     verdict="escalate",
                     hints=list(verdict.next_iteration_hints),
                 )
-                return self._escalate("AGENT_REVIEW_ESCALATE")
+                if round_number >= rounds_cap:
+                    return self._escalate("AGENT_REVIEW_ESCALATE")
+                # 硬门禁已过、评审保守升级且轮次未满：不再升级人工——评审
+                # hints 已随 _record_round 进入下一轮 memory digest（S1 参考），
+                # 继续迭代；仍未达预期且轮数耗尽才升级人工。
+                continue
             self._stage_digest(
                 round_number,
                 "review",
@@ -907,12 +962,36 @@ class AgentRunner:
                 hints=list(verdict.next_iteration_hints),
             )
 
+        last_s4 = next(
+            (
+                entry.get("s4")
+                for entry in reversed(self.memory.get("rounds", []))
+                if isinstance(entry.get("s4"), dict)
+            ),
+            None,
+        )
+        last_metrics = next(
+            (
+                entry.get("s3", {}).get("metrics")
+                for entry in reversed(self.memory.get("rounds", []))
+                if isinstance(entry.get("s3"), dict) and entry.get("s3", {}).get("metrics")
+            ),
+            None,
+        )
+        gate_fail_text = "；".join(
+            str(item) for item in ((last_s4 or {}).get("gate_failures") or [])[:6]
+        ) or "见档案 rounds[-1].s4.gate_failures"
+        import json as _json
+
         return self._escalate(
             "AGENT_MAX_ROUNDS",
             detail=(
-                f"{rounds_cap} 轮迭代均未通过硬门禁；最后一轮失败项见档案 s4/gate_failures。"
+                f"{rounds_cap} 轮迭代均未通过硬门禁。实际情况：最后一轮（第 "
+                f"{self.run.round_count} 轮）门禁未过项【{gate_fail_text}】；"
+                f"最后一轮实测指标 {_json.dumps(last_metrics or {}, ensure_ascii=False)}。"
                 "常见原因：数据量不足/类不平衡严重/门禁阈值高于数据可达上限——"
-                "建议降低阈值、换更大数据集或检查目标列语义。"
+                "建议降低阈值、换更大数据集或检查目标列语义；人工评估后也可采纳，"
+                "但必须注明实际情况（如降阈值依据/线下评估结论）。"
             ),
         )
 

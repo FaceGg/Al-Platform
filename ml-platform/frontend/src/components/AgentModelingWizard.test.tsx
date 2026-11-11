@@ -106,7 +106,7 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     expect(payload.target_column).toContain("判定");
     expect(payload.project_id).toBe("p1");
     expect(payload.llm_profile_id).toBe("prof-1");
-    expect(payload.step_by_step).toBe(false);
+    expect(payload.step_by_step).toBe(true);
     expect(payload.guidance.analysis.column_notes).toEqual([
       { column: "ACTUAL_TORQUE", note: "核心质量信号，关注偏差" },
     ]);
@@ -285,14 +285,14 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     });
   });
 
-  it("expands step-by-step mode into the pause plan on submit", async () => {
+  it("expands step-by-step into the pause plan by default (no toggle)", async () => {
     renderWizard();
     fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });
     fireEvent.change(await screen.findByLabelText("选择数据集"), { target: { value: "d1" } });
     await waitFor(() => expect(screen.getByLabelText("选择目标列").querySelectorAll("option").length).toBeGreaterThan(1));
-    const toggle = screen.getByRole("switch", { name: "逐步确认模式" });
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-checked", "true");
+    // 逐步确认开关已退役：默认开启，配置条只剩说明文案
+    expect(screen.queryByRole("switch", { name: "逐步确认模式" })).not.toBeInTheDocument();
+    expect(screen.getByText(/逐步确认：默认开启/)).toBeInTheDocument();
     for (let i = 0; i < 4; i += 1) {
       fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     }
@@ -300,6 +300,44 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     await waitFor(() => expect(agentCenterMocks.createAgentRun).toHaveBeenCalled());
     expect(agentCenterMocks.createAgentRun.mock.calls[0][0].step_by_step).toBe(true);
     expect(await screen.findByText(/已开启逐步确认/)).toBeInTheDocument();
+  });
+
+  it("sends knowledge sources (experience toggle + kb multiselect) in guidance", async () => {
+    clientGet.mockImplementation((url: string) => {
+      if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "p1", name: "拧紧" }] } });
+      if (url === "/llm-profiles") {
+        return Promise.resolve({ data: [{ id: "prof-1", name: "内置默认档案", model_id: "m", is_default: true, enabled: true }] });
+      }
+      if (url === "/knowledge-center/experience") {
+        return Promise.resolve({ data: [
+          { id: "e1", situation: "拧紧曲线漂移", lesson: "先剔工装标识列", action: "drop", confidence: 0.9, status: "active" },
+          { id: "e2", situation: "低置信", lesson: "x", action: "y", confidence: 0.5, status: "active" },
+        ] });
+      }
+      if (url === "/knowledge/bases") {
+        return Promise.resolve({ data: [
+          { id: "kb1", name: "点焊工艺手册", document_count: 3 },
+          { id: "kb2", name: "质量标准", document_count: 1 },
+        ] });
+      }
+      return Promise.resolve({ data: {} });
+    });
+    renderWizard();
+    // 经验精简展示：只显示置信度 ≥0.70 的条目
+    expect(await screen.findByText(/先剔工装标识列/)).toBeInTheDocument();
+    expect(screen.queryByText(/低置信/)).not.toBeInTheDocument();
+    fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });
+    fireEvent.change(await screen.findByLabelText("选择数据集"), { target: { value: "d1" } });
+    await waitFor(() => expect(screen.getByLabelText("选择目标列").querySelectorAll("option").length).toBeGreaterThan(1));
+    fireEvent.click(screen.getByLabelText("kb 点焊工艺手册"));
+    for (let i = 0; i < 4; i += 1) {
+      fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
+    }
+    fireEvent.click(await screen.findByRole("button", { name: /^rocket 启动智能体$/ }));
+    await waitFor(() => expect(agentCenterMocks.createAgentRun).toHaveBeenCalled());
+    const payload = agentCenterMocks.createAgentRun.mock.calls[0][0];
+    expect(payload.guidance.use_platform_experience).toBe(true);
+    expect(payload.guidance.knowledge_base_ids).toEqual(["kb1"]);
   });
 
   it("surfaces contract validation errors inline", async () => {

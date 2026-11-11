@@ -140,6 +140,10 @@ class UserGuidance(BaseModel):
     max_rounds: int = Field(default=3, ge=1, le=10)
     # 启动并服务化：验收通过（accepted）后自动起草 S5 三资产（发布仍需人工批准）。
     auto_servitize: bool = Field(default=False)
+    # 知识源（向导第一步「知识源」卡片）：平台经验默认注入（L2 检索），
+    # 知识中心知识库按用户多选检索相关块进 S1。检索失败静默降级。
+    use_platform_experience: bool = Field(default=True)
+    knowledge_base_ids: list[str] = Field(default_factory=list)
 
     def is_empty(self) -> bool:
         return not (

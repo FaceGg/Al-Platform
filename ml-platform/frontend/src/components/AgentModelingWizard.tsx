@@ -82,7 +82,12 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   const [targetColumn, setTargetColumn] = useState("");
   const [profiles, setProfiles] = useState<ProfileOption[]>([]);
   const [llmProfileId, setLlmProfileId] = useState("");
-  const [stepByStep, setStepByStep] = useState(false);
+  const [stepByStep] = useState(true);
+  // 知识源（S1 注入）：平台经验默认开；知识库按多选；两者随 guidance 提交
+  const [useExperience, setUseExperience] = useState(true);
+  const [kbIds, setKbIds] = useState<string[]>([]);
+  const [kbOptions, setKbOptions] = useState<{ id: string; name: string; document_count: number }[]>([]);
+  const [experienceTop, setExperienceTop] = useState<{ id: string; situation: string; lesson: string; confidence: number }[]>([]);
   // 全量数据训练（真实实验合同，默认开）：关=超大数据集保护性抽样上限
   const [fullData, setFullData] = useState(true);
 
@@ -182,6 +187,27 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
     if (!projectId) return;
     listDatasets(projectId).then((items) => setDatasets(Array.isArray(items) ? items : [])).catch(() => setDatasets([]));
   }, [projectId]);
+
+  // 知识源：平台经验精简预览（active + 置信度≥0.70，注入时取 top-5）与知识库清单
+  useEffect(() => {
+    let cancelled = false;
+    apiClient.get("/knowledge-center/experience", { params: { status: "active" } })
+      .then((r) => {
+        if (cancelled) return;
+        const entries = Array.isArray(r.data) ? r.data : [];
+        setExperienceTop(entries
+          .filter((e: { confidence: number }) => Number(e.confidence) >= 0.7)
+          .slice(0, 5)
+          .map((e: { id: string; situation: string; lesson: string; confidence: number }) => ({
+            id: e.id, situation: e.situation, lesson: e.lesson, confidence: e.confidence,
+          })));
+      })
+      .catch(() => { if (!cancelled) setExperienceTop([]); });
+    apiClient.get("/knowledge/bases")
+      .then((r) => { if (!cancelled) setKbOptions((Array.isArray(r.data) ? r.data : []).slice(0, 12)); })
+      .catch(() => { if (!cancelled) setKbOptions([]); });
+    return () => { cancelled = true; };
+  }, []);
 
   // sp-2 脚本预览数据源：本项目最近一次 Agent 运行的定稿脚本
   useEffect(() => {
@@ -327,6 +353,8 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           },
           max_rounds: Math.max(1, Math.min(10, Number(maxRounds) || 3)),
           auto_servitize: servitize,
+          use_platform_experience: useExperience,
+          knowledge_base_ids: kbIds,
         },
       });
       setSearchParams({ tab: "tasks" }, { replace: true });
@@ -378,20 +406,9 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
             ))}
           </select>
         </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, marginLeft: "auto", cursor: "pointer" }}>
-          {zh ? "逐步确认模式" : "Step-by-step"}
-          <span
-            role="switch"
-            aria-checked={stepByStep}
-            aria-label={zh ? "逐步确认模式" : "Step-by-step mode"}
-            tabIndex={0}
-            onClick={() => setStepByStep(!stepByStep)}
-            onKeyDown={(e) => { if (e.key === "Enter") setStepByStep(!stepByStep); }}
-            style={{ width: 34, height: 18, borderRadius: 10, background: stepByStep ? "var(--v2-blue)" : "var(--v2-line)", position: "relative", transition: ".18s", flexShrink: 0 }}
-          >
-            <span style={{ position: "absolute", top: 2, left: stepByStep ? 18 : 2, width: 14, height: 14, borderRadius: "50%", background: stepByStep ? "#fff" : "var(--v2-sub)", transition: ".18s" }} />
-          </span>
-        </label>
+        <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--v2-sub)" }}>
+          {zh ? "逐步确认：默认开启，每阶段完成暂停待确认" : "Step-by-step: on by default, pauses after each stage"}
+        </span>
       </div>
 
       {/* 步骤条 */}
@@ -489,6 +506,44 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
                     setTimeout(() => setTemplateSaved(""), 2500);
                   }).catch(() => setTemplateSaved(zh ? "保存失败" : "failed"));
                 }}>{zh ? "存为模板" : "Save template"}{templateSaved ? ` ${templateSaved}` : ""}</button>
+            </div>
+          </div>
+          <div className="v2-panel">
+            <h4><span className="bar" />{zh ? "知识源（S1 注入 · 检索失败自动降级）" : "Knowledge sources (injected into S1)"}
+              <span className="more">{zh ? "命中情况随任务档案「注入的经验」面板展示" : "hits shown in the run archive panel"}</span></h4>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, cursor: "pointer" }}>
+              <input type="checkbox" aria-label={zh ? "注入平台经验" : "inject platform experience"}
+                checked={useExperience}
+                onChange={(e) => setUseExperience(e.target.checked)} />
+              {zh ? "平台经验（默认注入：按域+跨域检索 top-5，置信度 ≥0.70，任务终态自动回写调分）" : "Platform experience (on by default: domain+cross-domain top-5)"}
+            </label>
+            {useExperience ? (
+              <div style={{ margin: "8px 0 4px 24px", display: "flex", flexDirection: "column", gap: 4 }}>
+                {experienceTop.length === 0 ? (
+                  <span style={{ fontSize: 12, color: "var(--v2-sub)" }}>{zh ? "暂无可注入的平台经验（知识中心 → 平台经验维护）" : "no injectable experience entries"}</span>
+                ) : experienceTop.map((item) => (
+                  <div key={item.id} style={{ fontSize: 12, color: "var(--v2-sub)" }}>
+                    <span style={{ color: "var(--v2-dim)" }}>[{item.situation}]</span> → {item.lesson}
+                    <span style={{ color: "var(--v2-dim)" }}>（置信度 {Number(item.confidence).toFixed(2)}）</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <div style={{ marginTop: 8, fontSize: 12.5, color: "var(--v2-sub)" }}>
+              {zh ? "知识中心知识库（可多选，检索相关段落进 S1）：" : "Knowledge bases (multi-select):"}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px", margin: "6px 0 0 24px" }}>
+              {kbOptions.length === 0 ? (
+                <span style={{ fontSize: 12, color: "var(--v2-dim)" }}>{zh ? "（暂无知识库）" : "(no knowledge bases)"}</span>
+              ) : kbOptions.map((kb) => (
+                <label key={kb.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, cursor: "pointer" }}>
+                  <input type="checkbox" aria-label={`kb ${kb.name}`}
+                    checked={kbIds.includes(kb.id)}
+                    onChange={(e) => setKbIds((cur) => (e.target.checked ? [...cur, kb.id] : cur.filter((x) => x !== kb.id)))} />
+                  {kb.name}
+                  <span style={{ color: "var(--v2-dim)", fontSize: 11.5 }}>{kb.document_count} 文档</span>
+                </label>
+              ))}
             </div>
           </div>
         </>

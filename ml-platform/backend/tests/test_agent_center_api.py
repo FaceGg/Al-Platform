@@ -459,6 +459,91 @@ class TestDeleteAgentRun(AgentCenterHarness, unittest.TestCase):
         response = client.delete(f"/api/agent/runs/{uuid4()}", headers=self.h)
         self.assertEqual(response.status_code, 404)
 
+    def test_max_rounds_accept_requires_note_and_records_situation(self):
+        """轮数耗尽（硬门禁从未通过）的升级：采纳必须注明实际情况（缺注 422，
+        注明后 accepted 且决策留痕带 error_code）；评审升级不受此限。"""
+        project_id, _ = self._project()
+        memory = {
+            "rounds": [
+                {"round": 1, "verdict": "gate_failed",
+                 "s4": {"gates": {"recall_minority": 0.85}, "gate_passed": False,
+                        "gate_failures": ["recall_minority=0.62 < 0.85"]},
+                 "s3": {"metrics": {"recall_minority": 0.62, "f1": 0.71}}},
+            ],
+            "escalation": {"code": "AGENT_MAX_ROUNDS",
+                           "detail": "3 轮迭代均未通过硬门禁", "round": 3},
+        }
+        with SessionLocal() as db:
+            run = AgentRun(
+                project_id=uuid.UUID(project_id), target_column="fault",
+                status="waiting_escalate", current_stage="s4", round_count=3,
+                token_used=5000, error_code="AGENT_MAX_ROUNDS",
+                memory_json=memory, result_json={"token_used": 5000},
+            )
+            db.add(run)
+            db.commit()
+            run_id = str(run.id)
+        missing = client.post(
+            f"/api/agent/runs/{run_id}/decision",
+            json={"decision": "accept"}, headers=self.h,
+        )
+        self.assertEqual(missing.status_code, 422)
+        self.assertEqual(missing.json()["detail"]["code"], "AGENT_DECISION_NOTE_REQUIRED")
+        noted = client.post(
+            f"/api/agent/runs/{run_id}/decision",
+            json={"decision": "accept",
+                  "note": "阈值按经验设置偏高；已线下复评 0.78 可用，采纳并注明"},
+            headers=self.h,
+        )
+        self.assertEqual(noted.status_code, 200)
+        self.assertEqual(noted.json()["status"], "accepted")
+        resolved = noted.json()["memory_json"]["escalation"]["resolved"]
+        self.assertEqual(resolved["decision"], "accept")
+        self.assertEqual(resolved["error_code"], "AGENT_MAX_ROUNDS")
+        self.assertIn("线下复评", resolved["note"])
+
+    def test_guidance_knowledge_sources_and_kb_references(self):
+        """知识源合同：use_platform_experience/knowledge_base_ids 随契约校验；
+        _kb_references 按所选知识库检索相关块（坏 id/未知库静默跳过）。"""
+        from types import SimpleNamespace
+
+        from app.services.agent.contracts import UserGuidance
+        from app.services.agent.runner import AgentRunner
+
+        guidance = UserGuidance.model_validate({
+            "use_platform_experience": True,
+            "knowledge_base_ids": ["11111111-1111-1111-1111-111111111111"],
+        })
+        self.assertTrue(guidance.use_platform_experience)
+        self.assertEqual(len(guidance.knowledge_base_ids), 1)
+
+        from app.models.knowledge import Chunk, Document, KnowledgeBase
+
+        with SessionLocal() as db:
+            kb = KnowledgeBase(name="点焊工艺手册-%s" % uuid4().hex[:6])
+            db.add(kb)
+            db.flush()
+            doc = Document(kb_id=kb.id, filename="工艺要点.txt", content="x")
+            db.add(doc)
+            db.flush()
+            chunk_text = "点焊质量建模时应优先构造电阻比与能量密度特征，注意剔除焊后检测结果列。"
+            from app.services.knowledge_retrieval import _compute_tfidf_embedding
+
+            db.add(Chunk(doc_id=doc.id, content=chunk_text, chunk_index=0,
+                         embedding=_compute_tfidf_embedding([chunk_text])[0]))
+            db.commit()
+            runner_stub = SimpleNamespace(
+                db=db, run=SimpleNamespace(target_column="fault"), frame=None,
+                _kb_query=lambda: "fault 质量建模 特征工程",
+            )
+            refs = AgentRunner._kb_references(runner_stub, [str(kb.id)])
+            self.assertTrue(refs, "知识库引用不应为空")
+            self.assertIn("电阻比", refs[0]["content"])
+            self.assertEqual(refs[0]["kb"], kb.name)
+            # 坏 id / 未知 id 静默跳过
+            self.assertEqual(AgentRunner._kb_references(runner_stub, ["not-a-uuid"]), [])
+            self.assertEqual(AgentRunner._kb_references(runner_stub, [str(uuid4())]), [])
+
 
 if __name__ == "__main__":
     unittest.main()

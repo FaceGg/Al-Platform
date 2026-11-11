@@ -112,6 +112,8 @@ export interface AgentRunCreatePayload {
     pause_at_stages?: string[];
     max_rounds?: number;
     auto_servitize?: boolean;
+    use_platform_experience?: boolean;
+    knowledge_base_ids?: string[];
   };
 }
 
