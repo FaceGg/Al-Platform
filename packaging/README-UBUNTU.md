@@ -10,8 +10,8 @@
 ## 安装
 
 ```bash
-tar -xzf linkraft-ubuntu-20261020-r17.tar.gz
-cd linkraft-ubuntu-20261020-r17
+tar -xzf linkraft-ubuntu-20261111-r18.tar.gz
+cd linkraft-ubuntu-20261111-r18
 chmod +x packaging/*.sh ml-platform/scripts/prepare-production-secrets.sh
 PUBLIC_ORIGIN=http://SERVER_PUBLIC_IP:5175 ./packaging/install-ubuntu.sh
 ```
@@ -74,22 +74,23 @@ r13 起门户会话 cookie（`portal_session`/`admin_portal_session`）的 `path
 从 r4-r8 升级时，保留现有 `.env`、`secrets/` 和数据库，只覆盖源码并重建相关服务：
 
 ```bash
-tar -xzf /path/to/linkraft-ubuntu-20261020-r17.tar.gz \
+tar -xzf /path/to/linkraft-ubuntu-20261111-r18.tar.gz \
   --strip-components=1 -C ~/linkraft-ubuntu-20260924-r4
 cd ~/linkraft-ubuntu-20260924-r4
 ./packaging/compose-ubuntu.sh up -d --build --force-recreate backend worker scheduler frontend annotator annotator-frontend
 ./packaging/compose-ubuntu.sh ps
 ```
 
-从 r9-r16 升级到 r17 使用同样的流程（覆盖源码后执行上面的重建命令）。r17 相比 r12 的主要变更：
+从 r9-r17 升级到 r18 使用同样的流程（覆盖源码后执行上面的重建命令）。r18 相比 r12 的主要变更：
 
 - **新增平台功能**：Kubernetes 集群管理/作业运行/Notebook 会话/镜像目录/多集群治理（Week 14-16，集群在平台内登记与连通性检查，无需为本包额外配置环境变量）、闭环演示（推理→错误数据回流→阈值告警→自动重训换模型）、编排服务图工作台、资源监控页；主平台/门户时间显示统一按 UTC 解析修复（此前 UTC+8 环境统一慢 8 小时）。
-- **数据库迁移**：alembic head 由 `20260926_61` 推进到 `20261019_72`（新增 `20260928_62`–`20261019_72`，含 demo_loop、compute 心跳、developer_resources、resource_governance、工作流全局模板、编排大屏计数、闭环复核收集、特征工程方式等表）；升级时 `migrate` 容器自动执行，完成后请在 `./packaging/compose-ubuntu.sh logs migrate` 确认无错再验收业务。
+- **数据库迁移**：alembic head 由 `20260926_61` 推进到 `20261107_97`（新增 `20260928_62`–`20261107_97`，含 demo_loop、compute 心跳、developer_resources、resource_governance、工作流全局模板、编排大屏计数、闭环复核收集、特征工程方式、智能体运行档案/经验/知识源、LLM 网关供应商分组、公告系统、集成学习重训开关等）；升级时 `migrate` 容器自动执行，完成后请在 `./packaging/compose-ubuntu.sh logs migrate` 确认无错再验收业务。
 - **门户 cookie path 收紧**：见上一节，升级后需一次性清除旧门户 cookie。
 - **r14 修复 r13 安装脚本缺陷**：r13 的 `install-ubuntu.sh` 在校验前会把 `PUBLIC_ORIGIN` 的第一个字符误删（`http://` 变 `ttp://`），导致所有合法 origin 都被 `[ERROR] PUBLIC_ORIGIN must be an origin ...` 拒绝。r14 已修复（前导空白修剪改用纯空白前缀剥离写法）。若已解压 r13，可在其目录执行 `sed -i '133s|.*|PUBLIC_ORIGIN="${PUBLIC_ORIGIN#"${PUBLIC_ORIGIN%%[![:space:]]*}"}"|' packaging/install-ubuntu.sh` 就地修复，或直接改用 r14 安装包。
 - **r15 模型运维修复与体验改进**：①删除已注册模型不再报 500——护栏只拦"活"引用（部署主版本与 stable/candidate/draft 发布目标），自动换模残留的 superseded/failed 历史目标随删除自动清理；模型库直接删除同样安全（级联清理引用版本与变空注册模型）；②发布运维抽屉修复 `INFERENCE_QUERY_INVALID`（分页参数校验缺陷）；③注册版本「来源训练模型」改为下拉选择（本项目已完成条目），不再需要手填 ID；④推理部署行新增「部署信息」查看抽屉；⑤API 市场全类型上线/下线按钮、predict 调用计入统计、响应字段解释；⑥界面默认中文与明亮主题（手动切换过的浏览器沿用其选择）。
 - **r16 大数据集与稳定性修复**：①工作流节点完成载荷截断至前 20 行（修复大 CSV 运行十几分钟的根因）、节点默认超时 300→1800 秒（大 CSV 导入不再被节点超时杀死）、CSV 导出流式化 + 数据集预览截断 500 行（修复大数据集预览/下载 OOM 崩溃）；②终止按钮落库终态 + 修复跨工作流运行状态泄漏，支持活动运行恢复；③数据集下载使用原始文件名（支持中文文件名）、CSV 导出前置 UTF-8 BOM（修复 Excel 打开中文乱码）；④拧紧特征工程兼容中文注释表头、python_script venv 卷引导与 pandas 版本漂移修复；⑤闭环复核标签全输出可选与保存修复、正确数据按比例收集。
 - **r17 工作台与拧紧算子增强**：①评估结果可视化预览——刷新/恢复后可查看历史节点结果，评估节点可开结果抽屉，指标中文化；②拧紧特征工程默认剔除泄漏判定列 + 缺失填充策略（单轴行保留）。
+- **r18 智能体全链与治理安全批次**：①智能体（Agent Loop）全链——知识源多选注入、逐步确认默认化、评审升级轮内续训、轮数耗尽实况采纳、注入档案持久化、S1 超时 240s + 重试×3 + escalation 详情持久化、S4 沙箱最小环境修复、LLM 网关重试与多会话；②集成学习双层（训练器 Top-K soft-voting + 引擎终选层）与闭环/编排重训集成；③治理安全批次九~十四——算子执行面安全（AST 校验/SSRF 防护/fail-closed）、认证边界、并发幂等、部署加固、登录限流容量可配、admin 口令 env fail-closed、Mimosa 三缺口修复；④知识中心大修——检索绑定补全、经验分区隐藏防污染、图谱纯展示页签、详情中文化、预览导出；⑤安全 CVE 清零——trivy 豁免合同化、setuptools/vite/wolfi/postgresql-client 升级；⑥复验日九项缺陷根修 + 换模链四修 + 流看门狗/涓流上限（5000 行实测闭环重训换模准确率 93.46%）；⑦NUMBA_CACHE_DIR 容器修复（UMAP numba 缓存定位）。
 
 ## CPU 兼容性
 
@@ -130,7 +131,7 @@ docker image inspect minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1 \
 如果 r4、r5、r6 或 r7 部署在注册 XGBoost AutoML 结果时返回 `MODEL_CONVERSION_FAILED`，请在不替换 `.env`、`secrets/` 和数据库文件的前提下更新现有部署目录，然后重建 Python 服务：
 
 ```bash
-tar -xzf /path/to/linkraft-ubuntu-20261020-r17.tar.gz \
+tar -xzf /path/to/linkraft-ubuntu-20261111-r18.tar.gz \
   --strip-components=1 -C ~/linkraft-ubuntu-20260924-r4
 cd ~/linkraft-ubuntu-20260924-r4
 ./packaging/compose-ubuntu.sh up -d --build --force-recreate backend worker scheduler
@@ -139,11 +140,11 @@ cd ~/linkraft-ubuntu-20260924-r4
 
 r8 及之后版本的 worker 会在应用 Linux 地址空间限制之前导入 ONNX/XGBoost 二进制扩展。既有模型制品无需重新训练；重建后的 `backend` 容器健康后重试注册即可。
 
-如果 r4、r5、r6 或 r7 部署出现 MinIO 健康检查问题，请部署 r8 或更新版本，或先复制 r17 的 `packaging/docker-compose.legacy-cpu.yml`。CPUv1 服务器镜像不提供 `mc` 健康检查命令；r8 改用服务器的 HTTP 就绪端点，并把存储桶创建保留在独立的 `minio-init` mc 容器中：
+如果 r4、r5、r6 或 r7 部署出现 MinIO 健康检查问题，请部署 r8 或更新版本，或先复制 r18 的 `packaging/docker-compose.legacy-cpu.yml`。CPUv1 服务器镜像不提供 `mc` 健康检查命令；r8 改用服务器的 HTTP 就绪端点，并把存储桶创建保留在独立的 `minio-init` mc 容器中：
 
 ```bash
 ./packaging/compose-ubuntu.sh up -d --force-recreate minio minio-init
 ./packaging/compose-ubuntu.sh up -d --remove-orphans
 ```
 
-如需从当前源码树重新构建安装包，运行 `./packaging/build-package.sh 20261020-r17`。
+如需从当前源码树重新构建安装包，运行 `./packaging/build-package.sh 20261111-r18`。
