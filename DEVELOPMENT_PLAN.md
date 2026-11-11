@@ -681,3 +681,18 @@ fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失�
 **终验证据链**（全部真实链路）：干净任务 413baa69（45 列剔除）采纳 → ①配方 40cce111 → ②引擎重铸（门禁 CV 校准 0.75 后通过）部署 dc695786/add5f803 前身 → ③真实冒烟通过 → ④三目标发布 → 本地 Python 5000 行全量调用（127.0.0.1、4 并发、**0 失败、准确率 93.46%、缺陷召回 75.0% 与铸造 CV 0.7676 一致**）→ 713 行回流（wldindex 回对：报错集 271/270 真缺陷）→ 闭环触发重训 → 重放轮 1 accepted（044eb775）→ 铸造失败暴露问题 1 → 修复后重放 a78767f6 一轮再 accepted（S4 保守升级人工采纳）→ 人工固化 8b441d9e → 引擎铸造（脚本变换后）→ 部署 fd9d9fff/add5f803 → 闭环指向 → **predict 打新版本 add5f803、预测正确** → 大屏在线（5006 推理 / 713/20）。编排 invoke 成功且其阈值节点可独立驱动重训（已与闭环共享单飞）。操作手册全量重写（ml-platform/docs/智能体任务一键部署操作手册.md，2026-11-10 全链实测版）。
 
 **运维注意**：①大屏「线上模型 vN」显示的是新注册模型的版本号（重训后注册新模型，仍显示 v1）——实际版本以 predict 返回的 model_version_id 为准（终验 add5f803），显示优化留待后续。②熔断计数含编排路径未记 loop 事件的部分，跨路径共用 24h/3 次预算需按事件表统一（留待后续）。③本地 13 个提交已推送 origin/main（用户授权），推送后按用户指示关机。
+
+## 2026-11-11 智能体向导两项需求：逐步确认默认化+知识源多选 + 评审升级轮内续训+轮数耗尽实况采纳
+
+用户需求两条：①新建任务去掉「逐步确认模式」开关（默认开启），显式显示经验精简，默认选「平台经验」并可多选知识中心其他知识库；②硬门禁过但评审升级时若轮次未满继续下一轮（仍不符再升级人工），另新增轮数耗尽未过门禁的任务也触发待人工决策、可采纳但需注明实际情况。
+
+**实现**（007fe968 + e3a0aac7）：
+1. **向导**：逐步确认开关退役（配置条改说明文案，step_by_step 恒 true）；第一步新增「知识源（S1 注入）」卡片——平台经验勾选（默认开，实时精简展示 active+置信度≥0.70 的前 5 条：[situation]→lesson（置信度））+ 知识库多选（含文档数）。契约 UserGuidance 新增 use_platform_experience/knowledge_base_ids（JSON 列，无迁移）。
+2. **S1 知识注入**：runner 每轮按 use_platform_experience 跳过/执行 L2 检索；按所选知识库 retrieve_chunks（查询串=目标列+前 8 列名，top-3/库，单库失败 warning 日志+静默降级），以独立引述块「领域知识参考」进 S1 提示词（build_s1_messages 既有 kb_references 参数首次接线）；注入条目落 memory.injected_knowledge 供档案面板。
+3. **评审升级轮内续训**：verdict=escalate 且轮次未满 → 不升级人工，评审 hints 随 _record_round 进入下一轮 memory digest 继续迭代；轮数耗尽才 AGENT_REVIEW_ESCALATE。
+4. **轮数耗尽实况采纳**：AGENT_MAX_ROUNDS 升级详情附实况（最后一轮门禁未过项+实测指标）；决策端点采纳强制 note（422 AGENT_DECISION_NOTE_REQUIRED）+决策留痕带 error_code；前端决策面板对 AGENT_MAX_ROUNDS 显示注必填提示+采纳按钮预拦截。
+5. **修复：注入档案被覆盖**（e3a0aac7）：injected_experience/injected_knowledge 直写 run.memory_json 会被同轮 _stage_digest 用 runner 自持 self.memory 整体覆盖——面板/回写键恒空（L2 写回靠 self.memory["injected_experience_ids"] 幸存）。改写 self.memory；_kb_references 失败可见化（warning 日志）。
+
+**验证**：后端 test_agent_center_api 20 passed（决策注必填 422/采纳留痕 error_code/契约新字段/_kb_references 检索+坏 id 降级——知识块需预计算 TF-IDF 缓存 embedding 否则检索路径过滤为空）+ 闭环系 83/88 passed；前端向导 9 passed（新知识源用例：经验精简过滤展示+知识库多选进载荷；逐步确认无开关断言）+ tsc。真实 E2E：任务 2d7243bc（选 1 知识库+平台经验）S1 后 waiting_guidance 暂停 ✓；**档案注入 exp=5/kb=1 落库 ✓**（修复前恒 0）；resume 后 S2 在网络抖动窗口按看门狗节奏磨（S1 亦 4 败 1 成，审计行随 runner 事务批量落库——实时查不到属正常）。评审升级续训（round 2）观察随任务推进补录。
+
+**坑（新）**：①runner 直写 run.memory_json 的字段会被 _stage_digest 的 self.memory 赋值冲掉——凡想进档案的内存态一律写 self.memory。②审计行（llm_gateway.egress）随 runner 事务提交，阶段中途实时查库看不到当轮调用记录。③测试种子知识块必须带 TF-IDF 缓存 embedding（检索 DB 路径只排序有缓存向量的块）。
