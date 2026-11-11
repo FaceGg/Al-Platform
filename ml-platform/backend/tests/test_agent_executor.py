@@ -561,3 +561,50 @@ class TestL2InjectionAndDistill(ExecutorHarness, unittest.TestCase):
             self.assertEqual(run.status, "waiting_escalate")
             # 报告失败不影响蒸馏，也不影响终态。
             self.assertEqual(len(run.result_json.get("distilled_experience") or []), 1)
+
+
+class TestAnomalyTrainer(unittest.TestCase):
+    """无监督 S3 训练器（技术方案 §3.4）：真实两族搜索 + 合成基准评估。"""
+
+    def test_anomaly_trainer_returns_runner_contract_shape(self):
+        import numpy as np
+
+        from app.services.agent.anomaly_trainer import anomaly_trainer
+
+        rng = np.random.default_rng(42)
+        matrix = rng.normal(size=(300, 4))
+        matrix[:, 1] = matrix[:, 0] * 0.8 + rng.normal(scale=0.3, size=300)
+        frame = pd.DataFrame(matrix, columns=["s1", "s2", "s3", "s4"])
+        result = anomaly_trainer(
+            frame,
+            None,
+            {"task_type": "anomaly", "contamination": 0.01, "full_data": True},
+        )
+        metrics = result["metrics"]
+        for key in ("synthetic_auc", "normal_fpr", "stability", "perturbation_recall"):
+            self.assertIn(key, metrics)
+        self.assertGreaterEqual(metrics["synthetic_auc"], 0.85)
+        self.assertEqual(result["minority_test_count"], None)
+        self.assertEqual(result["importance"], [])
+        self.assertEqual(result["data_fidelity"]["paradigm"], "unsupervised")
+        self.assertIn(result["champion_algorithm"], {"iforest", "ocsvm"})
+        self.assertIsNotNone(result["champion_model"])
+        self.assertEqual(result["champion_features"], ["s1", "s2", "s3", "s4"])
+        self.assertTrue(result["evaluation"]["acceptance_gates"]["synthetic_auc"]["passed"])
+        self.assertEqual(len(result["topk_metrics"]), 2)
+        self.assertEqual(result["contamination"], 0.01)
+
+    def test_anomaly_trainer_respects_algorithm_whitelist(self):
+        import numpy as np
+
+        from app.services.agent.anomaly_trainer import anomaly_trainer
+
+        rng = np.random.default_rng(7)
+        frame = pd.DataFrame(rng.normal(size=(200, 3)), columns=["a", "b", "c"])
+        result = anomaly_trainer(
+            frame,
+            None,
+            {"task_type": "anomaly", "algorithm_whitelist": ["ocsvm"], "full_data": True},
+        )
+        self.assertEqual(result["champion_algorithm"], "ocsvm")
+        self.assertEqual(len(result["topk_metrics"]), 1)

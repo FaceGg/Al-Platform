@@ -116,7 +116,9 @@ def list_agent_runs(
 
 class AgentRunCreate(BaseModel):
     dataset_artifact_id: uuid.UUID
-    target_column: str = Field(min_length=1, max_length=256)
+    # 无监督（guidance.task_type="anomaly"）时目标列必须为空（镜像互斥）；
+    # 有监督任务仍必填。校验在 create_agent_run 内按范式做。
+    target_column: str | None = Field(default=None, min_length=1, max_length=256)
     project_id: uuid.UUID | None = None
     llm_profile_id: uuid.UUID | None = None
     llm_model_id: str | None = Field(default=None, max_length=128)
@@ -146,13 +148,33 @@ def create_agent_run(
     try:
         guidance = UserGuidance.model_validate(payload.guidance)
     except ValidationError as error:
+        # 剥掉 ctx：field_validator 的 error.ctx 携带 ValueError 实例，
+        # 直接进 JSON 响应会 500（Object of type ValueError is not JSON serializable）。
+        safe_errors = [
+            {key: value for key, value in item.items() if key != "ctx"}
+            for item in error.errors()[:8]
+        ]
         raise HTTPException(
             status_code=422,
-            detail={"code": "AGENT_RUN_GUIDANCE_INVALID", "errors": error.errors()[:8]},
+            detail={"code": "AGENT_RUN_GUIDANCE_INVALID", "errors": safe_errors},
         )
     guidance_data = guidance.model_dump()
     if payload.step_by_step:
         guidance_data["pause_at_stages"] = sorted(set(STAGES))
+    # 范式镜像互斥（技术方案 §2.1/§3.4）：有监督必须有目标列，无监督必须没有。
+    task_type = guidance_data.get("task_type") or "supervised"
+    if task_type == "anomaly":
+        if payload.target_column:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "AGENT_RUN_TARGET_FORBIDDEN", "detail": "无监督（异常检测）任务不允许指定目标列"},
+            )
+    else:
+        if not payload.target_column:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "AGENT_RUN_TARGET_REQUIRED", "detail": "有监督任务必须指定目标列"},
+            )
 
     run = AgentRun(
         project_id=payload.project_id,

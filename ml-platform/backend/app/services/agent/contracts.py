@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import re
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 
 class AgentContractError(ValueError):
@@ -115,11 +115,19 @@ class GuidanceEnsemble(BaseModel):
     top_k: int = Field(default=3, ge=2, le=5)
 
 
+ANOMALY_TASK_TYPE = "anomaly"
+SUPERVISED_TASK_TYPE = "supervised"
+AGENT_TASK_TYPES = (SUPERVISED_TASK_TYPE, ANOMALY_TASK_TYPE)
+
+
 class GuidanceModeling(BaseModel):
     algorithm_whitelist: list[str] = Field(default_factory=list)
     param_hints: dict = Field(default_factory=dict)
     ensemble: GuidanceEnsemble = Field(default_factory=GuidanceEnsemble)
     prompts: list[str] = Field(default_factory=list)
+    # 无监督（anomaly_detection）专用：预期异常比例先验，宁低勿高（§3.4）。
+    # 有监督任务恒为 None；trainer/gate 按 task_type 分支消费。
+    contamination: float | None = Field(default=None, gt=0.0, le=0.5)
 
 
 class GuidanceEvaluation(BaseModel):
@@ -149,6 +157,17 @@ class UserGuidance(BaseModel):
     experience_top_k: int = Field(default=5, ge=3, le=5)
     experience_min_confidence: float = Field(default=0.80, ge=0.80, le=1.00)
     experience_entry_ids: list[str] = Field(default_factory=list)
+    # 建模范式（技术方案 §2.1）：supervised（默认，存量行为零变化）| anomaly
+    # （无监督异常检测）。随 guidance 固化终身不改，重放天然互斥；
+    # anomaly 时 target_column 必须为空（合同镜像），S1-S4 按范式走分支。
+    task_type: str = Field(default=SUPERVISED_TASK_TYPE)
+
+    @field_validator("task_type")
+    @classmethod
+    def _validate_task_type(cls, value: str) -> str:
+        if value not in AGENT_TASK_TYPES:
+            raise ValueError("task_type must be one of: " + ", ".join(AGENT_TASK_TYPES))
+        return value
 
     def is_empty(self) -> bool:
         return not (

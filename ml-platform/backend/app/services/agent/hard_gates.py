@@ -15,6 +15,9 @@ IMPORTANCE_TOP_N = 10
 # 采样噪声底倍数：n 个少数类测试样本下同一模型的二项召回波动
 # σ≈√(p̄(1-p̄)/n)，阈值随 2σ 抬升但永不低于 TOPK_MAX_VARIANCE。
 NOISE_FLOOR_MULTIPLIER = 2.0
+# 反向门禁键（越低越好）：无监督 normal_fpr（保留集误报率，应 ≈ contamination，
+# 技术方案 §3.3）。其余键一律「实际值 ≥ 阈值」方向。
+REVERSE_GATE_KEYS = frozenset({"normal_fpr"})
 
 
 @dataclass
@@ -51,7 +54,10 @@ def evaluate_hard_gates(
             failures.append(f"metric_missing: {key}")
             continue
         value = float(metrics[key])
-        if value < float(threshold):
+        if key in REVERSE_GATE_KEYS:
+            if value > float(threshold):
+                failures.append(f"gate_failed: {key}={value:.4f} > {threshold}")
+        elif value < float(threshold):
             failures.append(f"gate_failed: {key}={value:.4f} < {threshold}")
 
     if topk_metrics and len(topk_metrics) >= 2:

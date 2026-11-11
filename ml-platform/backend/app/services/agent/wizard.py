@@ -9,12 +9,17 @@
 from __future__ import annotations
 
 from app.services.agent.contracts import UserGuidance
+from app.services.agent.hard_gates import REVERSE_GATE_KEYS
 
 STAGES = ("s1", "s2", "s3", "s4")
 
 
 def merge_gates(defaults: dict, user_gates: dict | None) -> tuple[dict, list[str]]:
-    """用户门禁替换默认；低于默认的项产生黄条警示文案（11.3 护栏）。"""
+    """用户门禁替换默认；低于默认的项产生黄条警示文案（11.3 护栏）。
+
+    反向键（REVERSE_GATE_KEYS，如 normal_fpr「越低越好」）方向相反：
+    用户阈值**高于**默认才是放宽，黄条按 `>` 语义生成。
+    """
     merged = dict(defaults or {})
     warnings: list[str] = []
     for key, value in (user_gates or {}).items():
@@ -25,7 +30,16 @@ def merge_gates(defaults: dict, user_gates: dict | None) -> tuple[dict, list[str
             continue
         merged[key] = numeric
         default_value = (defaults or {}).get(key)
-        if default_value is not None and numeric < float(default_value):
+        if default_value is None:
+            continue
+        if key in REVERSE_GATE_KEYS:
+            relaxed = numeric > float(default_value)
+            if relaxed:
+                warnings.append(
+                    "gate_above_platform_default: %s=%.4f > %.4f（高于平台默认，"
+                    "误报风险自担；已记入配方审计）" % (key, numeric, float(default_value))
+                )
+        elif numeric < float(default_value):
             warnings.append(
                 "gate_below_platform_default: %s=%.4f < %.4f（低于平台默认，"
                 "模型质量风险自担；已记入配方审计）" % (key, numeric, float(default_value))

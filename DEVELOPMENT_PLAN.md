@@ -737,3 +737,23 @@ fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失�
 **坑（新）**：①Mimosa hook 对含 `def execute(` 的测试文件误报 SQL 注入封锁写入——测试辅助方法改名 run_job 绕开形态（在册坑第 3 次变体）。②pytest 直跑整仓时输出缓冲看不到进度，判断卡死还是慢要看进程而非 tail。③fpr 门禁在保留集 <500 行时被二项波动击穿（120 行时 99 分位阈值在 1-2 样本间跳动）——统计容差必须有，否则小样本任务随机挂。
 
 **待办（M2-M4 排队）**：M2 智能体向导无监督分支（S1 泄漏列识别提示词/S4 证据面板+hard_gates 门禁键/配方固化）；M3 ONNX 双族登记+score/is_anomaly/top_contributors 三要素推理合同+逐特征归因；M4 分数 PSI 漂移治理+仅正常数据重拟合+报警确认反馈+工况列路由。二期：autoencoder 族。
+
+## 2026-11-12 无监督异常检测 M2：智能体向导无监督分支（S1-S4 全链）
+
+M1 同日续作（方案 §3.4）。**范式随 guidance 固化**（零迁移：`guidance_json.task_type`，DB 层 target_column 本就可空），存量有监督体验零变化（默认 supervised，全部既有测试不改一字通过）。
+
+**实现（9 改 + 1 新）**：
+1. **合同**（contracts.py）：`UserGuidance.task_type`（supervised|anomaly，field_validator 白名单）+ `GuidanceModeling.contamination`（pydantic gt/le (0,0.5]）。
+2. **API**（agent_center.py）：`AgentRunCreate.target_column` 放宽可空；创建时镜像互斥双侧校验——anomaly 带 target_column 400 `AGENT_RUN_TARGET_FORBIDDEN`、supervised 无 target_column 400 `AGENT_RUN_TARGET_REQUIRED`；422 detail 剥 ctx（field_validator 的 error.ctx 携带 ValueError 实例直接进 JSON 响应会 500——通用修复）。
+3. **无监督训练器**（新 `agent/anomaly_trainer.py`）：与 lightweight_trainer 同构返回形状（metrics/topk_metrics/importance/minority_test_count/data_fidelity/champion_*），内部复用 M1 引擎核心（合成基准+评估器+稳定性）两族搜索选优（synthetic_auc 主键）；whitelist 硬约束同监督侧；evaluation 证据包（门禁逐项/三类检出率/直方图/候选对比）随返回。
+4. **executor**：trainer 按 `guidance_json.task_type` 分支选择；target 缺列护栏与 profile_data(target=None) 天然兼容（零改动）。
+5. **runner**：`self.task_type` 随 guidance 固化；S1/S2 调用传 task_type（提示词分支）；S3 hints 增 contamination+task_type（y 恒 None）；S4 默认门禁按范式切换（`DEFAULT_GATES_ANOMALY`={synthetic_auc:0.85, normal_fpr:0.015, stability:0.8}，与引擎 M1 同源）+ `primary_metric=synthetic_auc` + **跨族方差阈值放宽 0.05**（topk 只有 2 个异质族，族间 AUC 差异是选型有效性信号而非不稳定——稳定性由 stability=Spearman 专门承担，监督侧 0.02 不动）；s3_digest 增 evaluation 证据包（S4 面板数据源）；`_persist_s3_champion` 无监督 target_schema=[]（与引擎 anomaly bundle 同合同）。
+6. **hard_gates**：`REVERSE_GATE_KEYS={"normal_fpr"}`（越低越好，`> threshold` 一票否决）；其余键方向不变。
+7. **wizard.merge_gates**：反向键黄条语义反转（用户阈值**高于**默认才是放宽，`gate_above_platform_default`）。
+8. **llm_client**：S1 无监督系统提示（识别疑似标签列/主键/时间戳——正常数据训练最忌标签泄漏；正常性画像取代类别平衡叙事）；S2 无监督专项（剔除常数/近常数列、强共线合并提示、target_must_survive 不适用）；S4 无监督评审语义（合成基准检出能力+分数分布自洽）。AnalysisReport/FeatureScript/ReviewVerdict 三合同不变。
+9. **配方固化**（recipe.py）：`content["anomaly"]={task_type, method, contamination, condition_column(M4 预留)}`；acceptance_gates 默认按范式切换；inputs.target_column=None、target_semantics/minority_label 置空（防 derive_error_classes 拿空标签误推导）；guidance 快照含范式 → 重放天然互斥。
+10. **前端**（AgentModelingWizard + agentCenter.ts）：配置条「任务类型」select（默认有监督）；anomaly 选中→目标列 select **整体隐藏**+污染率 input（宁低勿高缺省 1%）；payload 无 target_column 键+guidance.task_type/contamination；三处提交按钮 disabled 条件放宽；payload 类型 target_column 可空+双新字段。
+
+**验证**：test_agent_runner 14 passed（新 3 用例：anomaly 全链 accepted〔断言 anomaly 门禁键+无 target〕/门禁失败打回带 anomaly 指标 hints〔评审未被咨询〕/normal_fpr 反向拦截）；test_agent_hard_gates 16 passed（反向键方向/同过/低 AUC 拒）；test_agent_executor 14 passed（anomaly_trainer 真跑：300 行相关数据全指标+形状合同+whitelist 单族）；test_agent_center_api（anomaly 创建 201 无 target/带 target 400/supervised 缺 target 400/未知 task_type 422——**修出 pydantic ctx 序列化 500**）；test_agent_loop_retrain（anomaly 配方固化：anomaly 段/范式门禁/目标语义置空/重放互斥）；agent 域全量 238 passed（1 个 launch 线程时序 flake 单跑过）；前端向导 10 passed（新 anomaly 用例：目标列隐藏+污染率显出+payload 无 target_column）+ tsc 零错误。
+
+**坑（新）**：①测试 harness 构造 AgentRunner 时漏传 guidance（真实链路由 executor 从 run.guidance_json 读）——范式分支在测试里静默不生效，fake trainer 的 assert 才暴露；照 executor 形态对齐 harness。②无监督 topk 方差守卫不可复用监督阈值：2 个异质族的 AUC 差异（如 iforest 0.92 vs ocsvm 0.88，std=0.02）恰踩 0.02 默认值，把「选型有效」误判为「不稳定」。③pydantic v2 field_validator 的 errors() ctx 含 ValueError 实例——FastAPI 直接 JSON 化会 500，detail 层必须剥 ctx。

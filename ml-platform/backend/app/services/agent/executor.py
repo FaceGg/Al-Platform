@@ -387,6 +387,7 @@ def lightweight_trainer(feature_frame, y, hints: dict) -> dict:
 def execute_agent_run(run_id, actor_id=None) -> AgentRun:
     """Synchronous execution — used by the launcher thread and by tests."""
     from app.database import SessionLocal
+    from app.services.agent.anomaly_trainer import anomaly_trainer
     from app.services.agent.profile_data import profile_data
     from app.services.agent.runner import AgentRunner
 
@@ -446,14 +447,22 @@ def execute_agent_run(run_id, actor_id=None) -> AgentRun:
             frame = _load_dataset_frame(db, run)
             config = _resolve_config(db, run)
             profile = profile_data(frame, target=run.target_column)
+            # 范式分支（技术方案 §3.4）：anomaly 任务走无监督训练器
+            # （y=None，合成异常基准评估），有监督走既有 lightweight_trainer。
+            guidance = dict(run.guidance_json or {})
+            trainer = (
+                anomaly_trainer
+                if (guidance.get("task_type") or "supervised") == "anomaly"
+                else lightweight_trainer
+            )
             runner = AgentRunner(
                 db,
                 run=run,
                 config=config,
                 profile_report=profile,
                 dataset_frame=frame,
-                guidance=dict(run.guidance_json or {}),
-                trainer=lightweight_trainer,
+                guidance=guidance,
+                trainer=trainer,
                 actor=actor_id or run.created_by,
             )
             return runner.run_to_completion()

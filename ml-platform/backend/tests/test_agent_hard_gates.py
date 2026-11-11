@@ -125,3 +125,34 @@ class TestHardGates(unittest.TestCase):
             leakage_columns=["DECIDE_ONE"],
         )
         self.assertTrue(report.passed)
+
+    def test_reverse_gate_normal_fpr_uses_lower_is_better_direction(self):
+        """无监督反向门禁（技术方案 §3.3）：normal_fpr 超阈值一票否决。"""
+        report = evaluate_hard_gates(
+            {"synthetic_auc": 0.92, "normal_fpr": 0.30, "stability": 0.9},
+            gates={"synthetic_auc": 0.85, "normal_fpr": 0.015, "stability": 0.8},
+            primary_metric="synthetic_auc",
+        )
+        self.assertFalse(report.passed)
+        self.assertTrue(any("normal_fpr=0.3000 > 0.015" in item for item in report.failures))
+
+    def test_reverse_gate_normal_fpr_within_threshold_passes(self):
+        report = evaluate_hard_gates(
+            {"synthetic_auc": 0.92, "normal_fpr": 0.01, "stability": 0.9},
+            gates={"synthetic_auc": 0.85, "normal_fpr": 0.015, "stability": 0.8},
+            topk_metrics=[{"synthetic_auc": 0.92}, {"synthetic_auc": 0.90}],
+            primary_metric="synthetic_auc",
+            topk_max_variance=0.05,
+        )
+        self.assertTrue(report.passed, report.failures)
+
+    def test_anomaly_default_gates_reject_low_synthetic_auc(self):
+        report = evaluate_hard_gates(
+            {"synthetic_auc": 0.60, "normal_fpr": 0.01, "stability": 0.9},
+            gates={"synthetic_auc": 0.85, "normal_fpr": 0.015, "stability": 0.8},
+            topk_metrics=[{"synthetic_auc": 0.60}, {"synthetic_auc": 0.58}],
+            primary_metric="synthetic_auc",
+            topk_max_variance=0.05,
+        )
+        self.assertFalse(report.passed)
+        self.assertTrue(any("synthetic_auc" in item for item in report.failures))

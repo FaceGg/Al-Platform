@@ -266,6 +266,47 @@ class TestCreateAgentRun(AgentCenterHarness, unittest.TestCase):
         })
         self.assertEqual(response.status_code, 401)
 
+    def test_anomaly_run_requires_no_target_column(self):
+        """无监督（task_type=anomaly）：目标列必须为空（镜像互斥，§3.4）。"""
+        payload = {
+            "dataset_artifact_id": str(uuid4()),
+            "guidance": {"task_type": "anomaly", "modeling": {"contamination": 0.02}},
+        }
+        response = client.post("/api/agent/runs", json=payload, headers=self.h)
+        self.assertEqual(response.status_code, 201, response.text)
+        detail = response.json()
+        self.assertIsNone(detail["target_column"])
+        self.assertEqual(detail["guidance_json"]["task_type"], "anomaly")
+        self.assertEqual(detail["guidance_json"]["modeling"]["contamination"], 0.02)
+
+    def test_anomaly_run_with_target_column_is_rejected(self):
+        payload = {
+            "dataset_artifact_id": str(uuid4()),
+            "target_column": "DECIDE_ONE",
+            "guidance": {"task_type": "anomaly"},
+        }
+        response = client.post("/api/agent/runs", json=payload, headers=self.h)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"]["code"], "AGENT_RUN_TARGET_FORBIDDEN")
+
+    def test_supervised_run_without_target_column_is_rejected(self):
+        payload = {
+            "dataset_artifact_id": str(uuid4()),
+            "guidance": {},
+        }
+        response = client.post("/api/agent/runs", json=payload, headers=self.h)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"]["code"], "AGENT_RUN_TARGET_REQUIRED")
+
+    def test_unknown_task_type_is_rejected_by_contract(self):
+        payload = {
+            "dataset_artifact_id": str(uuid4()),
+            "guidance": {"task_type": "semisupervised"},
+        }
+        response = client.post("/api/agent/runs", json=payload, headers=self.h)
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["detail"]["code"], "AGENT_RUN_GUIDANCE_INVALID")
+
 
 class TestRecipeListing(AgentCenterHarness, unittest.TestCase):
     def test_lists_recipes_with_current_version_metadata(self):

@@ -91,13 +91,17 @@ export async function resumeAgentRun(runId: string): Promise<AgentRunDetail> {
 
 export interface AgentRunCreatePayload {
   dataset_artifact_id: string;
-  target_column: string;
+  // 镜像互斥（技术方案 §2.1）：有监督必填；无监督（task_type="anomaly"）
+  // 必须不携带（后端 400 AGENT_RUN_TARGET_FORBIDDEN）
+  target_column?: string;
   project_id?: string | null;
   llm_profile_id?: string | null;
   llm_model_id?: string | null;
   token_budget?: number | null;
   step_by_step?: boolean;
   guidance: {
+    // 建模范式：supervised（默认）| anomaly（无监督异常检测）；随任务固化终身不改
+    task_type?: "supervised" | "anomaly";
     analysis?: { column_notes?: { column: string; note: string }[]; prompts?: string[]; full_data?: boolean };
     feature?: {
       data_shape?: "tabular" | "waveform" | "mixed";
@@ -107,7 +111,14 @@ export interface AgentRunCreatePayload {
       suggest_drop?: { column: string; reason?: string }[];
       prompts?: string[];
     };
-    modeling?: { algorithm_whitelist?: string[]; param_hints?: Record<string, number | string>; ensemble?: { enabled?: boolean; top_k?: number }; prompts?: string[] };
+    modeling?: {
+      algorithm_whitelist?: string[];
+      param_hints?: Record<string, number | string>;
+      ensemble?: { enabled?: boolean; top_k?: number };
+      prompts?: string[];
+      // 无监督专用：预期异常比例先验 (0, 0.5]，宁低勿高缺省 0.01
+      contamination?: number;
+    };
     evaluation?: { custom_test_dataset_id?: string | null; metric_gates?: Record<string, number>; review_focus?: string[] };
     pause_at_stages?: string[];
     max_rounds?: number;

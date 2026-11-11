@@ -367,4 +367,30 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^rocket 启动智能体$/ }));
     expect(await screen.findByText(/AGENT_RUN_GUIDANCE_INVALID/)).toBeInTheDocument();
   });
+
+  it("runs the unsupervised branch: hides target, shows contamination, omits target_column", async () => {
+    // 无监督（技术方案 §3.4）：范式互斥——目标列控件整体隐藏（非置灰），
+    // 污染率先验出现；payload 无 target_column 且 guidance 携带范式。
+    renderWizard();
+    fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });
+    fireEvent.change(await screen.findByLabelText("选择数据集"), { target: { value: "d1" } });
+    await waitFor(() => expect(screen.getByLabelText("选择目标列").querySelectorAll("option").length).toBeGreaterThan(1));
+
+    fireEvent.change(screen.getByLabelText("选择任务类型"), { target: { value: "anomaly" } });
+    // 目标列消失（隐藏而非置灰），污染率出现
+    await waitFor(() => expect(screen.queryByLabelText("选择目标列")).toBeNull());
+    const contamination = screen.getByLabelText("污染率");
+    expect((contamination as HTMLInputElement).value).toBe("0.01");
+    fireEvent.change(contamination, { target: { value: "0.02" } });
+
+    for (let i = 0; i < 4; i += 1) {
+      fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
+    }
+    fireEvent.click(await screen.findByRole("button", { name: /^rocket 启动智能体$/ }));
+    await waitFor(() => expect(agentCenterMocks.createAgentRun).toHaveBeenCalledTimes(1));
+    const payload = agentCenterMocks.createAgentRun.mock.calls[0][0];
+    expect(payload).not.toHaveProperty("target_column");
+    expect(payload.guidance.task_type).toBe("anomaly");
+    expect(payload.guidance.modeling.contamination).toBe(0.02);
+  });
 });

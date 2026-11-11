@@ -295,14 +295,25 @@ def build_fixation_content(run, memory: dict, smoke_row: dict | None = None,
     ))
     modeling = dict((run.guidance_json or {}).get("modeling") or {})
     ensemble = dict(modeling.get("ensemble") or {})
+    task_type = str((run.guidance_json or {}).get("task_type") or "supervised")
+    is_anomaly = task_type == "anomaly"
+    # 默认门禁随范式切换（技术方案 §3.4，与 runner.DEFAULT_GATES_ANOMALY 同源；
+    # guidance.evaluation.metric_gates 显式给值时替换默认——merge 语义在
+    # 重放消费方 hard_gates/wizard.merge_gates，此处只固化）
+    if gates:
+        acceptance_gates = gates
+    elif is_anomaly:
+        acceptance_gates = {"synthetic_auc": 0.85, "normal_fpr": 0.015, "stability": 0.8}
+    else:
+        acceptance_gates = {"recall_minority": 0.90}
     # 算法白名单随配方固化：服务化后闭环重训按白名单缩小引擎搜索族
     # （此前 guidance.modeling.algorithm_whitelist 无任何消费方，勾选形同虚设）
-    return {
+    content = {
         "domain": memory.get("last_domain") or "",
-        "inputs": {"target_column": run.target_column},
+        "inputs": {"target_column": None if is_anomaly else run.target_column},
         "feature_script": final_script,
         "automl_config": modeling.get("param_hints", {}),
-        "acceptance_gates": gates or {"recall_minority": 0.90},
+        "acceptance_gates": acceptance_gates,
         # 向导第三步的集成选项随配方固化 → 服务化后闭环重训沿用（集成走到线上的最后一环）
         "retrain_ensemble": (
             {"enabled": True, "top_k": int(ensemble.get("top_k") or 3)}
@@ -326,3 +337,16 @@ def build_fixation_content(run, memory: dict, smoke_row: dict | None = None,
         "analysis_digest": "run %s" % str(run.id)[:8],
         "optimization_report": (run.result_json or {}).get("optimization_report"),
     }
+    if is_anomaly:
+        # 无监督配方段（技术方案 §3.7）：重放走同一合同；condition_column
+        # 为 M4 分工况建模预留（一期恒 None=全量单模型）。
+        content["anomaly"] = {
+            "task_type": "anomaly_detection",
+            "method": (run.result_json or {}).get("s3_champion", {}).get("algorithm") or "",
+            "contamination": modeling.get("contamination") or 0.01,
+            "condition_column": None,
+        }
+        # 无监督无目标语义：置空防止 derive_error_classes 拿空标签误推导
+        content["target_semantics"] = {}
+        content["minority_label"] = None
+    return content

@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.agent_run import AgentRun
 from app.services.agent.contracts import AnalysisReport
-from app.services.agent.hard_gates import PRIMARY_METRIC, evaluate_hard_gates
+from app.services.agent.hard_gates import PRIMARY_METRIC, TOPK_MAX_VARIANCE, evaluate_hard_gates
 from app.services.agent.llm_client import run_s1, run_s2, run_s4
 from app.services.agent.sandbox import (
     ast_violations,
@@ -39,6 +39,18 @@ MAX_ROUNDS = 3
 MAX_S2_ATTEMPTS = 8
 META_HINT_AFTER_SAME_ERROR = 3
 DEFAULT_GATES = {PRIMARY_METRIC: 0.90}
+# 无监督（anomaly）默认门禁（技术方案 §3.3 第二层默认值，与引擎 M1 同源）：
+# normal_fpr 是反向键（越低越好，hard_gates.REVERSE_GATE_KEYS）。
+DEFAULT_GATES_ANOMALY = {
+    "synthetic_auc": 0.85,
+    "normal_fpr": 0.015,
+    "stability": 0.8,
+}
+ANOMALY_PRIMARY_METRIC = "synthetic_auc"
+# 无监督跨族方差阈值放宽：topk 只有 2 个异质族（树 vs 核方法），synthetic_auc
+# 族间差异是选型有效性信号而非不稳定（稳定性已由 stability=Spearman 承担）；
+# 监督侧 8 族同质，0.02 收紧合理，两域不可共用同一阈值。
+ANOMALY_TOPK_MAX_VARIANCE = 0.05
 S2_SAMPLE_ROWS = 5000
 
 Trainer = Callable[[object, object, dict], dict]
@@ -65,6 +77,8 @@ class AgentRunner:
         self.guidance = guidance
         self.trainer = trainer
         self.actor = actor
+        # 建模范式随 guidance 固化（技术方案 §2.1）：supervised | anomaly。
+        self.task_type = str((guidance or {}).get("task_type") or "supervised")
         self.memory: dict = {"rounds": []}
         self._usage_total = 0
         # S3 冠军模型运行时持有（accepted 时物化；失败/升级即随进程丢弃）
@@ -250,11 +264,17 @@ class AgentRunner:
                             {"name": str(name), "dtype": "float64"}
                             for name in (champion.get("features") or [])
                         ],
-                        "target_schema": {
-                            "name": self.run.target_column,
-                            "dtype": "int64",
-                            "task": "classification",
-                        },
+                        # 无监督冠军无目标列：target_schema 置空列表（与引擎
+                        # M1 anomaly bundle 同合同），监督侧保持既有形状。
+                        "target_schema": (
+                            []
+                            if self.task_type == "anomaly"
+                            else {
+                                "name": self.run.target_column,
+                                "dtype": "int64",
+                                "task": "classification",
+                            }
+                        ),
                     },
                     path,
                 )
@@ -544,6 +564,7 @@ class AgentRunner:
                 error_history=error_history,
                 meta_hint=meta_hint,
                 guidance=guidance_feature,
+                task_type=self.task_type,
                 actor=self.actor,
             )
             if not self._absorb_usage(usage):
@@ -687,6 +708,7 @@ class AgentRunner:
                 experience_references=l2_refs,
                 guidance=(self.guidance or {}).get("analysis") if isinstance(self.guidance, dict) else None,
                 actor=self.actor,
+                task_type=self.task_type,
             )
             s1_reasoning = (usage or {}).pop("reasoning_content", None)
             if not self._absorb_usage(usage):
@@ -821,11 +843,21 @@ class AgentRunner:
             # 全量训练合同（默认 True）：向导第一步可关；关闭时训练器才会
             # 启用 2 万行/类别 top-200 保护上限，且保真度事实随指标落档。
             hints_payload["full_data"] = bool(analysis_cfg.get("full_data", True))
+            if self.task_type == "anomaly":
+                # 无监督（§3.4）：污染率先验（guidance.modeling.contamination，
+                # 合同层缺省 0.01）透传训练器；y 恒 None。
+                modeling_hints = modeling_cfg if modeling_cfg else {}
+                hints_payload["contamination"] = modeling_hints.get("contamination")
+                hints_payload["task_type"] = "anomaly"
             trainer_result = self.trainer(feature_df, y, hints_payload)
             s3_digest = self._s3_digest(trainer_result)
             fidelity = trainer_result.get("data_fidelity")
             if fidelity:
                 s3_digest["data_fidelity"] = fidelity
+            # 无监督评估证据（技术方案 §3.3 第二层 S4 面板数据源）：门禁逐项/
+            # 三类检出率/分数直方图/候选对比，随档案落库前端可见。
+            if trainer_result.get("evaluation"):
+                s3_digest["evaluation"] = trainer_result["evaluation"]
             if target_excluded:
                 # 留痕：评审与排障能看到"特征表里的标签列已被平台剥离"。
                 s3_digest["target_excluded_from_features"] = target
@@ -841,13 +873,18 @@ class AgentRunner:
             # ---- S4 hard gates (before any LLM sees the numbers) ----
             self.run.current_stage = "s4"
             self.db.commit()
-            gates = dict(DEFAULT_GATES)
+            # 默认门禁按范式选择（技术方案 §3.4：S4 验收门禁键与引擎 M1 同源；
+            # normal_fpr 为反向键，hard_gates/merge_gates 双处按方向处理）。
+            default_gates = (
+                dict(DEFAULT_GATES_ANOMALY) if self.task_type == "anomaly" else dict(DEFAULT_GATES)
+            )
+            primary_metric = ANOMALY_PRIMARY_METRIC if self.task_type == "anomaly" else PRIMARY_METRIC
             user_gates = None
             if isinstance(self.guidance, dict):
                 user_gates = ((self.guidance or {}).get("evaluation") or {}).get(
                     "metric_gates"
                 )
-            gates, gate_warnings = merge_gates(DEFAULT_GATES, user_gates)
+            gates, gate_warnings = merge_gates(default_gates, user_gates)
             if gate_warnings:
                 memory = dict(self.run.memory_json or {})
                 gate_log = list(memory.get("gate_warnings") or [])
@@ -868,6 +905,10 @@ class AgentRunner:
                 importance=trainer_result.get("importance"),
                 leakage_columns=[item.column for item in report.leakage_suspects],
                 minority_test_count=trainer_result.get("minority_test_count"),
+                primary_metric=primary_metric,
+                topk_max_variance=(
+                    ANOMALY_TOPK_MAX_VARIANCE if self.task_type == "anomaly" else TOPK_MAX_VARIANCE
+                ),
             )
             self._stage_digest(
                 round_number,
@@ -903,6 +944,7 @@ class AgentRunner:
                 round_number=round_number,
                 actor=self.actor,
                 data_fidelity=trainer_result.get("data_fidelity"),
+                task_type=self.task_type,
             )
             if not self._absorb_usage(usage):
                 return self._escalate("AGENT_TOKEN_BUDGET_EXCEEDED")

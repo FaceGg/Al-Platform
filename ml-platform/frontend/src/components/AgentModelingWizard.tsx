@@ -80,6 +80,10 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   const [selectedColumns, setSelectedColumns] = useState<Record<string, boolean>>({});
   const [columnNotes, setColumnNotes] = useState<Record<string, string>>({});
   const [targetColumn, setTargetColumn] = useState("");
+  // 建模范式（技术方案 §2.1）：supervised 默认（存量体验零变化）；anomaly
+  // 无监督异常检测——目标列隐藏（非置灰）、污染率先验出现。随 guidance 固化。
+  const [taskType, setTaskType] = useState<"supervised" | "anomaly">("supervised");
+  const [contamination, setContamination] = useState(0.01);
   const [profiles, setProfiles] = useState<ProfileOption[]>([]);
   const [llmProfileId, setLlmProfileId] = useState("");
   const [stepByStep] = useState(true);
@@ -316,7 +320,9 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   ];
 
   const submit = async (servitize: boolean) => {
-    if (!datasetId || !targetColumn) return;
+    const isAnomaly = taskType === "anomaly";
+    if (!datasetId || (!isAnomaly && !targetColumn)) return;
+    if (isAnomaly && (!(contamination > 0) || contamination > 0.5)) return;
     setSubmitting(true); setError("");
     const gates: Record<string, number> = {};
     Object.entries(metricGates).forEach(([key, value]) => {
@@ -331,11 +337,13 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
     try {
       await createAgentRun({
         dataset_artifact_id: datasetId,
-        target_column: targetColumn,
+        // 镜像互斥（技术方案 §2.1）：有监督必须带目标列，无监督必须不带
+        ...(isAnomaly ? {} : { target_column: targetColumn }),
         project_id: projectId || null,
         llm_profile_id: llmProfileId || null,
         step_by_step: stepByStep,
         guidance: {
+          task_type: taskType,
           analysis: {
             column_notes: chosenNotes,
             prompts: analysisPrompt.trim() ? [analysisPrompt.trim()] : [],
@@ -345,7 +353,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           feature: {
             // 全局 data_shape 单选已退役：列级标注随引导进 S2 提示词
             column_shapes: Object.fromEntries(
-              columns.filter((c) => c !== targetColumn)
+              columns.filter((c) => isAnomaly || c !== targetColumn)
                 .map((c) => [c, shapeOf(c)])
                 .filter(([, shape]) => shape !== "unknown")
             ),
@@ -361,6 +369,8 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
               top_k: Math.max(2, Math.min(5, Number(ensembleTopK) || 3)),
             },
             prompts: modelingPrompt.trim() ? [modelingPrompt.trim()] : [],
+            // 无监督污染率先验（宁低勿高，缺省 1%）；有监督不携带
+            ...(isAnomaly && contamination > 0 && contamination <= 0.5 ? { contamination } : {}),
           },
           evaluation: {
             custom_test_dataset_id: testDatasetId || null,
@@ -409,12 +419,34 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           </select>
         </label>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5 }}>
-          {zh ? "目标列" : "Target"}
-          <select className="v2-select" style={{ minWidth: 180 }} value={targetColumn} onChange={(e) => setTargetColumn(e.target.value)} disabled={!columns.length} aria-label={zh ? "选择目标列" : "Target column"}>
-            <option value="">—</option>
-            {columns.map((c) => <option key={c} value={c}>{c}</option>)}
+          {zh ? "任务类型" : "Task type"}
+          <select className="v2-select" style={{ minWidth: 150 }} value={taskType} onChange={(e) => {
+            const next = e.target.value === "anomaly" ? "anomaly" : "supervised";
+            setTaskType(next);
+            // 范式互斥（技术方案 §2.1）：切换即清空目标列（换范式=重选）
+            if (next === "anomaly") setTargetColumn("");
+          }} aria-label={zh ? "选择任务类型" : "Task type"}>
+            <option value="supervised">{zh ? "有监督" : "Supervised"}</option>
+            <option value="anomaly">{zh ? "异常检测（无监督）" : "Anomaly detection"}</option>
           </select>
         </label>
+        {taskType === "anomaly" ? (
+          // 无监督：目标列控件整体隐藏（非置灰），污染率先验出现（宁低勿高）
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5 }}>
+            {zh ? "污染率（预期异常比例）" : "Contamination"}
+            <input className="v2-select" style={{ width: 92 }} type="number" min={0.001} max={0.5} step={0.005}
+              value={contamination} onChange={(e) => setContamination(Number(e.target.value) || 0.01)}
+              aria-label={zh ? "污染率" : "Contamination"} title={zh ? "宁低勿高，缺省 1%" : "keep low, default 1%"} />
+          </label>
+        ) : (
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5 }}>
+            {zh ? "目标列" : "Target"}
+            <select className="v2-select" style={{ minWidth: 180 }} value={targetColumn} onChange={(e) => setTargetColumn(e.target.value)} disabled={!columns.length} aria-label={zh ? "选择目标列" : "Target column"}>
+              <option value="">—</option>
+              {columns.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+        )}
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5 }}>
           {zh ? "模型" : "Model"}
           <select className="v2-select" style={{ minWidth: 170 }} value={llmProfileId} onChange={(e) => setLlmProfileId(e.target.value)} aria-label={zh ? "选择大模型档案" : "LLM profile"}>
@@ -858,18 +890,18 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
         <button type="button" className="v2-btn ghost" disabled={step === 1 || submitting}
           onClick={() => setStep((step - 1) as StepId)}>{zh ? "上一步" : "Back"}</button>
         {step < 5 ? (
-          <button type="button" className="v2-btn primary" disabled={!datasetId || !targetColumn}
+          <button type="button" className="v2-btn primary" disabled={!datasetId || (taskType !== "anomaly" && !targetColumn)}
             onClick={() => setStep((step + 1) as StepId)}>{zh ? "下一步" : "Next"} →</button>
         ) : (
           <div style={{ display: "flex", gap: 10 }}>
-            <button type="button" className="v2-btn primary" disabled={submitting || !datasetId || !targetColumn} onClick={() => void submit(false)}>
+            <button type="button" className="v2-btn primary" disabled={submitting || !datasetId || (taskType !== "anomaly" && !targetColumn)} onClick={() => void submit(false)}>
               <RocketOutlined />{submitting ? (zh ? "提交中…" : "Submitting…") : (zh ? "启动智能体" : "Launch agent")}
             </button>
             <button
               type="button"
               className="v2-btn primary"
               style={{ background: "linear-gradient(135deg, #52c41a, #389e0d)", borderColor: "#52c41a" }}
-              disabled={submitting || !datasetId || !targetColumn} onClick={() => void submit(true)}
+              disabled={submitting || !datasetId || (taskType !== "anomaly" && !targetColumn)} onClick={() => void submit(true)}
             >
               <RocketOutlined />{zh ? "启动并服务化" : "Launch & servitize"}
             </button>

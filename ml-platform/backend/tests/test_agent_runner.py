@@ -98,7 +98,7 @@ def _frame(n: int = 40) -> pd.DataFrame:
 
 
 class RunnerHarness(unittest.TestCase):
-    def build(self, monkeypatches: dict, run_kwargs=None, trainer=_trainer_passing):
+    def build(self, monkeypatches: dict, run_kwargs=None, trainer=_trainer_passing, guidance=None):
         """Construct a runner with runner-module LLM functions patched."""
         from app.models.llm_profile import LLMProfile
 
@@ -112,7 +112,9 @@ class RunnerHarness(unittest.TestCase):
             db.add(profile)
             db.commit()
             profile_id = str(profile.id)
-            run = AgentRun(target_column="DECIDE(判定结果)", **(run_kwargs or {}))
+            run_kwargs = dict(run_kwargs or {})
+            run_kwargs.setdefault("target_column", "DECIDE(判定结果)")
+            run = AgentRun(**run_kwargs)
             db.add(run)
             db.commit()
             run_id = run.id
@@ -128,6 +130,7 @@ class RunnerHarness(unittest.TestCase):
             config=_config(profile_id),
             profile_report={"row_count": 40},
             dataset_frame=_frame(),
+            guidance=guidance,
             trainer=trainer,
         )
         self.addCleanup(db.close)
@@ -379,3 +382,124 @@ class TestAgentRunner(RunnerHarness, unittest.TestCase):
         hints = result.memory_json["rounds"][0]["hints"]
         self.assertTrue(any("recall_minority" in hint for hint in hints))
         self.assertTrue(any("leakage_in_top10" in hint for hint in hints))
+
+
+_ANOMALY_REPORT = AnalysisReport(
+    domain_hypothesis="tightening",
+    domain_reasoning="无监督正常性画像",
+    focus_channels=[{"name": "torque", "columns": ["ACTUAL_TORQUE"], "why": "主参数"}],
+    expected_important_features=[
+        {"name_hint": "ACTUAL_TORQUE", "reason": "主导离群分数", "priority": "high"}
+    ],
+    leakage_suspects=[{"column": "DECIDE_ONE", "why": "疑似结果标签列，须剔除"}],
+    feature_engineering_brief="剔除标签列与常数列，保留数值参数",
+)
+
+
+def _trainer_anomaly_passing(feature_df, y, hints):
+    """无监督训练器 fake：形状与 anomaly_trainer 对齐（y 恒 None）。"""
+    assert y is None, "无监督任务 S3 必须传 y=None"
+    assert hints.get("task_type") == "anomaly"
+    return {
+        "metrics": {
+            "synthetic_auc": 0.92,
+            "perturbation_recall": 0.55,
+            "normal_fpr": 0.01,
+            "stability": 0.9,
+        },
+        "topk_metrics": [{"synthetic_auc": 0.92}, {"synthetic_auc": 0.88}],
+        "importance": [],
+        "minority_test_count": None,
+    }
+
+
+class TestAgentRunnerAnomaly(RunnerHarness, unittest.TestCase):
+    """无监督分支（技术方案 §3.4）：范式门禁/hints/y=None 全链。"""
+
+    def build_anomaly(self, trainer=_trainer_anomaly_passing, extra_patches=None):
+        patches = {
+            "run_s1": lambda db, **kw: (
+                (kw.get("task_type") == "anomaly") and _ANOMALY_REPORT or _REPORT,
+                None,
+                {"total_tokens": 100},
+            ),
+            "run_s2": lambda db, **kw: (_SCRIPT_OK, None, {"total_tokens": 100}),
+            "run_s4": lambda db, **kw: (_verdict("pass"), None, {"total_tokens": 100}),
+        }
+        patches.update(extra_patches or {})
+        return self.build(
+            patches,
+            run_kwargs={
+                "target_column": None,
+                "guidance_json": {"task_type": "anomaly", "modeling": {"contamination": 0.02}},
+            },
+            trainer=trainer,
+            # executor 真实链路从 run.guidance_json 读 guidance 传入 runner；
+            # harness 直接对齐该形态（guidance 携带范式）。
+            guidance={"task_type": "anomaly", "modeling": {"contamination": 0.02}},
+        )
+
+    def test_anomaly_task_reaches_accepted_without_target(self):
+        """无监督任务全链：无目标列、anomaly 门禁键、范式随 guidance 固化。"""
+        runner, db, run_id = self.build_anomaly()
+        result = runner.run_to_completion()
+        self.assertEqual(result.status, "accepted")
+        self.assertIsNone(result.target_column)
+        entry = result.memory_json["rounds"][0]
+        self.assertEqual(entry["s4"]["gates"].get("synthetic_auc"), 0.85)
+        self.assertIn("normal_fpr", entry["s4"]["gates"])
+        self.assertNotIn("recall_minority", entry["s4"]["gates"])
+        self.assertTrue(entry["s4"]["gate_passed"])
+
+    def test_anomaly_gate_failure_loops_with_anomaly_metric_hint(self):
+        """synthetic_auc 门禁未过 → 打回 S1，hints 带 anomaly 指标名。"""
+        s4_calls = []
+
+        def trainer_weak(feature_df, y, hints):
+            return {
+                "metrics": {
+                    "synthetic_auc": 0.60,
+                    "perturbation_recall": 0.1,
+                    "normal_fpr": 0.4,
+                    "stability": 0.5,
+                },
+                "topk_metrics": [{"synthetic_auc": 0.60}],
+                "importance": [],
+                "minority_test_count": None,
+            }
+
+        runner, db, _ = self.build_anomaly(
+            trainer=trainer_weak,
+            extra_patches={
+                "run_s4": lambda db, **kw: (s4_calls.append(1) or (_verdict("pass"), None, {"total_tokens": 10})),
+            },
+        )
+        result = runner.run_to_completion()
+        self.assertEqual(result.status, "waiting_escalate")
+        self.assertEqual(result.error_code, "AGENT_MAX_ROUNDS")
+        # 评审从未被咨询：门禁在 LLM 之前一票否决（与监督侧同语义）。
+        self.assertEqual(s4_calls, [])
+        hints = result.memory_json["rounds"][0]["hints"]
+        self.assertTrue(any("synthetic_auc" in hint for hint in hints))
+        self.assertTrue(any("normal_fpr" in hint for hint in hints))
+
+    def test_anomaly_reverse_fpr_gate_blocks_high_false_positive_rate(self):
+        """normal_fpr 反向门禁（越低越好）：误报率超阈值必须被拦。"""
+        def trainer_leaky(feature_df, y, hints):
+            return {
+                "metrics": {
+                    "synthetic_auc": 0.95,
+                    "perturbation_recall": 0.8,
+                    "normal_fpr": 0.30,
+                    "stability": 0.9,
+                },
+                "topk_metrics": [{"synthetic_auc": 0.95}],
+                "importance": [],
+                "minority_test_count": None,
+            }
+
+        runner, db, _ = self.build_anomaly(trainer=trainer_leaky)
+        result = runner.run_to_completion()
+        self.assertEqual(result.status, "waiting_escalate")
+        hints = result.memory_json["rounds"][0]["hints"]
+        self.assertTrue(any("normal_fpr" in hint for hint in hints))

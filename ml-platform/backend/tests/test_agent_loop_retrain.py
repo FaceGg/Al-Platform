@@ -916,6 +916,37 @@ class AgentLoopRetrain(unittest.TestCase):
         # 旧配方无 minority_label：退回字典序最小（行为不变）
         self.assertEqual(derive_error_classes(content["target_semantics"])[0], ["0"])
 
+    def test_anomaly_recipe_content_carries_paradigm_and_gates(self):
+        """无监督配方固化（技术方案 §3.7）：anomaly 段 + 范式门禁 + 目标语义置空。"""
+        from app.services.agent.recipe import build_fixation_content
+
+        class _Run:
+            id = uuid.uuid4()
+            target_column = None
+            guidance_json = {
+                "task_type": "anomaly",
+                "modeling": {"contamination": 0.02, "algorithm_whitelist": ["iforest", "ocsvm"]},
+            }
+            result_json = {"s3_champion": {"algorithm": "ocsvm"}}
+
+        content = build_fixation_content(_Run(), {}, target_values=[], smoke_row={"f1": 1.0})
+        # 范式段（重放走同一合同；condition_column 为 M4 分工况预留）
+        self.assertEqual(content["anomaly"]["task_type"], "anomaly_detection")
+        self.assertEqual(content["anomaly"]["method"], "ocsvm")
+        self.assertEqual(content["anomaly"]["contamination"], 0.02)
+        self.assertIsNone(content["anomaly"]["condition_column"])
+        # 默认门禁按范式切换（synthetic_auc 主键；无用户显式门禁时）
+        self.assertEqual(
+            content["acceptance_gates"],
+            {"synthetic_auc": 0.85, "normal_fpr": 0.015, "stability": 0.8},
+        )
+        # 无监督无目标语义
+        self.assertIsNone(content["inputs"]["target_column"])
+        self.assertEqual(content["target_semantics"], {})
+        self.assertIsNone(content["minority_label"])
+        # 范式随 guidance 快照固化 → 重放天然互斥（创建新任务不再带目标列）
+        self.assertEqual(content["guidance"]["task_type"], "anomaly")
+
 
 if __name__ == "__main__":
     unittest.main()
