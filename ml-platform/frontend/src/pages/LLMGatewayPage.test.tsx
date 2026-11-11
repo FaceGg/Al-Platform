@@ -132,7 +132,7 @@ describe("LLMGatewayPage", () => {
     expect(mocks.createLlmProfile.mock.calls[1][0].provider_group).toBeTruthy();
     // 自定义供应商卡：仍走表单（含 Key）
     fireEvent.click(screen.getByText("添加供应商"));
-    fireEvent.click(within(screen.getByTestId("provider-picker")).getByText("创建自定义供应商")); screen.debug(undefined, 40000);
+    fireEvent.click(within(screen.getByTestId("provider-picker")).getByText("创建自定义供应商"));
     const fixtureKey = "vitest-" + crypto.randomUUID().slice(0, 12);
     await waitFor(() => expect(screen.getByLabelText("名称")).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "glm-backup" } });
