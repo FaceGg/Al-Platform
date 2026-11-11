@@ -686,7 +686,7 @@ fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失�
 
 - 背景：r17（2026-10-20）发布后主线累计 498 个提交（智能体全链、治理安全批次九~十四、知识中心大修、trivy 豁免合同化、复验日修复等，迁移 head 推进至 `20261107_97`）；用户要求更新文档重新打包。
 - 发布记录（2026-11-11）：安装包 `output/linkraft-ubuntu-20261111-r18.tar.gz`（13,346,742 字节），manifest 绑定 HEAD `80bd8eea`（= tag = 门禁分支 `release/r18` HEAD；README r18 文档提交），SHA-256 `118f4cd21208884a2367b48a9f320f034e1a35350ec0f9c6e151a613c0278828`，`sha256sum -c` 通过；`.git/` 内 LF 临时副本执行打包。体积由 r17 的 3.26MB 增至 13.3MB 为自托管 CJK 字体（数百个 woff2 unicode-range 分片）等 1410 个文件的合法增长，无失控大文件（最大单文件 910KB）。归档抽查：迁移 `20261019_72`+`20261107_97`、LoopConfigModal 渲染循环修复、NUMBA_CACHE_DIR、r18 文档引用逐项在包；排除项干净（无 `.env`/secrets/数据库/wheelhouse/node_modules/.git）；packaging 脚本 0 CR（WSL 原生工具复核；README-UBUNTU.md 的 CRLF 属文档既有惯例）。
-- 质量门禁：在门禁分支 `release/r18` 隔离并发组验证，终验 run 回填；绿后 tag `80bd8eea` 发 GitHub Release `20261111-r18`（资产 = tar.gz + sha256）。
+- 质量门禁：在门禁分支 `release/r18` 隔离并发组验证。首跑（run 42962800217）Production ×2 全绿，两平台 Quality 挂三个模块：`test_showcase_agent_template`（独立子进程运行时算子注册表为空，`OperatorRegistry.get` 返回 None——补 `import app.operators` 触发注册，`0dfc1204`）；`test_evidence_manifest`/`test_week11_12_tools`（迁移头硬编码 `20261015_71` 未随 `20261019_72` 推进——evidence_manifest MIGRATION_HEAD、upgrade_fixture EXPECTED_HEAD、run_upgrade_fixture.sh --target 三处同步，`41d1c74`）。二跑终验（run 回填）；绿后 tag 当前 HEAD 发 GitHub Release `20261111-r18`（资产 = tar.gz + sha256）。
 
 ## 2026-11-11 智能体向导两项需求：逐步确认默认化+知识源多选 + 评审升级轮内续训+轮数耗尽实况采纳
 
