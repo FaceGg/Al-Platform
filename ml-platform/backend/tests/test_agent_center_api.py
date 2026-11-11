@@ -513,9 +513,13 @@ class TestDeleteAgentRun(AgentCenterHarness, unittest.TestCase):
         guidance = UserGuidance.model_validate({
             "use_platform_experience": True,
             "knowledge_base_ids": ["11111111-1111-1111-1111-111111111111"],
+            "experience_top_k": 4,
+            "experience_min_confidence": 0.85,
+            "experience_entry_ids": ["22222222-2222-2222-2222-222222222222"],
         })
-        self.assertTrue(guidance.use_platform_experience)
-        self.assertEqual(len(guidance.knowledge_base_ids), 1)
+        self.assertEqual(guidance.experience_top_k, 4)
+        self.assertEqual(guidance.experience_min_confidence, 0.85)
+        self.assertEqual(len(guidance.experience_entry_ids), 1)
 
         from app.models.knowledge import Chunk, Document, KnowledgeBase
 
@@ -543,6 +547,54 @@ class TestDeleteAgentRun(AgentCenterHarness, unittest.TestCase):
             # 坏 id / 未知 id 静默跳过
             self.assertEqual(AgentRunner._kb_references(runner_stub, ["not-a-uuid"]), [])
             self.assertEqual(AgentRunner._kb_references(runner_stub, [str(uuid4())]), [])
+
+    def test_l2_references_honors_params_and_entry_ids(self):
+        """L2 注入参数化：min_confidence/top_k 进检索；entry_ids 按勾选注入
+        （仍校验 active+置信度，跳过检索 top-k）。"""
+        from types import SimpleNamespace
+
+        from app.models.experience_entry import ExperienceEntry
+        from app.services.agent.runner import AgentRunner
+
+        with SessionLocal() as db:
+            rows = []
+            for confidence, situation in ((0.9, "高置信条目"), (0.5, "低置信条目")):
+                entry = ExperienceEntry(
+                    domain="cross-domain", situation=situation, lesson=situation,
+                    action="drop", confidence=confidence, origin="human",
+                    status="active",
+                )
+                db.add(entry)
+                rows.append(entry)
+            db.commit()
+            high_id, low_id = str(rows[0].id), str(rows[1].id)
+
+            def _stub(guidance):
+                return SimpleNamespace(
+                    db=db, memory={}, guidance=guidance, _last_domain=None,
+                    run=SimpleNamespace(target_column="fault", project_id=None),
+                    frame=None, _kb_query=lambda: "q",
+                )
+
+            # 按勾选注入：只取勾选的高置信条目
+            stub = _stub({"experience_entry_ids": [high_id],
+                          "experience_min_confidence": 0.8})
+            refs = AgentRunner._l2_references(stub)
+            self.assertEqual(len(refs), 1)
+            self.assertEqual(refs[0]["situation"], "高置信条目")
+            # 勾选了低置信条目但阈值 0.8 → 被校验拦下（空）
+            stub = _stub({"experience_entry_ids": [low_id],
+                          "experience_min_confidence": 0.8})
+            self.assertEqual(AgentRunner._l2_references(stub), [])
+            # 检索路径：min_confidence=0.85 → 只回高置信条目
+            stub = _stub({"experience_top_k": 3, "experience_min_confidence": 0.85})
+            refs = AgentRunner._l2_references(stub)
+            self.assertEqual([r["situation"] for r in refs], ["高置信条目"])
+            # 检索路径：min_confidence 放宽 0.5 → 两条都回（top_k 上限内）
+            stub = _stub({"experience_top_k": 5, "experience_min_confidence": 0.5})
+            self.assertEqual(len(AgentRunner._l2_references(stub)), 2)
+            db.query(ExperienceEntry).delete()
+            db.commit()
 
 
 if __name__ == "__main__":

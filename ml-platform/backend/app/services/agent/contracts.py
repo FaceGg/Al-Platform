@@ -144,6 +144,11 @@ class UserGuidance(BaseModel):
     # 知识中心知识库按用户多选检索相关块进 S1。检索失败静默降级。
     use_platform_experience: bool = Field(default=True)
     knowledge_base_ids: list[str] = Field(default_factory=list)
+    # 平台经验注入参数（向导可配）：注入条数与最低置信度；entry_ids 非空时
+    # 按用户勾选的具体条目注入（跳过检索 top-k，仍校验 active+置信度）。
+    experience_top_k: int = Field(default=5, ge=3, le=5)
+    experience_min_confidence: float = Field(default=0.80, ge=0.80, le=1.00)
+    experience_entry_ids: list[str] = Field(default_factory=list)
 
     def is_empty(self) -> bool:
         return not (

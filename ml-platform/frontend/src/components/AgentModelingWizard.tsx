@@ -83,11 +83,24 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   const [profiles, setProfiles] = useState<ProfileOption[]>([]);
   const [llmProfileId, setLlmProfileId] = useState("");
   const [stepByStep] = useState(true);
-  // 知识源（S1 注入）：平台经验默认开；知识库按多选；两者随 guidance 提交
+  // 知识源（S1 注入）：平台经验默认开（参数可配+条目可勾选）；知识库按多选
   const [useExperience, setUseExperience] = useState(true);
   const [kbIds, setKbIds] = useState<string[]>([]);
   const [kbOptions, setKbOptions] = useState<{ id: string; name: string; document_count: number }[]>([]);
-  const [experienceTop, setExperienceTop] = useState<{ id: string; situation: string; lesson: string; confidence: number }[]>([]);
+  const [experienceAll, setExperienceAll] = useState<{ id: string; situation: string; lesson: string; confidence: number }[]>([]);
+  const [expTopK, setExpTopK] = useState(5);
+  const [expMinConf, setExpMinConf] = useState(0.80);
+  const [expSelected, setExpSelected] = useState<string[]>([]);
+  // 候选 = active + 置信度≥阈值，按置信度降序取前 topK；候选变化时默认全选
+  const experienceCandidates = useMemo(() => (
+    experienceAll
+      .filter((e) => Number(e.confidence) >= expMinConf)
+      .sort((a, b) => Number(b.confidence) - Number(a.confidence))
+      .slice(0, expTopK)
+  ), [experienceAll, expMinConf, expTopK]);
+  useEffect(() => {
+    setExpSelected(experienceCandidates.map((e) => e.id));
+  }, [experienceCandidates]);
   // 全量数据训练（真实实验合同，默认开）：关=超大数据集保护性抽样上限
   const [fullData, setFullData] = useState(true);
 
@@ -188,23 +201,26 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
     listDatasets(projectId).then((items) => setDatasets(Array.isArray(items) ? items : [])).catch(() => setDatasets([]));
   }, [projectId]);
 
-  // 知识源：平台经验精简预览（active + 置信度≥0.70，注入时取 top-5）与知识库清单
+  // 知识源：平台经验全量 active 清单（候选按阈值/topK 前端过滤）与知识库清单
   useEffect(() => {
     let cancelled = false;
     apiClient.get("/knowledge-center/experience", { params: { status: "active" } })
       .then((r) => {
         if (cancelled) return;
         const entries = Array.isArray(r.data) ? r.data : [];
-        setExperienceTop(entries
-          .filter((e: { confidence: number }) => Number(e.confidence) >= 0.7)
-          .slice(0, 5)
-          .map((e: { id: string; situation: string; lesson: string; confidence: number }) => ({
-            id: e.id, situation: e.situation, lesson: e.lesson, confidence: e.confidence,
-          })));
+        setExperienceAll(entries.map((e: { id: string; situation: string; lesson: string; confidence: number }) => ({
+          id: e.id, situation: e.situation, lesson: e.lesson, confidence: e.confidence,
+        })));
       })
-      .catch(() => { if (!cancelled) setExperienceTop([]); });
+      .catch(() => { if (!cancelled) setExperienceAll([]); });
     apiClient.get("/knowledge/bases")
-      .then((r) => { if (!cancelled) setKbOptions((Array.isArray(r.data) ? r.data : []).slice(0, 12)); })
+      .then((r) => {
+        if (cancelled) return;
+        // 排除「平台经验（系统分区）」：与上方平台经验注入重复
+        const bases = (Array.isArray(r.data) ? r.data : [])
+          .filter((b: { name: string }) => b.name !== "平台经验（系统分区）");
+        setKbOptions(bases.slice(0, 12));
+      })
       .catch(() => { if (!cancelled) setKbOptions([]); });
     return () => { cancelled = true; };
   }, []);
@@ -355,6 +371,9 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           auto_servitize: servitize,
           use_platform_experience: useExperience,
           knowledge_base_ids: kbIds,
+          experience_top_k: expTopK,
+          experience_min_confidence: expMinConf,
+          experience_entry_ids: expSelected,
         },
       });
       setSearchParams({ tab: "tasks" }, { replace: true });
@@ -406,9 +425,6 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
             ))}
           </select>
         </label>
-        <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--v2-sub)" }}>
-          {zh ? "逐步确认：默认开启，每阶段完成暂停待确认" : "Step-by-step: on by default, pauses after each stage"}
-        </span>
       </div>
 
       {/* 步骤条 */}
@@ -515,19 +531,48 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
               <input type="checkbox" aria-label={zh ? "注入平台经验" : "inject platform experience"}
                 checked={useExperience}
                 onChange={(e) => setUseExperience(e.target.checked)} />
-              {zh ? "平台经验（默认注入：按域+跨域检索 top-5，置信度 ≥0.70，任务终态自动回写调分）" : "Platform experience (on by default: domain+cross-domain top-5)"}
+              {zh ? "平台经验" : "Platform experience"}
             </label>
             {useExperience ? (
-              <div style={{ margin: "8px 0 4px 24px", display: "flex", flexDirection: "column", gap: 4 }}>
-                {experienceTop.length === 0 ? (
-                  <span style={{ fontSize: 12, color: "var(--v2-sub)" }}>{zh ? "暂无可注入的平台经验（知识中心 → 平台经验维护）" : "no injectable experience entries"}</span>
-                ) : experienceTop.map((item) => (
-                  <div key={item.id} style={{ fontSize: 12, color: "var(--v2-sub)" }}>
-                    <span style={{ color: "var(--v2-dim)" }}>[{item.situation}]</span> → {item.lesson}
-                    <span style={{ color: "var(--v2-dim)" }}>（置信度 {Number(item.confidence).toFixed(2)}）</span>
-                  </div>
-                ))}
-              </div>
+              <>
+                <div style={{ display: "flex", alignItems: "center", gap: 16, margin: "8px 0 4px 24px", fontSize: 12.5, flexWrap: "wrap" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    {zh ? "注入条数" : "top-k"}
+                    <select className="v2-select" style={{ width: 76 }} aria-label={zh ? "经验注入条数" : "experience top-k"}
+                      value={expTopK}
+                      onChange={(e) => setExpTopK(Number(e.target.value))}>
+                      <option value={3}>3</option>
+                      <option value={4}>4</option>
+                      <option value={5}>5</option>
+                    </select>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    {zh ? "最低置信度" : "min confidence"}
+                    <input type="number" className="v2-select" style={{ width: 90 }} aria-label={zh ? "经验最低置信度" : "experience min confidence"}
+                      min={0.80} max={1.00} step={0.05}
+                      value={expMinConf}
+                      onChange={(e) => {
+                        const v = Math.min(1, Math.max(0.8, Number(e.target.value) || 0.8));
+                        setExpMinConf(Math.round(v * 100) / 100);
+                      }} />
+                  </label>
+                </div>
+                <div style={{ margin: "4px 0 4px 24px", display: "flex", flexDirection: "column", gap: 4 }}>
+                  {experienceCandidates.length === 0 ? (
+                    <span style={{ fontSize: 12, color: "var(--v2-sub)" }}>{zh ? "暂无可注入的平台经验（调整阈值或到知识中心 → 平台经验维护）" : "no injectable experience entries"}</span>
+                  ) : experienceCandidates.map((item) => (
+                    <label key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--v2-sub)", cursor: "pointer" }}>
+                      <input type="checkbox" aria-label={`exp ${item.situation}`}
+                        checked={expSelected.includes(item.id)}
+                        onChange={(e) => setExpSelected((cur) => (e.target.checked ? [...cur, item.id] : cur.filter((x) => x !== item.id)))} />
+                      <span>
+                        <span style={{ color: "var(--v2-dim)" }}>[{item.situation}]</span> → {item.lesson}
+                        <span style={{ color: "var(--v2-dim)" }}>（置信度 {Number(item.confidence).toFixed(2)}）</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </>
             ) : null}
             <div style={{ marginTop: 8, fontSize: 12.5, color: "var(--v2-sub)" }}>
               {zh ? "知识中心知识库（可多选，检索相关段落进 S1）：" : "Knowledge bases (multi-select):"}

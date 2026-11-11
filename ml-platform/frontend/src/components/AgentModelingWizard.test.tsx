@@ -290,9 +290,9 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });
     fireEvent.change(await screen.findByLabelText("选择数据集"), { target: { value: "d1" } });
     await waitFor(() => expect(screen.getByLabelText("选择目标列").querySelectorAll("option").length).toBeGreaterThan(1));
-    // 逐步确认开关已退役：默认开启，配置条只剩说明文案
+    // 逐步确认开关已退役（默认开启，无 UI 字样）
     expect(screen.queryByRole("switch", { name: "逐步确认模式" })).not.toBeInTheDocument();
-    expect(screen.getByText(/逐步确认：默认开启/)).toBeInTheDocument();
+    expect(screen.queryByText(/逐步确认：默认开启/)).not.toBeInTheDocument();
     for (let i = 0; i < 4; i += 1) {
       fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     }
@@ -302,7 +302,7 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     expect(await screen.findByText(/已开启逐步确认/)).toBeInTheDocument();
   });
 
-  it("sends knowledge sources (experience toggle + kb multiselect) in guidance", async () => {
+  it("sends knowledge sources (params + entry checkboxes + kb multiselect) in guidance", async () => {
     clientGet.mockImplementation((url: string) => {
       if (url === "/projects") return Promise.resolve({ data: { items: [{ id: "p1", name: "拧紧" }] } });
       if (url === "/llm-profiles") {
@@ -311,11 +311,12 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
       if (url === "/knowledge-center/experience") {
         return Promise.resolve({ data: [
           { id: "e1", situation: "拧紧曲线漂移", lesson: "先剔工装标识列", action: "drop", confidence: 0.9, status: "active" },
-          { id: "e2", situation: "低置信", lesson: "x", action: "y", confidence: 0.5, status: "active" },
+          { id: "e2", situation: "历史遗留样例", lesson: "不应出现在候选里", action: "y", confidence: 0.5, status: "active" },
         ] });
       }
       if (url === "/knowledge/bases") {
         return Promise.resolve({ data: [
+          { id: "sys-kb", name: "平台经验（系统分区）", document_count: 9 },
           { id: "kb1", name: "点焊工艺手册", document_count: 3 },
           { id: "kb2", name: "质量标准", document_count: 1 },
         ] });
@@ -323,13 +324,22 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
       return Promise.resolve({ data: {} });
     });
     renderWizard();
-    // 经验精简展示：只显示置信度 ≥0.70 的条目
+    // 经验精简展示：只显示置信度 ≥0.80（默认阈值）的条目，且带勾选框
     expect(await screen.findByText(/先剔工装标识列/)).toBeInTheDocument();
-    expect(screen.queryByText(/低置信/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/不应出现在候选里/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("exp 拧紧曲线漂移")).toBeChecked();
+    // 知识库列表排除「平台经验（系统分区）」（与上方平台经验注入重复）
+    expect(screen.queryByLabelText("kb 平台经验（系统分区）")).not.toBeInTheDocument();
     fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });
     fireEvent.change(await screen.findByLabelText("选择数据集"), { target: { value: "d1" } });
     await waitFor(() => expect(screen.getByLabelText("选择目标列").querySelectorAll("option").length).toBeGreaterThan(1));
     fireEvent.click(screen.getByLabelText("kb 点焊工艺手册"));
+    // 取消勾选经验条目 → 提交的 entry_ids 同步变化
+    fireEvent.click(screen.getByLabelText("exp 拧紧曲线漂移"));
+    fireEvent.click(screen.getByLabelText("exp 拧紧曲线漂移"));
+    // 调整注入条数与置信度阈值
+    fireEvent.change(screen.getByLabelText("经验注入条数"), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("经验最低置信度"), { target: { value: "0.85" } });
     for (let i = 0; i < 4; i += 1) {
       fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     }
@@ -338,6 +348,9 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     const payload = agentCenterMocks.createAgentRun.mock.calls[0][0];
     expect(payload.guidance.use_platform_experience).toBe(true);
     expect(payload.guidance.knowledge_base_ids).toEqual(["kb1"]);
+    expect(payload.guidance.experience_top_k).toBe(3);
+    expect(payload.guidance.experience_min_confidence).toBe(0.85);
+    expect(payload.guidance.experience_entry_ids).toEqual(["e1"]);
   });
 
   it("surfaces contract validation errors inline", async () => {

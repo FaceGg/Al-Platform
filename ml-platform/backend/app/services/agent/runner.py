@@ -279,18 +279,42 @@ class AgentRunner:
             return None
 
     def _l2_references(self) -> list[dict]:
-        """§10.4 任务启动/S1 注入：检索 L2 top-k active 经验（独立引述块）。
-        检索失败静默降级为空——经验注入是增益，不是依赖。"""
+        """§10.4 任务启动/S1 注入：检索 L2 经验（独立引述块）。
+
+        向导可配注入参数（top_k/最低置信度）；勾选了具体条目（entry_ids）
+        则按勾选注入（跳过检索 top-k，仍校验 active+置信度）。检索失败
+        静默降级为空——经验注入是增益，不是依赖。"""
+        from app.models.experience_entry import ExperienceEntry
         from app.services.agent.experience import retrieve_for_task
 
+        guidance = self.guidance if isinstance(self.guidance, dict) else {}
+        top_k = max(3, min(5, int(guidance.get("experience_top_k") or 5)))
+        min_conf = guidance.get("experience_min_confidence")
+        min_conf = float(min_conf) if min_conf is not None else None
+        entry_ids = list(guidance.get("experience_entry_ids") or [])
         try:
-            entries = retrieve_for_task(
-                self.db,
-                domain=getattr(self, "_last_domain", None) or "cross-domain",
-                profile_fingerprint={},
-                top_k=5,
-                project_id=getattr(self.run, "project_id", None),
-            )
+            if entry_ids:
+                entries = []
+                for raw in entry_ids[:10]:
+                    try:
+                        entry = self.db.get(ExperienceEntry, uuid.UUID(str(raw)))
+                    except (TypeError, ValueError):
+                        continue
+                    if (
+                        entry is not None
+                        and entry.status == "active"
+                        and float(entry.confidence) >= (min_conf if min_conf is not None else 0.0)
+                    ):
+                        entries.append(entry)
+            else:
+                entries = retrieve_for_task(
+                    self.db,
+                    domain=getattr(self, "_last_domain", None) or "cross-domain",
+                    profile_fingerprint={},
+                    top_k=top_k,
+                    project_id=getattr(self.run, "project_id", None),
+                    min_confidence=min_conf,
+                )
         except Exception:  # noqa: BLE001 - 经验库故障不应阻断建模
             return []
         # 全量 id 落档案（跨轮取并集）：任务终态时据此回写经验成败（结果反馈调分）。

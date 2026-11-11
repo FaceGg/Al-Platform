@@ -98,21 +98,23 @@ def retrieve_for_task(
     profile_fingerprint: dict,
     top_k: int = 5,
     project_id: UUID | None = None,
+    min_confidence: float | None = None,
 ) -> list[ExperienceEntry]:
     """Top-k injectable entries for a new task's S1.
 
     Active entries matching the domain (plus cross-domain) with
-    ``confidence >= 0.70``, ranked by confidence then hit count. Shadow
-    entries are NOT returned but their hit count increments (the cooldown
-    counter); the fingerprint parameter is reserved for vector similarity in
-    the knowledge-center milestone (P6).
+    ``confidence >= min_confidence or 0.70``, ranked by confidence then hit
+    count. Shadow entries are NOT returned but their hit count increments (the
+    cooldown counter); the fingerprint parameter is reserved for vector
+    similarity in the knowledge-center milestone (P6).
     """
+    threshold = float(min_confidence) if min_confidence is not None else MIN_INJECT_CONFIDENCE
     db.flush()  # sessions run with autoflush off — see the caller's pending state
     candidates = (
         db.query(ExperienceEntry)
         .filter(
             ExperienceEntry.status == "active",
-            ExperienceEntry.confidence >= MIN_INJECT_CONFIDENCE,
+            ExperienceEntry.confidence >= threshold,
             ExperienceEntry.domain.in_([domain, "cross-domain"]),
         )
         .order_by(
@@ -134,7 +136,7 @@ def retrieve_for_task(
         db.query(ExperienceEntry)
         .filter(
             ExperienceEntry.status == "shadow",
-            ExperienceEntry.confidence >= MIN_INJECT_CONFIDENCE,
+            ExperienceEntry.confidence >= threshold,
             ExperienceEntry.domain.in_([domain, "cross-domain"]),
         )
         .all()

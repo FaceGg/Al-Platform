@@ -114,6 +114,9 @@ export interface AgentRunCreatePayload {
     auto_servitize?: boolean;
     use_platform_experience?: boolean;
     knowledge_base_ids?: string[];
+    experience_top_k?: number;
+    experience_min_confidence?: number;
+    experience_entry_ids?: string[];
   };
 }
 
