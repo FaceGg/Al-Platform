@@ -18,15 +18,23 @@ class TestAutoMLCatalog(unittest.TestCase):
         self.assertEqual(AUTOML_FAMILY_IDS, (
             "lightgbm", "xgboost", "catboost", "gbdt",
             "random_forest", "extra_trees", "hist_gradient_boosting", "mlp",
+            "iforest", "ocsvm",
         ))
-        self.assertEqual(len(list_algorithm_families()), 8)
-        self.assertEqual(len(set(AUTOML_FAMILY_IDS)), 8)
+        self.assertEqual(len(list_algorithm_families()), 10)
+        self.assertEqual(len(set(AUTOML_FAMILY_IDS)), 10)
 
     def test_every_family_defines_both_tasks_and_resource(self):
         for family in list_algorithm_families():
             self.assertTrue(family.grid)
             self.assertTrue(family.search_space)
             self.assertIn(family.resource_parameter, family.search_space)
+            if family.supported_tasks == ("anomaly_detection",):
+                # 无监督族只对 anomaly_detection 构建（范式互斥），输出
+                # fit/predict 双能力（无 predict_proba）。
+                detector = family.build("anomaly_detection", family.default_params)
+                self.assertTrue(callable(getattr(detector, "fit", None)))
+                self.assertTrue(callable(getattr(detector, "predict", None)))
+                continue
             classifier = family.build("classification", family.default_params)
             regressor = family.build("regression", family.default_params)
             self.assertTrue(callable(getattr(classifier, "fit", None)))

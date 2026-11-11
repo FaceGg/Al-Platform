@@ -30,7 +30,7 @@ from app.models.user import User
 from app.services.automl_execution import (
     AutoMLCandidate,
     AutoMLDependencies,
-    _build_multioutput_trial_specs,
+    _build_trial_specs,
     _aggregate_fold_classification_metrics,
     _rank_multioutput_trials,
     execute_automl_job,
@@ -761,7 +761,7 @@ class TestAutoMLTracking(unittest.TestCase):
     def test_grid_trial_specs_use_cartesian_parameter_combinations(self):
         from app.services.automl_catalog import resolve_algorithm_families
         family = resolve_algorithm_families(["random_forest"])[0]
-        specs = _build_multioutput_trial_specs((family,), method="grid", max_trials=200, search_strength="medium")
+        specs = _build_trial_specs((family,), method="grid", max_trials=200, search_strength="medium")
         expected = 1
         for values in family.grid.values():
             expected *= len(values)
@@ -770,7 +770,7 @@ class TestAutoMLTracking(unittest.TestCase):
 
     def test_grid_trial_specs_give_each_requested_family_a_trial(self):
         from app.services.automl_catalog import resolve_algorithm_families
-        specs = _build_multioutput_trial_specs(
+        specs = _build_trial_specs(
             resolve_algorithm_families(["random_forest", "extra_trees"]),
             method="grid", max_trials=2, search_strength="medium",
         )
@@ -781,7 +781,7 @@ class TestAutoMLTracking(unittest.TestCase):
 
         family = resolve_algorithm_families(["random_forest"])[0]
         for method in ("random", "bayesian", "evolutionary", "multi_fidelity"):
-            specs = _build_multioutput_trial_specs(
+            specs = _build_trial_specs(
                 (family,), method=method, max_trials=4, search_strength="medium",
             )
             params = [tuple(sorted(values.items())) for _family, values in specs]
@@ -834,7 +834,7 @@ class TestAutoMLTracking(unittest.TestCase):
         from app.services.automl_catalog import resolve_algorithm_families
 
         with self.assertRaises(ValueError):
-            _build_multioutput_trial_specs(
+            _build_trial_specs(
                 resolve_algorithm_families(["random_forest", "extra_trees"]),
                 method="grid", max_trials=1, search_strength="medium",
             )

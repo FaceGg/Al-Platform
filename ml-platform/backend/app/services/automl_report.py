@@ -282,6 +282,31 @@ def generate_automl_report(
     if not job.model_artifact_id or not job.dataset_artifact_id:
         raise AutoMLReportError("AUTOML_REPORT_SOURCE_UNAVAILABLE", "任务缺少模型或数据集制品")
     params = dict(job.params or {})
+    if str(params.get("task") or (job.automl_contract or {}).get("task_type") or "") == "anomaly_detection":
+        # 无监督报告快照：合成基准评估证据（门禁/三类检出率/分数直方图），
+        # 不走监督报告的推理/重要性/聚类路径（技术方案 §3.3 第二层）。
+        evaluation = dict(metrics.get("evaluation") or {})
+        preview = {
+            "overview": {
+                "task": job.name,
+                "rows": None,
+                "features": len((metrics.get("input_contract") or {}).get("input_columns") or []),
+                "best_model": metrics.get("best_candidate"),
+                "paradigm": "unsupervised",
+                "cv_strategy": "synthetic_benchmark",
+            },
+            "selection": _report_results(metrics.get("all_results") or metrics.get("algorithm_results")),
+            "evaluation": evaluation,
+        }
+        manifest = {
+            "fingerprint": fingerprint,
+            "artifacts": {},
+            "preview": preview,
+            "report_version": "anomaly-1",
+        }
+        job.metrics = {**metrics, "automl_report": manifest}
+        db.commit()
+        return manifest
     with artifact_service.materialize(job.dataset_artifact_id, job.project_id, expected_type="dataset") as dataset_path:
         frame = read_automl_dataset(dataset_path)
     with artifact_service.materialize(job.model_artifact_id, job.project_id, expected_type="model") as model_path:

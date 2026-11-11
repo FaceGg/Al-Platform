@@ -17,7 +17,12 @@ from sklearn.ensemble import (
 )
 
 
-TaskType = Literal["classification", "multioutput_classification", "regression", "multioutput_regression"]
+TaskType = Literal["classification", "multioutput_classification", "regression", "multioutput_regression", "anomaly_detection"]
+
+# 算法族×任务类型白名单（技术方案 §2.1：算法目录层互斥）。
+# 未声明 supported_tasks 的家族默认只服务监督任务；无监督家族
+# （iforest/ocsvm）只注册在 anomaly_detection，监督任务白名单天然不出现。
+SUPERVISED_TASK_TYPES = ("classification", "multioutput_classification", "regression", "multioutput_regression")
 
 
 class AlgorithmUnavailable(RuntimeError):
@@ -51,10 +56,14 @@ class AlgorithmFamily:
     min_resource: int
     max_resource: int
     builder: Callable[[TaskType, Mapping[str, object]], object]
+    supported_tasks: tuple[str, ...] | None = None
 
     def build(self, task: TaskType, params: Mapping[str, object]):
-        if task not in {"classification", "multioutput_classification", "regression", "multioutput_regression"}:
+        allowed = self.supported_tasks if self.supported_tasks is not None else SUPERVISED_TASK_TYPES
+        if task not in allowed:
             raise ValueError("AUTOML_SEARCH_CONFIG_INVALID")
+        if task == "anomaly_detection":
+            return self.builder(task, MappingProxyType(dict(params)))
         base_task = "classification" if "classification" in task else "regression"
         return self.builder(base_task, MappingProxyType(dict(params)))
 
@@ -155,6 +164,49 @@ def _hist_gradient_boosting_builder(task: TaskType, params: Mapping[str, object]
     return estimator(random_state=42, **dict(params))
 
 
+def _anomaly_pipeline(detector) -> "Pipeline":
+    """无监督管线强制结构：Imputer → StandardScaler → 检测器（缺一不可用）。
+
+    Scaler 必须在 Pipeline 内（训练/推理/ONNX 一体，杜绝预处理漂移），
+    median 插补保证推理侧 NaN 行可用（与监督管线包装同一先例）。
+    """
+    from sklearn.impute import SimpleImputer
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    return Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("scaler", StandardScaler()),
+        ("detector", detector),
+    ])
+
+
+def _iforest_builder(task: TaskType, params: Mapping[str, object]):
+    """IsolationForest：主力基线（快、稳、高维友好）。
+
+    contamination="auto"：引擎层面由 ThresholdPolicy 以合同 contamination
+    分位数持久化判定阈值，不在模型 offset 语义上重复定义。
+    """
+    from sklearn.ensemble import IsolationForest
+
+    normalized = dict(params)
+    normalized.setdefault("contamination", "auto")
+    normalized.setdefault("n_estimators", 200)
+    normalized.setdefault("max_samples", 256)
+    normalized["n_estimators"] = int(normalized["n_estimators"])
+    return _anomaly_pipeline(IsolationForest(random_state=42, n_jobs=1, **normalized))
+
+
+def _ocsvm_builder(task: TaskType, params: Mapping[str, object]):
+    """OneClassSVM：小特征集高精度；>2 万行由执行层降采样（沿用 UMAP 路径策略）。"""
+    from sklearn.svm import OneClassSVM
+
+    normalized = dict(params)
+    if "nu" in normalized:
+        normalized["nu"] = float(normalized["nu"])
+    return _anomaly_pipeline(OneClassSVM(**normalized))
+
+
 def _family(
     family_id: str,
     display_name: str,
@@ -165,6 +217,7 @@ def _family(
     min_resource: int,
     max_resource: int,
     builder: Callable[[TaskType, Mapping[str, object]], object],
+    supported_tasks: tuple[str, ...] | None = None,
 ) -> AlgorithmFamily:
     return AlgorithmFamily(
         id=family_id,
@@ -176,6 +229,7 @@ def _family(
         min_resource=min_resource,
         max_resource=max_resource,
         builder=builder,
+        supported_tasks=supported_tasks,
     )
 
 
@@ -285,6 +339,34 @@ _FAMILIES = (
         },
         "max_iter", 80, 600, _mlp_builder,
     ),
+    # 无监督异常检测两族（M1）：仅注册在 anomaly_detection，
+    # 监督任务经 resolve_algorithm_families(task=...) 过滤后不可见。
+    _family(
+        "iforest", "IsolationForest 隔离森林",
+        {"n_estimators": 200, "max_samples": 256},
+        {"n_estimators": (100, 200, 400), "max_samples": (256, 512)},
+        {
+            "n_estimators": ParameterSpec("int", low=100, high=400, step=20),
+            "max_samples": ParameterSpec("categorical", choices=(256, 512, 1024)),
+        },
+        "n_estimators", 100, 400, _iforest_builder,
+        supported_tasks=("anomaly_detection",),
+    ),
+    _family(
+        # 注意：resource_parameter 声明为 nu 仅为满足目录合同；nu 是 float 且
+        # 多保真 rung 机制（int-only）与 OC-SVM 不匹配，执行层 anomaly 分支的
+        # method 白名单排除 multi_fidelity（技术方案 §4.5 预案同源）。
+        "ocsvm", "One-Class SVM 单类支持向量机",
+        {"nu": 0.05, "kernel": "rbf", "gamma": "scale"},
+        {"nu": (0.01, 0.05, 0.1), "kernel": ("rbf",), "gamma": ("scale",)},
+        {
+            "nu": ParameterSpec("float", low=0.01, high=0.2),
+            "kernel": ParameterSpec("categorical", choices=("rbf", "linear")),
+            "gamma": ParameterSpec("categorical", choices=("scale", "auto")),
+        },
+        "nu", 0.01, 0.2, _ocsvm_builder,
+        supported_tasks=("anomaly_detection",),
+    ),
 )
 
 AUTOML_FAMILY_IDS = tuple(family.id for family in _FAMILIES)
@@ -380,14 +462,26 @@ def list_algorithm_families() -> tuple[AlgorithmFamily, ...]:
 
 def resolve_algorithm_families(
     family_ids: list[str] | tuple[str, ...] | None,
+    *,
+    task: str | None = None,
 ) -> tuple[AlgorithmFamily, ...]:
     requested = tuple(family_ids or AUTOML_FAMILY_IDS)
     if len(requested) != len(set(requested)):
         raise ValueError("AUTOML_SEARCH_CONFIG_INVALID")
     try:
-        return tuple(_FAMILY_BY_ID[family_id] for family_id in requested)
+        families = tuple(_FAMILY_BY_ID[family_id] for family_id in requested)
     except KeyError as error:
         raise ValueError("AUTOML_SEARCH_CONFIG_INVALID") from error
+    if task is not None:
+        # 全族默认（family_ids 为空）时按任务过滤白名单，监督任务不携带
+        # 无监督族、无监督任务不携带监督族（否则 trial build 恒失败污染搜索记录）。
+        families = tuple(
+            family for family in families
+            if task in (family.supported_tasks or SUPERVISED_TASK_TYPES)
+        )
+        if not families:
+            raise ValueError("AUTOML_SEARCH_CONFIG_INVALID")
+    return families
 
 
 def get_algorithm_family(family_id: str) -> AlgorithmFamily:

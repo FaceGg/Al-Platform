@@ -845,6 +845,48 @@ describe("AutoMLPage", () => {
     expect(api.post.mock.calls[0][1]).not.toHaveProperty("target_column");
   });
 
+  it("submits an unsupervised anomaly detection task without any target column", async () => {
+    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    datasets.getDatasetPreview.mockResolvedValue({
+      columns: ["feature", "force", "label_a"],
+      dtypes: { feature: "float64", force: "float64", label_a: "int64" },
+      preview: [],
+    });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "任务类型" }));
+    fireEvent.click(await screen.findByText("异常检测（无监督）", { selector: ".ant-select-item-option-content" }));
+
+    // 范式互斥：目标列控件整体隐藏（非置灰），污染率参数出现
+    await waitFor(() => expect(screen.queryByRole("combobox", { name: "目标列" })).toBeNull());
+    expect(screen.getByRole("spinbutton", { name: "污染率" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/training/automl/run",
+      expect.objectContaining({
+        task: "anomaly_detection",
+        algorithm_ids: ["iforest", "ocsvm"],
+        contamination: 0.01,
+        cross_validation_enabled: false,
+        cross_validation_folds: null,
+      }),
+      expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) }),
+    ));
+    const payload = api.post.mock.calls[0][1];
+    expect(payload).not.toHaveProperty("target_column");
+    expect(payload).not.toHaveProperty("target_columns");
+  });
+
   it.skip("submits the selected input columns with the target column", async () => {
     api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);

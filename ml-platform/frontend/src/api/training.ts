@@ -4,7 +4,8 @@ export type AutoMLTaskType =
   | "classification"
   | "multioutput_classification"
   | "regression"
-  | "multioutput_regression";
+  | "multioutput_regression"
+  | "anomaly_detection";
 
 export type AutoMLSearchMethod = "grid" | "random" | "bayesian" | "evolutionary" | "multi_fidelity";
 export type AutoMLSearchStrength = "light" | "medium" | "high" | "ultra";
@@ -39,6 +40,14 @@ export type AutoMLRunPayload =
       task: "multioutput_classification" | "multioutput_regression";
       target_columns: [string, string, ...string[]];
       target_column?: never;
+    })
+  // 无监督异常检测：目标列必须为空（镜像互斥），无常规 CV（合成异常基准替代）
+  | (AutoMLRunPayloadBase & {
+      task: "anomaly_detection";
+      target_column?: never;
+      target_columns?: never;
+      /** 预期异常比例先验（宁低勿高），缺省 0.01，合法域 (0, 0.5] */
+      contamination?: number;
     });
 
 export interface TrainingJobCreate {

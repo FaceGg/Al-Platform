@@ -30,7 +30,7 @@ CANONICAL_SEARCH_TIME_BUDGETS = frozenset({1800, 3600, 7200, 14400})
 SEARCH_TIME_BUDGETS = frozenset({60, 300, 600}) | CANONICAL_SEARCH_TIME_BUDGETS
 SEARCH_STRENGTH_TRIALS = {"light": 10, "medium": 30, "high": 80, "ultra": 200}
 
-PERSISTED_TASK_TYPES = frozenset({"classification", "multioutput_classification", "regression", "multioutput_regression"})
+PERSISTED_TASK_TYPES = frozenset({"classification", "multioutput_classification", "regression", "multioutput_regression", "anomaly_detection"})
 TASK_TYPE_ALIASES = {"multilabel_classification": "multioutput_classification", "multiregression": "multioutput_regression"}
 
 
@@ -121,9 +121,23 @@ class AutoMLContract:
     input_columns: list[str] | None = None
     cross_validation_folds: int = 5
     random_seed: int = 42
+    contamination: float | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "task_type", normalize_task_type(self.task_type))
+        if self.task_type == "anomaly_detection":
+            # 无监督镜像互斥（技术方案 §2.1/§3.1）：target_columns 必须为空
+            # （传入即合同错误），特征列必填，无常规 CV（合成基准替代）。
+            from app.services.automl_anomaly import normalize_anomaly_contamination
+
+            if self.target_columns:
+                raise AutoMLContractError("anomaly detection tasks must not have target columns")
+            if self.input_columns is not None and not self.input_columns:
+                raise AutoMLContractError("anomaly detection tasks require numeric input columns")
+            if int(self.cross_validation_folds) != 0:
+                raise AutoMLContractError("anomaly detection tasks must not use cross validation")
+            object.__setattr__(self, "contamination", normalize_anomaly_contamination(self.contamination))
+            return
         if not 2 <= int(self.cross_validation_folds) <= 5:
             raise AutoMLContractError("cross_validation_folds must be between 2 and 5")
         if not self.target_columns or len(set(self.target_columns)) != len(self.target_columns):
@@ -170,6 +184,12 @@ class FeatureImportanceReport:
 
 def validate_target_columns(frame, task_type: str, target_columns: list[str]):
     task = normalize_task_type(task_type)
+    if task == "anomaly_detection":
+        # 无监督旁路（镜像互斥）：目标列传入即拒绝；特征列的数值性/
+        # 全 NaN/常数校验由执行层（_execute_anomaly_job）按方案 §3.1 承担。
+        if target_columns:
+            raise AutoMLContractError("anomaly detection tasks must not have target columns")
+        return True
     if len(set(target_columns)) != len(target_columns):
         raise AutoMLContractError("target columns must be unique")
     missing = [column for column in target_columns if column not in frame.columns]
@@ -203,6 +223,17 @@ def aggregate_feature_importance(per_target: dict[str, Sequence[float]], feature
 
 def rank_candidates(candidates: Sequence[CandidateSummary], task_type: str) -> list[CandidateSummary]:
     normalized_task = normalize_task_type(task_type)
+    if normalized_task == "anomaly_detection":
+        # 无监督口径（技术方案 §3.3）：synthetic_auc 主键、perturbation_recall
+        # 次键（最难形态敏感度）、stability 第三键、运行时长收尾。
+        # 字段映射：auc=synthetic_auc，macro_f1=perturbation_recall，
+        # accuracy=stability（候选记录装配时按此对齐）。
+        return sorted(candidates, key=lambda item: (
+            -(item.auc if item.auc is not None else -1),
+            -(item.macro_f1 if item.macro_f1 is not None else -1),
+            -(item.accuracy if item.accuracy is not None else -1),
+            item.runtime_s,
+        ))
     if "regression" in normalized_task:
         return sorted(candidates, key=lambda item: (
             -(item.r2 if item.r2 is not None else float("-inf")),
@@ -225,7 +256,12 @@ def run_automl_search(frame, contract: AutoMLContract) -> AutoMLExecutionResult:
     from sklearn.model_selection import KFold, StratifiedKFold, cross_val_predict
     features = frame[contract.input_columns or [c for c in frame.columns if c not in contract.target_columns]].select_dtypes(include=["number"])
     reports = {}
-    strategy = "iterative_stratified" if contract.task_type == "multioutput_classification" else ("stratified" if "classification" in contract.task_type else "kfold")
+    strategy = (
+        "synthetic_benchmark" if contract.task_type == "anomaly_detection"
+        else "iterative_stratified" if contract.task_type == "multioutput_classification"
+        else "stratified" if "classification" in contract.task_type
+        else "kfold"
+    )
     if contract.task_type == "multioutput_classification":
         # Build one shared fold assignment from the joint label distribution.
         splits = iterative_stratified_splits(

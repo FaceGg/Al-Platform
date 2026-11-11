@@ -36,7 +36,13 @@ export const AUTOML_ALGORITHM_OPTIONS = [
   { value: "hist_gradient_boosting", label: "HistGradientBoosting" },
   { value: "mlp", label: "MLP 神经网络" },
 ];
+// 无监督（异常检测）族：仅 anomaly_detection 任务可选（范式互斥）
+export const AUTOML_ANOMALY_ALGORITHM_OPTIONS = [
+  { value: "iforest", label: "IsolationForest 隔离森林" },
+  { value: "ocsvm", label: "One-Class SVM 单类支持向量机" },
+];
 export const AUTOML_ALGORITHM_IDS = AUTOML_ALGORITHM_OPTIONS.map(({ value }) => value);
+export const AUTOML_ANOMALY_ALGORITHM_IDS = AUTOML_ANOMALY_ALGORITHM_OPTIONS.map(({ value }) => value);
 
 // MLP 推荐默认（与拧紧质量感知报告一致）：adam / 0.001 / L2 1e-4 / 隐藏层 256-128-64。
 const MLP_DEFAULT_PARAMS = {
@@ -60,6 +66,7 @@ const AUTOML_TASK_OPTIONS = [
   { value: "multioutput_classification", label: "Multi-output Classification" },
   { value: "regression", label: "Regression" },
   { value: "multioutput_regression", label: "Multi-output Regression" },
+  { value: "anomaly_detection", label: "异常检测（无监督）" },
 ];
 
 const AUTOML_STRENGTH_OPTIONS: Array<{ value: AutoMLSearchStrength; label: string }> = [
@@ -150,6 +157,8 @@ export default function AutoMLPage() {
   const [inputColumns, setInputColumns] = useState<string[]>([]);
   const [targetColumns, setTargetColumns] = useState<string[]>([]);
   const [taskType, setTaskType] = useState<AutoMLTaskType>("classification");
+  // 无监督（异常检测）：预期异常比例先验，宁低勿高（缺省 1%，合法域 (0, 0.5]）
+  const [contamination, setContamination] = useState<number>(0.01);
   const [algorithmIds, setAlgorithmIds] = useState<string[]>(() => [...AUTOML_ALGORITHM_IDS]);
   const [mlpParams, setMlpParams] = useState<{ solver: "adam" | "lbfgs" | "sgd"; learning_rate_init: number; alpha: number; hidden_layers: string }>({ ...MLP_DEFAULT_PARAMS });
   // 默认关闭：全部 MLP 超参交给强度缩放后的自动搜索；开启后才按表单值固定
@@ -357,8 +366,15 @@ export default function AutoMLPage() {
   const features = results?.feature_importance || results?.features || {};
   const handleTaskTypeChange = (task: AutoMLTaskType) => {
     setTaskType(task);
-    if (!task.startsWith("multioutput") && targetColumns.length > 1) {
-      setTargetColumns(targetColumns.slice(0, 1));
+    if (task === "anomaly_detection") {
+      // 范式互斥：无监督无目标列，切换即清空（换范式=重选任务）
+      setTargetColumns([]);
+      setAlgorithmIds(AUTOML_ANOMALY_ALGORITHM_IDS);
+    } else {
+      if (!task.startsWith("multioutput") && targetColumns.length > 1) {
+        setTargetColumns(targetColumns.slice(0, 1));
+      }
+      setAlgorithmIds((ids) => ids.filter((id) => !AUTOML_ANOMALY_ALGORITHM_IDS.includes(id as never)));
     }
     setClassWeight(task.includes("classification"));
   };
@@ -448,8 +464,13 @@ export default function AutoMLPage() {
 
   const handleRun = async () => {
     const isMultiOutput = taskType.startsWith("multioutput");
-    if (!selectedProject || !selectedExperiment || !selectedDataset || !targetColumns.length || (isMultiOutput && targetColumns.length < 2) || inputColumns.length === 0) {
+    const isAnomaly = taskType === "anomaly_detection";
+    if (!selectedProject || !selectedExperiment || !selectedDataset || inputColumns.length === 0 || (!isAnomaly && !targetColumns.length) || (isMultiOutput && targetColumns.length < 2)) {
       message.warning((t.automl?.select_project || "Project") + " / " + (t.automl?.select_dataset || "Dataset") + " / " + (t.automl?.target || "Target"));
+      return;
+    }
+    if (isAnomaly && (!(contamination > 0) || contamination > 0.5)) {
+      message.warning("污染率（预期异常比例）必须在 (0, 0.5] 区间内，建议宁低勿高");
       return;
     }
     setRunning(true);
@@ -465,14 +486,24 @@ export default function AutoMLPage() {
         // 交给强度缩放后的自动搜索（否则默认值会钉死隐藏层/学习率/正则化，
         // 搜索强度只剩 max_iter 可变）。
         ...(algorithmIds.includes("mlp") && mlpCustomizeEnabled ? { algorithm_params: { mlp: mlpParams } } : {}),
-        search_method: searchMethod,
+        // 无监督不支持多保真（Hyperband int 资源 rung 与 OC-SVM 不匹配），降级随机搜索
+        search_method: isAnomaly && searchMethod === "multi_fidelity" ? "random" : searchMethod,
         time_budget: timeBudget,
         search_strength: searchStrength,
         class_weight: classWeight,
         cross_validation_enabled: crossValidationEnabled,
         cross_validation_folds: crossValidationEnabled ? crossValidationFolds : null,
       };
-      const payload: AutoMLRunPayload = isMultiOutput
+      const payload: AutoMLRunPayload = isAnomaly
+        ? {
+            ...payloadBase,
+            task: "anomaly_detection",
+            // 无监督：无目标列（镜像互斥）；引擎用合成异常基准替代常规 CV
+            cross_validation_enabled: false,
+            cross_validation_folds: null,
+            ...(contamination > 0 && contamination <= 0.5 ? { contamination } : {}),
+          }
+        : isMultiOutput
         ? {
             ...payloadBase,
             task: taskType as "multioutput_classification" | "multioutput_regression",
@@ -683,7 +714,7 @@ export default function AutoMLPage() {
   const resultColumns = [
     { title: t.knowledge?.name || "Name", dataIndex: "name", key: "name" },
     { title: t.automl?.score || "Score", dataIndex: "score", key: "score", render: (v: number) => v != null ? Number(v).toFixed(4) : "-" },
-    { title: "Task", dataIndex: "task_type", key: "task" },
+    { title: "Task", dataIndex: "task_type", key: "task", render: (value: string) => value === "anomaly_detection" ? "异常检测（无监督）" : value },
     {
       title: "Time",
       key: "time",
@@ -769,7 +800,14 @@ export default function AutoMLPage() {
               {t.training?.new_experiment || "New Experiment"}
             </Button>
           </Col>
-          <Col xs={24} sm={4}><Text strong>{t.automl?.target || "Target"}</Text>
+          <Col xs={24} sm={4}>{taskType === "anomaly_detection" ? (<>
+            <Text strong>污染率（预期异常比例）</Text>
+            <InputNumber aria-label="污染率" style={{ width: "100%", marginTop: 4 }}
+              min={0.001} max={0.5} step={0.005} value={contamination}
+              onChange={(value) => setContamination(Number(value) || 0.01)} />
+            <small style={{ display: "block", color: "rgba(0,0,0,0.45)" }}>宁低勿高，缺省 1%</small>
+          </>) : (<>
+            <Text strong>{t.automl?.target || "Target"}</Text>
             <Select
               aria-label="目标列"
               mode={taskType.startsWith("multioutput") ? "multiple" : undefined}
@@ -780,7 +818,7 @@ export default function AutoMLPage() {
               onChange={(columns: string[] | string) => setTargetColumns(Array.isArray(columns) ? columns : columns ? [columns] : [])}
               disabled={!selectedDataset}
               options={datasetColumns.map((column) => ({ value: column, label: column }))}
-            /></Col>
+            /></>)}</Col>
           <Col xs={24} sm={6}><Text strong>输入列</Text>
             <Select
               aria-label="输入列"
@@ -807,7 +845,7 @@ export default function AutoMLPage() {
               placeholder="默认全部算法"
               value={algorithmIds}
               onChange={setAlgorithmIds}
-              options={AUTOML_ALGORITHM_OPTIONS}
+              options={taskType === "anomaly_detection" ? AUTOML_ANOMALY_ALGORITHM_OPTIONS : AUTOML_ALGORITHM_OPTIONS}
             /></Col>
           {algorithmIds.includes("mlp") && <>
             <Col xs={12} sm={4}><Text strong>自定义 MLP 超参</Text>
@@ -843,7 +881,9 @@ export default function AutoMLPage() {
           </>}
           <Col xs={24} sm={4}><Text strong>搜索方法</Text>
             <Select aria-label="搜索方法" style={{ width: "100%", marginTop: 4 }} value={searchMethod} onChange={setSearchMethod}
-              options={AUTOML_SEARCH_OPTIONS} /></Col>
+              options={AUTOML_SEARCH_OPTIONS.map((option) => option.value === "multi_fidelity" && taskType === "anomaly_detection"
+                ? { ...option, label: "多保真搜索（无监督不可用）", disabled: true }
+                : option)} /></Col>
           <Col xs={12} sm={3}><Text strong>搜索强度</Text>
             <Select aria-label="搜索强度" style={{ width: "100%", marginTop: 4 }} value={searchStrength} onChange={handleSearchStrengthChange}
               options={AUTOML_STRENGTH_OPTIONS} /></Col>

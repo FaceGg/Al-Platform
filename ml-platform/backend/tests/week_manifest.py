@@ -119,6 +119,7 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_annotation_concurrency",
         "test_weighted_clustering_umap",
         "test_automl_multioutput",
+        "test_automl_anomaly",
         "test_label_schema",
         "test_label_schema_api",
         "test_run_suite",

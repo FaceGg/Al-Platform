@@ -8,6 +8,8 @@ const ALGORITHM_LABELS: Record<string, string> = {
   extra_trees: "Extra Trees",
   hist_gradient_boosting: "HistGradientBoosting",
   mlp: "MLP 神经网络",
+  iforest: "IsolationForest 隔离森林",
+  ocsvm: "One-Class SVM 单类支持向量机",
   ensemble: "集成加权投票",
   onnx: "ONNX",
 };

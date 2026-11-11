@@ -1,5 +1,6 @@
 """Finite, deterministic AutoML execution with MLflow child Runs."""
 
+import json
 import logging
 import math
 import tempfile
@@ -45,6 +46,15 @@ from app.models.experiment import Experiment
 from app.models.model_library import ModelLibrary
 from app.models.training import TrainingJob
 from app.services.artifact_service import build_artifact_service
+from app.services.automl_anomaly import (
+    ANOMALY_HOLDOUT_RATIO,
+    ANOMALY_MIN_ROWS,
+    ANOMALY_OCSVM_MAX_TRAIN_ROWS,
+    build_synthetic_benchmark,
+    evaluate_anomaly_candidate,
+    evaluate_anomaly_gates,
+    normalize_anomaly_contamination,
+)
 from app.services.automl_catalog import AlgorithmUnavailable, family_for_strength, resolve_algorithm_families
 from app.services.automl_search import (
     AllFamilySearchesFailed,
@@ -166,8 +176,11 @@ def _apply_search_strength(family, params: dict, strength: str, *, preserve_exis
     return params
 
 
-def _build_multioutput_trial_specs(families, *, method: str, max_trials: int, search_strength: str):
-    """Build a bounded task-level trial plan while covering every family."""
+def _build_trial_specs(families, *, method: str, max_trials: int, search_strength: str):
+    """Build a bounded task-level trial plan while covering every family.
+
+    multioutput 与 anomaly_detection 共用（per-family 轮转 + strength/grid/
+    random/bayesian/evolutionary；multi_fidelity 由各任务分支自行限制）。"""
     if max_trials < len(families):
         raise ValueError("AUTOML_SEARCH_CONFIG_INVALID")
     if method not in {"strength", "grid", "random", "bayesian", "evolutionary", "multi_fidelity"}:
@@ -664,10 +677,13 @@ def resolve_automl_feature_columns(
     target_columns: Sequence[str] | None = None,
 ) -> list[str]:
     all_targets = [str(column) for column in (target_columns or ([target_column] if target_column else []))]
-    if not all_targets or any(column not in frame.columns for column in all_targets):
+    if all_targets and any(column not in frame.columns for column in all_targets):
         raise ValueError("AutoML target column is missing")
     if requested_input_columns is None:
-        return frame.drop(columns=all_targets).select_dtypes(include=["number"]).columns.tolist()
+        # 无目标列（anomaly_detection）时默认特征 = 全数值列；
+        # 全 NaN/常数列的无监督专项剔除由执行层承担。
+        base_frame = frame.drop(columns=all_targets) if all_targets else frame
+        return base_frame.select_dtypes(include=["number"]).columns.tolist()
     if not isinstance(requested_input_columns, (list, tuple)):
         raise ValueError("AutoML input columns must be a list")
     feature_columns = [str(column) for column in requested_input_columns]
@@ -675,7 +691,7 @@ def resolve_automl_feature_columns(
         raise ValueError("AutoML requires at least one input column")
     if len(set(feature_columns)) != len(feature_columns):
         raise ValueError("AutoML input columns must be unique")
-    if any(column in feature_columns for column in all_targets):
+    if all_targets and any(column in feature_columns for column in all_targets):
         raise ValueError("AutoML target column cannot be an input column")
     missing_columns = [column for column in feature_columns if column not in frame.columns]
     if missing_columns:
@@ -1245,7 +1261,7 @@ def _execute_multioutput_job(
     requested_family_ids = list(params.get("algorithm_ids") or ["random_forest"])
     families = resolve_algorithm_families(requested_family_ids)
     trial_specs = (
-        _build_multioutput_trial_specs(
+        _build_trial_specs(
             families,
             method=method,
             max_trials=requested_trials,
@@ -1817,6 +1833,539 @@ def _execute_multioutput_job(
     return AutoMLExecutionResult(str(job.id), "completed", algorithm_id)
 
 
+def _build_anomaly_estimator(family, family_params: dict):
+    """无监督候选 = 家族 builder 产出的完整管线（Imputer→Scaler→检测器）。"""
+    return family.build("anomaly_detection", family_params)
+
+
+def _anomaly_training_matrix(matrix: np.ndarray, family_id: str, *, random_seed: int) -> np.ndarray:
+    """OC-SVM 训练成本随样本量平方级增长：超上限时按固定种子降采样。"""
+    if family_id == "ocsvm" and len(matrix) > ANOMALY_OCSVM_MAX_TRAIN_ROWS:
+        rng = np.random.default_rng(random_seed)
+        rows = np.sort(rng.choice(len(matrix), size=ANOMALY_OCSVM_MAX_TRAIN_ROWS, replace=False))
+        return matrix[rows]
+    return matrix
+
+
+def _execute_anomaly_job(
+    *,
+    job,
+    db,
+    artifact_service,
+    dataset,
+    frame: pd.DataFrame,
+    params: dict,
+    task: str,
+    parent,
+    tracking,
+    dependencies: AutoMLDependencies,
+) -> AutoMLExecutionResult:
+    """无监督异常检测分支（技术方案 §3.1-§3.3）。
+
+    与 multioutput 分支同型：按族搜索 → 合成异常基准评估排序 →
+    门禁冠军产出。差异：无目标列（镜像互斥）、80/20 正常保留集替代 CV、
+    阈值随模型持久化、冠军必须通过 synthetic_auc/normal_fpr/stability 门禁。
+    """
+    from app.services.automl_search import AutoMLContract, validate_target_columns
+
+    contamination = normalize_anomaly_contamination(params.get("contamination"))
+    # 镜像互斥在引擎侧同样强制：params 携带目标列（绕过 API 直发任务）时
+    # 合同构造即拒绝（技术方案 §2.1「合同镜像强制」）。
+    params_targets = list(params.get("target_columns") or ([params.get("target_column")] if params.get("target_column") else []))
+    contract = AutoMLContract(
+        task_type=task,
+        target_columns=params_targets,
+        input_columns=params.get("input_columns"),
+        cross_validation_folds=0,
+        contamination=contamination,
+    )
+    validate_target_columns(frame, task, params_targets)
+    feature_columns = resolve_automl_feature_columns(frame, None, params.get("input_columns"))
+    # 无监督特征专项清洗（方案 §3.4 S2）：全 NaN 列与常数列毒害距离模型，直接剔除。
+    removed_columns: dict[str, str] = {}
+    usable_columns: list[str] = []
+    for column in feature_columns:
+        values = frame[column]
+        if not values.notna().any():
+            removed_columns[str(column)] = "all_nan"
+        elif values.nunique(dropna=True) <= 1:
+            removed_columns[str(column)] = "constant"
+        else:
+            usable_columns.append(column)
+    feature_columns = usable_columns
+    if not feature_columns:
+        raise ValueError("AutoML anomaly detection requires at least one usable numeric feature column")
+    features = frame.loc[:, feature_columns].dropna(how="all")
+    if len(features) < ANOMALY_MIN_ROWS:
+        raise ValueError(
+            f"AutoML anomaly detection requires at least {ANOMALY_MIN_ROWS} rows, got {len(features)}"
+        )
+
+    strength_estimators = {"light": 40, "medium": 80, "high": 160, "ultra": 320}
+    search_strength = str(params.get("search_strength", "medium")).lower()
+    if search_strength not in strength_estimators:
+        raise ValueError("AUTOML_SEARCH_CONFIG_INVALID")
+    method = str(params.get("search_method") or "strength")
+    if method == "multi_fidelity":
+        # Hyperband 资源 rung 是 int 语义，与 OC-SVM（nu 为 float）不匹配（方案 §4.5）。
+        raise ValueError("AUTOML_ANOMALY_METHOD_UNSUPPORTED")
+    deadline = dependencies.monotonic() + float(params.get("time_budget", 3600))
+    requested_trials = int(params.get("max_trials") or SEARCH_STRENGTH_TRIALS[search_strength])
+    families = resolve_algorithm_families(list(params.get("algorithm_ids") or []), task=task)
+    trial_specs = (
+        _build_trial_specs(families, method=method, max_trials=requested_trials, search_strength=search_strength)
+        if method in {"strength", "grid"}
+        else []
+    )
+
+    # 正常数据 80/20 分割：80% 拟合，20% 正常保留集 + 三类合成异常注入基准。
+    holdout_size = max(1, int(len(features) * ANOMALY_HOLDOUT_RATIO))
+    indices = np.arange(len(features))
+    train_index, holdout_index = train_test_split(
+        indices, test_size=holdout_size, random_state=contract.random_seed,
+    )
+    train_matrix = features.iloc[np.sort(train_index)].to_numpy(dtype=float)
+    holdout_matrix = features.iloc[np.sort(holdout_index)].to_numpy(dtype=float)
+    benchmark = build_synthetic_benchmark(train_matrix, holdout_matrix, random_seed=contract.random_seed)
+
+    def check_control():
+        if dependencies.cancellation_requested:
+            cancelled = dependencies.cancellation_requested(job.id)
+        else:
+            with dependencies.session_factory() as control_db:
+                cancelled = control_db.query(TrainingJob.status).filter(
+                    TrainingJob.id == job.id,
+                ).scalar() == "cancel_requested"
+        if cancelled:
+            raise AutoMLCancelled("AutoML cancellation requested")
+        if dependencies.monotonic() >= deadline:
+            raise TimeoutError("AutoML time budget exceeded")
+        job.heartbeat_at = utcnow()
+        db.commit()
+
+    def evaluate_candidate(
+        estimator,
+        *,
+        with_stability: bool,
+        train_override: np.ndarray | None = None,
+    ) -> dict[str, object]:
+        metrics = evaluate_anomaly_candidate(
+            estimator,
+            train_override if train_override is not None else train_matrix,
+            holdout_matrix,
+            benchmark,
+            contamination=contamination,
+            random_seed=contract.random_seed,
+            compute_stability=with_stability,
+        )
+        if with_stability:
+            # stability 缺测时门禁只含 auc/fpr；补测后重算完整门禁。
+            metrics.update(evaluate_anomaly_gates(metrics, contamination=contamination))
+        return metrics
+
+    def persist_metrics_snapshot():
+        job.metrics = {
+            "search": {
+                "method": method,
+                "strength": search_strength,
+                "max_trials": requested_trials,
+                "completed_trials": sum(item.get("status") == "completed" for item in trials),
+                "trials": trials,
+                "budget_exhausted": False,
+            },
+        }
+        job.heartbeat_at = utcnow()
+        db.commit()
+
+    trials: list[dict[str, object]] = []
+    runnable_specs: list[tuple[object, dict]] = []
+    for family, family_params in trial_specs:
+        try:
+            family.build(task, family_params)
+            runnable_specs.append((family, family_params))
+        except AlgorithmUnavailable as error:
+            trials.append({
+                "number": len(trials),
+                "algorithm_id": family.id,
+                "params": family_params,
+                "score": None,
+                "status": "unavailable",
+                "error_code": error.code,
+            })
+    completed_candidates: list[dict[str, object]] = []
+    budget_exhausted = False
+    persist_metrics_snapshot()
+
+    trial_metric_fields = ("synthetic_auc", "perturbation_recall", "normal_fpr")
+
+    def completed_trial_row(family, family_params, metrics, training_time_seconds):
+        return {
+            "number": len(trials),
+            "algorithm_id": family.id,
+            "params": family_params,
+            "score": float(metrics.get("score") or 0.0),
+            "status": "completed",
+            "metrics": {field: metrics.get(field) for field in trial_metric_fields}
+            | {"stability": metrics.get("stability"), "gates_passed": bool(metrics.get("gates_passed"))},
+            "training_time_seconds": training_time_seconds,
+        }
+
+    if trial_specs:
+        # strength/grid：trial 计划在任务级展开，每个 trial 直接完整评估（含稳定性）。
+        for family, family_params in runnable_specs:
+            try:
+                check_control()
+            except TimeoutError:
+                budget_exhausted = True
+                break
+            trial_started = time.perf_counter()
+            try:
+                estimator = _build_anomaly_estimator(family, family_params)
+                metrics = evaluate_candidate(
+                    estimator,
+                    train_override=_anomaly_training_matrix(train_matrix, family.id, random_seed=contract.random_seed),
+                    with_stability=True,
+                )
+            except (AutoMLCancelled, TimeoutError):
+                raise
+            except Exception as error:
+                trials.append({
+                    "number": len(trials),
+                    "algorithm_id": family.id,
+                    "params": family_params,
+                    "score": None,
+                    "status": "failed",
+                    "training_time_seconds": time.perf_counter() - trial_started,
+                    "error_code": "AUTOML_CANDIDATE_FAILED",
+                    "error_type": type(error).__name__,
+                    "error_message": str(error)[:300],
+                })
+                persist_metrics_snapshot()
+                continue
+            trial_row = completed_trial_row(family, family_params, metrics, time.perf_counter() - trial_started)
+            trials.append(trial_row)
+            completed_candidates.append({
+                "trial": trial_row,
+                "family": family,
+                "params": dict(family_params),
+                "metrics": metrics,
+            })
+            persist_metrics_snapshot()
+    else:
+        # random/bayesian/evolutionary：Optuna 按族搜索，trial 级不做稳定性校验，
+        # 族冠军补测（与技术方案 §3.3 稳定性校验定位一致：冠军资格判定用）。
+        base_trials, extra_trials = divmod(requested_trials, len(families))
+        for family_index, family in enumerate(families):
+            family_trial_count = base_trials + (1 if family_index < extra_trials else 0)
+            if family_trial_count < 1:
+                continue
+            remaining_seconds = max(0.001, deadline - dependencies.monotonic())
+            persisted_trial_rows: list[dict] = []
+
+            def on_trial(summary: TrialSummary, *, current_family=family):
+                row = {
+                    "number": len(trials),
+                    "family_trial_number": summary.number,
+                    "algorithm_id": current_family.id,
+                    "params": summary.params,
+                    "score": summary.score,
+                    "status": summary.state,
+                    "training_time_seconds": summary.duration_seconds,
+                    "error_code": summary.error_code,
+                    "intermediate_scores": summary.intermediate_scores,
+                }
+                trials.append(row)
+                persisted_trial_rows.append(row)
+                persist_metrics_snapshot()
+
+            try:
+                family_result = dependencies.family_search(
+                    family=family,
+                    task=task,
+                    features=_anomaly_training_matrix(train_matrix, family.id, random_seed=contract.random_seed),
+                    target=None,
+                    evaluation={"cross_validation_enabled": False, "cross_validation_folds": None},
+                    config=SearchConfig(method=method, max_trials=family_trial_count, timeout_seconds=remaining_seconds),
+                    catalog_index=family_index,
+                    trial_callback=on_trial,
+                    estimator_builder=lambda current_family, _task, trial_params: _build_anomaly_estimator(
+                        current_family,
+                        _apply_search_strength(current_family, dict(trial_params), search_strength, preserve_existing=True),
+                    ),
+                    estimator_evaluator=lambda estimator, **_kwargs: evaluate_candidate(
+                        clone(estimator), with_stability=False,
+                    )["score"],
+                    monotonic=dependencies.monotonic,
+                    fixed_params=(params.get("algorithm_params") or {}).get(family.id),
+                )
+            except (AutoMLCancelled, TimeoutError):
+                raise
+            except Exception as error:
+                trials.append({
+                    "number": len(trials),
+                    "algorithm_id": family.id,
+                    "params": {},
+                    "score": None,
+                    "status": "failed",
+                    "training_time_seconds": 0.0,
+                    "error_code": "AUTOML_CANDIDATE_FAILED",
+                    "error_type": type(error).__name__,
+                    "error_message": str(error)[:300],
+                })
+                continue
+            budget_exhausted = budget_exhausted or family_result.budget_exhausted
+            if family_result.status != "completed" or family_result.best_estimator is None:
+                if not persisted_trial_rows:
+                    trials.append({
+                        "number": len(trials),
+                        "algorithm_id": family.id,
+                        "params": {},
+                        "score": None,
+                        "status": family_result.status,
+                        "training_time_seconds": family_result.training_time_seconds,
+                        "error_code": family_result.error_code,
+                        "error_message": family_result.error_message,
+                    })
+                continue
+            best_params = _apply_search_strength(
+                family, dict(family_result.best_params), search_strength, preserve_existing=True,
+            )
+            metrics = evaluate_candidate(family_result.best_estimator, with_stability=True)
+            trial_row = completed_trial_row(
+                family, best_params, metrics, family_result.training_time_seconds,
+            )
+            trials.append(trial_row)
+            completed_candidates.append({
+                "trial": trial_row,
+                "family": family,
+                "params": best_params,
+                "metrics": metrics,
+            })
+            persist_metrics_snapshot()
+            if dependencies.monotonic() >= deadline:
+                budget_exhausted = True
+                break
+
+    if not completed_candidates:
+        if budget_exhausted:
+            raise TimeoutError("AutoML time budget exceeded")
+        raise AllCandidatesFailed("No anomaly detection trials completed")
+
+    def anomaly_sort_key(candidate: dict[str, object]) -> tuple:
+        metrics = candidate["metrics"]
+        return (
+            -float(metrics.get("synthetic_auc") or -1.0),
+            -float(metrics.get("perturbation_recall") or -1.0),
+            -float(metrics.get("stability") or -1.0),
+            float(candidate["trial"].get("training_time_seconds") or float("inf")),
+        )
+
+    ranked_candidates = sorted(completed_candidates, key=anomaly_sort_key)
+    eligible_candidates = [item for item in ranked_candidates if item["metrics"].get("gates_passed")]
+    if not eligible_candidates:
+        top = ranked_candidates[0]["metrics"]
+        raise AllCandidatesFailed(
+            "所有候选未通过无监督验收门禁（synthetic_auc≥0.85、normal_fpr≤contamination×1.5、stability≥0.8）；"
+            f"最优候选 synthetic_auc={float(top.get('synthetic_auc') or 0.0):.4f}, "
+            f"normal_fpr={float(top.get('normal_fpr') or 0.0):.4f}, "
+            f"stability={top.get('stability')}"
+        )
+    best_candidate = eligible_candidates[0]
+    best_family = best_candidate["family"]
+    best_params = best_candidate["params"]
+
+    # 冠军最终拟合与最终评估严格一致：评估函数幂等重拟合全量训练矩阵。
+    if not budget_exhausted:
+        check_control()
+    best_estimator = _build_anomaly_estimator(best_family, best_params)
+    final_metrics = evaluate_candidate(
+        best_estimator,
+        train_override=_anomaly_training_matrix(train_matrix, best_family.id, random_seed=contract.random_seed),
+        with_stability=True,
+    )
+    budget_exhausted = budget_exhausted or dependencies.monotonic() >= deadline
+    algorithm_id = best_family.id if params.get("algorithm_ids") else f"anomaly_{best_family.id}"
+    input_contract = {
+        "task_type": task,
+        "target_columns": [],
+        "input_columns": feature_columns,
+        "cross_validation_folds": 0,
+        "random_seed": contract.random_seed,
+        "contamination": contamination,
+    }
+    preprocessing = {
+        "feature_columns": feature_columns,
+        "removed_columns": removed_columns,
+        "steps": ["median_imputation", "standard_scaling"],
+        "holdout_ratio": ANOMALY_HOLDOUT_RATIO,
+        "ocsvm_max_train_rows": ANOMALY_OCSVM_MAX_TRAIN_ROWS,
+    }
+    feature_schema = [{"name": str(name), "dtype": str(features[name].dtype)} for name in features.columns]
+    evaluation = {
+        "synthetic_auc": final_metrics.get("synthetic_auc"),
+        "perturbation_recall": final_metrics.get("perturbation_recall"),
+        "normal_fpr": final_metrics.get("normal_fpr"),
+        "stability": final_metrics.get("stability"),
+        "detection_recall_per_class": final_metrics.get("detection_recall_per_class"),
+        "acceptance_gates": final_metrics.get("acceptance_gates"),
+        "threshold_score": final_metrics.get("threshold_score"),
+        "calibrated_threshold": final_metrics.get("calibrated_threshold"),
+        "synthetic_class_sizes": final_metrics.get("synthetic_class_sizes"),
+        "score_histograms": final_metrics.get("score_histograms"),
+    }
+    score_stats = {
+        "task_type": task,
+        "algorithm_id": best_family.id,
+        "contamination": contamination,
+        "threshold_score": float(final_metrics.get("threshold_score") or 0.0),
+        "calibrated_threshold": float(final_metrics.get("calibrated_threshold") or 0.0),
+        "calibration": final_metrics.get("calibration"),
+        "synthetic_auc": float(final_metrics.get("synthetic_auc") or 0.0),
+        "normal_fpr": float(final_metrics.get("normal_fpr") or 0.0),
+        "stability": float(final_metrics.get("stability") or 0.0),
+        "feature_columns": feature_columns,
+        "random_seed": contract.random_seed,
+    }
+    candidate_result_rows = [
+        {
+            "algorithm_id": (
+                candidate["family"].id if candidate is best_candidate else f"{candidate['family'].id}#trial-{candidate['trial']['number']}"
+            ),
+            "name": candidate["family"].display_name,
+            "status": "completed",
+            "params": candidate["params"],
+            "score": candidate["trial"]["score"],
+            "metrics": candidate["trial"].get("metrics"),
+            "gates_passed": bool(candidate["metrics"].get("gates_passed")),
+            "training_time_seconds": candidate["trial"].get("training_time_seconds"),
+        }
+        for candidate in ranked_candidates
+    ]
+    for trial in trials:
+        if trial.get("status") == "completed":
+            continue
+        candidate_result_rows.append({
+            "algorithm_id": str(trial.get("algorithm_id") or f"trial-{trial.get('number')}"),
+            "name": str(trial.get("algorithm_id") or f"trial-{trial.get('number')}"),
+            "status": trial.get("status", "failed"),
+            "params": trial.get("params", {}),
+            "score": trial.get("score"),
+            "training_time_seconds": trial.get("training_time_seconds", 0.0),
+            "error_code": trial.get("error_code"),
+            "error_type": trial.get("error_type"),
+            "error_message": trial.get("error_message"),
+        })
+
+    model_artifact = None
+    stats_artifact = None
+    with tempfile.TemporaryDirectory() as temporary:
+        model_path = Path(temporary) / f"{job.id}-anomaly_model.joblib"
+        joblib.dump({
+            "model": best_estimator,
+            "feature_schema": feature_schema,
+            "target_schema": [],
+            "input_contract": input_contract,
+            "preprocessing": preprocessing,
+            "score_stats": score_stats,
+            "threshold_policy": {
+                "threshold_score": score_stats["threshold_score"],
+                "calibrated_threshold": score_stats["calibrated_threshold"],
+                "contamination": contamination,
+                "persisted": True,
+            },
+        }, model_path)
+        model_artifact = artifact_service.create_from_file(
+            job.project_id,
+            model_path,
+            f"{job.name}-{algorithm_id}.joblib",
+            "model",
+            metadata={
+                "source": "automl",
+                "training_job_id": str(job.id),
+                "dataset_artifact_id": str(dataset.id),
+                "best_algorithm": best_family.id,
+                "best_candidate": algorithm_id,
+                "candidate_id": algorithm_id,
+                "input_contract": input_contract,
+                "paradigm": "unsupervised",
+            },
+        )
+        stats_path = Path(temporary) / f"{job.id}-score_stats.json"
+        stats_path.write_text(json.dumps(score_stats, ensure_ascii=False, indent=2), encoding="utf-8")
+        stats_artifact = artifact_service.create_from_file(
+            job.project_id,
+            stats_path,
+            f"{job.name}-score_stats.json",
+            "report",
+            metadata={
+                "source": "automl",
+                "training_job_id": str(job.id),
+                "kind": "anomaly_score_stats",
+                "best_candidate": algorithm_id,
+            },
+        )
+
+    job.metrics = {
+        "task_type": task,
+        "paradigm": "unsupervised",
+        "best_candidate": algorithm_id,
+        "best_algorithm": best_family.id,
+        "best_model": {
+            "algorithm_id": best_family.id,
+            "model_artifact_id": str(model_artifact.id),
+            "aggregate": {
+                "synthetic_auc": evaluation["synthetic_auc"],
+                "normal_fpr": evaluation["normal_fpr"],
+                "stability": evaluation["stability"],
+            },
+        },
+        "score_artifact_id": str(stats_artifact.id),
+        "algorithm_results": candidate_result_rows,
+        "all_results": candidate_result_rows,
+        "aggregate": {
+            "synthetic_auc": evaluation["synthetic_auc"],
+            "normal_fpr": evaluation["normal_fpr"],
+            "stability": evaluation["stability"],
+        },
+        "evaluation": evaluation,
+        "cv_strategy": "synthetic_benchmark",
+        "input_contract": input_contract,
+        "preprocessing": preprocessing,
+        "search": {
+            "method": method,
+            "strength": search_strength,
+            "time_budget": params.get("time_budget", 3600),
+            "n_estimators": strength_estimators[search_strength],
+            "selected_algorithm": best_family.id,
+            "selected_params": best_params,
+            "max_trials": requested_trials,
+            "completed_trials": sum(item.get("status") in {"complete", "completed"} for item in trials),
+            "trials": trials,
+            "budget_exhausted": budget_exhausted,
+        },
+        "prediction_source": "synthetic_benchmark",
+    }
+    job.feature_schema = feature_schema
+    job.target_schema = []
+    job.preprocessing = preprocessing
+    job.automl_contract = {**(job.automl_contract or {}), **input_contract}
+    job.model_path = artifact_service.storage_reference(model_artifact)
+    job.model_artifact_id = model_artifact.id
+    job.model_library_id = None
+    job.status = "completed"
+    job.finished_at = utcnow()
+    job.heartbeat_at = utcnow()
+    tracking.set_tags(parent.run_id, {
+        "platform.best_candidate": algorithm_id,
+        "platform.best_algorithm": best_family.id,
+        "platform.model_artifact_id": str(model_artifact.id),
+        "platform.paradigm": "unsupervised",
+    })
+    tracking.end_run(parent.run_id, "FINISHED")
+    db.commit()
+    return AutoMLExecutionResult(str(job.id), "completed", algorithm_id)
+
+
 def execute_automl_job(
     job_id,
     *,
@@ -1869,6 +2418,19 @@ def execute_automl_job(
         target_column = params.get("target_column")
         task = normalize_task_type(params.get("task", "classification"))
         target_columns = list(params.get("target_columns") or [target_column])
+        if task == "anomaly_detection":
+            return _execute_anomaly_job(
+                job=job,
+                db=db,
+                artifact_service=artifact_service,
+                dataset=dataset,
+                frame=frame,
+                params=params,
+                task=task,
+                parent=parent,
+                tracking=tracking,
+                dependencies=dependencies,
+            )
         if task.startswith("multioutput_"):
             return _execute_multioutput_job(
                 job=job,

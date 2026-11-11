@@ -96,6 +96,8 @@ class AutoMLRunRequest(BaseModel):
     target_columns: list[str] | None = None
     input_columns: list[str] | None = None
     task: str = "classification"
+    # 无监督（anomaly_detection）专用：预期异常比例先验，宁低勿高，缺省 0.01。
+    contamination: float | None = Field(default=None, gt=0.0, le=0.5)
     candidate_ids: list[str] = Field(default_factory=list)
     algorithm_ids: list[str] = Field(default_factory=list)
     algorithm_params: dict[str, dict[str, float | int | str]] = Field(default_factory=dict)
@@ -689,12 +691,22 @@ def start_automl(
         try:
             task_type = normalize_task_type(data.task)
             target_columns = list(data.target_columns or ([data.target_column] if data.target_column else []))
-            if not target_columns:
-                raise ValueError("At least one target column is required")
-            if "multioutput" in task_type and len(target_columns) < 2:
-                raise ValueError("Multi-output AutoML requires at least two target columns")
-            if "multioutput" not in task_type and len(target_columns) != 1:
-                raise ValueError("Single-output AutoML requires exactly one target column")
+            if task_type == "anomaly_detection":
+                # 无监督镜像互斥（技术方案 §2.1）：目标列传入即 422/400，
+                # 且必须走 algorithm_ids 搜索合同。
+                if target_columns:
+                    raise ValueError("Anomaly detection tasks must not define target columns")
+                if not uses_new_contract:
+                    raise ValueError("Anomaly detection requires the algorithm_ids search contract")
+                if data.input_columns is not None and not data.input_columns:
+                    raise ValueError("Anomaly detection requires at least one input column")
+            else:
+                if not target_columns:
+                    raise ValueError("At least one target column is required")
+                if "multioutput" in task_type and len(target_columns) < 2:
+                    raise ValueError("Multi-output AutoML requires at least two target columns")
+                if "multioutput" not in task_type and len(target_columns) != 1:
+                    raise ValueError("Single-output AutoML requires exactly one target column")
         except ValueError as error:
             raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", str(error))) from error
         try:
@@ -709,12 +721,12 @@ def start_automl(
                 if data.time_budget < 60:
                     raise ValueError("AutoML search time budget must be at least 60 seconds")
                 resolved_algorithm_ids = [
-                    family.id for family in resolve_algorithm_families(data.algorithm_ids)
+                    family.id for family in resolve_algorithm_families(data.algorithm_ids, task=task_type)
                 ]
             else:
                 resolve_candidates(task_type, data.candidate_ids)
             evaluation = normalize_evaluation_config(
-                data.cross_validation_enabled,
+                data.cross_validation_enabled and task_type != "anomaly_detection",
                 data.cross_validation_folds,
             )
             controls = normalize_search_controls(
@@ -753,7 +765,7 @@ def start_automl(
                 frame = read_automl_dataset(dataset_path)
             feature_columns = resolve_automl_feature_columns(
                 frame,
-                target_columns[0],
+                target_columns[0] if target_columns else None,
                 data.input_columns,
                 target_columns=target_columns,
             )
@@ -767,8 +779,10 @@ def start_automl(
             id=job_id, project_id=data.project_id, user_id=current_user.id,
             experiment_id=experiment.id, name=data.name, operator_id="automl",
             params={
-                "target_column": target_columns[0],
-                "target_columns": target_columns,
+                **({
+                    "target_column": target_columns[0],
+                    "target_columns": target_columns,
+                } if target_columns else {"target_columns": []}),
                 "input_columns": list(data.input_columns) if data.input_columns is not None else None,
                 "task": task_type,
                 **(
@@ -787,6 +801,7 @@ def start_automl(
                 "search_strength": controls["strength"],
                 "class_weight": controls["class_weight"],
                 "time_budget": controls["time_budget"],
+                **({"contamination": float(data.contamination)} if data.contamination is not None else {}),
                 **({"ensemble": dict(data.ensemble)} if data.ensemble else {}),
             },
             dataset_artifact_id=dataset.id,
@@ -794,9 +809,15 @@ def start_automl(
             automl_contract={
                 "task_type": task_type,
                 "target_columns": target_columns,
-                "cross_validation_folds": evaluation["cross_validation_folds"],
-                "cv_strategy": "iterative_stratified" if task_type == "multioutput_classification" else ("stratified" if "classification" in task_type else "kfold"),
+                "cross_validation_folds": evaluation["cross_validation_folds"] or 0,
+                "cv_strategy": (
+                    "synthetic_benchmark" if task_type == "anomaly_detection"
+                    else "iterative_stratified" if task_type == "multioutput_classification"
+                    else "stratified" if "classification" in task_type
+                    else "kfold"
+                ),
                 "random_seed": 42,
+                **({"contamination": float(data.contamination)} if data.contamination is not None else {}),
                 "idempotency_fingerprint": request_fingerprint,
             },
             automl_idempotency_key=normalized_key,
