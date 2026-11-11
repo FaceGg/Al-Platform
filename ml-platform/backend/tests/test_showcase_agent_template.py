@@ -24,6 +24,7 @@ AGENT_SET = {
 class TestShowcaseAgentTemplate(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        import app.operators  # noqa: F401  触发算子注册（独立子进程运行时注册表为空）
         from app.api.platform_api import (
             SHOWCASE_OPERATOR_SET, SHOWCASE_OPERATOR_SET_AGENT, _showcase_eligible,
         )
