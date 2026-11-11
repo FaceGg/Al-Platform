@@ -332,12 +332,15 @@ class AgentRunner:
             try:
                 kb = self.db.get(KnowledgeBase, uuid.UUID(str(raw)))
             except (TypeError, ValueError):
+                logger.warning("agent kb reference: invalid kb id %r", raw)
                 continue
             if kb is None:
+                logger.warning("agent kb reference: kb %s not found", raw)
                 continue
             try:
                 chunks = retrieve_chunks(self.db, kb, query, top_k=3) or []
             except Exception:  # noqa: BLE001 - 单库故障不阻断建模
+                logger.warning("agent kb reference: retrieve failed for %s", raw, exc_info=True)
                 continue
             for chunk in chunks[:3]:
                 content = str(chunk.get("content") or "")[:600]
@@ -347,6 +350,7 @@ class AgentRunner:
                         "doc": str(chunk.get("filename") or "")[:120],
                         "content": content,
                     })
+        logger.info("agent kb references: ids=%s refs=%d", kb_ids, len(refs))
         return refs
 
     def _auto_servitize_if_requested(self) -> None:
@@ -672,15 +676,14 @@ class AgentRunner:
                     "AGENT_S1_LLM_FAILED" if is_llm_failure else "AGENT_S1_CONTRACT_FAILED",
                     detail=error,
                 )
-            # 注入的 L2 引用落档案（前端"注入的经验"面板数据源）。
+            # 注入的 L2/知识库引用落档案（前端"注入的经验"面板数据源）。
+            # 必须写 self.memory（runner 的权威记忆，_stage_digest 以它整体
+            # 覆盖 run.memory_json）——直接写 run.memory_json 会被同轮
+            # _stage_digest 冲掉（实测面板恒空）。
             if l2_refs:
-                memory = dict(self.run.memory_json or {})
-                memory["injected_experience"] = l2_refs
-                self.run.memory_json = memory
+                self.memory["injected_experience"] = l2_refs
             if kb_refs:
-                memory = dict(self.run.memory_json or {})
-                memory["injected_knowledge"] = kb_refs
-                self.run.memory_json = memory
+                self.memory["injected_knowledge"] = kb_refs
             # 下一轮 L2 检索按本轮域假设聚焦（§10.4 domain 匹配）。
             self._last_domain = str(report.domain_hypothesis)[:32]
             s1_digest = self._s1_digest(report)
