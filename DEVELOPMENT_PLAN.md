@@ -797,3 +797,18 @@ M3 同日续作（方案 §3.6/§3.7）。迁移 20261112_98（demo_loop_configs
 **M4 验收判据对照（方案 §4.2 判据⑤）**：注入漂移→PSI 预警→重拟合→误报率回落实测——前两环已自动化验证（漂移分数→psi_alert 事件→重训触发；重拟合剔除逻辑单测覆盖）；「误报率回落」需真实部署数据的长周期观察，一期以「PSI 预警自动触发重拟合+重拟合仅用正常数据」的机制闭环交付。
 
 **坑（新）**：①**ModelLibrary 在 app/models/model_library.py 不在 model_registry.py**——两处 helper 的 import 错了被 `except Exception: return None` 静默吞掉（同文件测试 fixture 也犯了一模一样的错），链路断在看不见的地方；静默降级的 helper 调试时优先核对 import。②JSON 列取出的 artifact id 恒为 str，UUID 列绑定必须 `uuid.UUID(str(x))`（在册坑第 N 次变体，这次是查询 WHERE 侧）。③改造触发函数时若把数值比较重构成布尔量（rows_reached），必须同步补回提前返回守卫——漏掉会把「阈值未达」变成「每次回流都触发」，占住状态槽后续全挡。④测试 harness 改共享 helper 的硬编码参数为 setdefault 时，别丢原有的 UUID 转换（sa.Uuid+str 崩 .hex 第 N 次变体）。⑤predict API `_require_config` 按 project 取 first config——多 config 测试用例间会互相截流（前序用例的 config 抢占 first），新用例建 config 前先清 project 下旧 config。
+
+## 2026-11-12 一期复现审计 + 差距补齐（判据③④⑤量化/S4 已知样本验证/分工况训练切分）
+
+用户要求结合方案一期工作重新审查平台复现情况，审计出 5 项差距后用户指示「都补上」。
+
+**审计确认的差距（5 项）与补齐**：
+1. **判据④代测未做** → 补 `tools/acceptance/run_anomaly_criteria_check.py`：阈值法（Tukey 1.5×IQR 围栏，任一特征出围栏即报警）vs 模型同数据对照。**真实拧紧数据实证：阈值法误报率 6.79% vs 模型 1.00%，下降 85.3%（≥30% 达标）**；报告落档 docs/验收-无监督异常检测-判据三四.{md,json}，可复现脚本参数化数据路径。
+2. **判据③案例化未做** → 同脚本：2,000 个分位错配组合异常中阈值法漏检 1,638、模型检出 1,307（79.8%），逐样本列举 5 个具体案例（特征值+模型分数+双方判定结论），≥3 达标。
+3. **判据⑤「误报率回落」未量化** → 补三阶段量化测试（test_anomaly_drift）：漂移→误报率飙升（>5×contamination）→仅正常重拟合→回落（≤3×contamination 且 <漂移时/3）。
+4. **§3.4 S4「上传已知异常样本弱监督验证」未实现（M2 范围遗漏）** → 补全功能：`GuidanceEvaluation.known_anomaly_rows`（≤50 行，合同校验）→ S4 门禁通过后冠军模型打分 → 检出率进 metrics（LLM 评审同源）与 s4 digest 证据（观察项不一票否决——样本少统计弱）；向导第四步 anomaly 显示 CSV 上传入口（≤50 行解析）。
+5. **分工况训练切分未实现**（方案 §3.6 写明一期即做）→ 补训练侧：anomaly_trainer 按 condition_column groupby 独立建模，冠军取最差工况口径（任一工况不可用即整体不可用），per_condition 证据随返回；**部署路由拓扑（按工况值路由到多模型）仍为二期**——训练切分已完成，路由面涉及 DeploymentTarget 语义扩展（与方案 §4.3 二期边界冲突处如实标注）。
+
+**部署**：backend/worker/scheduler/migrate/frontend 五镜像重建（本批无迁移），backend healthy `/api/health 200`、日志零 error。
+
+**验证**：判据③④真实数据双达标（85.3%/1307 案例）；anomaly_drift 6 passed（判据⑤三阶段量化断言）；runner 15 passed（含已知样本验证：检出率进 metrics+digest 证据）；trainer 分工况切分 3 passed；向导 10 passed（含第四步指标/上传入口）。**一期总验收判据①②③④⑤全部闭环**（⑤的「误报率回落」为合成数据量化，真实部署长周期数据待积累）。
