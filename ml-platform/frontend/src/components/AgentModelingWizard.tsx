@@ -5,7 +5,7 @@ import { getDatasetPreview, listDatasets } from "../api/datasets";
 import { fetchDatasetProfile } from "../api/agentCenter";
 import apiClient from "../api/client";
 import { createAgentRun, listAgentRuns, getAgentRun } from "../api/agentCenter";
-import { AUTOML_ALGORITHM_OPTIONS } from "../pages/AutoMLPage";
+import { AUTOML_ALGORITHM_OPTIONS, AUTOML_ANOMALY_ALGORITHM_OPTIONS } from "../pages/AutoMLPage";
 import { useI18n } from "../i18n";
 
 /**
@@ -127,9 +127,15 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   // Step 3
   // 白名单默认全勾（用户指示 2026-11-06）：默认即全算法族搜索，用户取消
   // 勾选来收窄；全不选仍等价于全族（payload 语义不变）。
+  // 范式切换（用户建议 2）：无监督白名单=双族（iforest/ocsvm），监督白名单
+  // =8 监督族；切换范式时白名单整体重置为新范式的默认全勾。
+  const whitelistOptions = taskType === "anomaly" ? AUTOML_ANOMALY_ALGORITHM_OPTIONS : AUTOML_ALGORITHM_OPTIONS;
   const [algorithmWhitelist, setAlgorithmWhitelist] = useState<Record<string, boolean>>(
     () => Object.fromEntries(AUTOML_ALGORITHM_OPTIONS.map((alg) => [alg.value, true])),
   );
+  useEffect(() => {
+    setAlgorithmWhitelist(Object.fromEntries(whitelistOptions.map((alg) => [alg.value, true])));
+  }, [taskType]);
   const [paramHints, setParamHints] = useState({ trials: "", budget_seconds: "", cv_folds: "" });
   // 集成学习（多模型加权投票）：启用后 S3 取主指标前 K 名候选 soft-voting
   const [ensembleEnabled, setEnsembleEnabled] = useState(false);
@@ -727,7 +733,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           <div className="v2-panel">
             <h4><span className="bar" />{zh ? "算法白名单（硬约束智能体训练与 S5 闭环重训的算法族，必须使用勾选的；不选 = 全族 + 内置轻量逻辑回归）" : "Algorithm whitelist (hard constraint on agent training and serving retrain families; unchecked families never train; empty = all + built-in logistic)"}</h4>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 8 }}>
-              {AUTOML_ALGORITHM_OPTIONS.map((alg) => (
+              {whitelistOptions.map((alg) => (
                 <label key={alg.value} className={`v2-radio-card${algorithmWhitelist[alg.value] ? " on" : ""}`} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 0 }}>
                   <input type="checkbox" checked={!!algorithmWhitelist[alg.value]}
                     onChange={(e) => setAlgorithmWhitelist((cur) => ({ ...cur, [alg.value]: e.target.checked }))} />
@@ -750,6 +756,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
                   onChange={(e) => setParamHints((cur) => ({ ...cur, cv_folds: e.target.value }))} /></label>
             </div>
           </div>
+          {taskType !== "anomaly" && (
           <div className="v2-panel">
             <h4><span className="bar" />{zh ? "集成学习（可选）" : "Ensemble (optional)"}
               <span className="more">{zh ? "多模型加权投票：按验证集少数类召回自动加权 soft-voting，冠军取集成与最佳单模型更优者" : "weighted soft-voting of top-k candidates"}</span></h4>
@@ -773,6 +780,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
               </label>
             ) : null}
           </div>
+          )}
           <div className="v2-panel">
             <h4><span className="bar" />{zh ? "建模提示词（可选）" : "Modeling prompt (optional)"}</h4>
             <input className="v2-select" style={{ width: "100%", minWidth: 0 }} value={modelingPrompt}
