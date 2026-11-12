@@ -40,6 +40,17 @@ test("submits a multi-output AutoML contract from the browser", async ({ page })
       body: JSON.stringify([{ id: "experiment-1", name: "Contract experiment", automl_used: false }]),
     });
   });
+  // 实验自动创建（2026-11-12 范式化批次）：提交前 POST /api/experiments 建
+  // 专属实验（experiment_id 进 run payload）——未 mock 会打到真实后端，提交
+  // 链断在创建实验处，waitForRequest("/api/training/automl/run") 超时。
+  await page.route("**/api/experiments", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({ id: "experiment-1", name: "Contract experiment", automl_used: true }),
+    });
+  });
   await page.route("**/api/datasets/dataset-1/preview", async (route) => {
     await route.fulfill({
       status: 200,
@@ -70,7 +81,11 @@ test("submits a multi-output AutoML contract from the browser", async ({ page })
   await page.goto("/automl");
   await page.getByRole("button", { name: "新建" }).click();
 
-  const modal = page.getByRole("dialog", { name: "新建通用自动建模" });
+  // 范式卡片化（2026-11-12）：弹窗首屏是两张范式卡片，先点「有监督建模」
+  // 才出现具体表单；title 随范式选择变化（新建自动建模→新建有监督建模）。
+  const initialModal = page.getByRole("dialog", { name: "新建自动建模" });
+  await initialModal.locator('div[aria-label="范式：有监督建模"]').click();
+  const modal = page.getByRole("dialog", { name: "新建有监督建模" });
   const comboboxes = modal.getByRole("combobox");
   const openSelect = async (label: string) => {
     const input = modal.locator(`[aria-label="${label}"]`);
@@ -85,7 +100,7 @@ test("submits a multi-output AutoML contract from the browser", async ({ page })
   await page.getByText("multioutput.csv", { exact: true }).click();
   await expect.poll(() => page.locator(".ant-select-selection-item").count()).toBeGreaterThan(0);
 
-  await openSelect("任务类型");
+  await openSelect("任务子类型");
   await page.locator(".ant-select-item-option-content").filter({ hasText: "Multi-output Regression" }).click();
   await openSelect("目标列");
   await page.locator(".ant-select-item-option-content").filter({ hasText: "label_a" }).click();
