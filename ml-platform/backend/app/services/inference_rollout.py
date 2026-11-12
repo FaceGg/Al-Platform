@@ -51,15 +51,22 @@ class InferenceRolloutError(RuntimeError):
 class RoutedTarget:
     revision_id: UUID | str
     model_version_id: UUID | str
+    # 工况分片扩展（§6.3）：命中 target 的 condition_value 标注与精确命中
+    # 标志（False=回退默认分片，调用方据此落 unknown_condition 审计事件）。
+    # 灰度路径不感知（默认值兼容既有构造点）。
+    condition_value: str | None = None
+    matched: bool = True
 
 
 class ConditionValueRouter:
     """工况分片路由（技术方案 §6.3，二期 M7）：按请求工况值精确匹配 target。
 
     与 WeightedTargetRouter（纯权重灰度，测试锁死）互斥挂载——部署声明
-    routing_mode 决定使用哪个 Router。匹配语义：DeploymentTarget.condition_value
-    精确等于请求工况值的 target 命中；未命中回退 weight 最高的 target
-    （默认分片，通配）。runtime session 由既有 start/reconcile 机制加载
+    condition_column（迁移 20261112_100）非空即工况路由模式。匹配语义：
+    DeploymentTarget.condition_value 精确等于请求工况值的 target 命中；
+    未命中回退 condition_value=None 的通配 target（默认分片），再否则回退
+    weight 最高的 target（训练量最大的分片，weight 按段行数比例分配）。
+    runtime session 由既有 start/reconcile 机制加载
     （key=`{revision_id}:{model_version_id}`，与灰度共用）。
     """
 
@@ -74,21 +81,32 @@ class ConditionValueRouter:
             raise InferenceRolloutError("ROLLOUT_TARGETS_EMPTY")
         request_value = str(record.get(self.condition_column, ""))
         matched = None
+        wildcard = None
         default = None
         highest_weight = -1
         for target in candidates:
+            condition_value = getattr(target, "condition_value", None)
             if target.weight_bps > highest_weight:
                 highest_weight = target.weight_bps
                 default = target
+            if condition_value is None and wildcard is None:
+                wildcard = target
             if (
                 request_value
-                and getattr(target, "condition_value", None) == request_value
+                and condition_value == request_value
             ):
                 matched = target
-        chosen = matched or default
+        if matched is not None:
+            chosen, is_matched = matched, True
+        elif wildcard is not None:
+            chosen, is_matched = wildcard, False
+        else:
+            chosen, is_matched = default, False
         return RoutedTarget(
             revision_id=chosen.revision_id,
             model_version_id=chosen.model_version_id,
+            condition_value=getattr(chosen, "condition_value", None),
+            matched=is_matched,
         )
 
 

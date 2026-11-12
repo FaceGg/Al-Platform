@@ -18,7 +18,12 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import SessionLocal, get_db
-from app.models.model_registry import InferenceApiKey, InferenceDeployment, ModelVersion
+from app.models.model_registry import (
+    DeploymentRevision,
+    InferenceApiKey,
+    InferenceDeployment,
+    ModelVersion,
+)
 from app.schemas.model_registry import ProductionPredictRequest, ProductionPredictResponse
 from app.services.inference_api_keys import (
     USAGE_TOUCH_INTERVAL_SECONDS,
@@ -329,6 +334,53 @@ def build_inference_production_router(
         try:
             if deployment.desired_state != "running" or deployment.observed_state != "running":
                 raise InferenceDeploymentError("DEPLOYMENT_NOT_READY")
+            condition_column = str(getattr(deployment, "condition_column", None) or "").strip()
+            if condition_column:
+                # 工况分片路由（技术方案 §6.3，二期 M7）：与灰度互斥——声明
+                # condition_column 的部署按记录工况值分组路由（各组独立 enrich，
+                # 每分片阈值独立），观测记录按主分片（deployment 主版本）口径。
+                result = deployment_service_value.predict_condition_sharded(
+                    db, deployment, condition_column, data.records,
+                )
+                stable = db.query(DeploymentRevision).filter(
+                    DeploymentRevision.deployment_id == deployment.id,
+                    DeploymentRevision.status == "stable",
+                ).order_by(DeploymentRevision.revision_number.desc()).first()
+                revision_id = stable.id if stable is not None else None
+                model_version_id = deployment.model_version_id
+                duration_ms = max(0, int((perf_counter() - started) * 1000))
+                if isinstance(observation, InferenceObservability):
+                    _schedule_observation(
+                        background_tasks,
+                        request_id=request_id,
+                        deployment_id=deployment.id,
+                        revision_id=revision_id,
+                        model_version_id=model_version_id,
+                        api_key_id=api_key.id,
+                        batch_size=len(data.records),
+                        duration_ms=duration_ms,
+                        status="success",
+                    )
+                else:
+                    observation.record_request(
+                        db, request_id, deployment.id, revision_id, model_version_id,
+                        api_key.id, len(data.records), duration_ms, "success",
+                        aggregate=False,
+                    )
+                return {
+                    "request_id": request_id,
+                    "deployment_id": str(deployment.id),
+                    "revision_id": str(revision_id) if revision_id is not None else None,
+                    "model_version_id": str(model_version_id),
+                    "predictions": result.get("predictions"),
+                    "probabilities": result.get("probabilities"),
+                    "anomaly_score": result.get("anomaly_score"),
+                    "is_anomaly": result.get("is_anomaly"),
+                    "top_contributors": result.get("top_contributors"),
+                    # 工况分片回显（§6.3 排障用）：逐记录实际服务的工况值
+                    "condition_values": result.get("condition_values"),
+                    "duration_ms": duration_ms,
+                }
             routed = WeightedTargetRouter().select_active(deployment, request_id)
             revision_id, model_version_id = routed.revision_id, routed.model_version_id
             version = db.query(ModelVersion).filter(ModelVersion.id == model_version_id).first()

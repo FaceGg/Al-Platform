@@ -32,7 +32,7 @@ from app.models.agent_run import AgentRun
 from app.models.artifact import Artifact
 from app.models.data_version import DatasetSample, DatasetSchemaColumn
 from app.models.demo_loop import DemoLoopConfig, DemoLoopEvent
-from app.models.model_registry import InferenceDeployment, ModelVersion
+from app.models.model_registry import DeploymentRevision, InferenceDeployment, ModelVersion
 from app.models.platform_models import GenericAnnotationTask
 from app.models.recipe import PipelineRecipe
 from app.models.training import TrainingJob
@@ -51,7 +51,7 @@ from app.services.closed_loop_actions import (
     trigger_retrain_job,
 )
 from app.services.inference_deployment import InferenceDeploymentError, InferenceDeploymentService
-from app.services.inference_rollout import WeightedTargetRouter
+from app.services.inference_rollout import ConditionValueRouter, WeightedTargetRouter
 from app.services.inference_runtime_client import InferenceRuntimeClient
 from app.services.label_schema import bind_label_schema_to_task, create_label_schema, label_schema_snapshot
 from app.services.model_registry import ModelRegistryError  # noqa: F401 (re-exported for callers)
@@ -128,35 +128,18 @@ _ANOMALY_PREDICTION_THRESHOLD_CACHE: dict[str, float] = {}
 def _anomaly_prediction_threshold(db, version) -> float | None:
     """部署版本的标定阈值（score_stats.threshold_score，§6.6A 判定统一）。
 
-    与 API enrich 同链同口径；进程级缓存（version 不可变）。
+    与 API enrich 同链同口径——直接委托 anomaly_threshold_for_version（含
+    工况分片版本的独立阈值解析：conversion_metadata.anomaly_score_stats_
+    artifact_id 优先，M7）；进程级缓存（version 不可变）。
     """
     key = str(version.id)
     if key in _ANOMALY_PREDICTION_THRESHOLD_CACHE:
         return _ANOMALY_PREDICTION_THRESHOLD_CACHE[key]
-    try:
-        from app.models.model_library import ModelLibrary
-        from app.models.training import TrainingJob
+    from app.services.inference_deployment import anomaly_threshold_for_version
 
-        library = db.query(ModelLibrary).filter(
-            ModelLibrary.id == version.source_model_library_id,
-        ).first()
-        if library is None or not library.training_job_id:
-            return None
-        job = db.query(TrainingJob).filter(TrainingJob.id == library.training_job_id).first()
-        score_artifact_id = (job.metrics or {}).get("score_artifact_id") if job else None
-        if not score_artifact_id:
-            return None
-        artifact = db.query(Artifact).filter(Artifact.id == str(score_artifact_id)).first()
-        if artifact is None:
-            return None
-        service = build_artifact_service(db)
-        with service.materialize(artifact.id, job.project_id, expected_type="report") as path:
-            payload = json.loads(Path(path).read_text(encoding="utf-8"))
-        threshold = payload.get("threshold_score")
-        result = float(threshold) if threshold is not None else None
-    except Exception:
-        return None
-    _ANOMALY_PREDICTION_THRESHOLD_CACHE[key] = result
+    result = anomaly_threshold_for_version(db, version)
+    if result is not None:
+        _ANOMALY_PREDICTION_THRESHOLD_CACHE[key] = result
     return result
 
 
@@ -534,14 +517,17 @@ class DemoLoopService:
         deployment = self._deployment(config)
         version = self._current_model_version(deployment)
 
-        predicted, confidence, anomaly_score = self._run_prediction(config, deployment, version, record)
+        predicted, confidence, anomaly_score, served_version = self._run_prediction(
+            config, deployment, version, record,
+        )
 
         # 无监督报警判定（技术方案 §6.6A 判定统一）：anomaly 部署按标定阈值
         # （score_stats.threshold_score）判 anomaly_score，与 API enrich 同口径；
+        # 工况分片部署按实际路由到的分片版本判定（每分片阈值独立，§6.3）。
         # 阈值不可得时回退 label 端口。有监督保持类别匹配。
-        output_schema = version.output_schema if isinstance(version.output_schema, dict) else {}
+        output_schema = served_version.output_schema if isinstance(served_version.output_schema, dict) else {}
         if output_schema.get("task") == "anomaly":
-            threshold = _anomaly_prediction_threshold(self.db, version)
+            threshold = _anomaly_prediction_threshold(self.db, served_version)
             if threshold is not None and anomaly_score is not None:
                 is_error = anomaly_score >= threshold
             else:
@@ -553,7 +539,7 @@ class DemoLoopService:
                 "prediction": str(predicted),
                 "confidence": confidence,
                 "anomaly_score": anomaly_score,
-                "model_version_id": str(version.id),
+                "model_version_id": str(served_version.id),
                 "error_matched": is_error,
                 "appended": False,
                 "dry_run": True,
@@ -608,7 +594,7 @@ class DemoLoopService:
             "prediction": str(predicted),
             "confidence": confidence,
             "anomaly_score": anomaly_score,
-            "model_version_id": str(version.id),
+            "model_version_id": str(served_version.id),
             "error_matched": is_error,
             "appended": appended,
             "total_count": int(config.total_count),
@@ -618,7 +604,12 @@ class DemoLoopService:
         }
 
     def _run_prediction(self, config: DemoLoopConfig, deployment: InferenceDeployment, version: ModelVersion, record: dict):
-        """Runtime first (production-identical ONNX serving), in-process fallback."""
+        """Runtime first (production-identical ONNX serving), in-process fallback.
+
+        返回 ``(predicted, confidence, anomaly_score, served_version)``——
+        工况分片部署（§6.3）按记录工况路由到分片版本，served_version 是
+        实际服务的版本（阈值/输出合同判定必须跟随它，而非部署主版本）。
+        """
         names = _feature_names(version)
         if names:
             missing = [name for name in names if name not in record]
@@ -627,7 +618,26 @@ class DemoLoopService:
         service = _deployment_service()
         if service is not None:
             try:
-                routed = WeightedTargetRouter().select_active(deployment, uuid.uuid4().hex)
+                condition_column = str(getattr(deployment, "condition_column", None) or "").strip()
+                if condition_column:
+                    # 工况分片路由（§6.3，二期 M7）：分片部署与灰度互斥，回流
+                    # 记录按其工况值精确路由到对应分片 runtime（未命中回退默认
+                    # 分片），保证回流行分数与线上同口径。
+                    stable = self.db.query(DeploymentRevision).filter(
+                        DeploymentRevision.deployment_id == deployment.id,
+                        DeploymentRevision.status == "stable",
+                    ).order_by(DeploymentRevision.revision_number.desc()).first()
+                    targets = list(stable.targets or ()) if stable is not None else []
+                    if not targets:
+                        raise DemoLoopError(
+                            "DEMO_LOOP_PREDICT_EMPTY",
+                            "部署缺少稳定 revision 的分片 targets，无法路由",
+                        )
+                    routed = ConditionValueRouter(condition_column).select_for_record(
+                        deployment, record, targets=targets,
+                    )
+                else:
+                    routed = WeightedTargetRouter().select_active(deployment, uuid.uuid4().hex)
                 if names:
                     numeric = {}
                     for name in names:
@@ -654,10 +664,24 @@ class DemoLoopService:
                 probabilities = result.get("probabilities") or []
                 confidence = None
                 anomaly_score = None
+                # 工况分片：实际服务的版本可能与部署主版本不同（按记录工况
+                # 路由），输出合同与阈值判定都跟随 served_version。
+                served_version = version
+                if str(routed.model_version_id) != str(version.id):
+                    try:
+                        candidate = self.db.query(ModelVersion).filter(
+                            # 路由产物可能是 str（JSON/fake target）也可能是
+                            # UUID 对象：绑定 UUID 列必须统一转 uuid 对象（坑）
+                            ModelVersion.id == uuid.UUID(str(routed.model_version_id)),
+                        ).first()
+                    except (TypeError, ValueError):
+                        # 非 UUID 形态的路由键（测试 stub/外部实现）按主版本判定
+                        candidate = None
+                    served_version = candidate or version
                 # 无监督分数回流（技术方案 §3.6）：ONNX scores=decision_function
                 # （正=正常），anomaly_score 取负统一「越高越异常」。scores 端口
                 # 输出形状 [N] 张量 → _json_value 得 list，取首元素。
-                output_schema = version.output_schema if isinstance(version.output_schema, dict) else {}
+                output_schema = served_version.output_schema if isinstance(served_version.output_schema, dict) else {}
                 if output_schema.get("task") == "anomaly" and probabilities:
                     row_value = _json_value(probabilities[0])
                     if isinstance(row_value, list) and row_value:
@@ -668,7 +692,7 @@ class DemoLoopService:
                     row = _json_value(probabilities[0])
                     if isinstance(row, list) and row:
                         confidence = round(float(max(row)), 4)
-                return predicted, confidence, anomaly_score
+                return predicted, confidence, anomaly_score, served_version
             except DemoLoopError:
                 raise
             except (InferenceDeploymentError, RuntimeError) as error:
@@ -678,9 +702,12 @@ class DemoLoopService:
                         "DEMO_LOOP_RECORD_INVALID",
                         "数据与模型特征列不匹配（需要与训练特征完全一致的数值列）",
                     ) from error
-        return self._predict_in_process(
-            version, record, names,
-            preprocess_enabled=bool(getattr(config, "preprocess_enabled", False)),
+        return (
+            *self._predict_in_process(
+                version, record, names,
+                preprocess_enabled=bool(getattr(config, "preprocess_enabled", False)),
+            ),
+            version,
         )
 
     def _engineer_missing_features(

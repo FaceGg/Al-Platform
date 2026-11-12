@@ -833,3 +833,40 @@ M3 同日续作（方案 §3.6/§3.7）。迁移 20261112_98（demo_loop_configs
 - 无 condition_column 时单段全量（行为与 M1 一致，回归零变化）
 - 带 condition_column（params，来自重训参数链/直接 API）时按工况值切分：每段 ≥100 行独立走完整流程（80/20+合成基准+双族搜索+门禁），每段独立 artifact（condition_value metadata），冠军=最差段（synthetic_auc 最低——任一工况不可用即整体不可用）；不足 100 行的段并入默认段并留痕
 - 分段护栏与 §6.3 对齐（段 ≥100，M7 路由挂载时统一 ≥200 语义）；metrics 带 `condition_segments`/`per_condition` 证据
+
+## 2026-11-12 二期 M7 主块二收官：工况分片挂载 + 推理路由接线（0b456af8/2985e23f/2e025e4e + 本批）
+
+M7 全块落地（技术方案 §6.3/§6.6E/F/G）。主块一（前批）：迁移 _99 `deployment_targets.condition_value`、`ConditionValueRouter`（inference_rollout，与灰度锁互斥隔离）、引擎分片 bundle 清单 `metrics.condition_bundles`。本批主块二：
+
+1. **部署侧声明链**（迁移 20261112_100）：`inference_deployments.condition_column`（String 128 nullable，NULL=普通部署语义不变；非空即工况分片模式，与灰度 `routing_key` 互斥——工况模式下灰度键被忽略）。
+2. **分片注册挂载**（closed_loop_actions）：`condition_bundles` → N 独立 RegisteredModel（命名 `champion-{jobid8}-{工况净化后缀}`，后缀保留中文）+ `register_platform_version(source_model_artifact_id)` 段 artifact 信任链（信任锚放宽：`condition_bundles` 清单本身可信——job.metrics 候选清单只含最差段，其余段 artifact 此前会 MODEL_SOURCE_UNTRUSTED）；每版本写幂等键 `closed-loop-{job}-cond-{suffix}` + `conversion_metadata.anomaly_score_stats_artifact_id`（**分片版本阈值解析指针**——job 顶层 score_artifact_id 是最差段的，直接复用会张冠李戴，`anomaly_threshold_for_version` 优先读它）；换模轮换 revision 挂 N targets（weight 按段行数比例分配、总和 10000、最大行数=默认分片）；`deployment.condition_column` 自动写入；重放幂等按 targets 集合（版本+工况值）整体比对。
+3. **retention per-shard**（§6.3 per-shard 门禁）：`_retention_per_shard` 逐分片用各自 bundle 模型对该工况内 confirmed 样本打分，返回**最差分片口径**（任一分片命中率下降即整体拒换模，与训练冠军=最差段同语义）；无工况列/无样本回退单模型整体判定。
+4. **推理路由接线**：`InferenceDeploymentService.predict` 工况分派 → `predict_condition_sharded`（按记录工况值分组路由 → 各组独立 runtime.predict + 按实际服务版本独立 enrich（每分片阈值独立）→ 原序合并）；生产端点同款接线（观测记录按主分片口径）；demo_loop 单条回流按 `ConditionValueRouter.select_for_record` 路由，阈值判定跟随实际路由版本（served_version 四元组返回）；回显逐记录 `condition_values`（None=未精确命中走了兜底）。
+5. **unknown_condition 审计**：未命中记录的工况值集合落域事件 `inference.unknown_condition`（severity=warning，幂等键含集合指纹，savepoint 隔离失败不阻断推理；SAFE_EVENT_TYPES/SAFE_PAYLOAD_KEYS 同批扩容）。
+6. **段护栏统一 ≥200**（§6.6E）：`ANOMALY_SEGMENT_MIN_ROWS=200`（automl_anomaly.py 常量化），小样本分片 fpr 门禁随机挂的 Binomial 教训对齐。
+7. **Router 语义补强**：未命中回退 condition_value=None 通配 target 优先（默认段兜底），再则 weight 最高（训练量最大分片）；`RoutedTarget` 增 `condition_value`/`matched`（默认值兼容灰度路径）。
+
+**验证**：专项 `test_condition_shard_routing.py` 18 passed（Router 纯函数语义 6 + 分组路由各归其模/unknown 幂等审计/灰度互斥 5 + 闭环挂载 N 版本 N targets/重放幂等/单版本回归锁 3 + retention per-shard 2 + 阈值分片指针 2）；受影响面回归 rollout/deployment/demo_loop/闭环重训/weld 140 passed。
+
+**坑（新）**：①mock.Mock 的 `.get()` 返回 Mock，对其迭代直接 TypeError——闭环 metrics 提取全部加 `isinstance(job.metrics, dict)` 防御（`test_without_recipe_registration_proceeds` 暴露）。②JSON 列取出的 artifact id 恒为 str，UUID 列绑定必须转 uuid 对象——分片阈值指针查询再次踩中（既往坑第 N 次）。③`model_versions` 有 `ck_model_versions_source_reference` CHECK（platform_joblib 必须带 model_library_id）——测试 fixture 用 `onnx_artifact` kind 最省事；`training_jobs.user_id` NOT NULL。
+
+## 2026-11-12 二期 M5-0 + M5：autoencoder 第三族（先决实测全过 + 立项门槛达标采纳）
+
+1. **M5-0 先决实测**（`tools/acceptance/run_anomaly_ae_preflight.py` 落档 + `test_anomaly_ae_preflight.py` 5 passed；torch 2.15.0+cpu 本地装，CI/镜像接线属采纳后事项）：
+   - torch.onnx.export + ORT 1.24.4 载入 ✓；方向实测 ✓（正常重构误差 0.58 << 异常 11.5，AUC 1.0）；clone 协议 ✓；一致性 5.7e-6 << 1e-4 ✓
+   - **核心发现（方向语义，M3 块①「不猜方向」的 AE 版）**：`pipeline_anomaly_scores` 对 `decision_function` 取负（sklearn 惯例正=正常）→ AE anomaly_score=+MSE；AE 的 ONNX 融合图直接输出 `scores=−MSE`（正=正常）**与一期 decision_function 端口合同完全对齐——enrich/runtime/demo_loop 取负逻辑零改动**（曾试过 reconstruction 端口方案，推理侧要按模型类型分支取负，已否决）
+   - 成本实测（§6.6D）：单 fit 11.2s（万行×20 特征@100 epochs）、stability 5×80% 重训 37.5s、单 trial ≈13.5s → **AE 只在 high/ultra 搜索强度出场**（引擎侧过滤，light/medium 留给快速双族）
+   - 融合导出必须用 **pipeline 真前端参数**（Imputer.statistics_/Scaler.mean_/scale_）：pipeline 内 detector.fit 收到的是标准化后输入，detector 内部统计是 scaled 空间的，直接用会双重标准化
+2. **M5 落地**：`automl_anomaly_ae.py`（TorchAutoencoder：BaseEstimator clone 协议/只实现 decision_function+predict 不实现 score_samples（§6.6B）/去噪训练 σ=0.05/融合单图导出含 NaN→median→scale 前端）+ 目录注册第三族 `autoencoder`（supported_tasks=anomaly_detection、resource_parameter=epochs int Hyperband 兼容、torch 缺失时 builder 抛 AlgorithmUnavailable 族自动缺席——§6.5 降级预案结构化形态，IF/OCSVM ONNX 路径不受影响）+ onnx_worker `autoencoder` 分支（`_model_family` 分派 + `export_pipeline_autoencoder_onnx`，输出 label（全 1 占位，判定走 threshold_score）+ scores（−MSE），ORT 载入逐位一致 1.8e-7）+ 引擎出场过滤。
+3. **立项门槛判定（真实拧紧数据三族同台，`docs/验收-无监督异常检测-AE对照.json`）**：
+
+| 指标 | iforest | ocsvm（一期冠军） | **autoencoder** |
+|---|---|---|---|
+| synthetic_auc | —（一期 0.961） | 0.9930 | **0.9989** |
+| uniform_outlier 检出 | 0.187 | 1.0 | **1.0** |
+| local_perturbation 检出 | 0.016 | 0.968 | **1.0** |
+| **combinatorial 检出** | 0.0 | 0.7945 | **0.941** |
+| normal_fpr / stability | 0.0104 / 0.995 | 0.0100 / 0.9999 | **0.0133 / 0.9796（均过门禁）** |
+
+   **comb 0.941 ≥ 门槛 0.845（ocsvm 0.7945+0.05）→ 采纳为可选族**；方案 §6.0 预判的「AE 边际收益有限风险」被数据推翻——重构误差对密度空洞组合异常的捕捉显著优于轴平行切分（comb +0.15）。方案「数据说话」机制首次给出正面立项结论。
+4. **M6 半监督精调按 §6.2 自动顺延**：前置门槛 confirmed_fault ≥50 条未达（平台真实标签尚在积累），档 1（标签阈值重标定）机制面已就位（feedback_marks/排除集消费/阈值随版本下发/分片阈值指针全部就绪），标签积累到位后按 §6.2 档 1 直接实施即可。

@@ -638,6 +638,17 @@ class ModelRegistryService:
                 and item.get("status") == "completed"
                 for item in results
             )
+            if not trusted:
+                # 工况分片 bundle（技术方案 §6.3，二期 M7）：job.metrics 的
+                # 候选清单只含最差段（冠军=最差段口径），其余段的 artifact
+                # 不在 algorithm_results——信任锚放宽到引擎产出的
+                # condition_bundles 清单（同 job、同 training_job_id 链）。
+                bundles = (job.metrics or {}).get("condition_bundles") or []
+                trusted = any(
+                    isinstance(bundle, dict)
+                    and str(bundle.get("model_artifact_id")) == str(artifact.id)
+                    for bundle in bundles
+                )
         else:
             trusted = job.model_artifact_id == artifact.id and job.model_library_id == library.id
         if not trusted:

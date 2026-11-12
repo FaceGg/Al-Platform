@@ -134,7 +134,9 @@ def test_anomaly_families_registered_exclusively():
     supervised = [family.id for family in resolve_algorithm_families(None, task="classification")]
     assert "iforest" not in supervised and "ocsvm" not in supervised
     anomaly = [family.id for family in resolve_algorithm_families(None, task="anomaly_detection")]
-    assert anomaly == ["iforest", "ocsvm"]
+    # 三族（二期 M5）：autoencoder 第三族注册（torch 缺失时 builder 抛
+    # AlgorithmUnavailable，trial 记 unavailable——族位保留）。
+    assert anomaly == ["iforest", "ocsvm", "autoencoder"]
 
 
 def test_family_build_rejects_cross_paradigm_tasks():

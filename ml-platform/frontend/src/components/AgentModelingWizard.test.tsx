@@ -39,6 +39,7 @@ vi.mock("../pages/AutoMLPage", () => ({
   AUTOML_ANOMALY_ALGORITHM_OPTIONS: [
     { value: "iforest", label: "IsolationForest 隔离森林" },
     { value: "ocsvm", label: "One-Class SVM 单类支持向量机" },
+    { value: "autoencoder", label: "AutoEncoder 自编码器" },
   ],
 }));
 vi.mock("../i18n", () => ({

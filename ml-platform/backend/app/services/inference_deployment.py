@@ -1,10 +1,13 @@
 """Inference deployment desired/observed state orchestration."""
 
 from datetime import datetime, timezone
+import hashlib
 import json
+import logging
 import uuid
 from pathlib import Path
 
+from app.events.domain import create_domain_event, to_storage_payload
 from app.models.artifact import Artifact
 from app.models.model_registry import (
     DeploymentRevision,
@@ -14,7 +17,10 @@ from app.models.model_registry import (
     ModelVersion,
 )
 from app.services.artifact_service import build_artifact_service
+from app.services.inference_rollout import ConditionValueRouter
 from app.services.inference_runtime_client import InferenceRuntimeClientError
+
+logger = logging.getLogger(__name__)
 
 
 def utcnow():
@@ -35,7 +41,10 @@ def anomaly_threshold_for_version(db, version):
     """部署版本的标定阈值（score_stats.threshold_score，§6.6A）。
 
     链：版本 → 模型库（training_job_id）→ 训练任务 metrics.score_artifact_id
-    → 工件 JSON。任一环节缺失返回 None（调用方回退 label 端口判定）。
+    → 工件 JSON。工况分片版本（M7）优先走 conversion_metadata 里注册时写入的
+    anomaly_score_stats_artifact_id——每分片独立标定，job 顶层 score_artifact_id
+    是最差段的，直接复用会张冠李戴。任一环节缺失返回 None（调用方回退 label
+    端口判定）。
     """
     cached = _ANOMALY_THRESHOLD_CACHE.get(str(version.id))
     if cached is not None:
@@ -44,6 +53,22 @@ def anomaly_threshold_for_version(db, version):
         from app.models.model_library import ModelLibrary
         from app.models.training import TrainingJob
 
+        metadata = version.conversion_metadata if isinstance(version.conversion_metadata, dict) else {}
+        shard_stats_id = str(metadata.get("anomaly_score_stats_artifact_id") or "").strip()
+        if shard_stats_id:
+            # JSON 列取出的 id 恒为 str：UUID 列绑定必须转 uuid 对象（既往坑）
+            artifact = db.query(Artifact).filter(
+                Artifact.id == uuid.UUID(shard_stats_id),
+            ).first()
+            if artifact is not None:
+                service = build_artifact_service(db)
+                with service.materialize(artifact.id, artifact.project_id, expected_type="report") as path:
+                    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+                threshold = payload.get("threshold_score")
+                if threshold is not None:
+                    value = float(threshold)
+                    _ANOMALY_THRESHOLD_CACHE[str(version.id)] = value
+                    return value
         library = db.query(ModelLibrary).filter(
             ModelLibrary.id == version.source_model_library_id,
         ).first()
@@ -66,7 +91,8 @@ def anomaly_threshold_for_version(db, version):
 
 
 def anomaly_predict_enrichment(runtime, runtime_key, records, result, *,
-                               feature_schema, output_schema, threshold_score=None):
+                               feature_schema, output_schema, threshold_score=None,
+                               enable_attribution=True):
     """无监督三要素映射 + 单行扰动归因（技术方案 §3.5，平台/生产端点共用）。
 
     ONNX `scores` 端口 = sklearn decision_function（正=正常，2026-11-12
@@ -75,7 +101,9 @@ def anomaly_predict_enrichment(runtime, runtime_key, records, result, *,
     score_stats 下发）；threshold 不可得时回退 label 端口（offset 语义）。
     top_contributors 用中心差分扰动归因（每特征 ±1% 各重推理一次，共
     2×n_features 次 session.run），仅单行请求时返回——批量归因成本线性
-    放大，一期不做。非 anomaly 部署原样返回。
+    放大，一期不做。enable_attribution=False 供工况分片批量路径禁用
+    （按总请求数判断归因，防分片子组恰为单行时成本线性放大）。非 anomaly
+    部署原样返回。
     """
     schema = output_schema if isinstance(output_schema, dict) else {}
     if schema.get("task") != "anomaly":
@@ -96,7 +124,7 @@ def anomaly_predict_enrichment(runtime, runtime_key, records, result, *,
         for item in (feature_schema or [])
         if isinstance(item, dict) and item.get("name")
     ]
-    if len(records) == 1 and names:
+    if enable_attribution and len(records) == 1 and names:
         row = dict(records[0])
         contributions: list[dict[str, float | str]] = []
         for name in names:
@@ -383,6 +411,11 @@ class InferenceDeploymentService:
         if deployment.desired_state != "running" or deployment.observed_state != "running":
             raise InferenceDeploymentError("DEPLOYMENT_NOT_READY")
         try:
+            condition_column = str(getattr(deployment, "condition_column", None) or "").strip()
+            if condition_column:
+                # 工况分片路由（§6.3）：部署声明 condition_column 即工况模式，
+                # 与灰度 routing_key 互斥（灰度键在工况模式下被忽略）。
+                return self.predict_condition_sharded(db, deployment, condition_column, records)
             runtime_key = deployment.id
             if routing_key is not None:
                 from app.services.inference_rollout import WeightedTargetRouter
@@ -446,12 +479,161 @@ class InferenceDeploymentService:
         except (InferenceRuntimeClientError, InferenceDeploymentError) as error:
             raise InferenceDeploymentError(self._runtime_code(error)) from None
 
-    def _anomaly_enrich(self, runtime_key, records, result, version, threshold_score):
+    def predict_condition_sharded(self, db, deployment, condition_column, records):
+        """工况分片推理（技术方案 §6.3，二期 M7）：按记录工况值分组路由。
+
+        - targets 从最新 stable revision 解析（revision 不可变；分片 targets
+          由闭环换模挂载，各自带 condition_value 标注）
+        - 每组独立 runtime.predict（键 ``{revision_id}:{model_version_id}``，
+          与灰度共用 reconcile 预载）+ 按该组实际服务版本独立 enrich——每
+          分片阈值独立（conversion_metadata.anomaly_score_stats_artifact_id）
+        - 未命中回退默认分片（ConditionValueRouter：condition_value=None 通配
+          优先，再则 weight 最高）并落 unknown_condition 审计事件（同一
+          unknown 集合幂等只落一次）
+        - 响应附逐记录 ``condition_values`` 回显（排障用；分片选择对调用方
+          透明，三要素合同不变）；单行请求保留 top_contributors 归因
+        """
+        stable = db.query(DeploymentRevision).filter(
+            DeploymentRevision.deployment_id == deployment.id,
+            DeploymentRevision.status == "stable",
+        ).order_by(DeploymentRevision.revision_number.desc()).first()
+        if stable is None or not (stable.targets or ()):
+            raise InferenceDeploymentError("STABLE_REVISION_NOT_FOUND")
+        router = ConditionValueRouter(condition_column)
+        groups: dict[tuple[str, str | None], list[int]] = {}
+        condition_values: list[str | None] = []
+        unknown_values: set[str] = set()
+        for index, record in enumerate(records):
+            routed = router.select_for_record(deployment, record, targets=stable.targets)
+            groups.setdefault(
+                (str(routed.model_version_id), routed.condition_value),
+                [],
+            ).append(index)
+            # 回显语义：None=该记录未精确命中任何分片（走了兜底，详情见
+            # unknown_condition 审计事件）；命中时回显实际服务的工况值。
+            condition_values.append(routed.condition_value if routed.matched else None)
+            raw_value = record.get(condition_column)
+            if not routed.matched and raw_value not in (None, ""):
+                unknown_values.add(str(raw_value))
+        if unknown_values:
+            self._record_unknown_condition_event(
+                db, deployment, condition_column, unknown_values,
+            )
+        merged: dict = {"condition_values": condition_values}
+        list_keys = ("predictions", "probabilities", "anomaly_score", "is_anomaly")
+        for key in list_keys:
+            merged[key] = [None] * len(records)
+        single_row_contributors = None
+        for model_version_id, _condition_value in groups:
+            version = db.query(ModelVersion).filter(
+                ModelVersion.id == uuid.UUID(model_version_id),
+            ).first()
+            if version is None:
+                raise InferenceDeploymentError("MODEL_VERSION_NOT_FOUND")
+            runtime_key = f"{stable.id}:{model_version_id}"
+            sub_records = [records[index] for index in groups[(model_version_id, _condition_value)]]
+            try:
+                result = self.runtime.predict(runtime_key, sub_records)
+                used_key = runtime_key
+            except (InferenceRuntimeClientError, InferenceDeploymentError) as alias_error:
+                # 别名未载回落主键（换模后 ≤1 个 reconcile 周期窗口；主版本
+                # 即默认分片，回落语义与单模型路径一致）
+                if (
+                    getattr(alias_error, "code", "") == "DEPLOYMENT_NOT_READY"
+                    or "DEPLOYMENT_NOT_READY" in str(alias_error)
+                ):
+                    used_key = str(deployment.id)
+                    result = self.runtime.predict(deployment.id, sub_records)
+                else:
+                    raise
+            served_threshold = anomaly_threshold_for_version(db, version)
+            enriched = anomaly_predict_enrichment(
+                self.runtime, used_key, sub_records, result,
+                feature_schema=version.feature_schema,
+                output_schema=version.output_schema,
+                threshold_score=served_threshold,
+                enable_attribution=len(records) == 1,
+            )
+            if not isinstance(enriched, dict):
+                raise InferenceDeploymentError("INFERENCE_PREDICT_INVALID")
+            for key in list_keys:
+                values = enriched.get(key)
+                if isinstance(values, list):
+                    for position, index in enumerate(groups[(model_version_id, _condition_value)]):
+                        if position < len(values):
+                            merged[key][index] = values[position]
+            if len(records) == 1 and enriched.get("top_contributors") is not None:
+                single_row_contributors = enriched.get("top_contributors")
+        if single_row_contributors is not None:
+            merged["top_contributors"] = single_row_contributors
+        return merged
+
+    def _record_unknown_condition_event(self, db, deployment, condition_column, values):
+        """unknown_condition 审计事件（§6.3）：未命中分片的工况值集合落域事件。
+
+        幂等键含集合指纹——同一 unknown 集合只落一次；savepoint 隔离，落库
+        失败不影响推理本身。
+        """
+        from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        from app.models.notifications import NotificationOutbox
+
+        fingerprint = hashlib.sha256(
+            "|".join(sorted(values)).encode("utf-8"),
+        ).hexdigest()[:16]
+        event = create_domain_event(
+            idempotency_key=f"inference.unknown_condition:{deployment.id}:{fingerprint}",
+            event_type="inference.unknown_condition",
+            severity="warning",
+            occurred_at=utcnow(),
+            project_id=deployment.project_id,
+            actor_id=None,
+            resource_type="inference_deployment",
+            resource_id=str(deployment.id),
+            payload={
+                "condition_column": condition_column,
+                "unknown_values": sorted(values),
+            },
+        )
+        try:
+            with db.begin_nested():
+                statement_factory = (
+                    postgresql_insert
+                    if db.get_bind().dialect.name == "postgresql"
+                    else sqlite_insert
+                )
+                db.execute(statement_factory(NotificationOutbox).values(
+                    id=uuid.uuid4(),
+                    event_id=event.event_id,
+                    idempotency_key=event.idempotency_key,
+                    event_type=event.event_type,
+                    severity=event.severity,
+                    occurred_at=event.occurred_at.replace(tzinfo=None),
+                    project_id=event.project_id,
+                    actor_id=event.actor_id,
+                    resource_type=event.resource_type,
+                    resource_id=event.resource_id,
+                    payload=to_storage_payload(event.payload),
+                    status="pending",
+                ).on_conflict_do_nothing(
+                    index_elements=[NotificationOutbox.idempotency_key],
+                ))
+        except Exception:  # noqa: BLE001 - 审计事件失败不阻断推理
+            logger.warning(
+                "unknown_condition event persist failed (deployment=%s)",
+                deployment.id,
+                exc_info=True,
+            )
+
+    def _anomaly_enrich(self, runtime_key, records, result, version, threshold_score,
+                        enable_attribution=True):
         return anomaly_predict_enrichment(
             self.runtime, runtime_key, records, result,
             feature_schema=version.feature_schema,
             output_schema=version.output_schema,
             threshold_score=threshold_score,
+            enable_attribution=enable_attribution,
         )
 
     def reconcile(self, db, *, include_rollout_aliases=False):

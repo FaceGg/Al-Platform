@@ -50,6 +50,7 @@ from app.services.automl_anomaly import (
     ANOMALY_HOLDOUT_RATIO,
     ANOMALY_MIN_ROWS,
     ANOMALY_OCSVM_MAX_TRAIN_ROWS,
+    ANOMALY_SEGMENT_MIN_ROWS,
     build_synthetic_benchmark,
     evaluate_anomaly_candidate,
     evaluate_anomaly_gates,
@@ -2349,8 +2350,8 @@ def _execute_anomaly_job(
 
     无 condition_column：单段全量（M1 行为）。带 condition_column（§6.3 分
     片建模）：按工况值切分，每段独立完整流程与独立 artifact，冠军取最差
-    段（synthetic_auc 最低——任一工况不可用即整体不可用）；段护栏 ≥100 行，
-    不足段并入默认段并留痕。
+    段（synthetic_auc 最低——任一工况不可用即整体不可用）；段护栏
+    ≥ANOMALY_SEGMENT_MIN_ROWS 行（§6.6E 统一 200），不足段并入默认段并留痕。
     """
     from app.services.automl_search import AutoMLContract, validate_target_columns
 
@@ -2403,6 +2404,12 @@ def _execute_anomaly_job(
     if condition_column and condition_column not in frame.columns:
         condition_column = None  # 分组列缺失时静默降级单段（与回流自愈同语义）
 
+    # AE 出场策略（§6.6D，M5-0 实测）：单 trial 成本比 IF/OC-SVM 高一个量级
+    # （万行×20 特征 100 epochs ≈ 12s），只在 high/ultra 强度出场——light/
+    # medium 搜索预算留给快速双族。
+    if search_strength in {"light", "medium"}:
+        families = tuple(family for family in families if family.id != "autoencoder")
+
     def check_control():
         if dependencies.cancellation_requested:
             cancelled = dependencies.cancellation_requested(job.id)
@@ -2418,8 +2425,9 @@ def _execute_anomaly_job(
         job.heartbeat_at = utcnow()
         db.commit()
 
-    # 分段切分（§6.3 分片）：按工况值 groupby，段 ≥100 行；不足段行并入
-    # 默认段（label=None）并留痕。单段模式（无工况列）= 全量一段。
+    # 分段切分（§6.3 分片，护栏 §6.6E 统一 ≥200）：按工况值 groupby，段
+    # ≥ANOMALY_SEGMENT_MIN_ROWS 行；不足段行并入默认段（label=None）并留痕。
+    # 单段模式（无工况列）= 全量一段。
     segments: list[tuple[str | None, pd.DataFrame]] = []
     merged_note: dict | None = None
     if condition_column:
@@ -2428,7 +2436,7 @@ def _execute_anomaly_job(
         small_frames: list[pd.DataFrame] = []
         for value, group in features.groupby(condition_values):
             label = f"{condition_column}={value}"
-            if len(group) >= 100:
+            if len(group) >= ANOMALY_SEGMENT_MIN_ROWS:
                 large_masks.append((label, group.index))
             else:
                 small_frames.append(group)

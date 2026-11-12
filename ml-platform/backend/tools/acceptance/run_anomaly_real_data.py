@@ -73,8 +73,22 @@ def main() -> int:
     hyperparams = {
         "iforest": {"n_estimators": 200, "max_samples": 512},
         "ocsvm": {"nu": 0.05, "kernel": "rbf", "gamma": "scale"},
+        # AE 第三族对照（§6.1 二期 M5 立项门槛）：comb 检出率 ≥ ocsvm 基线
+        # （一期实测 0.79）+0.05 才采纳为可选族，否则如实记录「本域无边际
+        # 收益」并保留族位（torch 缺失时自动跳过，不影响双族）。
+        "autoencoder": {"hidden_units": 64, "hidden_layers": 2,
+                        "bottleneck_ratio": 0.25, "epochs": 100,
+                        "learning_rate": 0.001},
     }
     for family_id, params in hyperparams.items():
+        try:
+            estimator = get_algorithm_family(family_id).build("anomaly_detection", params)
+        except Exception as error:  # noqa: BLE001 - torch 缺失等环境级缺席如实记录
+            results["families"][family_id] = {
+                "status": "skipped",
+                "reason": f"{type(error).__name__}: {error}",
+            }
+            continue
         metrics = evaluate_anomaly_candidate(
             get_algorithm_family(family_id).build("anomaly_detection", params),
             train,

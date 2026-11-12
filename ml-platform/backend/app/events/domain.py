@@ -19,6 +19,7 @@ SAFE_EVENT_TYPES = frozenset({
     "runtime.load_failed",
     "rate_limit.threshold_exceeded",
     "inference.error_rate.threshold_exceeded",
+    "inference.unknown_condition",
     "annotation_return.accepted",
     "annotation_return.returned_for_changes",
     "annotation_comment.replied",
@@ -35,6 +36,8 @@ SAFE_PAYLOAD_KEYS = frozenset({
     "comment_id",
     "parent_comment_id",
     "status",
+    "condition_column",
+    "unknown_values",
 })
 
 

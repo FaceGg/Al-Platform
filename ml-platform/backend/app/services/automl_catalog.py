@@ -207,6 +207,32 @@ def _ocsvm_builder(task: TaskType, params: Mapping[str, object]):
     return _anomaly_pipeline(OneClassSVM(**normalized))
 
 
+def _autoencoder_builder(task: TaskType, params: Mapping[str, object]):
+    """TorchAutoencoder 去噪 AE（技术方案 §6.1，二期 M5）。
+
+    torch 为可选依赖：缺失时抛 AlgorithmUnavailable（引擎记 trial
+    unavailable，族自动缺席；IF/OC-SVM 不受影响——§6.5「降级 joblib-only」
+    预案的结构化形态，M5-0 已实测 torch 路径可行）。出场策略由引擎侧控制：
+    单 trial 成本比 IF/OC-SVM 高一个量级（M5-0 实测：万行×20 特征 100
+    epochs ≈ 12s），只在 high/ultra 搜索强度出场。
+    """
+    from app.services.automl_anomaly_ae import TORCH_AVAILABLE, TorchAutoencoder
+
+    if not TORCH_AVAILABLE:
+        raise AlgorithmUnavailable("autoencoder")
+    normalized = dict(params)
+    normalized["epochs"] = int(normalized.get("epochs") or 100)
+    if "hidden_layers" in normalized:
+        normalized["hidden_layers"] = int(normalized["hidden_layers"])
+    if "hidden_units" in normalized:
+        normalized["hidden_units"] = int(normalized["hidden_units"])
+    if "bottleneck_ratio" in normalized:
+        normalized["bottleneck_ratio"] = float(normalized["bottleneck_ratio"])
+    if "learning_rate" in normalized:
+        normalized["learning_rate"] = float(normalized["learning_rate"])
+    return _anomaly_pipeline(TorchAutoencoder(**normalized))
+
+
 def _family(
     family_id: str,
     display_name: str,
@@ -365,6 +391,28 @@ _FAMILIES = (
             "gamma": ParameterSpec("categorical", choices=("scale", "auto")),
         },
         "nu", 0.01, 0.2, _ocsvm_builder,
+        supported_tasks=("anomaly_detection",),
+    ),
+    _family(
+        # AE 第三族（§6.1，二期 M5）：重构误差捕捉密度空洞组合异常的候选
+        # 优势族。resource_parameter=epochs（int，Hyperband 兼容）；采纳与否
+        # 以真实数据 comb 检出率对照判定（§6.1 立项门槛：≥ ocsvm 基线+0.05
+        # 才为可选族，否则如实记录「本域无边际收益」）。
+        "autoencoder", "AutoEncoder 自编码器",
+        {"hidden_units": 64, "hidden_layers": 2, "bottleneck_ratio": 0.25,
+         "epochs": 100, "learning_rate": 0.001},
+        {
+            "hidden_units": (64,), "hidden_layers": (2,),
+            "bottleneck_ratio": (0.1, 0.25, 0.5), "epochs": (100,),
+        },
+        {
+            "hidden_units": ParameterSpec("categorical", choices=(32, 64)),
+            "hidden_layers": ParameterSpec("categorical", choices=(1, 2, 3)),
+            "bottleneck_ratio": ParameterSpec("categorical", choices=(0.1, 0.25, 0.5)),
+            "epochs": ParameterSpec("int", low=50, high=200, step=50),
+            "learning_rate": ParameterSpec("categorical", choices=(0.001, 0.0001)),
+        },
+        "epochs", 50, 200, _autoencoder_builder,
         supported_tasks=("anomaly_detection",),
     ),
 )

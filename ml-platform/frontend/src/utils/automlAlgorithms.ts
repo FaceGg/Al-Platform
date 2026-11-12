@@ -10,6 +10,7 @@ const ALGORITHM_LABELS: Record<string, string> = {
   mlp: "MLP 神经网络",
   iforest: "IsolationForest 隔离森林",
   ocsvm: "One-Class SVM 单类支持向量机",
+  autoencoder: "AutoEncoder 自编码器",
   ensemble: "集成加权投票",
   onnx: "ONNX",
 };

@@ -23,6 +23,10 @@ ANOMALY_TASK_TYPE = "anomaly_detection"
 ANOMALY_DEFAULT_CONTAMINATION = 0.01
 # 方案 §3.1：无监督行数下限（正常样本海量，低于此值建模无意义）。
 ANOMALY_MIN_ROWS = 200
+# 工况分段护栏（方案 §6.3/§6.6E）：每工况段 ≥200 行才独立训练，不足段并入
+# 默认段——与 M1 fpr 统计容差的 Binomial 教训一致，小样本分片的 fpr 门禁
+# 会随机挂（一期 trainer 过渡形态曾用 ≥100，M7 挂载时统一）。
+ANOMALY_SEGMENT_MIN_ROWS = 200
 ANOMALY_HOLDOUT_RATIO = 0.2
 # 每类合成异常的注入数量上限：与保留集 1:1 但封顶，控制大表评估耗时。
 ANOMALY_BENCHMARK_PER_CLASS_CAP = 2000

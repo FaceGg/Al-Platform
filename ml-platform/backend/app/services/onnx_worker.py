@@ -189,6 +189,10 @@ def _model_family(model: object) -> str:
             detector = getattr(model, "steps", [])[-1][1] if getattr(model, "steps", []) else None
             if type(detector) in _anomaly_pipeline_detector_types():
                 return "skl2onnx"
+            if type(detector).__name__ == "TorchAutoencoder":
+                # AE 第三族（§6.1，二期 M5）：torch.onnx.export 独立路径
+                # （skl2onnx 不认识 torch 估计器）。
+                return "autoencoder"
         raise WorkerError("MODEL_CONVERSION_UNSUPPORTED")
     if model_type is VotingClassifier:
         return "ensemble"
@@ -447,6 +451,34 @@ def _convert(source: Path, destination: Path) -> dict[str, object]:
         if scaler is not None:
             raise WorkerError("MODEL_CONVERSION_UNSUPPORTED")
         return _convert_ensemble(model, features, output, destination)
+
+    if family == "autoencoder":
+        # 融合前端（median+Scaler）+ AE + scores=-MSE 单图（§6.1/§6.6，M5）。
+        # 输出双端口 (label, scores) 按位置对齐一期合同：scores=-MSE（正=正常）
+        # ——enrich 取负后 anomaly_score=+MSE「越高越异常」，runtime/enrich/
+        # demo_loop 取负逻辑零改动（M5-0 核心实测结论）。前端参数取 pipeline
+        # 真前端（detector.fit 收到的是标准化后输入，其内部统计是 scaled
+        # 空间的，直接用会双重标准化）。
+        if scaler is not None:
+            raise WorkerError("MODEL_CONVERSION_UNSUPPORTED")
+        try:
+            from app.services.automl_anomaly_ae import (
+                export_pipeline_autoencoder_onnx,
+            )
+
+            _apply_resource_limits()
+            converted_info = export_pipeline_autoencoder_onnx(model, destination)
+        except Exception:
+            raise WorkerError("MODEL_CONVERSION_FAILED") from None
+        return {
+            "ok": True,
+            "converter": "torch",
+            "feature_schema": features,
+            "output_schema": output,
+            "input_names": converted_info["input_names"],
+            "output_names": converted_info["output_names"],
+            "opset": converted_info["opset"],
+        }
 
     if family == "catboost":
         if scaler is not None:

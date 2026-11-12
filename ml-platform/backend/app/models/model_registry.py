@@ -223,6 +223,10 @@ class InferenceDeployment(Base):
     last_checked_at = Column(DateTime, nullable=True)
     started_at = Column(DateTime, nullable=True)
     stopped_at = Column(DateTime, nullable=True)
+    # 工况分片路由（技术方案 §6.3，迁移 20261112_100）：部署级工况路由声明
+    # （NULL=普通部署，灰度/立即语义不变；非空即工况分片模式，与灰度互斥
+    # 挂载）。闭环分片换模时自动写入（取自训练任务 metrics.condition_column）。
+    condition_column = Column(String(128), nullable=True)
     created_by_id = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),

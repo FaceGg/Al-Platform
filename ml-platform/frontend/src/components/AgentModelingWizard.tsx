@@ -134,8 +134,9 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   // Step 3
   // 白名单默认全勾（用户指示 2026-11-06）：默认即全算法族搜索，用户取消
   // 勾选来收窄；全不选仍等价于全族（payload 语义不变）。
-  // 范式切换（用户建议 2）：无监督白名单=双族（iforest/ocsvm），监督白名单
-  // =8 监督族；切换范式时白名单整体重置为新范式的默认全勾。
+  // 范式切换（用户建议 2）：无监督白名单=三族（iforest/ocsvm/autoencoder，
+  // 二期 M5 AE 采纳），监督白名单=8 监督族；切换范式时白名单整体重置为
+  // 新范式的默认全勾。
   const whitelistOptions = taskType === "anomaly" ? AUTOML_ANOMALY_ALGORITHM_OPTIONS : AUTOML_ALGORITHM_OPTIONS;
   const [algorithmWhitelist, setAlgorithmWhitelist] = useState<Record<string, boolean>>(
     () => Object.fromEntries(AUTOML_ALGORITHM_OPTIONS.map((alg) => [alg.value, true])),

@@ -36,10 +36,14 @@ export const AUTOML_ALGORITHM_OPTIONS = [
   { value: "hist_gradient_boosting", label: "HistGradientBoosting" },
   { value: "mlp", label: "MLP 神经网络" },
 ];
-// 无监督（异常检测）族：仅 anomaly_detection 任务可选（范式互斥）
+// 无监督（异常检测）族：仅 anomaly_detection 任务可选（范式互斥）。
+// AE 第三族（二期 M5）：真实数据 comb 检出率 0.941 达标采纳（§6.1 门槛
+// ocsvm 基线+0.05）；仅 high/ultra 搜索强度出场（引擎侧过滤，torch 缺失
+// 时族自动缺席记 unavailable）。
 export const AUTOML_ANOMALY_ALGORITHM_OPTIONS = [
   { value: "iforest", label: "IsolationForest 隔离森林" },
   { value: "ocsvm", label: "One-Class SVM 单类支持向量机" },
+  { value: "autoencoder", label: "AutoEncoder 自编码器" },
 ];
 export const AUTOML_ALGORITHM_IDS = AUTOML_ALGORITHM_OPTIONS.map(({ value }) => value);
 export const AUTOML_ANOMALY_ALGORITHM_IDS = AUTOML_ANOMALY_ALGORITHM_OPTIONS.map(({ value }) => value);

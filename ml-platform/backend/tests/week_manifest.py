@@ -121,6 +121,10 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_automl_multioutput",
         "test_automl_anomaly",
         "test_anomaly_drift",
+        # 二期 M7/M5（2026-11-12）：工况分片路由挂载 + AE 第三族
+        "test_condition_shard_routing",
+        "test_anomaly_ae_preflight",
+        "test_automl_anomaly_ae",
         "test_label_schema",
         "test_label_schema_api",
         "test_run_suite",

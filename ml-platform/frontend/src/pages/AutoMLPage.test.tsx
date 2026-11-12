@@ -918,7 +918,8 @@ describe("AutoMLPage", () => {
       "/training/automl/run",
       expect.objectContaining({
         task: "anomaly_detection",
-        algorithm_ids: ["iforest", "ocsvm"],
+        // 三族（二期 M5）：autoencoder 采纳进白名单（默认全勾语义不变）
+        algorithm_ids: ["iforest", "ocsvm", "autoencoder"],
         contamination: 0.01,
         cross_validation_enabled: false,
         cross_validation_folds: null,

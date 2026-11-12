@@ -564,6 +564,90 @@ def candidate_score(row: dict) -> float:
     return 0.0
 
 
+def _condition_shard_model_suffix(condition_value) -> str:
+    """RegisteredModel 名字后缀（唯一约束）：净化路径分隔/控制字符，保留
+    unicode 字母数字（中文工况值是真实场景，不能整段抹掉）。"""
+    import re as _re
+
+    text = str(condition_value).strip() if condition_value is not None else ""
+    sanitized = _re.sub(r"[^\w-]+", "_", text, flags=_re.UNICODE).strip("_")
+    return sanitized[:64] or "default"
+
+
+def _register_condition_shard_versions(
+    db, registry, *, job, bundles, base_model_name, actor_id,
+) -> list[dict]:
+    """工况分片版本注册（技术方案 §6.3，二期 M7）。
+
+    每个 bundle 独立走 artifact 信任链注册（register_platform_version 的
+    source_model_artifact_id 分支：source=automl + training_job completed 校验，
+    段 artifact 自动建模型库条目），并写分片身份：
+
+    - registration_task_id / registration_idempotency_key（``closed-loop-{job}
+      -cond-{suffix}``）：闭环重放幂等——同一 job 再次换模复用已注册版本；
+    - conversion_metadata.anomaly_score_stats_artifact_id：推理阈值按分片独立
+      解析（anomaly_threshold_for_version 优先读它；job 顶层 score_artifact_id
+      是最差段的，直接复用会张冠李戴）。
+
+    返回 rows 降序的 ``[{"version", "condition_value", "rows"}]``——首个即
+    「默认分片」（训练量最大，ConditionValueRouter 未命中回退它）。
+    """
+    base = str(base_model_name).strip()
+    entries: list[dict] = []
+    sorted_bundles = sorted(
+        bundles,
+        key=lambda item: int(item.get("rows") or 0),
+        reverse=True,
+    )
+    for bundle in sorted_bundles:
+        raw_value = bundle.get("condition_value")
+        condition_value = str(raw_value).strip() if raw_value is not None else None
+        if condition_value is not None and not condition_value:
+            condition_value = None
+        suffix = _condition_shard_model_suffix(condition_value)
+        idempotency_key = f"closed-loop-{job.id}-cond-{suffix}"[:128]
+        existing = db.query(ModelVersion).filter(
+            ModelVersion.registration_task_id == job.id,
+            ModelVersion.registration_idempotency_key == idempotency_key,
+        ).first()
+        if existing is not None:
+            entries.append({
+                "version": existing,
+                "condition_value": condition_value,
+                "rows": int(bundle.get("rows") or 0),
+            })
+            continue
+        model = registry.create_registered_model(
+            db,
+            project_id=job.project_id,
+            actor_id=actor_id,
+            name=f"{base}-{suffix}"[:128],
+            description="",
+        )
+        version = registry.register_platform_version(
+            db,
+            model_id=model.id,
+            source_model_artifact_id=str(bundle.get("model_artifact_id")),
+            actor_id=actor_id,
+            commit=False,
+        )
+        version.registration_task_id = job.id
+        version.registration_candidate_id = f"condition:{condition_value or 'default'}"
+        version.registration_idempotency_key = idempotency_key
+        version.lifecycle_state = "pending_review"
+        metadata = dict(version.conversion_metadata or {})
+        metadata["anomaly_score_stats_artifact_id"] = str(bundle.get("stats_artifact_id") or "")
+        metadata["condition_value"] = condition_value
+        version.conversion_metadata = metadata
+        db.flush()
+        entries.append({
+            "version": version,
+            "condition_value": condition_value,
+            "rows": int(bundle.get("rows") or 0),
+        })
+    return entries
+
+
 def _anomaly_detection_retention(db, deployment_id, job, best) -> dict | None:
     """无监督换模门禁评估（技术方案 §3.6）：新模型对基线期已知报警样本分数不下降。
 
@@ -572,6 +656,11 @@ def _anomaly_detection_retention(db, deployment_id, job, best) -> dict | None:
     阈值（部署版本 score_stats 基线，零额外打分）；新命中 = 候选模型管线对该批
     特征打分 ≥ 新阈值（候选 bundle 自带）。返回 ``{"old_hit_rate", "new_hit_rate"}``；
     无确认样本/旧分数缺失/部署缺失 → None（不设门禁，保持可换模）。
+
+    工况分片（§6.3 per-shard 门禁）：job 带 condition_bundles 且确认样本带工况
+    列时逐分片判定——每分片用自己的 bundle 模型对该工况内样本打分，任一分片
+    命中率下降即拒绝换模（最差分片口径，与训练冠军=最差段同语义）；无工况列
+    或无分片样本时回退单模型整体判定。
     """
     import joblib as _joblib
 
@@ -604,6 +693,13 @@ def _anomaly_detection_retention(db, deployment_id, job, best) -> dict | None:
     old_threshold = _deployment_score_threshold(db, deployment)
     if old_threshold is None:
         return None
+    # 工况分片（§6.3 per-shard 门禁）：逐分片用各自 bundle 模型判定，返回
+    # 最差分片口径（任一分片能力下降即整体拒换模）；不适用则走单模型整体。
+    shard_retention = _retention_per_shard(
+        db, job=job, confirmed=confirmed, old_threshold=old_threshold,
+    )
+    if shard_retention is not None:
+        return shard_retention
     old_hit_rate = float((old_scores >= old_threshold).mean())
     # 新候选模型打分：候选工件（type=model，M1 bundle 含 Pipeline 与 score_stats）
     try:
@@ -623,6 +719,85 @@ def _anomaly_detection_retention(db, deployment_id, job, best) -> dict | None:
     except Exception:
         return None
     return {"old_hit_rate": round(old_hit_rate, 4), "new_hit_rate": round(new_hit_rate, 4)}
+
+
+def _retention_per_shard(db, *, job, confirmed, old_threshold) -> dict | None:
+    """分片 retention 门禁（§6.3）：逐分片判定，返回最差分片口径。
+
+    每分片用自己的 bundle 模型对该工况内 confirmed 样本打分；condition_value
+    为 None 的 bundle 吃未匹配任何已知工况值的样本（通配兜底）。全部分片均无
+    可判样本（无工况列/无匹配行/打分失败）→ None（回退单模型整体判定）。
+    """
+    import joblib as _joblib
+
+    from app.services.automl_anomaly import pipeline_anomaly_scores
+
+    job_metrics = job.metrics if isinstance(job.metrics, dict) else {}
+    condition_column = str(job_metrics.get("condition_column") or "").strip()
+    bundles = [
+        dict(bundle)
+        for bundle in job_metrics.get("condition_bundles") or []
+        if isinstance(bundle, dict) and bundle.get("model_artifact_id")
+    ]
+    if not condition_column or condition_column not in confirmed.columns or not bundles:
+        return None
+    service = build_artifact_service(db)
+    condition_series = confirmed[condition_column].astype(str).str.strip()
+    known_values = {
+        str(bundle.get("condition_value")).strip()
+        for bundle in bundles
+        if bundle.get("condition_value") is not None
+    }
+    shard_reports: list[dict] = []
+    for bundle in bundles:
+        raw_value = bundle.get("condition_value")
+        shard_value = str(raw_value).strip() if raw_value is not None else None
+        if shard_value:
+            shard_rows = confirmed[condition_series == shard_value]
+        else:
+            shard_rows = confirmed[~condition_series.isin(known_values)]
+        if shard_rows.empty:
+            continue
+        shard_scores = pd.to_numeric(shard_rows["anomaly_score"], errors="coerce").dropna()
+        if shard_scores.empty:
+            continue
+        try:
+            artifact = service.resolve(
+                _as_uuid(bundle["model_artifact_id"]), job.project_id, expected_type="model",
+            )
+            with service.materialize(artifact.id, job.project_id, expected_type="model") as path:
+                payload = _joblib.load(path)
+            model = payload.get("model")
+            feature_columns = [
+                item["name"]
+                for item in (payload.get("feature_schema") or [])
+                if item.get("name")
+            ]
+            new_threshold = float((payload.get("score_stats") or {}).get("threshold_score") or 0.0)
+            if model is None or not feature_columns:
+                continue
+            features = shard_rows.reindex(columns=feature_columns)
+            scores = pipeline_anomaly_scores(model, features.to_numpy(dtype=float))
+            new_hit_rate = float((scores >= new_threshold).mean())
+        except Exception:  # noqa: BLE001 - 单分片证据缺失不阻断其余分片判定
+            continue
+        shard_reports.append({
+            "condition_value": shard_value,
+            "rows": int(len(shard_scores)),
+            "old_hit_rate": round(float((shard_scores >= old_threshold).mean()), 4),
+            "new_hit_rate": round(new_hit_rate, 4),
+        })
+    if not shard_reports:
+        return None
+    worst = min(
+        shard_reports,
+        key=lambda item: float(item["new_hit_rate"]) - float(item["old_hit_rate"]),
+    )
+    return {
+        "old_hit_rate": worst["old_hit_rate"],
+        "new_hit_rate": worst["new_hit_rate"],
+        "shards": shard_reports,
+    }
 
 
 def _deployment_score_threshold(db, deployment) -> float | None:
@@ -734,23 +909,58 @@ def _complete_retrain_swap_locked(
     # registered_models has a (project_id, name) unique constraint — one model
     # entry per retrain cycle, suffixed by job id for determinism/idempotency.
     unique_model_name = f"{model_name}-{str(job.id)[:8]}"
-    version, _created = registry.register_automl_candidate(
-        db,
-        task_id=job.id,
-        candidate_id=candidate_id,
-        model_name=unique_model_name,
-        actor_id=actor_id,
-        idempotency_key=f"closed-loop-{job.id}",
+    # metrics 非 dict（测试 Mock/异常载荷）时按无分片处理——迭代 Mock 会炸。
+    job_metrics = job.metrics if isinstance(job.metrics, dict) else {}
+    condition_bundles = [
+        bundle for bundle in job_metrics.get("condition_bundles") or []
+        if isinstance(bundle, dict) and bundle.get("model_artifact_id")
+    ]
+    is_condition_sharded = (
+        str(job_metrics.get("task_type") or "") == "anomaly_detection"
+        and bool(condition_bundles)
     )
+    shard_entries: list[dict] = []
+    if is_condition_sharded:
+        # 工况分片挂载（§6.3）：每个 bundle 独立注册版本（独立 RegisteredModel
+        # 条目 + 段 artifact 信任链），rows 降序——首个即「默认分片」（训练量
+        # 最大，ConditionValueRouter 未命中回退它）。
+        shard_entries = _register_condition_shard_versions(
+            db,
+            registry,
+            job=job,
+            bundles=condition_bundles,
+            base_model_name=unique_model_name,
+            actor_id=actor_id,
+        )
+        version = shard_entries[0]["version"]
+    else:
+        version, _created = registry.register_automl_candidate(
+            db,
+            task_id=job.id,
+            candidate_id=candidate_id,
+            model_name=unique_model_name,
+            actor_id=actor_id,
+            idempotency_key=f"closed-loop-{job.id}",
+        )
     # 幂等重放（同一 job 再次换模）时版本可能已批准，重复 approve 会报状态冲突。
-    if version.approval_status != "approved":
+    if version is not None and version.approval_status != "approved":
         registry.transition_model_version(db, version.id, "approve", actor_id)
+    for entry in shard_entries:
+        entry_version = entry["version"]
+        if entry_version.approval_status != "approved":
+            registry.transition_model_version(db, entry_version.id, "approve", actor_id)
     if deployment_id is not None:
         deployment = db.query(InferenceDeployment).filter(
             InferenceDeployment.id == deployment_id,
         ).first()
         if deployment is not None:
             deployment.model_version_id = version.id
+            if shard_entries:
+                # 分片换模同时声明工况路由列（迁移 20261112_100）：部署从此
+                # 进入工况分片路由模式（predict 按记录工况值选分片）。
+                condition_column = str((job.metrics or {}).get("condition_column") or "").strip()
+                if condition_column:
+                    deployment.condition_column = condition_column
             # 换模跟随的另一半：闭环的特征脚本必须跟到新配方的 S2 脚本——
             # 新模型吃新派生特征，回流行仍按旧脚本变换会缺特征列（实测换模
             # 后 predict 全量 422「缺少模型特征列：ron_delta, …」）。
@@ -782,9 +992,21 @@ def _complete_retrain_swap_locked(
                 DeploymentRevision.deployment_id == deployment.id,
                 DeploymentRevision.status == "stable",
             ).order_by(DeploymentRevision.revision_number.desc()).first()
-            already_stable = stable is not None and any(
-                target.model_version_id == version.id for target in (stable.targets or ())
-            )
+            if shard_entries:
+                # 分片幂等判定按 targets 集合（版本+工况值）整体比对：同一 job
+                # 重放时 stable 已挂全套分片 targets 则不再轮换。
+                desired_shards = {
+                    (str(entry["version"].id), entry["condition_value"])
+                    for entry in shard_entries
+                }
+                already_stable = stable is not None and {
+                    (str(target.model_version_id), target.condition_value)
+                    for target in (stable.targets or ())
+                } == desired_shards
+            else:
+                already_stable = stable is not None and any(
+                    target.model_version_id == version.id for target in (stable.targets or ())
+                )
             if stable is not None and not already_stable:
                 stable.status = "superseded"
                 latest = db.query(DeploymentRevision.revision_number).filter(
@@ -799,12 +1021,29 @@ def _complete_retrain_swap_locked(
                 )
                 db.add(revision)
                 db.flush()
-                db.add(DeploymentTarget(
-                    revision_id=revision.id,
-                    model_version_id=version.id,
-                    weight_bps=10000,
-                    role="stable",
-                ))
+                if shard_entries:
+                    total_rows = sum(int(entry["rows"] or 0) for entry in shard_entries) or len(shard_entries)
+                    remaining = 10000
+                    for index, entry in enumerate(shard_entries):
+                        if index == len(shard_entries) - 1:
+                            weight = remaining
+                        else:
+                            weight = int(round(10000 * int(entry["rows"] or 0) / total_rows))
+                            remaining -= weight
+                        db.add(DeploymentTarget(
+                            revision_id=revision.id,
+                            model_version_id=entry["version"].id,
+                            weight_bps=max(weight, 0),
+                            role="stable",
+                            condition_value=entry["condition_value"],
+                        ))
+                else:
+                    db.add(DeploymentTarget(
+                        revision_id=revision.id,
+                        model_version_id=version.id,
+                        weight_bps=10000,
+                        role="stable",
+                    ))
                 db.flush()
     if hasattr(version, "_sa_instance_state"):
         db.commit()

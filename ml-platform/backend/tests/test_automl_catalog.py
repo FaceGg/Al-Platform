@@ -15,13 +15,15 @@ from app.services.automl_catalog import (
 
 class TestAutoMLCatalog(unittest.TestCase):
     def test_catalog_contains_exactly_eight_unique_families(self):
+        # 11 族（二期 M5）：autoencoder 第三无监督族注册（torch 缺失时
+        # builder 抛 AlgorithmUnavailable，族位保留）。
         self.assertEqual(AUTOML_FAMILY_IDS, (
             "lightgbm", "xgboost", "catboost", "gbdt",
             "random_forest", "extra_trees", "hist_gradient_boosting", "mlp",
-            "iforest", "ocsvm",
+            "iforest", "ocsvm", "autoencoder",
         ))
-        self.assertEqual(len(list_algorithm_families()), 10)
-        self.assertEqual(len(set(AUTOML_FAMILY_IDS)), 10)
+        self.assertEqual(len(list_algorithm_families()), 11)
+        self.assertEqual(len(set(AUTOML_FAMILY_IDS)), 11)
 
     def test_every_family_defines_both_tasks_and_resource(self):
         for family in list_algorithm_families():
