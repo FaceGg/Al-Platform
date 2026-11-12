@@ -161,7 +161,9 @@ describe("AutoMLPage", () => {
     expect(dashboardEvents.notifyDashboardStatsChanged).toHaveBeenCalled();
   });
 
-  it("offers existing experiments and selects the first available one", async () => {
+  it("no longer shows an experiment dropdown (auto-created per run)", async () => {
+    // 实验自动创建（用户建议 1）：一实验一任务约束下下拉选择注定撞 409，
+    // 配置条不再展示实验选择，也不预取 /experiments。
     api.get.mockImplementation((url: string) => {
       if (url === "/training/automl/jobs") return Promise.resolve({ data: [] });
       if (url === "/experiments") return Promise.resolve({ data: { items: [
@@ -177,41 +179,49 @@ describe("AutoMLPage", () => {
     fireEvent.mouseDown(projectSelect);
     fireEvent.click(await screen.findByText("Weld line"));
 
-    await waitFor(() => expect(api.get).toHaveBeenCalledWith("/experiments", { params: { project_id: "project-1" } }));
-    const experimentSelect = screen.getByRole("combobox", { name: "实验" });
-    await waitFor(() => expect(screen.getByTitle("Unused Experiment")).toBeInTheDocument());
-    fireEvent.mouseDown(experimentSelect);
-    expect((await screen.findAllByText("Unused Experiment")).length).toBeGreaterThan(0);
-    expect(screen.getByText("Used Experiment", { selector: ".ant-select-item-option-content" }).closest(".ant-select-item-option"))
-      .toHaveClass("ant-select-item-option-disabled");
+    await waitFor(() => expect(screen.queryByRole("combobox", { name: "实验" })).toBeNull());
+    expect(screen.queryByRole("button", { name: "New Experiment" })).toBeNull();
   });
 
-  it("selects a newly created experiment", async () => {
+  it("auto-creates a dedicated experiment on run and uses its id", async () => {
     api.get.mockImplementation((url: string) => {
       if (url === "/training/automl/jobs") return Promise.resolve({ data: [] });
-      if (url === "/experiments") return Promise.resolve({ data: { items: [] } });
       return Promise.resolve({ data: { items: [{ id: "project-1", name: "Weld line", project_role: "owner" }] } });
     });
-    api.post.mockResolvedValue({ data: {
-      id: "experiment-new",
-      name: "Fresh Experiment",
-      automl_used: false,
-    } });
+    api.post.mockImplementation((url: string) => {
+      if (url === "/experiments") return Promise.resolve({ data: { id: "experiment-new", name: "自动建模-x" } });
+      return Promise.reject({ response: { data: { detail: "Error" } } });
+    });
+    datasets.getDatasetPreview.mockResolvedValue({
+      columns: ["feature", "force", "label_a"],
+      dtypes: { feature: "float64", force: "float64", label_a: "int64" },
+      preview: [],
+    });
 
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: "新建" }));
-    fireEvent.mouseDown((await screen.findAllByRole("combobox"))[0]);
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
     fireEvent.click(await screen.findByText("Weld line"));
-    fireEvent.click(await screen.findByRole("button", { name: "New Experiment" }));
-    fireEvent.change(await screen.findByLabelText("Experiment Name"), { target: { value: "Fresh Experiment" } });
-    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
 
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/experiments", {
-      project_id: "project-1",
-      name: "Fresh Experiment",
-      description: "",
-    }));
-    expect(await screen.findByTitle("Fresh Experiment")).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "任务类型" }));
+    fireEvent.click(await screen.findByText("Classification", { selector: ".ant-select-item-option-content" }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "目标列" }));
+    fireEvent.click(await screen.findByText("label_a", { selector: ".ant-select-item-option-content" }));
+    fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/experiments",
+      expect.objectContaining({ project_id: "project-1" }),
+    ));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/training/automl/run",
+      expect.objectContaining({ experiment_id: "experiment-new" }),
+      expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) }),
+    ));
   });
 
   it.skip("renders the measured training time returned by ordinary AutoML", async () => {
@@ -361,7 +371,9 @@ describe("AutoMLPage", () => {
   });
 
   it.skip("submits the selected generic cross-validation configuration without a budget", async () => {
-    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    api.post.mockImplementation((url: string) => url === "/experiments"
+      ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })
+      : Promise.reject({ response: { data: { detail: "Error" } } }));
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     const comboboxes = await screen.findAllByRole("combobox");
@@ -384,7 +396,9 @@ describe("AutoMLPage", () => {
   });
 
   it.skip("submits holdout evaluation when generic cross-validation is disabled", async () => {
-    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    api.post.mockImplementation((url: string) => url === "/experiments"
+      ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })
+      : Promise.reject({ response: { data: { detail: "Error" } } }));
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     const comboboxes = await screen.findAllByRole("combobox");
@@ -605,7 +619,9 @@ describe("AutoMLPage", () => {
   });
 
   it.skip("submits the selected algorithm families and search configuration", async () => {
-    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    api.post.mockImplementation((url: string) => url === "/experiments"
+      ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })
+      : Promise.reject({ response: { data: { detail: "Error" } } }));
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     const comboboxes = await screen.findAllByRole("combobox");
@@ -658,7 +674,9 @@ describe("AutoMLPage", () => {
   });
 
   it("pins MLP hyper-parameters in the run payload only when customization is enabled", async () => {
-    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    api.post.mockImplementation((url: string) => url === "/experiments"
+      ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })
+      : Promise.reject({ response: { data: { detail: "Error" } } }));
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "新建" }));
@@ -695,7 +713,9 @@ describe("AutoMLPage", () => {
   });
 
   it("submits a single-output classification with the planned defaults", async () => {
-    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    api.post.mockImplementation((url: string) => url === "/experiments"
+      ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })
+      : Promise.reject({ response: { data: { detail: "Error" } } }));
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "新建" }));
@@ -741,7 +761,9 @@ describe("AutoMLPage", () => {
   });
 
   it("sends the ensemble config when weighted-voting is enabled for classification", async () => {
-    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    api.post.mockImplementation((url: string) => url === "/experiments"
+      ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })
+      : Promise.reject({ response: { data: { detail: "Error" } } }));
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "新建" }));
@@ -779,7 +801,9 @@ describe("AutoMLPage", () => {
   });
 
   it("reuses the idempotency key when an unchanged AutoML request is retried", async () => {
-    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    api.post.mockImplementation((url: string) => url === "/experiments"
+      ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })
+      : Promise.reject({ response: { data: { detail: "Error" } } }));
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "新建" }));
@@ -794,20 +818,24 @@ describe("AutoMLPage", () => {
     await waitFor(() => expect(screen.getByTitle("feature")).toBeInTheDocument());
 
     const run = screen.getByRole("button", { name: "thunderbolt Run" });
+    const runCalls = () => api.post.mock.calls.filter(([url]) => url === "/training/automl/run");
     fireEvent.click(run);
-    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(runCalls()).toHaveLength(1));
     await waitFor(() => expect(run).toBeEnabled());
     fireEvent.click(run);
-    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(runCalls()).toHaveLength(2));
 
-    const firstHeaders = api.post.mock.calls[0][2].headers;
-    const retryHeaders = api.post.mock.calls[1][2].headers;
+    // 第一次调用是实验自动创建（/experiments），幂等键断言只看 run 接口的两次调用
+    const firstHeaders = runCalls()[0][2].headers;
+    const retryHeaders = runCalls()[1][2].headers;
     expect(retryHeaders["Idempotency-Key"]).toBe(firstHeaders["Idempotency-Key"]);
     expect(retryHeaders["X-Request-ID"]).toEqual(expect.any(String));
   });
 
   it("submits multi-output targets separately and excludes every target from inputs", async () => {
-    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    api.post.mockImplementation((url: string) => url === "/experiments"
+      ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })
+      : Promise.reject({ response: { data: { detail: "Error" } } }));
     datasets.getDatasetPreview.mockResolvedValue({
       columns: ["feature", "force", "label_a", "label_b"],
       dtypes: { feature: "float64", force: "float64", label_a: "float64", label_b: "int64" },
@@ -846,7 +874,9 @@ describe("AutoMLPage", () => {
   });
 
   it("submits an unsupervised anomaly detection task without any target column", async () => {
-    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    api.post.mockImplementation((url: string) => url === "/experiments"
+      ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })
+      : Promise.reject({ response: { data: { detail: "Error" } } }));
     datasets.getDatasetPreview.mockResolvedValue({
       columns: ["feature", "force", "label_a"],
       dtypes: { feature: "float64", force: "float64", label_a: "int64" },
@@ -888,7 +918,9 @@ describe("AutoMLPage", () => {
   });
 
   it.skip("submits the selected input columns with the target column", async () => {
-    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    api.post.mockImplementation((url: string) => url === "/experiments"
+      ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })
+      : Promise.reject({ response: { data: { detail: "Error" } } }));
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     const comboboxes = await screen.findAllByRole("combobox");
@@ -912,7 +944,9 @@ describe("AutoMLPage", () => {
   });
 
   it.skip("keeps the algorithm family selection when switching task type", async () => {
-    api.post.mockRejectedValue({ response: { data: { detail: "Error" } } });
+    api.post.mockImplementation((url: string) => url === "/experiments"
+      ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })
+      : Promise.reject({ response: { data: { detail: "Error" } } }));
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     const comboboxes = await screen.findAllByRole("combobox");

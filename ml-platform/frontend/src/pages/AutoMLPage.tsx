@@ -148,7 +148,7 @@ export default function AutoMLPage() {
   const { message } = AntApp.useApp();
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
-  const [experiments, setExperiments] = useState<any[]>([]);
+  // 实验自动创建（用户建议 1）：selectedExperiment 只存本次提交自动创建的实验 id
   const [selectedExperiment, setSelectedExperiment] = useState<string | null>(null);
   const [datasets, setDatasets] = useState<any[]>([]);
   const [selectedDataset, setSelectedDataset] = useState<string | null>(null);
@@ -159,6 +159,7 @@ export default function AutoMLPage() {
   const [taskType, setTaskType] = useState<AutoMLTaskType>("classification");
   // 无监督（异常检测）：预期异常比例先验，宁低勿高（缺省 1%，合法域 (0, 0.5]）
   const [contamination, setContamination] = useState<number>(0.01);
+  const isAnomaly = taskType === "anomaly_detection";
   const [algorithmIds, setAlgorithmIds] = useState<string[]>(() => [...AUTOML_ALGORITHM_IDS]);
   const [mlpParams, setMlpParams] = useState<{ solver: "adam" | "lbfgs" | "sgd"; learning_rate_init: number; alpha: number; hidden_layers: string }>({ ...MLP_DEFAULT_PARAMS });
   // 默认关闭：全部 MLP 超参交给强度缩放后的自动搜索；开启后才按表单值固定
@@ -191,10 +192,7 @@ export default function AutoMLPage() {
   const [viewingTaskKey, setViewingTaskKey] = useState<string | null>(null);
   const [stoppingTaskKey, setStoppingTaskKey] = useState<string | null>(null);
   const [qualityChartUrls, setQualityChartUrls] = useState<Record<string, string>>({});
-  const [experimentModalOpen, setExperimentModalOpen] = useState(false);
   const [configurationOpen, setConfigurationOpen] = useState(false);
-  const [experimentCreating, setExperimentCreating] = useState(false);
-  const [experimentForm] = Form.useForm();
   const barRef = useRef<HTMLDivElement>(null);
   const radarRef = useRef<HTMLDivElement>(null);
   const resultRegionRef = useRef<HTMLDivElement>(null);
@@ -261,13 +259,6 @@ export default function AutoMLPage() {
         await apiClient.delete(`/projects/${projectId}/spot-weld/runs/${task.id}`);
       } else {
         await apiClient.delete(`/training/automl/jobs/${task.id}`);
-        const projectId = task.project_id || selectedProject;
-        if (projectId && projectId === selectedProject) {
-          const response = await apiClient.get("/experiments", { params: { project_id: projectId } });
-          const items = Array.isArray(response.data) ? response.data : (response.data.items || []);
-          setExperiments(items);
-          setSelectedExperiment(items.find((item: any) => !item.automl_used)?.id || null);
-        }
       }
       notifyDashboardStatsChanged();
       message.success("建模任务已删除");
@@ -285,17 +276,12 @@ export default function AutoMLPage() {
   useEffect(() => {
     if (!selectedProject) {
       setDatasets([]); setSelectedDataset(null);
-      setExperiments([]); setSelectedExperiment(null);
+      setSelectedExperiment(null);
       return;
     }
     listDatasets(selectedProject).then(setDatasets).catch(() => setDatasets([]));
-    apiClient.get("/experiments", { params: { project_id: selectedProject } })
-      .then((res) => {
-        const items = Array.isArray(res.data) ? res.data : (res.data.items || []);
-        setExperiments(items);
-        setSelectedExperiment(items.find((item: any) => !item.automl_used)?.id || null);
-      })
-      .catch(() => { setExperiments([]); setSelectedExperiment(null); });
+    // 实验自动创建（用户建议 1）：提交时按需创建专属实验，不再预取/预选
+    setSelectedExperiment(null);
     void refreshModelingTasks();
   }, [selectedProject]);
 
@@ -464,8 +450,7 @@ export default function AutoMLPage() {
 
   const handleRun = async () => {
     const isMultiOutput = taskType.startsWith("multioutput");
-    const isAnomaly = taskType === "anomaly_detection";
-    if (!selectedProject || !selectedExperiment || !selectedDataset || inputColumns.length === 0 || (!isAnomaly && !targetColumns.length) || (isMultiOutput && targetColumns.length < 2)) {
+    if (!selectedProject || !selectedDataset || inputColumns.length === 0 || (!isAnomaly && !targetColumns.length) || (isMultiOutput && targetColumns.length < 2)) {
       message.warning((t.automl?.select_project || "Project") + " / " + (t.automl?.select_dataset || "Dataset") + " / " + (t.automl?.target || "Target"));
       return;
     }
@@ -477,8 +462,23 @@ export default function AutoMLPage() {
     setResults(null);
     setAnalysisReport(null);
     try {
+      // 实验自动创建（用户建议 1）：后端约束一实验只能绑一个 AutoML 任务，
+      // 下拉选择注定撞 409——每次提交自动创建专属实验（秒级时间戳保证唯一）。
+      let experimentId: string = selectedExperiment ?? "";
+      if (!experimentId) {
+        const now = new Date();
+        const pad = (n: number) => String(n).padStart(2, "0");
+        const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+        const created = await apiClient.post("/experiments", {
+          project_id: selectedProject,
+          name: `自动建模-${stamp}`,
+          description: "",
+        });
+        experimentId = String(created.data.id);
+        setSelectedExperiment(experimentId);
+      }
       const payloadBase = {
-        project_id: selectedProject, experiment_id: selectedExperiment,
+        project_id: selectedProject, experiment_id: experimentId,
         dataset_artifact_id: selectedDataset,
         input_columns: inputColumns,
         algorithm_ids: algorithmIds,
@@ -533,8 +533,6 @@ export default function AutoMLPage() {
       automlSubmissionRef.current = null;
       notifyDashboardStatsChanged();
       void refreshModelingTasks();
-      setExperiments((items) => items.filter((item: any) => item.id !== selectedExperiment));
-      setSelectedExperiment(null);
       const rid = res.data.run_id || res.data.id || res.data.job_id;
       setRunning(false);
       setConfigurationOpen(false);
@@ -577,28 +575,6 @@ export default function AutoMLPage() {
     anchor.click();
     URL.revokeObjectURL(url);
     message.success("分析报告已导出");
-  };
-
-  const createExperiment = async (values: { name: string; description?: string }) => {
-    if (!selectedProject) return;
-    setExperimentCreating(true);
-    try {
-      const response = await apiClient.post("/experiments", {
-        project_id: selectedProject,
-        name: values.name,
-        description: values.description || "",
-      });
-      const experiment = response.data;
-      setExperiments((items) => [experiment, ...items]);
-      setSelectedExperiment(experiment.id);
-      experimentForm.resetFields();
-      setExperimentModalOpen(false);
-      message.success(t.common.success);
-    } catch (error: any) {
-      message.error(error.response?.data?.detail?.message || error.response?.data?.detail || t.common.error);
-    } finally {
-      setExperimentCreating(false);
-    }
   };
 
   const handleQualityRun = async () => {
@@ -787,19 +763,8 @@ export default function AutoMLPage() {
           <Col xs={24} sm={6}><Text strong>{t.automl?.select_dataset || "Dataset"}</Text>
             <Select style={{ width: "100%", marginTop: 4 }} placeholder={t.automl?.select_dataset} value={selectedDataset} onChange={setSelectedDataset}
               options={datasets.map((d: any) => ({ value: d.id, label: d.name || d.filename }))} /></Col>
-          <Col xs={24} sm={4}><Text strong>{t.training?.experiments || "Experiment"}</Text>
-            <Select aria-label="实验" style={{ width: "100%", marginTop: 4 }} value={selectedExperiment || undefined} onChange={setSelectedExperiment}
-              disabled={!selectedProject} placeholder={t.training?.experiments || "Experiment"}
-              options={experiments.map((item: any) => ({
-                value: item.id,
-                label: item.name,
-                disabled: Boolean(item.automl_used),
-              }))} />
-            <Button type="link" size="small" style={{ padding: 0, marginTop: 3 }} disabled={!selectedProject}
-              onClick={() => setExperimentModalOpen(true)}>
-              {t.training?.new_experiment || "New Experiment"}
-            </Button>
-          </Col>
+          {/* 实验自动创建（用户建议 1）：一实验一任务的后端约束下，下拉选择
+              注定撞 409——提交时自动创建专属实验，不再展示实验选择 */}
           <Col xs={24} sm={4}>{taskType === "anomaly_detection" ? (<>
             <Text strong>污染率（预期异常比例）</Text>
             <InputNumber aria-label="污染率" style={{ width: "100%", marginTop: 4 }}
@@ -890,10 +855,17 @@ export default function AutoMLPage() {
           <Col xs={12} sm={3}><Text strong>总时间上限</Text>
             <Select aria-label="总时间上限" style={{ width: "100%", marginTop: 4 }} value={timeBudget} onChange={setTimeBudget}
               options={AUTOML_TIME_BUDGET_OPTIONS} /></Col>
+          {/* 范式分组（用户建议 2）：类别权重/交叉验证/集成学习是监督专属——
+              无监督只保留搜索控制与污染率，payload 层本就忽略这些值 */}
+          {!isAnomaly && (
           <Col xs={12} sm={3}><Text strong>类别权重</Text>
             <div style={{ marginTop: 7 }}><Switch aria-label="类别权重" checked={classWeight} disabled={!taskType.includes("classification")} onChange={setClassWeight} /></div></Col>
+          )}
+          {!isAnomaly && (
           <Col xs={12} sm={3}><Text strong>交叉验证</Text>
             <div style={{ marginTop: 7 }}><Switch aria-label="启用交叉验证" checked={crossValidationEnabled} onChange={setCrossValidationEnabled} /></div></Col>
+          )}
+          {!isAnomaly && (
           <Col xs={12} sm={3}><Text strong>折数</Text>
             <Select
               aria-label="交叉验证折数"
@@ -903,9 +875,13 @@ export default function AutoMLPage() {
               onChange={(folds: 2 | 3 | 4 | 5) => setCrossValidationFolds(folds)}
               options={[2, 3, 4, 5].map((folds) => ({ value: folds, label: `${folds} 折` }))}
             /></Col>
+          )}
+          {!isAnomaly && (
           <Col xs={12} sm={3}><Text strong>集成学习</Text>
             <div style={{ marginTop: 7 }}><Switch aria-label="启用集成学习" checked={ensembleEnabled}
               disabled={taskType !== "classification"} onChange={setEnsembleEnabled} /></div></Col>
+          )}
+          {!isAnomaly && (
           <Col xs={12} sm={3}><Text strong>集成成员</Text>
             <Select
               aria-label="集成成员数"
@@ -915,6 +891,7 @@ export default function AutoMLPage() {
               onChange={(k: 2 | 3 | 4 | 5) => setEnsembleTopK(k)}
               options={[2, 3, 4, 5].map((k) => ({ value: k, label: `前 ${k} 名` }))}
             /></Col>
+          )}
           <Col xs={24} sm={2}><Button type="primary" icon={<ThunderboltOutlined />} onClick={handleRun} loading={running} block style={{ marginTop: 22 }}>{t.automl?.run || "Run"}</Button></Col>
         </Row>
       </Card>
@@ -984,22 +961,6 @@ export default function AutoMLPage() {
         ]} />
         </div>
       )}
-      <Modal
-        title={t.training?.new_experiment || "New Experiment"}
-        open={experimentModalOpen}
-        onCancel={() => setExperimentModalOpen(false)}
-        onOk={() => experimentForm.submit()}
-        confirmLoading={experimentCreating}
-      >
-        <Form form={experimentForm} layout="vertical" onFinish={createExperiment} autoComplete="off">
-          <Form.Item name="name" label={t.training?.experiment_name || "Experiment Name"} rules={[{ required: true }]}>
-            <Input autoFocus />
-          </Form.Item>
-          <Form.Item name="description" label={t.training?.description || "Description"}>
-            <Input.TextArea rows={3} />
-          </Form.Item>
-        </Form>
-      </Modal>
       </Modal>}
       {recipeTab === "spot-weld-quality" && <section className="spot-weld-recipe">
         <Card>
