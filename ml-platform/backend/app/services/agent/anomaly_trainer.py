@@ -101,11 +101,26 @@ def _train_single(frame, hints: dict, contamination: float, full_data: bool) -> 
     import pandas as pd
 
     matrix = frame.to_numpy(dtype=float)
+    usable_columns = [str(name) for name in frame.columns]
     fidelity: dict = {
         "full_data": full_data,
         "total_rows": int(len(matrix)),
         "paradigm": "unsupervised",
     }
+    # 常数列剔除（与引擎 _execute_anomaly_job 同语义，§3.4 S2 兜底）：
+    # 零方差特征毒害距离模型；StandardScaler 对常数列 scale_=1 不崩但拉低质量
+    import pandas as _pd
+
+    _source = frame if isinstance(frame, _pd.DataFrame) else _pd.DataFrame(frame)
+    constant_columns = [
+        str(name) for name in _source.columns
+        if _source[name].nunique(dropna=True) <= 1
+    ]
+    if constant_columns:
+        usable_frame = _source.drop(columns=constant_columns)
+        matrix = usable_frame.to_numpy(dtype=float)
+        usable_columns = [str(name) for name in usable_frame.columns]
+        fidelity["removed_constant_columns"] = constant_columns
     # 保护上限与监督侧同语义：关闭全量时 2 万行抽样（正常数据海量，
     # 抽样评估的合成基准统计量依然稳定）。
     if not full_data and len(matrix) > 20000:
@@ -175,7 +190,7 @@ def _train_single(frame, hints: dict, contamination: float, full_data: bool) -> 
         # 冠军模型运行时对象（进程内传给 runner；验收通过时物化为
         # anomaly joblib 工件——与监督侧 champion_model 同合同）
         "champion_model": champion_model,
-        "champion_features": [str(name) for name in frame.columns],
+        "champion_features": usable_columns,
         "champion_algorithm": champion_family.id,
     }
     return result

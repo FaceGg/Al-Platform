@@ -632,3 +632,21 @@ class TestAnomalyTrainer(unittest.TestCase):
         self.assertTrue(result["evaluation"].get("per_condition"))
         self.assertIn("worst_segment", result["evaluation"])
         self.assertIn(result["champion_algorithm"], {"iforest", "ocsvm"})
+
+    def test_anomaly_trainer_removes_constant_columns(self):
+        """常数列剔除（§3.4 S2 引擎兜底，与 _execute_anomaly_job 同语义）：
+        剔除记录进 fidelity，champion_features 不含常数列。"""
+        import numpy as np
+
+        from app.services.agent.anomaly_trainer import anomaly_trainer
+
+        rng = np.random.default_rng(42)
+        matrix = rng.normal(size=(300, 3))
+        frame = pd.DataFrame(matrix, columns=["s1", "s2", "s3"])
+        frame["const_col"] = 1.0
+        result = anomaly_trainer(
+            frame, None,
+            {"task_type": "anomaly", "contamination": 0.01, "full_data": True},
+        )
+        self.assertNotIn("const_col", result["champion_features"])
+        self.assertEqual(result["data_fidelity"].get("removed_constant_columns"), ["const_col"])
