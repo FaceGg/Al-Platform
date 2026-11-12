@@ -1,3 +1,4 @@
 wheelhouse/*
 !wheelhouse/.keep
 req-no-jieba.tmp.txt
+ci_jobs.json
