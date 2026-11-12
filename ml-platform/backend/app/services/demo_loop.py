@@ -1702,7 +1702,11 @@ class DemoLoopService:
         cycle = uuid.uuid4().hex[:8]
         # 工况分片重拟合（§6.3，二期 M7）：分片部署的重训必须带工况列——
         # 引擎按它重新分片训练（N bundle），否则退化单段全量、分片 targets 断。
-        deployment_for_shard = self._deployment(config)
+        # config 无 deployment（测试桩/配置缺失）时安全降级为 None。
+        try:
+            deployment_for_shard = self._deployment(config)
+        except Exception:  # noqa: BLE001 - 无部署不阻断重训参数组装
+            deployment_for_shard = None
         shard_condition_column = str(
             getattr(deployment_for_shard, "condition_column", None) or ""
         ).strip() or None

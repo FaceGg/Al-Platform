@@ -136,6 +136,11 @@ def _train_single(frame, hints: dict, contamination: float, full_data: bool) -> 
         [str(x) for x in hints.get("algorithm_whitelist") or []] or None,
         task="anomaly_detection",
     )
+    # AE 不进 S3 轻量路径（§6.6D 出场策略同引擎）：单 trial 成本高一个量级，
+    # S3 是 agent 闭环的实时验证路径，只跑快速双族；白名单显式点名时放行。
+    whitelist = [str(x) for x in hints.get("algorithm_whitelist") or []]
+    if not whitelist:
+        families = tuple(family for family in families if family.id != "autoencoder")
     holdout_size = max(1, int(len(matrix) * 0.2))
     train_matrix, holdout_matrix = matrix[:-holdout_size], matrix[-holdout_size:]
     benchmark = build_synthetic_benchmark(train_matrix, holdout_matrix, random_seed=42)

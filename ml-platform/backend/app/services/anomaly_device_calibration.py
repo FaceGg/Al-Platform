@@ -122,7 +122,7 @@ def recalibrate_device_version(
         if isinstance(item, dict) and item.get("name")
     ]
     if not feature_columns:
-        raise DeviceCalibrationError("MODEL_FEATURE_SCHEMA_MISSING")
+        raise DeviceCalibrationError("MODEL_FEATURE_COLUMNS_MISSING")
     device_frame = frame.reindex(columns=feature_columns).dropna(how="all")
     device_frame = device_frame.dropna()
     if len(device_frame) < DEVICE_CALIBRATION_MIN_ROWS:

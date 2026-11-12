@@ -1,0 +1,695 @@
+{
+  "total_count": 6,
+  "jobs": [
+    {
+      "id": 131231921489,
+      "run_id": 43232655572,
+      "workflow_name": "Cross-platform quality gates",
+      "head_branch": "main",
+      "run_url": "https://api.github.com/repos/FaceGg/Al-Platform/actions/runs/43232655572",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOTX7K388AAAAejgg1UQ",
+      "head_sha": "1e4ac6168aedc39020badd5464480655d7eb75d8",
+      "url": "https://api.github.com/repos/FaceGg/Al-Platform/actions/jobs/131231921489",
+      "html_url": "https://github.com/FaceGg/Al-Platform/actions/runs/43232655572/job/131231921489",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-11-12T14:00:08Z",
+      "started_at": "2026-11-12T14:00:11Z",
+      "completed_at": "2026-11-12T14:03:12Z",
+      "name": "Production integration (Ubuntu)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-11-12T14:00:12Z",
+          "completed_at": "2026-11-12T14:00:13Z"
+        },
+        {
+          "name": "Initialize containers",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-11-12T14:00:13Z",
+          "completed_at": "2026-11-12T14:00:31Z"
+        },
+        {
+          "name": "Run actions/checkout@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-11-12T14:00:31Z",
+          "completed_at": "2026-11-12T14:00:32Z"
+        },
+        {
+          "name": "Run actions/setup-python@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-11-12T14:00:32Z",
+          "completed_at": "2026-11-12T14:00:44Z"
+        },
+        {
+          "name": "Install backend dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-11-12T14:00:44Z",
+          "completed_at": "2026-11-12T14:01:59Z"
+        },
+        {
+          "name": "Start MinIO",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-11-12T14:01:59Z",
+          "completed_at": "2026-11-12T14:02:06Z"
+        },
+        {
+          "name": "Create MinIO bucket",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-11-12T14:02:06Z",
+          "completed_at": "2026-11-12T14:02:06Z"
+        },
+        {
+          "name": "Generate notification test key",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-11-12T14:02:06Z",
+          "completed_at": "2026-11-12T14:02:06Z"
+        },
+        {
+          "name": "Upgrade production schema",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-11-12T14:02:06Z",
+          "completed_at": "2026-11-12T14:02:13Z"
+        },
+        {
+          "name": "Start Celery worker (one automatic retry)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-11-12T14:02:13Z",
+          "completed_at": "2026-11-12T14:02:41Z"
+        },
+        {
+          "name": "Run production integration tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-11-12T14:02:41Z",
+          "completed_at": "2026-11-12T14:03:09Z"
+        },
+        {
+          "name": "Scan and upload production failure evidence",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 12,
+          "started_at": "2026-11-12T14:03:09Z",
+          "completed_at": "2026-11-12T14:03:09Z"
+        },
+        {
+          "name": "Upload production failure evidence",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 13,
+          "started_at": "2026-11-12T14:03:09Z",
+          "completed_at": "2026-11-12T14:03:09Z"
+        },
+        {
+          "name": "Stop Celery worker",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14,
+          "started_at": "2026-11-12T14:03:09Z",
+          "completed_at": "2026-11-12T14:03:09Z"
+        },
+        {
+          "name": "Post Run actions/setup-python@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 26,
+          "started_at": "2026-11-12T14:03:09Z",
+          "completed_at": "2026-11-12T14:03:09Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 27,
+          "started_at": "2026-11-12T14:03:09Z",
+          "completed_at": "2026-11-12T14:03:09Z"
+        },
+        {
+          "name": "Stop containers",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 28,
+          "started_at": "2026-11-12T14:03:09Z",
+          "completed_at": "2026-11-12T14:03:10Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 29,
+          "started_at": "2026-11-12T14:03:10Z",
+          "completed_at": "2026-11-12T14:03:10Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/FaceGg/Al-Platform/check-runs/131231921489",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_id": 1000002549,
+      "runner_name": "GitHub Actions 1000002549",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 131231921908,
+      "run_id": 43232655572,
+      "workflow_name": "Cross-platform quality gates",
+      "head_branch": "main",
+      "run_url": "https://api.github.com/repos/FaceGg/Al-Platform/actions/runs/43232655572",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOTX7K388AAAAejgg29A",
+      "head_sha": "1e4ac6168aedc39020badd5464480655d7eb75d8",
+      "url": "https://api.github.com/repos/FaceGg/Al-Platform/actions/jobs/131231921908",
+      "html_url": "https://github.com/FaceGg/Al-Platform/actions/runs/43232655572/job/131231921908",
+      "status": "completed",
+      "conclusion": "failure",
+      "created_at": "2026-11-12T14:00:08Z",
+      "started_at": "2026-11-12T14:00:11Z",
+      "completed_at": "2026-11-12T14:20:44Z",
+      "name": "Quality (ubuntu-22.04)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-11-12T14:00:11Z",
+          "completed_at": "2026-11-12T14:00:12Z"
+        },
+        {
+          "name": "Run actions/checkout@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-11-12T14:00:12Z",
+          "completed_at": "2026-11-12T14:00:14Z"
+        },
+        {
+          "name": "Run actions/setup-python@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-11-12T14:00:14Z",
+          "completed_at": "2026-11-12T14:00:25Z"
+        },
+        {
+          "name": "Run actions/setup-node@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-11-12T14:00:25Z",
+          "completed_at": "2026-11-12T14:00:29Z"
+        },
+        {
+          "name": "Install backend dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-11-12T14:00:29Z",
+          "completed_at": "2026-11-12T14:01:24Z"
+        },
+        {
+          "name": "Install optional PyTorch CPU backend",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-11-12T14:01:24Z",
+          "completed_at": "2026-11-12T14:01:33Z"
+        },
+        {
+          "name": "Install frontend dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-11-12T14:01:33Z",
+          "completed_at": "2026-11-12T14:01:35Z"
+        },
+        {
+          "name": "Run backend suite",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 8,
+          "started_at": "2026-11-12T14:01:35Z",
+          "completed_at": "2026-11-12T14:20:42Z"
+        },
+        {
+          "name": "Run frontend tests",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 9,
+          "started_at": "2026-11-12T14:20:42Z",
+          "completed_at": "2026-11-12T14:20:42Z"
+        },
+        {
+          "name": "Build frontend",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 10,
+          "started_at": "2026-11-12T14:20:42Z",
+          "completed_at": "2026-11-12T14:20:42Z"
+        },
+        {
+          "name": "Windows service smoke test",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 11,
+          "started_at": "2026-11-12T14:20:42Z",
+          "completed_at": "2026-11-12T14:20:42Z"
+        },
+        {
+          "name": "Ubuntu service smoke test",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 12,
+          "started_at": "2026-11-12T14:20:42Z",
+          "completed_at": "2026-11-12T14:20:42Z"
+        },
+        {
+          "name": "Post Run actions/setup-node@v5",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 22,
+          "started_at": "2026-11-12T14:20:42Z",
+          "completed_at": "2026-11-12T14:20:42Z"
+        },
+        {
+          "name": "Post Run actions/setup-python@v6",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 23,
+          "started_at": "2026-11-12T14:20:42Z",
+          "completed_at": "2026-11-12T14:20:42Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 24,
+          "started_at": "2026-11-12T14:20:42Z",
+          "completed_at": "2026-11-12T14:20:42Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 25,
+          "started_at": "2026-11-12T14:20:42Z",
+          "completed_at": "2026-11-12T14:20:42Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/FaceGg/Al-Platform/check-runs/131231921908",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_id": 1000002548,
+      "runner_name": "GitHub Actions 1000002548",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 131231921924,
+      "run_id": 43232655572,
+      "workflow_name": "Cross-platform quality gates",
+      "head_branch": "main",
+      "run_url": "https://api.github.com/repos/FaceGg/Al-Platform/actions/runs/43232655572",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOTX7K388AAAAejgg3BA",
+      "head_sha": "1e4ac6168aedc39020badd5464480655d7eb75d8",
+      "url": "https://api.github.com/repos/FaceGg/Al-Platform/actions/jobs/131231921924",
+      "html_url": "https://github.com/FaceGg/Al-Platform/actions/runs/43232655572/job/131231921924",
+      "status": "completed",
+      "conclusion": "failure",
+      "created_at": "2026-11-12T14:00:08Z",
+      "started_at": "2026-11-12T14:00:11Z",
+      "completed_at": "2026-11-12T14:35:51Z",
+      "name": "Quality (windows-latest)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-11-12T14:00:13Z",
+          "completed_at": "2026-11-12T14:00:14Z"
+        },
+        {
+          "name": "Run actions/checkout@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-11-12T14:00:14Z",
+          "completed_at": "2026-11-12T14:00:22Z"
+        },
+        {
+          "name": "Run actions/setup-python@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-11-12T14:00:22Z",
+          "completed_at": "2026-11-12T14:00:35Z"
+        },
+        {
+          "name": "Run actions/setup-node@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-11-12T14:00:35Z",
+          "completed_at": "2026-11-12T14:00:50Z"
+        },
+        {
+          "name": "Install backend dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-11-12T14:00:50Z",
+          "completed_at": "2026-11-12T14:03:34Z"
+        },
+        {
+          "name": "Install optional PyTorch CPU backend",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-11-12T14:03:34Z",
+          "completed_at": "2026-11-12T14:04:09Z"
+        },
+        {
+          "name": "Install frontend dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-11-12T14:04:09Z",
+          "completed_at": "2026-11-12T14:04:18Z"
+        },
+        {
+          "name": "Run backend suite",
+          "status": "completed",
+          "conclusion": "failure",
+          "number": 8,
+          "started_at": "2026-11-12T14:04:18Z",
+          "completed_at": "2026-11-12T14:35:48Z"
+        },
+        {
+          "name": "Run frontend tests",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 9,
+          "started_at": "2026-11-12T14:35:48Z",
+          "completed_at": "2026-11-12T14:35:48Z"
+        },
+        {
+          "name": "Build frontend",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 10,
+          "started_at": "2026-11-12T14:35:48Z",
+          "completed_at": "2026-11-12T14:35:48Z"
+        },
+        {
+          "name": "Windows service smoke test",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 11,
+          "started_at": "2026-11-12T14:35:48Z",
+          "completed_at": "2026-11-12T14:35:48Z"
+        },
+        {
+          "name": "Ubuntu service smoke test",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 12,
+          "started_at": "2026-11-12T14:35:48Z",
+          "completed_at": "2026-11-12T14:35:48Z"
+        },
+        {
+          "name": "Post Run actions/setup-node@v5",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 22,
+          "started_at": "2026-11-12T14:35:48Z",
+          "completed_at": "2026-11-12T14:35:48Z"
+        },
+        {
+          "name": "Post Run actions/setup-python@v6",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 23,
+          "started_at": "2026-11-12T14:35:48Z",
+          "completed_at": "2026-11-12T14:35:48Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 24,
+          "started_at": "2026-11-12T14:35:48Z",
+          "completed_at": "2026-11-12T14:35:50Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 25,
+          "started_at": "2026-11-12T14:35:50Z",
+          "completed_at": "2026-11-12T14:35:50Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/FaceGg/Al-Platform/check-runs/131231921924",
+      "labels": [
+        "windows-latest"
+      ],
+      "runner_id": 1000002551,
+      "runner_name": "GitHub Actions 1000002551",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 131231921957,
+      "run_id": 43232655572,
+      "workflow_name": "Cross-platform quality gates",
+      "head_branch": "main",
+      "run_url": "https://api.github.com/repos/FaceGg/Al-Platform/actions/runs/43232655572",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOTX7K388AAAAejgg3JQ",
+      "head_sha": "1e4ac6168aedc39020badd5464480655d7eb75d8",
+      "url": "https://api.github.com/repos/FaceGg/Al-Platform/actions/jobs/131231921957",
+      "html_url": "https://github.com/FaceGg/Al-Platform/actions/runs/43232655572/job/131231921957",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-11-12T14:00:08Z",
+      "started_at": "2026-11-12T14:00:11Z",
+      "completed_at": "2026-11-12T14:10:28Z",
+      "name": "Production experiment integration (Ubuntu)",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-11-12T14:00:12Z",
+          "completed_at": "2026-11-12T14:00:13Z"
+        },
+        {
+          "name": "Run actions/checkout@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-11-12T14:00:13Z",
+          "completed_at": "2026-11-12T14:00:14Z"
+        },
+        {
+          "name": "Run docker/setup-buildx-action@v3",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-11-12T14:00:14Z",
+          "completed_at": "2026-11-12T14:00:24Z"
+        },
+        {
+          "name": "Generate notification test key",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-11-12T14:00:24Z",
+          "completed_at": "2026-11-12T14:00:24Z"
+        },
+        {
+          "name": "Generate notification receiver certificate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-11-12T14:00:24Z",
+          "completed_at": "2026-11-12T14:00:24Z"
+        },
+        {
+          "name": "Validate production composition",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-11-12T14:00:24Z",
+          "completed_at": "2026-11-12T14:00:24Z"
+        },
+        {
+          "name": "Build experiment services",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-11-12T14:00:24Z",
+          "completed_at": "2026-11-12T14:06:12Z"
+        },
+        {
+          "name": "Start production experiment stack",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-11-12T14:06:12Z",
+          "completed_at": "2026-11-12T14:08:55Z"
+        },
+        {
+          "name": "Verify migrations and real experiment lifecycle",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-11-12T14:08:55Z",
+          "completed_at": "2026-11-12T14:09:50Z"
+        },
+        {
+          "name": "Collect redacted experiment failure evidence",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 10,
+          "started_at": "2026-11-12T14:09:50Z",
+          "completed_at": "2026-11-12T14:09:50Z"
+        },
+        {
+          "name": "Upload experiment failure evidence",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 11,
+          "started_at": "2026-11-12T14:09:50Z",
+          "completed_at": "2026-11-12T14:09:50Z"
+        },
+        {
+          "name": "Stop production experiment stack",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12,
+          "started_at": "2026-11-12T14:09:50Z",
+          "completed_at": "2026-11-12T14:10:14Z"
+        },
+        {
+          "name": "Post Run docker/setup-buildx-action@v3",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 23,
+          "started_at": "2026-11-12T14:10:14Z",
+          "completed_at": "2026-11-12T14:10:26Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 24,
+          "started_at": "2026-11-12T14:10:26Z",
+          "completed_at": "2026-11-12T14:10:27Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 25,
+          "started_at": "2026-11-12T14:10:27Z",
+          "completed_at": "2026-11-12T14:10:27Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/FaceGg/Al-Platform/check-runs/131231921957",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_id": 1000002550,
+      "runner_name": "GitHub Actions 1000002550",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 131253408632,
+      "run_id": 43232655572,
+      "workflow_name": "Cross-platform quality gates",
+      "head_branch": "main",
+      "run_url": "https://api.github.com/repos/FaceGg/Al-Platform/actions/runs/43232655572",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOTX7K388AAAAej1ATeA",
+      "head_sha": "1e4ac6168aedc39020badd5464480655d7eb75d8",
+      "url": "https://api.github.com/repos/FaceGg/Al-Platform/actions/jobs/131253408632",
+      "html_url": "https://github.com/FaceGg/Al-Platform/actions/runs/43232655572/job/131253408632",
+      "status": "completed",
+      "conclusion": "skipped",
+      "created_at": "2026-11-12T14:35:51Z",
+      "started_at": "2026-11-12T14:35:51Z",
+      "completed_at": "2026-11-12T14:35:51Z",
+      "name": "Chromium acceptance (Ubuntu)",
+      "steps": [
+
+      ],
+      "check_run_url": "https://api.github.com/repos/FaceGg/Al-Platform/check-runs/131253408632",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_id": null,
+      "runner_name": null,
+      "runner_group_id": null,
+      "runner_group_name": null
+    },
+    {
+      "id": 131253410927,
+      "run_id": 43232655572,
+      "workflow_name": "Cross-platform quality gates",
+      "head_branch": "main",
+      "run_url": "https://api.github.com/repos/FaceGg/Al-Platform/actions/runs/43232655572",
+      "run_attempt": 1,
+      "node_id": "CR_kwDOTX7K388AAAAej1Acbw",
+      "head_sha": "1e4ac6168aedc39020badd5464480655d7eb75d8",
+      "url": "https://api.github.com/repos/FaceGg/Al-Platform/actions/jobs/131253410927",
+      "html_url": "https://github.com/FaceGg/Al-Platform/actions/runs/43232655572/job/131253410927",
+      "status": "completed",
+      "conclusion": "skipped",
+      "created_at": "2026-11-12T14:35:52Z",
+      "started_at": "2026-11-12T14:35:52Z",
+      "completed_at": "2026-11-12T14:35:51Z",
+      "name": "Security & release verification (Ubuntu)",
+      "steps": [
+
+      ],
+      "check_run_url": "https://api.github.com/repos/FaceGg/Al-Platform/check-runs/131253410927",
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "runner_id": null,
+      "runner_name": null,
+      "runner_group_id": null,
+      "runner_group_name": null
+    }
+  ]
+}
