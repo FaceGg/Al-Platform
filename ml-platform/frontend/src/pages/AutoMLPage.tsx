@@ -767,8 +767,7 @@ export default function AutoMLPage() {
         .paradigm-card:hover { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(24,144,255,0.18); border-color: #69b1ff !important; }
         .paradigm-card:hover .paradigm-card-icon { background: #1890ff; color: #fff; }
       `}</style>
-      <Card style={{ marginBottom: 16 }}>
-        <Row gutter={[16, 16]}>
+      <Row gutter={[16, 16]} style={{ marginBottom: paradigmChosen ? 4 : 0 }}>
           <Col xs={24} sm={12}>
             <div role="button" aria-label="范式：有监督建模" tabIndex={0}
               onClick={() => { setParadigmChosen(true); handleTaskTypeChange("classification"); }}
@@ -819,10 +818,9 @@ export default function AutoMLPage() {
               </div>
             </div>
           </Col>
-        </Row>
-      </Card>
-      {paradigmChosen && <Card style={{ marginBottom: 16 }}>
-        <Row gutter={[16, 16]} align="middle">
+      </Row>
+      {paradigmChosen && <>
+        <Row gutter={[16, 16]} align="middle" style={{ marginBottom: 4 }}>
           <Col xs={24} sm={6}><Text strong>{t.automl?.select_project || "Project"}</Text>
             <Select style={{ width: "100%", marginTop: 4 }} placeholder={t.automl?.select_project} value={selectedProject} onChange={setSelectedProject}
               options={projects.map((p: any) => ({ value: p.id, label: p.name }))} /></Col>
@@ -962,7 +960,7 @@ export default function AutoMLPage() {
           )}
           <Col xs={24} sm={2}><Button type="primary" icon={<ThunderboltOutlined />} onClick={handleRun} loading={running} block style={{ marginTop: 22 }}>{t.automl?.run || "Run"}</Button></Col>
         </Row>
-      </Card>}
+      </>}
 
       {paradigmChosen && running && <Card style={{ textAlign: "center", padding: 40 }}><Spin size="large" /><p style={{ marginTop: 16 }}>{t.common.loading}</p></Card>}
 
