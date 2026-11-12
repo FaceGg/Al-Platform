@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { App as AntApp, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch } from "antd";
-import { ThunderboltOutlined, TrophyOutlined, BarChartOutlined, DownloadOutlined, EyeOutlined, PlusOutlined, ReloadOutlined, StopOutlined } from "@ant-design/icons";
+import { AimOutlined, AlertOutlined, CheckCircleFilled, ThunderboltOutlined, TrophyOutlined, BarChartOutlined, DownloadOutlined, EyeOutlined, PlusOutlined, ReloadOutlined, StopOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient, { formatApiError } from "../api/client";
 import type { AutoMLRunPayload, AutoMLSearchMethod, AutoMLSearchStrength, AutoMLTaskType, AutoMLTimeBudget } from "../api/training";
@@ -759,17 +759,38 @@ export default function AutoMLPage() {
       </Card>
       {configurationOpen && <Modal title={taskType === "anomaly_detection" ? "新建无监督异常检测" : (paradigmChosen ? "新建有监督建模" : "新建自动建模")} open={configurationOpen} onCancel={() => setConfigurationOpen(false)} footer={null} width={1100} destroyOnClose>
       {/* 范式入口卡片（用户建议 2）：有监督/无监督入口彻底分开——每次新建
-          先点范式卡片，未选时不出具体表单；不再共用「任务类型」下拉 */}
+          先点范式卡片，未选时不出具体表单；不再共用「任务类型」下拉。
+          视觉：图标底块 + 选中主色描边/浅底 + 勾选角标 + hover 上浮（深浅
+          主题经 CSS 变量与半透明选色自适应） */}
+      <style>{`
+        .paradigm-card { transition: all .2s ease; }
+        .paradigm-card:hover { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(24,144,255,0.18); border-color: #69b1ff !important; }
+        .paradigm-card:hover .paradigm-card-icon { background: #1890ff; color: #fff; }
+      `}</style>
       <Card style={{ marginBottom: 16 }}>
         <Row gutter={[16, 16]}>
           <Col xs={24} sm={12}>
             <div role="button" aria-label="范式：有监督建模" tabIndex={0}
               onClick={() => { setParadigmChosen(true); handleTaskTypeChange("classification"); }}
               onKeyDown={(e) => { if (e.key === "Enter") { setParadigmChosen(true); handleTaskTypeChange("classification"); } }}
-              style={{ cursor: "pointer", border: `2px solid ${paradigmChosen && taskType !== "anomaly_detection" ? "#1890ff" : "var(--v2-line, #e5e5e5)"}`, borderRadius: 8, padding: "12px 16px", background: paradigmChosen && taskType !== "anomaly_detection" ? "#e6f4ff" : undefined, height: "100%" }}>
+              className="paradigm-card"
+              style={{ cursor: "pointer", position: "relative", height: "100%", borderRadius: 10,
+                border: `2px solid ${paradigmChosen && taskType !== "anomaly_detection" ? "#1890ff" : "var(--v2-line, #e5e5e5)"}`,
+                background: paradigmChosen && taskType !== "anomaly_detection" ? "rgba(24,144,255,0.08)" : "var(--v2-panel, #fff)",
+                padding: "14px 16px 12px 60px" }}>
+              <span className="paradigm-card-icon" style={{ position: "absolute", left: 16, top: 16, width: 30, height: 30, borderRadius: 8,
+                background: paradigmChosen && taskType !== "anomaly_detection" ? "#1890ff" : "rgba(24,144,255,0.12)",
+                color: paradigmChosen && taskType !== "anomaly_detection" ? "#fff" : "#1890ff",
+                display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, transition: "all .2s ease" }}>
+                <AimOutlined />
+              </span>
               <Text strong style={{ fontSize: 14 }}>有监督建模</Text>
-              <div style={{ fontSize: 12, color: "rgba(0,0,0,0.45)", marginTop: 4 }}>
-                有标签数据：Classification / Regression / 多输出（目标列 + 集成 + 交叉验证）
+              {paradigmChosen && taskType !== "anomaly_detection" && (
+                <CheckCircleFilled style={{ position: "absolute", right: 12, top: 16, color: "#1890ff", fontSize: 16 }} />
+              )}
+              <div style={{ fontSize: 12, color: "var(--text-secondary, rgba(0,0,0,0.45))", marginTop: 6, lineHeight: 1.7 }}>
+                有标签数据，学习特征到标签的映射<br />
+                <span style={{ fontSize: 11.5 }}>Classification / Regression / 多输出 · 集成学习 · 交叉验证</span>
               </div>
             </div>
           </Col>
@@ -777,10 +798,24 @@ export default function AutoMLPage() {
             <div role="button" aria-label="范式：无监督异常检测" tabIndex={0}
               onClick={() => { setParadigmChosen(true); handleTaskTypeChange("anomaly_detection"); }}
               onKeyDown={(e) => { if (e.key === "Enter") { setParadigmChosen(true); handleTaskTypeChange("anomaly_detection"); } }}
-              style={{ cursor: "pointer", border: `2px solid ${taskType === "anomaly_detection" ? "#1890ff" : "var(--v2-line, #e5e5e5)"}`, borderRadius: 8, padding: "12px 16px", background: taskType === "anomaly_detection" ? "#e6f4ff" : undefined, height: "100%" }}>
+              className="paradigm-card"
+              style={{ cursor: "pointer", position: "relative", height: "100%", borderRadius: 10,
+                border: `2px solid ${taskType === "anomaly_detection" ? "#1890ff" : "var(--v2-line, #e5e5e5)"}`,
+                background: taskType === "anomaly_detection" ? "rgba(24,144,255,0.08)" : "var(--v2-panel, #fff)",
+                padding: "14px 16px 12px 60px" }}>
+              <span className="paradigm-card-icon" style={{ position: "absolute", left: 16, top: 16, width: 30, height: 30, borderRadius: 8,
+                background: taskType === "anomaly_detection" ? "#1890ff" : "rgba(255,122,69,0.12)",
+                color: taskType === "anomaly_detection" ? "#fff" : "#fa8c16",
+                display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, transition: "all .2s ease" }}>
+                <AlertOutlined />
+              </span>
               <Text strong style={{ fontSize: 14 }}>无监督异常检测</Text>
-              <div style={{ fontSize: 12, color: "rgba(0,0,0,0.45)", marginTop: 4 }}>
-                只用正常数据：检测多维联合分布异常（污染率 + IsolationForest / One-Class SVM）
+              {taskType === "anomaly_detection" && (
+                <CheckCircleFilled style={{ position: "absolute", right: 12, top: 16, color: "#1890ff", fontSize: 16 }} />
+              )}
+              <div style={{ fontSize: 12, color: "var(--text-secondary, rgba(0,0,0,0.45))", marginTop: 6, lineHeight: 1.7 }}>
+                只用正常数据，检测多维联合分布异常<br />
+                <span style={{ fontSize: 11.5 }}>污染率先验 · IsolationForest / One-Class SVM · 漂移治理</span>
               </div>
             </div>
           </Col>
