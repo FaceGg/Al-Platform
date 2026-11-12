@@ -767,8 +767,10 @@ export default function AutoMLPage() {
         .paradigm-card:hover { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(24,144,255,0.18); border-color: #69b1ff !important; }
         .paradigm-card:hover .paradigm-card-icon { background: #1890ff; color: #fff; }
       `}</style>
-      <Row gutter={[16, 16]} style={{ marginBottom: paradigmChosen ? 16 : 0 }}>
-          <Col xs={24} sm={12}>
+      {/* flex+gap 布局：antd Row 的 gutter 负 margin 会让卡片溢出 Modal
+          padding 边界（外层 Card 壳移除后暴露），gap 正间距无此问题 */}
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: paradigmChosen ? 16 : 0 }}>
+          <div style={{ flex: "1 1 380px" }}>
             <div role="button" aria-label="范式：有监督建模" tabIndex={0}
               onClick={() => { setParadigmChosen(true); handleTaskTypeChange("classification"); }}
               onKeyDown={(e) => { if (e.key === "Enter") { setParadigmChosen(true); handleTaskTypeChange("classification"); } }}
@@ -792,8 +794,8 @@ export default function AutoMLPage() {
                 <span style={{ fontSize: 11.5 }}>Classification / Regression / 多输出 · 集成学习 · 交叉验证</span>
               </div>
             </div>
-          </Col>
-          <Col xs={24} sm={12}>
+          </div>
+          <div style={{ flex: "1 1 380px" }}>
             <div role="button" aria-label="范式：无监督异常检测" tabIndex={0}
               onClick={() => { setParadigmChosen(true); handleTaskTypeChange("anomaly_detection"); }}
               onKeyDown={(e) => { if (e.key === "Enter") { setParadigmChosen(true); handleTaskTypeChange("anomaly_detection"); } }}
@@ -817,8 +819,8 @@ export default function AutoMLPage() {
                 <span style={{ fontSize: 11.5 }}>污染率先验 · IsolationForest / One-Class SVM · 漂移治理</span>
               </div>
             </div>
-          </Col>
-      </Row>
+      </div>
+      </div>
       {paradigmChosen && <>
         <Row gutter={[16, 16]} align="middle" style={{ marginBottom: 4 }}>
           <Col xs={24} sm={6}><Text strong>{t.automl?.select_project || "Project"}</Text>
