@@ -44,13 +44,18 @@ class TestUsageStatsDaily(unittest.TestCase):
         db = SessionLocal()
         admin = db.query(User).filter(User.username == "admin").first()
         today = _local_today()
-        # 本地今天 09:00 = UTC 01:00（同日）；本地今天 23:00 = UTC 15:00（同日）
+        # 造数锚定业务时区（UTC+8）的「今天」：此前用 UTC now-日期 + 固定
+        # hour（01:00/15:00），在 UTC 16:00-16:59（=UTC+8 午夜）跑 CI 时数据
+        # 落业务昨天、桶空（calls=0）——任意时刻跑都必须落在业务今天桶。
         probe_name = f"ut-usage-today-{today}"
-        for hour_utc in (1, 15):
+        for hour_local in (9, 23):
+            aware_local = datetime.now(PLATFORM_TZ).replace(
+                hour=hour_local, minute=0, second=0, microsecond=0,
+                tzinfo=PLATFORM_TZ,
+            )
             db.add(PlatformAuditEvent(
                 action="llm_gateway.egress",
-                created_at=datetime.now(timezone.utc).replace(
-                    hour=hour_utc, minute=0, second=0, microsecond=0),
+                created_at=aware_local.astimezone(timezone.utc),
                 actor_id=admin.id if admin else None,
                 actor_username="admin" if admin else "anonymous",
                 resource_type="llm_profile",
