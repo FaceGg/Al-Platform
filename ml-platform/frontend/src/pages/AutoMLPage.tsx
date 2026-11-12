@@ -770,12 +770,12 @@ export default function AutoMLPage() {
       {/* flex+gap 布局：antd Row 的 gutter 负 margin 会让卡片溢出 Modal
           padding 边界（外层 Card 壳移除后暴露），gap 正间距无此问题 */}
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: paradigmChosen ? 16 : 8 }}>
-          <div style={{ flex: "1 1 380px" }}>
+          <div style={{ flex: "1 1 380px", display: "flex" }}>
             <div role="button" aria-label="范式：有监督建模" tabIndex={0}
               onClick={() => { setParadigmChosen(true); handleTaskTypeChange("classification"); }}
               onKeyDown={(e) => { if (e.key === "Enter") { setParadigmChosen(true); handleTaskTypeChange("classification"); } }}
               className="paradigm-card"
-              style={{ cursor: "pointer", position: "relative", height: "100%", borderRadius: 10,
+              style={{ cursor: "pointer", position: "relative", flex: 1, borderRadius: 10,
                 border: `2px solid ${paradigmChosen && taskType !== "anomaly_detection" ? "#1890ff" : "var(--v2-line, #e5e5e5)"}`,
                 background: paradigmChosen && taskType !== "anomaly_detection" ? "rgba(24,144,255,0.08)" : "var(--v2-panel, #fff)",
                 padding: "14px 16px 12px 60px" }}>
@@ -795,12 +795,12 @@ export default function AutoMLPage() {
               </div>
             </div>
           </div>
-          <div style={{ flex: "1 1 380px" }}>
+          <div style={{ flex: "1 1 380px", display: "flex" }}>
             <div role="button" aria-label="范式：无监督异常检测" tabIndex={0}
               onClick={() => { setParadigmChosen(true); handleTaskTypeChange("anomaly_detection"); }}
               onKeyDown={(e) => { if (e.key === "Enter") { setParadigmChosen(true); handleTaskTypeChange("anomaly_detection"); } }}
               className="paradigm-card"
-              style={{ cursor: "pointer", position: "relative", height: "100%", borderRadius: 10,
+              style={{ cursor: "pointer", position: "relative", flex: 1, borderRadius: 10,
                 border: `2px solid ${taskType === "anomaly_detection" ? "#1890ff" : "var(--v2-line, #e5e5e5)"}`,
                 background: taskType === "anomaly_detection" ? "rgba(24,144,255,0.08)" : "var(--v2-panel, #fff)",
                 padding: "14px 16px 12px 60px" }}>
