@@ -1139,29 +1139,9 @@ class DemoLoopService:
             output_schema = version.output_schema if isinstance(version.output_schema, dict) else {}
             if output_schema.get("task") != "anomaly":
                 return None
-            from app.models.model_library import ModelLibrary
-
-            library = self.db.query(ModelLibrary).filter(
-                ModelLibrary.id == version.source_model_library_id,
-            ).first()
-            if library is None or not library.training_job_id:
+            payload = self._score_stats_payload_for_version(version)
+            if payload is None:
                 return None
-            job = self.db.query(TrainingJob).filter(
-                TrainingJob.id == library.training_job_id,
-            ).first()
-            score_artifact_id = (job.metrics or {}).get("score_artifact_id") if job else None
-            if not score_artifact_id:
-                return None
-            # JSON 列取出的 id 恒为 str：UUID 列绑定必须转 uuid 对象（str 直传崩 .hex）
-            artifact = self.db.query(Artifact).filter(
-                Artifact.id == uuid.UUID(str(score_artifact_id)),
-            ).first()
-            if artifact is None:
-                return None
-            with self._artifact_service().materialize(
-                artifact.id, config.project_id, expected_type="report",
-            ) as path:
-                payload = json.loads(Path(path).read_text(encoding="utf-8"))
             threshold = payload.get("threshold_score")
             contamination = payload.get("contamination")
             return {
@@ -1171,18 +1151,23 @@ class DemoLoopService:
         except Exception:
             return None
 
-    def _psi_baseline_points(self, config: DemoLoopConfig) -> list[float] | None:
-        """部署模型版本的训练期分数分位表（score_stats.json，M1 产物）。
+    def _score_stats_payload_for_version(self, version: ModelVersion) -> dict | None:
+        """部署版本的 score_stats.json 载荷（PSI 基线/重拟合参数共用）。
 
-        链路：部署 → 版本 → 模型库（training_job_id）→ 训练任务 metrics.
-        score_artifact_id → 工件 JSON。任一环节缺失返回 None（无证据不触发）。
+        工况分片版本（§6.3，二期 M7）优先走 conversion_metadata 里注册时写入
+        的 anomaly_score_stats_artifact_id（每分片独立标定）；普通版本走旧链
+        （模型库 → training_job → job.metrics.score_artifact_id，即最差段/单
+        模型口径）。任一环节缺失返回 None（无证据不触发）。
         """
-        try:
-            deployment = self._deployment(config)
-            version = self._current_model_version(deployment)
-            output_schema = version.output_schema if isinstance(version.output_schema, dict) else {}
-            if output_schema.get("task") != "anomaly":
-                return None
+        metadata = version.conversion_metadata if isinstance(version.conversion_metadata, dict) else {}
+        shard_stats_id = str(metadata.get("anomaly_score_stats_artifact_id") or "").strip()
+        artifact = None
+        if shard_stats_id:
+            # JSON 列取出的 id 恒为 str：UUID 列绑定必须转 uuid 对象（坑）
+            artifact = self.db.query(Artifact).filter(
+                Artifact.id == uuid.UUID(shard_stats_id),
+            ).first()
+        if artifact is None:
             from app.models.model_library import ModelLibrary
 
             library = self.db.query(ModelLibrary).filter(
@@ -1196,21 +1181,75 @@ class DemoLoopService:
             score_artifact_id = (job.metrics or {}).get("score_artifact_id") if job else None
             if not score_artifact_id:
                 return None
-            # JSON 列取出的 id 恒为 str：UUID 列绑定必须转 uuid 对象
             artifact = self.db.query(Artifact).filter(
                 Artifact.id == uuid.UUID(str(score_artifact_id)),
             ).first()
             if artifact is None:
                 return None
-            with self._artifact_service().materialize(
-                artifact.id, config.project_id, expected_type="report",
-            ) as path:
-                payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        with self._artifact_service().materialize(
+            artifact.id, artifact.project_id, expected_type="report",
+        ) as path:
+            return json.loads(Path(path).read_text(encoding="utf-8"))
+
+    def _psi_baseline_points(self, config: DemoLoopConfig) -> list[float] | dict | None:
+        """训练期分数分位表（score_stats.json，M1 产物）。
+
+        普通部署返回 ``list[float]``（单基线，与一期一致）；工况分片部署
+        （§6.3，二期 M7）返回 ``dict[condition_value → points]``——每分片
+        版本各自的 score_stats 基线（PSI per-shard 的数据基础），condition_
+        value=None 的通配分片（默认段）键为 None。任一环节缺失返回 None
+        （无证据不触发）。
+        """
+        try:
+            deployment = self._deployment(config)
+            version = self._current_model_version(deployment)
+            output_schema = version.output_schema if isinstance(version.output_schema, dict) else {}
+            if output_schema.get("task") != "anomaly":
+                return None
+            condition_column = str(getattr(deployment, "condition_column", None) or "").strip()
+            if condition_column:
+                return self._psi_baseline_points_sharded(deployment, condition_column)
+            payload = self._score_stats_payload_for_version(version)
+            if payload is None:
+                return None
             points = ((payload.get("calibration") or {}).get("quantile_points")) or []
             return [float(value) for value in points] if len(points) >= 2 else None
         except Exception:
             # 基线缺失/文件丢失：无证据不触发，静默降级（与回流数据集自愈同语义）
             return None
+
+    def _psi_baseline_points_sharded(self, deployment, condition_column: str) -> dict | None:
+        """分片基线：stable revision 每个 target 版本各自的分位表。
+
+        ``dict[condition_value → points]``；全部解析失败返回 None（回退无
+        证据不触发）。单分片也走 dict（评估端按分片语义统一处理）。
+        """
+        from app.models.model_registry import DeploymentRevision
+
+        stable = self.db.query(DeploymentRevision).filter(
+            DeploymentRevision.deployment_id == deployment.id,
+            DeploymentRevision.status == "stable",
+        ).order_by(DeploymentRevision.revision_number.desc()).first()
+        if stable is None or not (stable.targets or ()):
+            return None
+        baselines: dict[str | None, list[float]] = {}
+        for target in stable.targets or ():
+            version = self.db.query(ModelVersion).filter(
+                ModelVersion.id == target.model_version_id,
+            ).first()
+            if version is None:
+                continue
+            payload = self._score_stats_payload_for_version(version)
+            if payload is None:
+                continue
+            points = ((payload.get("calibration") or {}).get("quantile_points")) or []
+            if len(points) < 2:
+                continue
+            raw_value = getattr(target, "condition_value", None)
+            baselines[str(raw_value).strip() if raw_value is not None else None] = [
+                float(value) for value in points
+            ]
+        return baselines or None
 
     def _reflow_scores(self, config: DemoLoopConfig) -> list[float]:
         """回流分数样本：报错 + 正确数据集的 anomaly_score 列（§3.6 全部推理行）。
@@ -1244,8 +1283,68 @@ class DemoLoopService:
                 scores.extend(float(value) for value in column.tolist())
         return scores
 
+    def _reflow_frames(self, config: DemoLoopConfig) -> list[pd.DataFrame]:
+        """回流帧（PSI per-shard 用）：报错 + 正确数据集的原始行——保留工况
+        列，分片评估按工况列分组。缺失数据集跳过（只读已有工件）。"""
+        frames: list[pd.DataFrame] = []
+        artifact_ids = [config.error_artifact_id, getattr(config, "correct_artifact_id", None)]
+        service = None
+        for artifact_id in artifact_ids:
+            if not artifact_id:
+                continue
+            try:
+                artifact = self.db.query(Artifact).filter(
+                    Artifact.id == artifact_id,
+                    Artifact.project_id == config.project_id,
+                ).first()
+                if artifact is None:
+                    continue
+                service = service or self._artifact_service()
+                with service.materialize(
+                    artifact.id, config.project_id, expected_type="dataset",
+                ) as path:
+                    frame = pd.read_csv(Path(path))
+            except Exception:
+                continue
+            if "anomaly_score" in frame.columns:
+                frames.append(frame)
+        return frames
+
+    def _reflow_scores_by_condition(
+        self, config: DemoLoopConfig, condition_column: str,
+    ) -> dict[str | None, list[float]]:
+        """回流分数按工况值分列（§6.3 per-shard PSI 的流内侧）。
+
+        返回 ``dict[condition_value → scores]``；工况列缺失/值缺失/未匹配
+        任何已知分片的行归入 None 键（通配默认分片口径）。全部无分数返回
+        空表（无证据不触发）。
+        """
+        grouped: dict[str | None, list[float]] = {}
+        for frame in self._reflow_frames(config):
+            condition_series = (
+                frame[condition_column].astype(str).str.strip()
+                if condition_column in frame.columns else None
+            )
+            scores = pd.to_numeric(frame["anomaly_score"], errors="coerce")
+            for index, value in scores.items():
+                if pd.isna(value):
+                    continue
+                if condition_series is not None and index in condition_series.index:
+                    raw_value = condition_series.loc[index]
+                    key: str | None = str(raw_value) if raw_value not in (None, "", "nan") else None
+                else:
+                    key = None
+                grouped.setdefault(key, []).append(float(value))
+        return grouped
+
     def _evaluate_psi_drift(self, config: DemoLoopConfig) -> dict | None:
-        """回流分数 PSI 对训练基线（§3.6）：total_count 未变时跳过重算（节流）。"""
+        """回流分数 PSI 对训练基线（§3.6）：total_count 未变时跳过重算（节流）。
+
+        工况分片部署（§6.3，二期 M7）：基线为 dict 时按分片评估——每分片
+        用各自 score_stats 基线对该分片流内分数算 PSI（未匹配工况值的记录
+        归通配分片），汇总取**最差分片**（max PSI，与 retention/冠军同口径）；
+        per_shard 明细进 psi_state 供排障。普通部署单基线行为不变。
+        """
         state = dict(config.psi_state or {})
         total = int(getattr(config, "total_count", 0) or 0)
         if state.get("last_total") == total and "psi" in state:
@@ -1257,18 +1356,56 @@ class DemoLoopService:
                 "sample_count": int(state.get("sample_count") or 0),
             }
         baseline_points = self._psi_baseline_points(config)
-        scores = self._reflow_scores(config) if baseline_points else []
         from app.services.anomaly_drift import evaluate_score_drift
 
-        if not baseline_points or not scores:
-            drift = {"psi": None, "level": "no_data", "sample_count": len(scores)}
+        if isinstance(baseline_points, dict):
+            # 分片评估（per-shard）：deployment.condition_column 非空才可能
+            # 拿到 dict 基线；取不到部署列时全部归通配键。
+            deployment = self._deployment(config)
+            condition_column = str(getattr(deployment, "condition_column", None) or "").strip()
+            grouped = (
+                self._reflow_scores_by_condition(config, condition_column)
+                if condition_column else {}
+            )
+            if not grouped:
+                drift = {"psi": None, "level": "no_data", "sample_count": 0}
+            else:
+                shard_reports: list[dict] = []
+                for condition_value, points in baseline_points.items():
+                    shard_scores = grouped.get(condition_value) or []
+                    if not shard_scores:
+                        continue
+                    shard_drift = evaluate_score_drift(points, shard_scores)
+                    shard_reports.append({
+                        "condition_value": condition_value,
+                        **shard_drift,
+                    })
+                if not shard_reports:
+                    drift = {"psi": None, "level": "no_data", "sample_count": 0}
+                else:
+                    worst = max(shard_reports, key=lambda item: float(item.get("psi") or 0.0))
+                    drift = {
+                        "psi": worst.get("psi"),
+                        "level": worst.get("level"),
+                        "alert_threshold": float(config.psi_threshold or 0.25),
+                        "watch_threshold": 0.10,
+                        "sample_count": sum(
+                            int(item.get("sample_count") or 0) for item in shard_reports
+                        ),
+                        "per_shard": shard_reports,
+                    }
         else:
-            drift = evaluate_score_drift(baseline_points, scores)
+            scores = self._reflow_scores(config) if baseline_points else []
+            if not baseline_points or not scores:
+                drift = {"psi": None, "level": "no_data", "sample_count": len(scores)}
+            else:
+                drift = evaluate_score_drift(baseline_points, scores)
         state.update({
             "last_total": total,
             "psi": drift.get("psi"),
             "level": drift.get("level"),
             "sample_count": drift.get("sample_count") or 0,
+            **({"per_shard": drift.get("per_shard")} if drift.get("per_shard") else {}),
         })
         config.psi_state = state
         return drift
@@ -1563,6 +1700,12 @@ class DemoLoopService:
         # 绑定表以 experiment_id 为主键（实验↔AutoML 任务 1:1），且重训幂等
         # 指纹含实验名；实验名必须按周期唯一，否则同轮次触发绑定冲突或重放旧任务。
         cycle = uuid.uuid4().hex[:8]
+        # 工况分片重拟合（§6.3，二期 M7）：分片部署的重训必须带工况列——
+        # 引擎按它重新分片训练（N bundle），否则退化单段全量、分片 targets 断。
+        deployment_for_shard = self._deployment(config)
+        shard_condition_column = str(
+            getattr(deployment_for_shard, "condition_column", None) or ""
+        ).strip() or None
         job = trigger_retrain_job(
             self.db,
             project_id=config.project_id,
@@ -1588,6 +1731,7 @@ class DemoLoopService:
                     "anomaly_threshold_score": anomaly_params.get("threshold_score"),
                     "anomaly_contamination": anomaly_params.get("contamination"),
                     "feedback_marks": config.feedback_marks,
+                    "condition_column": shard_condition_column,
                 }
                 if is_anomaly
                 else {}

@@ -105,7 +105,7 @@ class TorchAutoencoder:
 
     def __init__(self, hidden_units=64, hidden_layers=2, bottleneck_ratio=0.25,
                  epochs=100, learning_rate=1e-3, noise_sigma=0.05, batch_size=64,
-                 seed=42):
+                 seed=42, early_stopping=True, patience=5, validation_fraction=0.1):
         self.hidden_units = hidden_units
         self.hidden_layers = hidden_layers
         self.bottleneck_ratio = bottleneck_ratio
@@ -114,6 +114,12 @@ class TorchAutoencoder:
         self.noise_sigma = noise_sigma
         self.batch_size = batch_size
         self.seed = seed
+        # 保留集早停（技术方案 §6.1 训练协议）：按 validation_fraction 切出
+        # 保留集，验证重构损失连续 patience 个 epoch 无改善即停——防止 epochs
+        # 上限 trial 跑满（§6.6D 成本控制的同时防过拟合正常包络）。
+        self.early_stopping = early_stopping
+        self.patience = patience
+        self.validation_fraction = validation_fraction
 
     # -- sklearn 接口 ------------------------------------------------------
 
@@ -127,6 +133,9 @@ class TorchAutoencoder:
             "noise_sigma": self.noise_sigma,
             "batch_size": self.batch_size,
             "seed": self.seed,
+            "early_stopping": self.early_stopping,
+            "patience": self.patience,
+            "validation_fraction": self.validation_fraction,
         }
 
     def set_params(self, **params):
@@ -163,18 +172,54 @@ class TorchAutoencoder:
         network.train()
         generator = torch.Generator().manual_seed(int(self.seed))
         n_rows = tensor.shape[0]
-        batch = min(int(self.batch_size), n_rows)
+
+        # 保留集切分（早停启用时）：验证损失只在 clean 重构误差上算（不加噪）
+        val_index = None
+        if self.early_stopping:
+            val_size = max(1, int(n_rows * min(max(float(self.validation_fraction), 0.0), 0.5)))
+            if n_rows - val_size >= 1:
+                perm = torch.randperm(n_rows, generator=generator)
+                val_index, train_index = perm[:val_size], perm[val_size:]
+            else:
+                train_index = torch.arange(n_rows)
+        else:
+            train_index = torch.arange(n_rows)
+        val_tensor = tensor[val_index] if val_index is not None else None
+
+        batch = min(int(self.batch_size), len(train_index))
         sigma = float(self.noise_sigma)
+        patience = max(1, int(self.patience))
+        best_val_loss = None
+        stale_epochs = 0
+        completed_epochs = 0
         for _epoch in range(int(self.epochs)):
-            perm = torch.randperm(n_rows, generator=generator)
-            for start in range(0, n_rows, batch):
-                index = perm[start:start + batch]
+            completed_epochs += 1
+            perm = torch.randperm(len(train_index), generator=generator)
+            for start in range(0, len(train_index), batch):
+                index = train_index[perm[start:start + batch]]
                 clean = tensor[index]
                 noisy = clean + sigma * torch.randn(clean.shape, generator=generator)
                 optimizer.zero_grad()
                 loss = nn.functional.mse_loss(network(noisy), clean)
                 loss.backward()
                 optimizer.step()
+            if val_tensor is None:
+                continue
+            with torch.no_grad():
+                network.eval()
+                val_loss = float(
+                    nn.functional.mse_loss(network(val_tensor), val_tensor).item()
+                )
+                network.train()
+            if best_val_loss is None or val_loss < best_val_loss:
+                best_val_loss = val_loss
+                stale_epochs = 0
+            else:
+                stale_epochs += 1
+                if stale_epochs >= patience:
+                    break
+        self.n_epochs_ = completed_epochs
+        self.best_val_mse_ = best_val_loss
         network.eval()
         self.network_ = network
         self.train_mse_ = float(

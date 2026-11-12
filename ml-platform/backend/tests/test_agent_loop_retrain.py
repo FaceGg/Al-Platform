@@ -1183,8 +1183,12 @@ class TestAnomalyClosedLoop(AgentLoopRetrain):
             self.assertNotIn("target_column", job.params)
             self.assertEqual(job.automl_contract["cv_strategy"], "synthetic_benchmark")
             self.assertEqual(job.automl_contract["contamination"], 0.01)
+            # 三族白名单（二期 M5）：autoencoder 采纳进目录（引擎侧 high/ultra
+            # 出场过滤，闭环重训默认强度下不实际出场）
             self.assertTrue(
-                set(job.params["algorithm_ids"]).issubset({"iforest", "ocsvm"})
+                set(job.params["algorithm_ids"]).issubset(
+                    {"iforest", "ocsvm", "autoencoder"}
+                )
             )
 
     def test_psi_alert_triggers_retrain_without_row_threshold(self):

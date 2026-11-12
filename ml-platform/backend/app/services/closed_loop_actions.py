@@ -373,6 +373,7 @@ def trigger_retrain_job(
     anomaly_threshold_score: float | None = None,
     anomaly_contamination: float | None = None,
     feedback_marks: dict | None = None,
+    condition_column: str | None = None,
 ) -> TrainingJob:
     """Create and dispatch one AutoML job on the given dataset(s)/target.
 
@@ -387,6 +388,9 @@ def trigger_retrain_job(
     无监督重拟合（技术方案 §3.6，task_type="anomaly_detection"）：目标列必须
     为空（镜像互斥）；``anomaly_threshold_score``（部署模型 score_stats 阈值）
     驱动「仅正常数据重拟合」剔除；contamination 随合同透传。
+    ``condition_column``（§6.3 分片重拟合，二期 M7）：分片部署的闭环重拟合
+    必须携带工况列——引擎按它重新分片训练（N bundle），缺失会退化单段全量，
+    换模后的分片 targets 就断了。
     """
     project_id = _as_uuid(project_id)
     actor_id = _as_uuid(actor_id)
@@ -517,6 +521,11 @@ def trigger_retrain_job(
             "class_weight": controls["class_weight"],
             **({"contamination": float(anomaly_contamination)} if is_anomaly and anomaly_contamination else {}),
             **({"ensemble": dict(ensemble)} if ensemble else {}),
+            # 工况分片重拟合（§6.3，二期 M7）：分片部署闭环重训必须带工况列，
+            # 引擎按它重新分片训练（N bundle）——缺失会退化单段全量训练。
+            **({
+                "condition_column": str(condition_column).strip()
+            } if is_anomaly and str(condition_column or "").strip() else {}),
         },
         dataset_artifact_id=dataset.id,
         dataset_path=service.storage_reference(dataset),

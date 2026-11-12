@@ -709,5 +709,225 @@ class TestThresholdShardStats(unittest.TestCase):
         self.assertIsNone(anomaly_threshold_for_version(self.db, self.version))
 
 
+class TestShardedPsiDrift(unittest.TestCase):
+    """PSI per-shard（§6.3/§6.4 M7 分片化补全）：每分片各自基线+流内按工况
+    分列+最差分片汇总；重拟合触发携带 condition_column。"""
+
+    def setUp(self):
+        import pandas as pd
+
+        self.engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(self.engine)
+        self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
+        self.db = self.Session()
+        self.user = User(username="psi-owner", password_hash="hash")
+        self.db.add(self.user)
+        self.db.flush()
+        self.project = Project(name="PsiShard", owner_id=self.user.id)
+        self.db.add(self.project)
+        self.db.flush()
+        self.directory = tempfile.mkdtemp(prefix="shard-psi-")
+        self.artifact = Artifact(
+            project_id=self.project.id, name="model.onnx", type="model",
+            storage_path="", storage_uri="s3://models/model.onnx",
+            file_size=12, format="onnx", metadata_={"sha256": "a" * 64},
+        )
+        self.db.add(self.artifact)
+        self.db.flush()
+        # 两个分片版本：各自 stats artifact（分位表不同）；先建版本再建部署
+        # （inference_deployments.model_version_id NOT NULL）
+        self.baselines = {
+            "A": [round(0.001 * index, 4) for index in range(201)],
+            "B": [round(1.0 + 0.001 * index, 4) for index in range(201)],
+        }
+        self.stats_ids = {}
+        self.versions = {}
+        for suffix in ("a", "b"):
+            stats_path = Path(self.directory) / f"stats_{suffix}.json"
+            stats_path.write_text(json.dumps({
+                "calibration": {"quantile_points": self.baselines[suffix.upper()]},
+                "threshold_score": 0.5,
+                "contamination": 0.01,
+            }), encoding="utf-8")
+            stats_artifact = Artifact(
+                project_id=self.project.id, name=f"stats-{suffix}.json", type="report",
+                storage_path=str(stats_path), storage_uri="",
+                file_size=stats_path.stat().st_size, format="json", metadata_={},
+            )
+            self.db.add(stats_artifact)
+            self.db.flush()
+            self.stats_ids[suffix] = str(stats_artifact.id)
+            model = RegisteredModel(
+                project_id=self.project.id, name=f"psi-shard-{suffix}",
+                created_by_id=self.user.id,
+            )
+            self.db.add(model)
+            self.db.flush()
+            version = ModelVersion(
+                registered_model_id=model.id, version_number=1,
+                source_kind="onnx_artifact",
+                source_artifact_id=self.artifact.id,
+                onnx_artifact_id=self.artifact.id,
+                framework="onnx", algorithm="iforest",
+                feature_schema=[], output_schema={"task": "anomaly"},
+                metrics={}, approval_status="approved",
+                created_by_id=self.user.id,
+                conversion_metadata={
+                    "anomaly_score_stats_artifact_id": str(stats_artifact.id),
+                },
+            )
+            self.db.add(version)
+            self.db.flush()
+            self.versions[suffix] = version
+        self.deployment = InferenceDeployment(
+            project_id=self.project.id, name="psi-sharded",
+            model_version_id=self.versions["a"].id, condition_column="station",
+            desired_state="running", observed_state="running",
+            created_by_id=self.user.id,
+        )
+        self.db.add(self.deployment)
+        self.db.flush()
+        self.revision = DeploymentRevision(
+            deployment_id=self.deployment.id, revision_number=1,
+            strategy="immediate", status="stable", created_by_id=self.user.id,
+        )
+        self.db.add(self.revision)
+        self.db.flush()
+        self.db.add(DeploymentTarget(
+            revision_id=self.revision.id, model_version_id=self.versions["a"].id,
+            weight_bps=6000, role="stable", condition_value="A",
+        ))
+        self.db.add(DeploymentTarget(
+            revision_id=self.revision.id, model_version_id=self.versions["b"].id,
+            weight_bps=4000, role="stable", condition_value="B",
+        ))
+        # 回流帧：A 分片贴基线（稳定），B 分片漂移到远离 B 基线的分布
+        reflow_rows = (
+            [{"station": "A", "anomaly_score": 0.0005 * index} for index in range(100)]
+            + [{"station": "B", "anomaly_score": 50.0 + index} for index in range(100)]
+        )
+        reflow_path = Path(self.directory) / "reflow.csv"
+        pd.DataFrame(reflow_rows).to_csv(reflow_path, index=False)
+        self.reflow_artifact = Artifact(
+            project_id=self.project.id, name="reflow.csv", type="dataset",
+            storage_path=str(reflow_path), storage_uri="",
+            file_size=reflow_path.stat().st_size, format="csv", metadata_={},
+        )
+        self.db.add(self.reflow_artifact)
+        self.db.flush()
+        from app.models.demo_loop import DemoLoopConfig
+
+        self.config = DemoLoopConfig(
+            project_id=self.project.id, name="psi-loop",
+            deployment_id=self.deployment.id,
+            error_artifact_id=self.reflow_artifact.id,
+            psi_enabled=True, psi_threshold=0.25,
+            total_count=200,
+        )
+        self.db.add(self.config)
+        self.db.commit()
+        from app.services.demo_loop import DemoLoopService
+
+        self.service = DemoLoopService(self.db)
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+
+    def test_baseline_points_are_per_shard(self):
+        points = self.service._psi_baseline_points(self.config)
+        self.assertIsInstance(points, dict)
+        self.assertEqual(sorted(points.keys()), ["A", "B"])
+        self.assertEqual(points["A"], self.baselines["A"])
+        self.assertEqual(points["B"], self.baselines["B"])
+
+    def test_evaluate_psi_reports_worst_shard(self):
+        drift = self.service._evaluate_psi_drift(self.config)
+        self.assertIsNotNone(drift)
+        self.assertEqual(drift["level"], "alert")
+        # 最差分片 = B（流内分数 50+ 对 B 基线 1.0-1.2 完全漂移）
+        self.assertGreater(float(drift["psi"]), 0.25)
+        per_shard = drift.get("per_shard") or []
+        self.assertEqual(len(per_shard), 2)
+        by_value = {item["condition_value"]: item for item in per_shard}
+        self.assertGreater(float(by_value["B"]["psi"]), float(by_value["A"]["psi"]))
+        # per_shard 明细进 psi_state
+        self.assertIn("per_shard", self.config.psi_state or {})
+
+    def test_retrain_trigger_carries_condition_column(self):
+        """分片部署重拟合触发必须携带工况列（否则引擎退化单段训练）。"""
+        from app.services import demo_loop as demo_loop_module
+
+        self.config.retrain_enabled = True
+        self.config.retrain_threshold_rows = 1
+        self.config.error_count = 5
+        self.db.commit()
+        captured = {}
+
+        def _fake_trigger(db, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(id=uuid.uuid4(), params={"max_trials": 3})
+
+        with mock.patch(
+            "app.services.closed_loop_actions.resolve_retrain_dataset_ids",
+            return_value=[str(uuid.uuid4())],
+        ), mock.patch.object(
+            demo_loop_module, "trigger_retrain_job", side_effect=_fake_trigger,
+        ):
+            self.service._trigger_retrain(self.config, str(self.user.id))
+        self.assertEqual(captured.get("condition_column"), "station")
+        self.assertEqual(captured.get("task_type"), "anomaly_detection")
+
+
+class TestCrossConditionInjection(unittest.TestCase):
+    """验收③语义级交叉注入（技术方案 §6.4）：两工况正常包络本质不同时，
+    同一样本在错误分片模型下分数显著不同——错用工况模型会把邻工况正常
+    误报、把靠近其包络的异常漏检。路由各归其模是检出质量的前提。
+
+    M7 前置批次的 stub 级测试只验证「路由把请求送到正确分片」；本类用
+    真实训练的两个 AE 分片模型验证「分片模型的包络确实各不相同」。
+    """
+
+    def test_cross_condition_scores_diverge(self):
+        try:
+            import torch  # noqa: F401
+        except ImportError:
+            self.skipTest("torch not installed (AE 采纳后接线待用户决策)")
+        import numpy as np
+
+        from app.services.automl_anomaly_ae import TorchAutoencoder
+
+        rng = np.random.RandomState(11)
+        # 工况 A 正常包络 N(0,1)；工况 B 正常包络 N(10,1)——分布中心差 10σ
+        normal_a = rng.randn(1500, 4).astype(np.float32)
+        normal_b = (10.0 + rng.randn(1500, 4)).astype(np.float32)
+        ae_a = TorchAutoencoder(hidden_units=32, hidden_layers=2, epochs=40)
+        ae_b = TorchAutoencoder(hidden_units=32, hidden_layers=2, epochs=40)
+        ae_a.fit(normal_a)
+        ae_b.fit(normal_b)
+
+        def anomaly_score(model, matrix):
+            return -np.asarray(model.decision_function(matrix))
+
+        # ① A 正常样本：在 A 模型下低分（正常）；在 B 模型下显著高分（误报）
+        probe_a = normal_a[:200]
+        score_on_a = anomaly_score(ae_a, probe_a)
+        score_on_b = anomaly_score(ae_b, probe_a)
+        self.assertLess(float(score_on_a.mean()), float(score_on_b.mean()))
+        self.assertGreater(float(score_on_b.mean()), 2.0 * max(float(score_on_a.mean()), 1e-6))
+        # ② A 异常（向 +8 偏移，靠近 B 包络）：A 模型检出；B 模型漏检
+        anomaly_a = (normal_a[:200] + 8.0).astype(np.float32)
+        self.assertGreater(
+            float(anomaly_score(ae_a, anomaly_a).mean()),
+            float(anomaly_score(ae_b, anomaly_a).mean()),
+        )
+        # ③ B 正常样本在 A 模型下同理误报（对称性）
+        probe_b = normal_b[:200]
+        self.assertLess(
+            float(anomaly_score(ae_b, probe_b).mean()),
+            float(anomaly_score(ae_a, probe_b).mean()),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -159,5 +159,57 @@ class TestAutoencoderWorkerConversion(unittest.TestCase):
         self.assertTrue(np.all(np.asarray(label) == 1))
 
 
+class TestAutoencoderEarlyStopping(unittest.TestCase):
+    """保留集早停（§6.1 训练协议）：验证损失无改善提前停，防止 epochs 跑满。"""
+
+    def test_early_stopping_halts_before_epoch_budget(self):
+        """易拟合数据 + 大 epochs 预算：实际 epoch 数应显著低于上限。"""
+        from app.services.automl_anomaly_ae import TorchAutoencoder
+
+        rng = np.random.RandomState(7)
+        matrix = rng.randn(2000, 6).astype(np.float32)
+        ae = TorchAutoencoder(hidden_units=32, hidden_layers=2, epochs=300,
+                              patience=3, validation_fraction=0.1)
+        ae.fit(matrix)
+        self.assertLess(int(ae.n_epochs_), 300)
+        self.assertIsNotNone(ae.best_val_mse_)
+
+    def test_early_stopping_disabled_runs_full_budget(self):
+        from app.services.automl_anomaly_ae import TorchAutoencoder
+
+        rng = np.random.RandomState(7)
+        matrix = rng.randn(500, 6).astype(np.float32)
+        ae = TorchAutoencoder(hidden_units=32, hidden_layers=2, epochs=40,
+                              early_stopping=False)
+        ae.fit(matrix)
+        self.assertEqual(int(ae.n_epochs_), 40)
+
+    def test_new_params_survive_clone(self):
+        from sklearn.base import clone
+
+        from app.services.automl_anomaly_ae import TorchAutoencoder
+
+        ae = TorchAutoencoder(epochs=50, patience=7, validation_fraction=0.2)
+        cloned = clone(ae)
+        self.assertEqual(cloned.get_params(), ae.get_params())
+
+    def test_direction_preserved_with_early_stopping(self):
+        """早停不劣化方向：正常样本 anomaly_score 仍低于偏移异常。"""
+        from app.services.automl_anomaly_ae import TorchAutoencoder
+
+        rng = np.random.RandomState(42)
+        normal = rng.randn(1500, 8).astype(np.float32)
+        anomaly = rng.randn(200, 8).astype(np.float32)
+        anomaly[:, :3] += 8.0
+        ae = TorchAutoencoder(hidden_units=32, hidden_layers=2, epochs=200,
+                              patience=4)
+        ae.fit(normal)
+        scores_normal = ae.decision_function(normal)
+        scores_anomaly = ae.decision_function(anomaly)
+        # decision_function 大=正常（sklearn 惯例）；anomaly score（取负）反之
+        self.assertGreater(float(np.mean(scores_normal)), float(np.mean(scores_anomaly)))
+        self.assertLess(float(np.mean(-scores_normal)), float(np.mean(-scores_anomaly)))
+
+
 if __name__ == "__main__":
     unittest.main()
