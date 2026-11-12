@@ -32,7 +32,9 @@ def anomaly_trainer(feature_frame, _y, hints: dict) -> dict:
     签名与 lightweight_trainer 对齐（feature_frame, y, hints）——y 恒为
     None（无监督无标签），保留参数位只为调用点形状统一。
     hints：algorithm_whitelist（目录族 id 白名单，硬约束同监督侧）、
-    contamination（guidance.modeling.contamination）。
+    contamination（guidance.modeling.contamination）、condition_column
+    （分工况建模 §3.6：指定后按工况值切分数据分别建模，冠军取各工况
+    最差检出能力——保证每个工况都可用；路由部署拓扑二期）。
     """
     import pandas as pd
 
@@ -40,6 +42,64 @@ def anomaly_trainer(feature_frame, _y, hints: dict) -> dict:
     contamination = normalize_anomaly_contamination(hints.get("contamination"))
     full_data = bool(hints.get("full_data", True))
     frame = feature_frame if isinstance(feature_frame, pd.DataFrame) else pd.DataFrame(feature_frame)
+    condition_column = str(hints.get("condition_column") or "").strip() or None
+    if condition_column and condition_column not in frame.columns:
+        raise ValueError(f"condition column {condition_column} not in features")
+    if condition_column:
+        # 分工况切分（§3.6）：每工况独立走完整训练评估，冠军取「最差工况」
+        # ——任何一个工况不达标即整体不达标（保守）。
+        segments = []
+        for value, segment in frame.groupby(condition_column, sort=True):
+            feature_only = segment.drop(columns=[condition_column])
+            if len(feature_only) >= 60:
+                segments.append((f"{condition_column}={value}", feature_only))
+        if not segments:
+            raise ValueError("condition column produced no usable segments (each needs ≥60 rows)")
+        segment_results = []
+        for label, segment_frame in segments:
+            result = _train_single(segment_frame, hints, contamination, full_data)
+            result["segment"] = label
+            result["data_fidelity"]["rows"] = int(len(segment_frame))
+            segment_results.append(result)
+        # 汇总冠军 = 各工况同一族配置下按最差 synthetic_auc 的族（各工况独立训练，
+        # 输出每工况最佳与整体最差，验收按最差口径——任一工况不可用即整体不可用）
+        worst = min(segment_results, key=lambda item: item["metrics"]["synthetic_auc"])
+        aggregated = {
+            "metrics": worst["metrics"],
+            "topk_metrics": [
+                {"synthetic_auc": item["metrics"]["synthetic_auc"]} for item in segment_results
+            ],
+            "importance": [],
+            "minority_test_count": None,
+            "data_fidelity": {
+                "full_data": full_data, "paradigm": "unsupervised",
+                "total_rows": int(len(frame)),
+                "condition_column": condition_column,
+                "segments": [item["segment"] for item in segment_results],
+            },
+            "contamination": contamination,
+            "evaluation": {
+                **(segment_results[0].get("evaluation") or {}),
+                "per_condition": [
+                    {"segment": item["segment"], "synthetic_auc": item["metrics"]["synthetic_auc"],
+                     "normal_fpr": item["metrics"]["normal_fpr"]}
+                    for item in segment_results
+                ],
+                "worst_segment": worst["segment"],
+            },
+            "champion_model": worst["champion_model"],
+            "champion_features": worst["champion_features"],
+            "champion_algorithm": worst["champion_algorithm"],
+        }
+        return aggregated
+    return _train_single(frame, hints, contamination, full_data)
+
+
+def _train_single(frame, hints: dict, contamination: float, full_data: bool) -> dict:
+    """单段（全量或单工况）训练评估。"""
+    import numpy as np
+    import pandas as pd
+
     matrix = frame.to_numpy(dtype=float)
     fidelity: dict = {
         "full_data": full_data,

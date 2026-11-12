@@ -152,6 +152,9 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   // Step 4
   const [metricGates, setMetricGates] = useState<Record<string, string>>({});
   const [reviewFocus, setReviewFocus] = useState("");
+  // 已知异常样本弱监督验证（技术方案 §3.4 S4，无监督可选）：上传少量已确认
+  // 异常样本 CSV，S4 门禁通过后冠军模型打分验证检出率（观察项，不一票否决）
+  const [knownAnomalyRows, setKnownAnomalyRows] = useState<Record<string, unknown>[]>([]);
   const [testDatasetId, setTestDatasetId] = useState("");
   const [maxRounds, setMaxRounds] = useState("3");
   const [analysisPrompt, setAnalysisPrompt] = useState("");
@@ -393,6 +396,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
             custom_test_dataset_id: testDatasetId || null,
             metric_gates: gates,
             review_focus: reviewFocus.trim() ? [reviewFocus.trim()] : [],
+            ...(isAnomaly && knownAnomalyRows.length ? { known_anomaly_rows: knownAnomalyRows } : {}),
           },
           max_rounds: Math.max(1, Math.min(10, Number(maxRounds) || 3)),
           auto_servitize: servitize,
@@ -835,7 +839,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
             </label>
           </div>
           <div className="v2-panel">
-            <h4><span className="bar" />{zh ? (taskType === "anomaly" ? "验收指标阈值（无监督：留空 = 平台默认门禁 synthetic_auc≥0.85 / 误报率≤1.5% / 稳定性≥0.8）" : "验收指标阈值（留空项不设门禁；对大模型一票否决）") : "Acceptance gates"}</h4>
+            <h4><span className="bar" />{zh ? (taskType === "anomaly" ? "验收指标阈值（留空 = 平台默认门禁 synthetic_auc≥0.85 / 误报率≤1.5% / 稳定性≥0.8）" : "验收指标阈值（留空项不设门禁；对大模型一票否决）") : "Acceptance gates"}</h4>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
               {(taskType === "anomaly" ? ANOMALY_METRIC_ROWS : METRIC_ROWS).map((metric) => (
                 <label key={metric.key} style={{ background: "var(--v2-bg)", border: "1px solid var(--v2-line)", borderRadius: 9, padding: "8px 11px", fontSize: 12 }}>
@@ -847,6 +851,37 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
               ))}
             </div>
           </div>
+          {taskType === "anomaly" && (
+          <div className="v2-panel">
+            <h4><span className="bar" />{zh ? "已知异常样本验证（可选 · 弱监督）" : "Known anomaly validation (optional)"}
+              <span className="more">{zh ? "上传少量已确认异常样本（≤50 行，特征列与训练数据一致），S4 门禁通过后用冠军模型打分验证检出率——观察项，不一票否决" : "score known anomalies with the champion model"}</span></h4>
+            <input type="file" accept=".csv" aria-label={zh ? "上传已知异常样本" : "known anomaly csv"}
+              style={{ fontSize: 12 }} onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const text = String(reader.result || "").replace(/^\uFEFF/, "");
+                  const lines = text.split(/\r?\n/).filter((line) => line.trim());
+                  if (lines.length < 2) { setKnownAnomalyRows([]); return; }
+                  const headers = lines[0].split(",").map((h) => h.trim());
+                  const parsed = lines.slice(1, 51).map((line) => {
+                    const cells = line.split(",");
+                    return Object.fromEntries(headers.map((h, i) => [h, cells[i] ?? ""]));
+                  });
+                  setKnownAnomalyRows(parsed);
+                };
+                reader.readAsText(file, "utf-8");
+              }} />
+            {knownAnomalyRows.length > 0 && (
+              <div style={{ fontSize: 12, marginTop: 6, color: "var(--v2-sub)" }}>
+                已载入 {knownAnomalyRows.length} 行已知异常样本（S4 验收时用冠军模型验证检出率）
+                <button type="button" style={{ marginLeft: 8, cursor: "pointer" }}
+                  onClick={() => setKnownAnomalyRows([])}>{zh ? "清除" : "clear"}</button>
+              </div>
+            )}
+          </div>
+          )}
           <div className="v2-panel">
             <h4><span className="bar" />{zh ? "评审重点提示词（可选）" : "Review focus (optional)"}</h4>
             <input className="v2-select" style={{ width: "100%", minWidth: 0 }} value={reviewFocus}

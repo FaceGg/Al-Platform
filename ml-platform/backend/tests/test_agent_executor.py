@@ -608,3 +608,27 @@ class TestAnomalyTrainer(unittest.TestCase):
         )
         self.assertEqual(result["champion_algorithm"], "ocsvm")
         self.assertEqual(len(result["topk_metrics"]), 1)
+
+    def test_anomaly_trainer_splits_by_condition_column(self):
+        """分工况建模（技术方案 §3.6）：按工况列切分独立建模，冠军按最差工况口径。"""
+        import numpy as np
+
+        from app.services.agent.anomaly_trainer import anomaly_trainer
+
+        rng = np.random.default_rng(42)
+        matrix = rng.normal(size=(300, 3))
+        frame = pd.DataFrame(matrix, columns=["s1", "s2", "s3"])
+        # 工况列：两个工况值（shift A / shift B），错开行序验证分组
+        frame["shift"] = ["A" if i % 2 == 0 else "B" for i in range(300)]
+        result = anomaly_trainer(
+            frame.drop(columns=["shift"]).assign(shift=frame["shift"]),
+            None,
+            {"task_type": "anomaly", "contamination": 0.01, "full_data": True,
+             "condition_column": "shift"},
+        )
+        fidelity = result["data_fidelity"]
+        self.assertEqual(fidelity["condition_column"], "shift")
+        self.assertEqual(sorted(fidelity["segments"]), ["shift=A", "shift=B"])
+        self.assertTrue(result["evaluation"].get("per_condition"))
+        self.assertIn("worst_segment", result["evaluation"])
+        self.assertIn(result["champion_algorithm"], {"iforest", "ocsvm"})

@@ -7,6 +7,8 @@ deterministic trainer (the platform AutoML binding lands in P3).
 
 import os
 import unittest
+import uuid
+from unittest import mock
 from uuid import uuid4
 
 os.environ.setdefault("LLM_MASTER_KEY", __import__(
@@ -400,6 +402,14 @@ def _trainer_anomaly_passing(feature_df, y, hints):
     """无监督训练器 fake：形状与 anomaly_trainer 对齐（y 恒 None）。"""
     assert y is None, "无监督任务 S3 必须传 y=None"
     assert hints.get("task_type") == "anomaly"
+    from sklearn.ensemble import IsolationForest
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    model = Pipeline([
+        ("scaler", StandardScaler()),
+        ("detector", IsolationForest(n_estimators=20, random_state=0)),
+    ]).fit(feature_df)
     return {
         "metrics": {
             "synthetic_auc": 0.92,
@@ -410,6 +420,10 @@ def _trainer_anomaly_passing(feature_df, y, hints):
         "topk_metrics": [{"synthetic_auc": 0.92}, {"synthetic_auc": 0.88}],
         "importance": [],
         "minority_test_count": None,
+        "evaluation": {"threshold_score": 0.0},
+        "champion_model": model,
+        "champion_features": [str(name) for name in feature_df.columns],
+        "champion_algorithm": "iforest",
     }
 
 
@@ -442,7 +456,9 @@ class TestAgentRunnerAnomaly(RunnerHarness, unittest.TestCase):
     def test_anomaly_task_reaches_accepted_without_target(self):
         """无监督任务全链：无目标列、anomaly 门禁键、范式随 guidance 固化。"""
         runner, db, run_id = self.build_anomaly()
-        result = runner.run_to_completion()
+        # 冠军物化依赖 artifact 存储配置——patch 掉（本用例验证全链状态机）
+        with mock.patch.object(runner_module.AgentRunner, "_persist_s3_champion", lambda self_, _result: None):
+            result = runner.run_to_completion()
         self.assertEqual(result.status, "accepted")
         self.assertIsNone(result.target_column)
         entry = result.memory_json["rounds"][0]
@@ -450,6 +466,44 @@ class TestAgentRunnerAnomaly(RunnerHarness, unittest.TestCase):
         self.assertIn("normal_fpr", entry["s4"]["gates"])
         self.assertNotIn("recall_minority", entry["s4"]["gates"])
         self.assertTrue(entry["s4"]["gate_passed"])
+
+    def test_known_anomaly_rows_validated_after_gate_pass(self):
+        """已知异常样本弱监督验证（技术方案 §3.4 S4）：门禁通过后冠军模型
+        对样本打分，检出率进 metrics 与 s4 digest 证据（不设一票否决）。"""
+        captured = {}
+
+        def fake_s4(db, **kwargs):
+            captured["metrics"] = kwargs.get("metrics")
+            return _verdict("pass"), None, {"total_tokens": 10}
+
+        runner, db, _ = self.build_anomaly(
+            extra_patches={
+                "run_s4": lambda db, **kw: (
+                    captured.__setitem__("metrics", kw.get("metrics")) or (_verdict("pass"), None, {"total_tokens": 10})
+                ),
+            },
+        )
+        # guidance 注入已知异常样本（evaluation 段）
+        runner.guidance["evaluation"] = {
+            "known_anomaly_rows": [
+                {"s1": 9.0, "s2": -8.0, "s3": 1.0, "s4": -1.0},
+                {"s1": -7.0, "s2": 6.0, "s3": -1.0, "s4": 1.0},
+            ],
+        }
+        # 冠军物化依赖 artifact 存储配置——本用例只验证检出率进 metrics，patch 掉
+        with mock.patch.object(
+            runner_module.AgentRunner, "_persist_s3_champion", lambda self_, _result: None,
+        ):
+            result = runner.run_to_completion()
+        self.assertEqual(result.status, "accepted")
+        # 检出率进 S4 评审看到的 metrics（LLM 评审与证据面板同源）
+        self.assertIn("known_anomaly_detection_rate", captured["metrics"])
+        entry = result.memory_json["rounds"][0]
+        validation = entry["s4"].get("known_anomaly_validation")
+        self.assertIsNotNone(validation)
+        self.assertEqual(validation["sample_count"], 2)
+        self.assertIn("detection_rate", validation)
+        self.assertIn("per_row", validation)
 
     def test_anomaly_gate_failure_loops_with_anomaly_metric_hint(self):
         """synthetic_auc 门禁未过 → 打回 S1，hints 带 anomaly 指标名。"""

@@ -138,6 +138,20 @@ class GuidanceEvaluation(BaseModel):
     custom_test_dataset_id: str | None = Field(default=None, max_length=64)
     metric_gates: dict = Field(default_factory=dict)
     review_focus: list[str] = Field(default_factory=list)
+    # 已知异常样本弱监督验证（技术方案 §3.4 S4，无监督专用）：少量已确认
+    # 异常样本（≤50 行特征值），S4 门禁通过后用冠军模型打分验证检出率，
+    # 进验收证据（观察项，不设一票否决——样本少统计弱）。
+    known_anomaly_rows: list[dict] = Field(default_factory=list)
+
+    @field_validator("known_anomaly_rows")
+    @classmethod
+    def _validate_known_anomaly_rows(cls, value: list[dict]) -> list[dict]:
+        if len(value) > 50:
+            raise ValueError("known_anomaly_rows supports at most 50 rows")
+        for row in value:
+            if not isinstance(row, dict):
+                raise ValueError("known_anomaly_rows entries must be objects")
+        return value
 
 
 class UserGuidance(BaseModel):

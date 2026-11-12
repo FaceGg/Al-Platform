@@ -910,19 +910,8 @@ class AgentRunner:
                     ANOMALY_TOPK_MAX_VARIANCE if self.task_type == "anomaly" else TOPK_MAX_VARIANCE
                 ),
             )
-            self._stage_digest(
-                round_number,
-                "s4",
-                {
-                    "gates": gates,
-                    "gate_passed": gate_report.passed,
-                    "gate_failures": gate_report.failures[:6],
-                },
-            )
-
+            known_anomaly_validation: dict | None = None
             if not gate_report.passed:
-                # Hard-gate failure: back to S1 with hints. The review is not
-                # even consulted — the LLM can never relax the gates.
                 hints = [f"hard_gate: {failure}" for failure in gate_report.failures]
                 self._record_round(
                     round_number,
@@ -931,6 +920,56 @@ class AgentRunner:
                     hints=hints,
                 )
                 continue
+
+            # 已知异常样本弱监督验证（技术方案 §3.4 S4，无监督专用）：门禁
+            # 通过后用冠军模型对用户上传的已知异常样本打分，检出率进验收
+            # 证据（观察项——样本少统计弱，不设一票否决）。
+            if self.task_type == "anomaly" and self._s3_champion and self._s3_champion.get("model"):
+                known_rows = list(((self.guidance or {}).get("evaluation") or {}).get("known_anomaly_rows") or [])
+                if known_rows:
+                    import numpy as _np
+
+                    from app.services.automl_anomaly import pipeline_anomaly_scores as _scores
+
+                    try:
+                        champion_model = self._s3_champion["model"]
+                        feature_names = list(self._s3_champion.get("features") or [])
+                        sample_matrix = _np.array(
+                            [[float(row.get(name) or 0.0) for name in feature_names] for row in known_rows],
+                            dtype=float,
+                        )
+                        sample_scores = _scores(champion_model, sample_matrix)
+                        sample_threshold = float((trainer_result.get("evaluation") or {}).get("threshold_score") or 0.0)
+                        detected = sample_scores >= sample_threshold
+                        known_anomaly_validation = {
+                            "sample_count": len(known_rows),
+                            "detected": int(detected.sum()),
+                            "detection_rate": round(float(detected.mean()), 4),
+                            "per_row": [
+                                {"index": i, "score": round(float(s), 4), "detected": bool(d)}
+                                for i, (s, d) in enumerate(zip(sample_scores, detected))
+                            ],
+                        }
+                        metrics_view = dict(trainer_result.get("metrics") or {})
+                        metrics_view["known_anomaly_detection_rate"] = known_anomaly_validation["detection_rate"]
+                        trainer_result["metrics"] = metrics_view
+                    except Exception as error:  # noqa: BLE001 - 验证失败不阻断验收
+                        known_anomaly_validation = {"error": str(error)[:200]}
+            self._stage_digest(
+                round_number,
+                "s4",
+                {
+                    "gates": gates,
+                    "gate_passed": gate_report.passed,
+                    "gate_failures": gate_report.failures[:6],
+                    **({"known_anomaly_validation": known_anomaly_validation} if known_anomaly_validation else {}),
+                },
+            )
+
+            if False:
+                # （原门禁失败分支已上移到已知样本验证之前：门禁失败无需做
+                # 已知样本验证——模型连门禁都不过，验证无意义）
+                pass
 
             verdict, error, usage = run_s4(
                 self.db,

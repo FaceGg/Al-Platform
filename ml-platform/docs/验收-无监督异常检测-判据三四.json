@@ -1,0 +1,102 @@
+{
+  "date": "2026-11-12",
+  "data_path": "C:/Users/17723/Desktop/拧紧/tighten_train_clean.csv",
+  "features": [
+    "TARGET_TORQUE",
+    "UPPER_LIMIT",
+    "LOWER_LIMIT",
+    "ACTUAL_TORQUE",
+    "PROGRAM_NO"
+  ],
+  "eval_rows": 2400,
+  "model": {
+    "family": "ocsvm",
+    "params": {
+      "nu": 0.05,
+      "kernel": "rbf",
+      "gamma": "scale"
+    },
+    "threshold_score": -114.652
+  },
+  "threshold_baseline": "Tukey 1.5×IQR 围栏（任一特征出围栏即报警）",
+  "criterion_4_false_positive": {
+    "threshold_fpr": 0.0679,
+    "model_fpr": 0.01,
+    "reduction_pct": 85.3,
+    "gate": "≥30%",
+    "passed": true
+  },
+  "criterion_3_cases": {
+    "synthetic_combinatorial_total": 2000,
+    "threshold_missed_count": 1638,
+    "model_detected_count": 1307,
+    "cases": [
+      {
+        "sample_index": 0,
+        "features": {
+          "TARGET_TORQUE": 22.0,
+          "UPPER_LIMIT": 635.0,
+          "LOWER_LIMIT": 625.0,
+          "ACTUAL_TORQUE": 634.0,
+          "PROGRAM_NO": 23.0
+        },
+        "model_score": -40.3662,
+        "model_verdict": "anomaly",
+        "threshold_verdict": "normal（单指标全在 1.5×IQR 围栏内，固定上下限法漏检）"
+      },
+      {
+        "sample_index": 2,
+        "features": {
+          "TARGET_TORQUE": 22.0,
+          "UPPER_LIMIT": 26.4,
+          "LOWER_LIMIT": 21.85,
+          "ACTUAL_TORQUE": 634.0,
+          "PROGRAM_NO": 1.0
+        },
+        "model_score": -72.2809,
+        "model_verdict": "anomaly",
+        "threshold_verdict": "normal（单指标全在 1.5×IQR 围栏内，固定上下限法漏检）"
+      },
+      {
+        "sample_index": 4,
+        "features": {
+          "TARGET_TORQUE": 23.0,
+          "UPPER_LIMIT": 26.4,
+          "LOWER_LIMIT": 21.85,
+          "ACTUAL_TORQUE": 634.0,
+          "PROGRAM_NO": 1.0
+        },
+        "model_score": -72.3398,
+        "model_verdict": "anomaly",
+        "threshold_verdict": "normal（单指标全在 1.5×IQR 围栏内，固定上下限法漏检）"
+      },
+      {
+        "sample_index": 8,
+        "features": {
+          "TARGET_TORQUE": 22.0,
+          "UPPER_LIMIT": 26.4,
+          "LOWER_LIMIT": 20.9,
+          "ACTUAL_TORQUE": 633.7,
+          "PROGRAM_NO": 3.0
+        },
+        "model_score": -74.0825,
+        "model_verdict": "anomaly",
+        "threshold_verdict": "normal（单指标全在 1.5×IQR 围栏内，固定上下限法漏检）"
+      },
+      {
+        "sample_index": 9,
+        "features": {
+          "TARGET_TORQUE": 22.0,
+          "UPPER_LIMIT": 26.4,
+          "LOWER_LIMIT": 627.0,
+          "ACTUAL_TORQUE": 22.36,
+          "PROGRAM_NO": 1.0
+        },
+        "model_score": -69.7798,
+        "model_verdict": "anomaly",
+        "threshold_verdict": "normal（单指标全在 1.5×IQR 围栏内，固定上下限法漏检）"
+      }
+    ],
+    "passed": true
+  }
+}
