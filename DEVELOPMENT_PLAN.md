@@ -891,3 +891,27 @@ M7 全块落地（技术方案 §6.3/§6.6E/F/G）。主块一（前批）：迁
 4. **交叉注入语义级验证**（§6.4 判据③补全）：真实训练双工况 AE 分片模型——邻工况正常样本错分片误报（>2×）、向邻包络偏移的异常错分片漏检、对称性断言；此前仅 stub 路由级验证。
 
 **验证**：`test_condition_shard_routing` 25 + AE 专项 13 + 引擎 33 passed；受影响面回归 202 passed（闭环重训白名单断言同步三族）。
+
+## 2026-11-12 三期收官（1e4ac616）：机群设备级标定 + 跨设备迁移 + 机群监控视图（技术方案 §7）
+
+三期能力=「per-device calibration」的规模化——机制本体（模型主体/标定分离、分片路由、PSI 分片化）在一二期全部就位，三期是组织方式的规模化（方案 §7 开篇判断成立，实测增量 ~900 行 vs 方案估算 800）。
+
+**M8 机群统一基线（§7.1）**：多设备联合训练=多数据集合并 + `condition_column=device_id`（复用二期 M7 分片链——引擎分段训练/每段独立标定/分片挂载/分片路由全量复用）；设备级标定调度与「不适配机群基线」判定的结构化产出（fleet_fit：源阈值下新设备 fpr vs 1.5×contamination 容差，`ANOMALY_ACCEPTANCE_FPR_TOLERANCE` 同口径）。
+
+**M9 跨设备迁移（§7.2）**：
+- `anomaly_device_calibration.recalibrate_device_version`：新设备短期数据（≥200 行护栏，与 §6.6E 同源）**只重跑标定层不动检测器主体**；机群形态判定（不硬迁——unfit 版本仍产出带标记，挂载决策留调用方）；合成基准回测（AUC+各类检出率）；迁移版本注册（同源 model/onnx artifact + 分片阈值指针指向新 stats；source_kind/library 组合跟随源版本满足 `ck_model_versions_source_reference` CHECK——首个实现版本用 platform_joblib+NULL library 撞约束的坑）；RegisteredModel 按设备后缀演进（同设备重标定=版本号递增）。
+- `add_fleet_shard_to_deployment`：迁移版本挂载为新 stable revision（现有分片全量复制+新分片，weight 缺省均分）；重复挂载/未批准版本拒绝；deployment.condition_column 缺省 device_id。
+- API：`POST /api/model-versions/{id}/recalibrate-device` + `POST /api/inference-deployments/{id}/fleet-shards` + `GET /api/inference-deployments/{id}/fleet-overview`。**坑：FastAPI 顺序匹配——`/api/model-versions/{version_id}/recalibrate-device` 必须注册在既有 `{action}` 通配路由之前，否则被吞成 LifecycleComment body（422 extra_forbidden）**。
+
+**M10 机群监控视图（§7 三-3）**：`fleet_overview` 聚合（stable revision 全部分片的工况值/标定阈值/机群兼容性/回测 AUC + 闭环 `psi_state.per_shard` 明细）+ 前端 `FleetShardPanel`（闭环详情页嵌入，普通部署静默不渲染）+ `build_status` 补 `deployment_id` 下发。
+
+**验证**：`test_fleet_device_calibration` 10 passed（兼容设备/不适配标记不拒绝/护栏拒绝/监督版本拒绝/挂载复制与重复拒绝/未批准拒绝/聚合含 PSI 明细/API 冒烟——含路由顺序坑回归）；受影响面 118 passed；前端 tsc 零错。
+
+**验收声明（如实）**：§7.1/§7.2 判据的「≥3 台同型设备真实数据误报率对比」「留出设备回测」以**合成数据机制验证**落位（真实 IF 模型+双分布 fixture），真实数据前置（§7.4：≥3 台设备同构特征+特征集 diff）未到位，按方案风险预案顺延至真实数据接入时执行。
+
+**全量 CI**：四轮收敛——
+- 第 1 轮 run 43232655572（@1e4ac616）failure：三期批次三处回归（新文件错误码含泛化门禁禁词 FEATURE_SCHEMA / S3 轻量训练器漏 AE 出场过滤致 topk 3≠2 / `_trigger_retrain_inner` 的 `_deployment(config)` 对测试桩炸）→ e898984b 修复；
+- 第 2 轮 run 43240261891（@655b5e70）failure：四测试 job 全绿后 Chromium acceptance 首次真跑挂 automl-multioutput e2e——**范式卡片化批次改弹窗交互未同步 e2e**（light CI 无浏览器验收盲区再现）→ 0b6c4bfa 修复（范式卡片点击/title 变化/任务子类型改名/实验自动创建 POST mock），本地 Playwright 5.8s 验证；
+- 第 3 轮 run 43251905038（@0b6c4bfa）failure：`test_usage_stats_daily` 午夜窗口 flake（服务端固定 UTC+8 分桶，测试造数锚 UTC 日期+固定 hour，UTC 16:00-16:59 窗口跑必落业务昨天桶空）——与本批无关的既存 flake，治本修（造数锚业务时区）→ 17b8d048；
+- **第 4 轮 run 43260473490（@17b8d048）六 job 全绿**（双 OS Quality + 双 Production + Chromium acceptance + Security & release），76 分钟。
+**坑（新）**：①新文件必须跑泛化门禁扫描（禁词子串匹配含错误码字符串字面量）；②改 AutoMLPage 弹窗交互必须同批同步走弹窗的 e2e（第三起）；③`{action}` 通配路由之前注册精确路由（FastAPI 顺序匹配）；④CI 时间敏感测试按业务时区锚定造数（午夜窗口 flake）。
