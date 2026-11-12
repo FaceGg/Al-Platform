@@ -61,6 +61,13 @@ const METRIC_ROWS: { key: string; label: string }[] = [
   { key: "precision", label: "精度" },
   { key: "recall_minority", label: "召回(少数类)" },
 ];
+// 无监督验收指标（技术方案 §3.3/§3.4，与引擎 M1 门禁同源；≥ 方向，除 normal_fpr 反向）
+const ANOMALY_METRIC_ROWS: { key: string; label: string }[] = [
+  { key: "synthetic_auc", label: "合成基准 AUC" },
+  { key: "normal_fpr", label: "误报率 ≤" },
+  { key: "stability", label: "稳定性" },
+  { key: "perturbation_recall", label: "扰动检出率" },
+];
 
 interface ProjectOption { id: string; name?: string }
 interface DatasetOption { id: string; name?: string; filename?: string; row_count?: number; column_count?: number }
@@ -828,11 +835,11 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
             </label>
           </div>
           <div className="v2-panel">
-            <h4><span className="bar" />{zh ? "验收指标阈值（留空项不设门禁；对大模型一票否决）" : "Acceptance gates (blank = no gate)"}</h4>
+            <h4><span className="bar" />{zh ? (taskType === "anomaly" ? "验收指标阈值（无监督：留空 = 平台默认门禁 synthetic_auc≥0.85 / 误报率≤1.5% / 稳定性≥0.8）" : "验收指标阈值（留空项不设门禁；对大模型一票否决）") : "Acceptance gates"}</h4>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
-              {METRIC_ROWS.map((metric) => (
+              {(taskType === "anomaly" ? ANOMALY_METRIC_ROWS : METRIC_ROWS).map((metric) => (
                 <label key={metric.key} style={{ background: "var(--v2-bg)", border: "1px solid var(--v2-line)", borderRadius: 9, padding: "8px 11px", fontSize: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", color: "var(--v2-sub)" }}>{metric.label} <span>≥</span></div>
+                  <div style={{ display: "flex", justifyContent: "space-between", color: "var(--v2-sub)" }}>{metric.label} <span>{metric.key === "normal_fpr" ? "≤" : "≥"}</span></div>
                   <input className="v2-select" style={{ border: "none", background: "transparent", padding: "2px 0 0", minWidth: 0, width: "100%" }}
                     value={metricGates[metric.key] ?? ""} placeholder="—"
                     onChange={(e) => setMetricGates((cur) => ({ ...cur, [metric.key]: e.target.value }))} />
