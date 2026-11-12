@@ -769,7 +769,7 @@ export default function AutoMLPage() {
       `}</style>
       {/* flex+gap 布局：antd Row 的 gutter 负 margin 会让卡片溢出 Modal
           padding 边界（外层 Card 壳移除后暴露），gap 正间距无此问题 */}
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: paradigmChosen ? 16 : 0 }}>
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: paradigmChosen ? 16 : 8 }}>
           <div style={{ flex: "1 1 380px" }}>
             <div role="button" aria-label="范式：有监督建模" tabIndex={0}
               onClick={() => { setParadigmChosen(true); handleTaskTypeChange("classification"); }}
