@@ -175,6 +175,7 @@ describe("AutoMLPage", () => {
 
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    fireEvent.click(await screen.findByRole("button", { name: "范式：有监督建模" }));
     const projectSelect = (await screen.findAllByRole("combobox"))[0];
     fireEvent.mouseDown(projectSelect);
     fireEvent.click(await screen.findByText("Weld line"));
@@ -200,6 +201,7 @@ describe("AutoMLPage", () => {
 
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    fireEvent.click(await screen.findByRole("button", { name: "范式：有监督建模" }));
     const comboboxes = await screen.findAllByRole("combobox");
     fireEvent.mouseDown(comboboxes[0]);
     fireEvent.click(await screen.findByText("Weld line"));
@@ -207,8 +209,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("weld.csv"));
     await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
 
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "任务类型" }));
-    fireEvent.click(await screen.findByText("Classification", { selector: ".ant-select-item-option-content" }));
+    // 范式卡片点「有监督建模」后默认任务子类型即 Classification，无需再选
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "目标列" }));
     fireEvent.click(await screen.findByText("label_a", { selector: ".ant-select-item-option-content" }));
     fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
@@ -646,16 +647,25 @@ describe("AutoMLPage", () => {
     expect(api.post.mock.calls[0][1]).not.toHaveProperty("candidate_ids");
   });
 
-  it("exposes the four canonical task types, all search controls, and four fold choices", async () => {
+  it("exposes the paradigm cards, four supervised subtypes, search controls, and four fold choices", async () => {
+    // 范式入口卡片（用户建议 2）：有监督/无监督分开入口；有监督内部再选子类型
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: "新建" }));
 
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "任务类型" }));
+    expect(screen.getByRole("button", { name: "范式：有监督建模" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "范式：无监督异常检测" })).toBeInTheDocument();
+    // 未选范式时具体表单不渲染
+    expect(screen.queryByRole("combobox", { name: "任务子类型" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "范式：有监督建模" }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "任务子类型" }));
     for (const label of ["Classification", "Multi-output Classification", "Regression", "Multi-output Regression"]) {
       expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
     }
+    // 无监督不是子类型选项（范式互斥：卡片入口分开）
+    expect(screen.queryByText("异常检测（无监督）", { selector: ".ant-select-item-option-content" })).toBeNull();
 
-    fireEvent.keyDown(screen.getByRole("combobox", { name: "任务类型" }), { key: "Escape" });
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "任务子类型" }), { key: "Escape" });
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "搜索强度" }));
     for (const label of ["轻度（10 次）", "中（30 次）", "高（80 次）", "Ultra（200 次）"]) {
       expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
@@ -680,6 +690,7 @@ describe("AutoMLPage", () => {
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    fireEvent.click(await screen.findByRole("button", { name: "范式：有监督建模" }));
     const comboboxes = await screen.findAllByRole("combobox");
     fireEvent.mouseDown(comboboxes[0]);
     fireEvent.click(await screen.findByText("Weld line"));
@@ -719,6 +730,7 @@ describe("AutoMLPage", () => {
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    fireEvent.click(await screen.findByRole("button", { name: "范式：有监督建模" }));
     const comboboxes = await screen.findAllByRole("combobox");
     fireEvent.mouseDown(comboboxes[0]);
     fireEvent.click(await screen.findByText("Weld line"));
@@ -767,6 +779,7 @@ describe("AutoMLPage", () => {
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    fireEvent.click(await screen.findByRole("button", { name: "范式：有监督建模" }));
     const comboboxes = await screen.findAllByRole("combobox");
     fireEvent.mouseDown(comboboxes[0]);
     fireEvent.click(await screen.findByText("Weld line"));
@@ -807,6 +820,7 @@ describe("AutoMLPage", () => {
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    fireEvent.click(await screen.findByRole("button", { name: "范式：有监督建模" }));
     const comboboxes = await screen.findAllByRole("combobox");
     fireEvent.mouseDown(comboboxes[0]);
     fireEvent.click(await screen.findByText("Weld line"));
@@ -844,6 +858,7 @@ describe("AutoMLPage", () => {
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    fireEvent.click(await screen.findByRole("button", { name: "范式：有监督建模" }));
     const comboboxes = await screen.findAllByRole("combobox");
     fireEvent.mouseDown(comboboxes[0]);
     fireEvent.click(await screen.findByText("Weld line"));
@@ -851,7 +866,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("weld.csv"));
     await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
 
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "任务类型" }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "任务子类型" }));
     fireEvent.click(await screen.findByText("Multi-output Regression", { selector: ".ant-select-item-option-content" }));
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "目标列" }));
     fireEvent.click(await screen.findByText("label_a", { selector: ".ant-select-item-option-content" }));
@@ -885,15 +900,13 @@ describe("AutoMLPage", () => {
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
     fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    fireEvent.click(await screen.findByRole("button", { name: "范式：无监督异常检测" }));
     const comboboxes = await screen.findAllByRole("combobox");
     fireEvent.mouseDown(comboboxes[0]);
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("weld.csv"));
     await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
-
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "任务类型" }));
-    fireEvent.click(await screen.findByText("异常检测（无监督）", { selector: ".ant-select-item-option-content" }));
 
     // 范式互斥：目标列控件整体隐藏（非置灰），污染率参数出现
     await waitFor(() => expect(screen.queryByRole("combobox", { name: "目标列" })).toBeNull());

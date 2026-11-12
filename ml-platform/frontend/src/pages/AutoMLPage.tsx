@@ -193,6 +193,9 @@ export default function AutoMLPage() {
   const [stoppingTaskKey, setStoppingTaskKey] = useState<string | null>(null);
   const [qualityChartUrls, setQualityChartUrls] = useState<Record<string, string>>({});
   const [configurationOpen, setConfigurationOpen] = useState(false);
+  // 范式入口卡片（用户建议 2 第二轮）：弹窗每次打开先选范式——有监督/无监督
+  // 入口彻底分开，未选时不渲染具体表单（不再用混合的任务类型下拉）
+  const [paradigmChosen, setParadigmChosen] = useState(false);
   const barRef = useRef<HTMLDivElement>(null);
   const radarRef = useRef<HTMLDivElement>(null);
   const resultRegionRef = useRef<HTMLDivElement>(null);
@@ -749,13 +752,41 @@ export default function AutoMLPage() {
       <Card title="建模任务" style={{ marginBottom: 16 }} extra={(
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => void refreshModelingTasks()} loading={loadingModelingTasks}>刷新</Button>
-          <Button type="primary" icon={<PlusOutlined />} aria-label="新建" onClick={() => { setRecipeTab("general"); setResults(null); setConfigurationOpen(true); }}>新建</Button>
+          <Button type="primary" icon={<PlusOutlined />} aria-label="新建" onClick={() => { setRecipeTab("general"); setResults(null); setParadigmChosen(false); setConfigurationOpen(true); }}>新建</Button>
         </Space>
       )}>
         <div className="table-surface"><Table<ModelingTask> rowKey={(task) => `${task.kind}-${task.id}`} size="small" columns={modelingTaskColumns} dataSource={modelingTasks} loading={loadingModelingTasks} pagination={false} locale={{ emptyText: "暂无建模任务" }} /></div>
       </Card>
-      {configurationOpen && <Modal title="新建通用自动建模" open={configurationOpen} onCancel={() => setConfigurationOpen(false)} footer={null} width={1100} destroyOnClose>
+      {configurationOpen && <Modal title={taskType === "anomaly_detection" ? "新建无监督异常检测" : (paradigmChosen ? "新建有监督建模" : "新建自动建模")} open={configurationOpen} onCancel={() => setConfigurationOpen(false)} footer={null} width={1100} destroyOnClose>
+      {/* 范式入口卡片（用户建议 2）：有监督/无监督入口彻底分开——每次新建
+          先点范式卡片，未选时不出具体表单；不再共用「任务类型」下拉 */}
       <Card style={{ marginBottom: 16 }}>
+        <Row gutter={[16, 16]}>
+          <Col xs={24} sm={12}>
+            <div role="button" aria-label="范式：有监督建模" tabIndex={0}
+              onClick={() => { setParadigmChosen(true); handleTaskTypeChange("classification"); }}
+              onKeyDown={(e) => { if (e.key === "Enter") { setParadigmChosen(true); handleTaskTypeChange("classification"); } }}
+              style={{ cursor: "pointer", border: `2px solid ${paradigmChosen && taskType !== "anomaly_detection" ? "#1890ff" : "var(--v2-line, #e5e5e5)"}`, borderRadius: 8, padding: "12px 16px", background: paradigmChosen && taskType !== "anomaly_detection" ? "#e6f4ff" : undefined, height: "100%" }}>
+              <Text strong style={{ fontSize: 14 }}>有监督建模</Text>
+              <div style={{ fontSize: 12, color: "rgba(0,0,0,0.45)", marginTop: 4 }}>
+                有标签数据：Classification / Regression / 多输出（目标列 + 集成 + 交叉验证）
+              </div>
+            </div>
+          </Col>
+          <Col xs={24} sm={12}>
+            <div role="button" aria-label="范式：无监督异常检测" tabIndex={0}
+              onClick={() => { setParadigmChosen(true); handleTaskTypeChange("anomaly_detection"); }}
+              onKeyDown={(e) => { if (e.key === "Enter") { setParadigmChosen(true); handleTaskTypeChange("anomaly_detection"); } }}
+              style={{ cursor: "pointer", border: `2px solid ${taskType === "anomaly_detection" ? "#1890ff" : "var(--v2-line, #e5e5e5)"}`, borderRadius: 8, padding: "12px 16px", background: taskType === "anomaly_detection" ? "#e6f4ff" : undefined, height: "100%" }}>
+              <Text strong style={{ fontSize: 14 }}>无监督异常检测</Text>
+              <div style={{ fontSize: 12, color: "rgba(0,0,0,0.45)", marginTop: 4 }}>
+                只用正常数据：检测多维联合分布异常（污染率 + IsolationForest / One-Class SVM）
+              </div>
+            </div>
+          </Col>
+        </Row>
+      </Card>
+      {paradigmChosen && <Card style={{ marginBottom: 16 }}>
         <Row gutter={[16, 16]} align="middle">
           <Col xs={24} sm={6}><Text strong>{t.automl?.select_project || "Project"}</Text>
             <Select style={{ width: "100%", marginTop: 4 }} placeholder={t.automl?.select_project} value={selectedProject} onChange={setSelectedProject}
@@ -797,9 +828,11 @@ export default function AutoMLPage() {
               disabled={!selectedDataset}
               options={numericInputColumns.filter((column) => !targetColumns.includes(column)).map((column) => ({ value: column, label: column }))}
             /></Col>
-          <Col xs={24} sm={4}><Text strong>{t.automl?.task || "Task"}</Text>
-            <Select aria-label="任务类型" style={{ width: "100%", marginTop: 4 }} value={taskType} onChange={handleTaskTypeChange}
-              options={AUTOML_TASK_OPTIONS} /></Col>
+          {isAnomaly ? null : (
+          <Col xs={24} sm={4}><Text strong>任务子类型</Text>
+            <Select aria-label="任务子类型" style={{ width: "100%", marginTop: 4 }} value={taskType} onChange={handleTaskTypeChange}
+              options={AUTOML_TASK_OPTIONS.filter((option) => option.value !== "anomaly_detection")} /></Col>
+          )}
           <Col xs={24} sm={6}><Text strong>算法家族</Text>
             <Select
               aria-label="算法家族"
@@ -894,9 +927,9 @@ export default function AutoMLPage() {
           )}
           <Col xs={24} sm={2}><Button type="primary" icon={<ThunderboltOutlined />} onClick={handleRun} loading={running} block style={{ marginTop: 22 }}>{t.automl?.run || "Run"}</Button></Col>
         </Row>
-      </Card>
+      </Card>}
 
-      {running && <Card style={{ textAlign: "center", padding: 40 }}><Spin size="large" /><p style={{ marginTop: 16 }}>{t.common.loading}</p></Card>}
+      {paradigmChosen && running && <Card style={{ textAlign: "center", padding: 40 }}><Spin size="large" /><p style={{ marginTop: 16 }}>{t.common.loading}</p></Card>}
 
       {results && (
         <div ref={resultRegionRef}>
