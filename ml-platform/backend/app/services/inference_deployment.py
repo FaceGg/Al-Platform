@@ -1,7 +1,9 @@
 """Inference deployment desired/observed state orchestration."""
 
 from datetime import datetime, timezone
+import json
 import uuid
+from pathlib import Path
 
 from app.models.artifact import Artifact
 from app.models.model_registry import (
@@ -11,6 +13,7 @@ from app.models.model_registry import (
     InferenceDeployment,
     ModelVersion,
 )
+from app.services.artifact_service import build_artifact_service
 from app.services.inference_runtime_client import InferenceRuntimeClientError
 
 
@@ -24,15 +27,55 @@ class InferenceDeploymentError(RuntimeError):
         self.code = code
 
 
+# 部署版本标定阈值缓存（§6.6A 推理判定统一）：version 不可变，进程级缓存
+_ANOMALY_THRESHOLD_CACHE: dict[str, float] = {}
+
+
+def anomaly_threshold_for_version(db, version):
+    """部署版本的标定阈值（score_stats.threshold_score，§6.6A）。
+
+    链：版本 → 模型库（training_job_id）→ 训练任务 metrics.score_artifact_id
+    → 工件 JSON。任一环节缺失返回 None（调用方回退 label 端口判定）。
+    """
+    cached = _ANOMALY_THRESHOLD_CACHE.get(str(version.id))
+    if cached is not None:
+        return cached
+    try:
+        from app.models.model_library import ModelLibrary
+        from app.models.training import TrainingJob
+
+        library = db.query(ModelLibrary).filter(
+            ModelLibrary.id == version.source_model_library_id,
+        ).first()
+        if library is None or not library.training_job_id:
+            return None
+        job = db.query(TrainingJob).filter(TrainingJob.id == library.training_job_id).first()
+        score_artifact_id = (job.metrics or {}).get("score_artifact_id") if job else None
+        if not score_artifact_id:
+            return None
+        artifact = db.query(Artifact).filter(Artifact.id == str(score_artifact_id)).first()
+        if artifact is None:
+            return None
+        service = build_artifact_service(db)
+        with service.materialize(artifact.id, job.project_id, expected_type="report") as path:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        threshold = payload.get("threshold_score")
+        return float(threshold) if threshold is not None else None
+    except Exception:
+        return None
+
+
 def anomaly_predict_enrichment(runtime, runtime_key, records, result, *,
-                               feature_schema, output_schema):
+                               feature_schema, output_schema, threshold_score=None):
     """无监督三要素映射 + 单行扰动归因（技术方案 §3.5，平台/生产端点共用）。
 
     ONNX `scores` 端口 = sklearn decision_function（正=正常，2026-11-12
-    双族实测），anomaly_score 取负统一为「越高越异常」；label ∈ {-1,1}
-    映射 is_anomaly。top_contributors 用中心差分扰动归因（每特征 ±1%
-    各重推理一次，共 2×n_features 次 session.run），仅单行请求时返回——
-    批量归因成本线性放大，一期不做。非 anomaly 部署原样返回。
+    双族实测），anomaly_score 取负统一为「越高越异常」。§6.6A 判定统一：
+    is_anomaly 按 anomaly_score ≥ threshold_score（训练标定阈值，随版本
+    score_stats 下发）；threshold 不可得时回退 label 端口（offset 语义）。
+    top_contributors 用中心差分扰动归因（每特征 ±1% 各重推理一次，共
+    2×n_features 次 session.run），仅单行请求时返回——批量归因成本线性
+    放大，一期不做。非 anomaly 部署原样返回。
     """
     schema = output_schema if isinstance(output_schema, dict) else {}
     if schema.get("task") != "anomaly":
@@ -42,7 +85,12 @@ def anomaly_predict_enrichment(runtime, runtime_key, records, result, *,
     if probabilities is None or predictions is None:
         return result
     result["anomaly_score"] = [-float(value) for value in probabilities]
-    result["is_anomaly"] = [int(value) == -1 for value in predictions]
+    if threshold_score is not None:
+        result["is_anomaly"] = [
+            float(value) >= float(threshold_score) for value in result["anomaly_score"]
+        ]
+    else:
+        result["is_anomaly"] = [int(value) == -1 for value in predictions]
     names = [
         str(item.get("name"))
         for item in (feature_schema or [])
@@ -390,15 +438,20 @@ class InferenceDeploymentService:
             served_version = db.query(ModelVersion).filter(
                 ModelVersion.id == served_version_id,
             ).one()
-            return self._anomaly_enrich(used_key, records, result, served_version)
+            served_threshold = anomaly_threshold_for_version(db, served_version)
+            return self._anomaly_enrich(
+                used_key, records, result, served_version,
+                threshold_score=served_threshold,
+            )
         except (InferenceRuntimeClientError, InferenceDeploymentError) as error:
             raise InferenceDeploymentError(self._runtime_code(error)) from None
 
-    def _anomaly_enrich(self, runtime_key, records, result, version):
+    def _anomaly_enrich(self, runtime_key, records, result, version, threshold_score):
         return anomaly_predict_enrichment(
             self.runtime, runtime_key, records, result,
             feature_schema=version.feature_schema,
             output_schema=version.output_schema,
+            threshold_score=threshold_score,
         )
 
     def reconcile(self, db, *, include_rollout_aliases=False):

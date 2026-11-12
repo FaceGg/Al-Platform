@@ -1847,71 +1847,39 @@ def _anomaly_training_matrix(matrix: np.ndarray, family_id: str, *, random_seed:
     return matrix
 
 
-def _execute_anomaly_job(
+def _execute_anomaly_segment_job(
     *,
     job,
     db,
     artifact_service,
     dataset,
-    frame: pd.DataFrame,
+    segment_frame: pd.DataFrame,
+    segment_label: str | None,
+    feature_columns: list[str],
+    removed_columns: dict,
     params: dict,
     task: str,
+    contract,
+    contamination: float,
+    search_strength: str,
+    method: str,
+    requested_trials: int,
+    families: tuple,
+    deadline: float,
+    check_control,
     parent,
     tracking,
     dependencies: AutoMLDependencies,
-) -> AutoMLExecutionResult:
-    """无监督异常检测分支（技术方案 §3.1-§3.3）。
+) -> dict:
+    """单段（全量或单工况）无监督训练评估（技术方案 §3.1-§3.3）。
 
-    与 multioutput 分支同型：按族搜索 → 合成异常基准评估排序 →
-    门禁冠军产出。差异：无目标列（镜像互斥）、80/20 正常保留集替代 CV、
-    阈值随模型持久化、冠军必须通过 synthetic_auc/normal_fpr/stability 门禁。
+    分片编排由外层 `_execute_anomaly_job` 负责（§6.3 工况分片）；本函数
+    承接一段 frame 的完整流程：80/20 保留集 → 三类合成基准 → 双族搜索 →
+    门禁冠军 → 段产物 payload（artifact 落盘由外层统一执行）。
     """
-    from app.services.automl_search import AutoMLContract, validate_target_columns
-
-    contamination = normalize_anomaly_contamination(params.get("contamination"))
-    # 镜像互斥在引擎侧同样强制：params 携带目标列（绕过 API 直发任务）时
-    # 合同构造即拒绝（技术方案 §2.1「合同镜像强制」）。
-    params_targets = list(params.get("target_columns") or ([params.get("target_column")] if params.get("target_column") else []))
-    contract = AutoMLContract(
-        task_type=task,
-        target_columns=params_targets,
-        input_columns=params.get("input_columns"),
-        cross_validation_folds=0,
-        contamination=contamination,
-    )
-    validate_target_columns(frame, task, params_targets)
-    feature_columns = resolve_automl_feature_columns(frame, None, params.get("input_columns"))
-    # 无监督特征专项清洗（方案 §3.4 S2）：全 NaN 列与常数列毒害距离模型，直接剔除。
-    removed_columns: dict[str, str] = {}
-    usable_columns: list[str] = []
-    for column in feature_columns:
-        values = frame[column]
-        if not values.notna().any():
-            removed_columns[str(column)] = "all_nan"
-        elif values.nunique(dropna=True) <= 1:
-            removed_columns[str(column)] = "constant"
-        else:
-            usable_columns.append(column)
-    feature_columns = usable_columns
-    if not feature_columns:
-        raise ValueError("AutoML anomaly detection requires at least one usable numeric feature column")
-    features = frame.loc[:, feature_columns].dropna(how="all")
-    if len(features) < ANOMALY_MIN_ROWS:
-        raise ValueError(
-            f"AutoML anomaly detection requires at least {ANOMALY_MIN_ROWS} rows, got {len(features)}"
-        )
+    features = segment_frame.loc[:, feature_columns]
 
     strength_estimators = {"light": 40, "medium": 80, "high": 160, "ultra": 320}
-    search_strength = str(params.get("search_strength", "medium")).lower()
-    if search_strength not in strength_estimators:
-        raise ValueError("AUTOML_SEARCH_CONFIG_INVALID")
-    method = str(params.get("search_method") or "strength")
-    if method == "multi_fidelity":
-        # Hyperband 资源 rung 是 int 语义，与 OC-SVM（nu 为 float）不匹配（方案 §4.5）。
-        raise ValueError("AUTOML_ANOMALY_METHOD_UNSUPPORTED")
-    deadline = dependencies.monotonic() + float(params.get("time_budget", 3600))
-    requested_trials = int(params.get("max_trials") or SEARCH_STRENGTH_TRIALS[search_strength])
-    families = resolve_algorithm_families(list(params.get("algorithm_ids") or []), task=task)
     trial_specs = (
         _build_trial_specs(families, method=method, max_trials=requested_trials, search_strength=search_strength)
         if method in {"strength", "grid"}
@@ -2345,6 +2313,243 @@ def _execute_anomaly_job(
         },
         "prediction_source": "synthetic_benchmark",
     }
+    return {
+        "algorithm_id": algorithm_id,
+        "segment_rows": int(len(segment_frame)),
+        "best_family": best_family,
+        "best_params": best_params,
+        "best_estimator": best_estimator,
+        "feature_schema": feature_schema,
+        "input_contract": input_contract,
+        "preprocessing": preprocessing,
+        "evaluation": evaluation,
+        "score_stats": score_stats,
+        "candidate_result_rows": candidate_result_rows,
+        "trials": trials,
+        "budget_exhausted": budget_exhausted,
+        "model_artifact": model_artifact,
+        "stats_artifact": stats_artifact,
+    }
+
+
+def _execute_anomaly_job(
+    *,
+    job,
+    db,
+    artifact_service,
+    dataset,
+    frame: pd.DataFrame,
+    params: dict,
+    task: str,
+    parent,
+    tracking,
+    dependencies: AutoMLDependencies,
+) -> AutoMLExecutionResult:
+    """无监督异常检测编排（技术方案 §3.1-§3.3 + §6.3 工况分片）。
+
+    无 condition_column：单段全量（M1 行为）。带 condition_column（§6.3 分
+    片建模）：按工况值切分，每段独立完整流程与独立 artifact，冠军取最差
+    段（synthetic_auc 最低——任一工况不可用即整体不可用）；段护栏 ≥100 行，
+    不足段并入默认段并留痕。
+    """
+    from app.services.automl_search import AutoMLContract, validate_target_columns
+
+    contamination = normalize_anomaly_contamination(params.get("contamination"))
+    # 镜像互斥在引擎侧同样强制：params 携带目标列（绕过 API 直发任务）时
+    # 合同构造即拒绝（技术方案 §2.1「合同镜像强制」）。
+    params_targets = list(params.get("target_columns") or ([params.get("target_column")] if params.get("target_column") else []))
+    contract = AutoMLContract(
+        task_type=task,
+        target_columns=params_targets,
+        input_columns=params.get("input_columns"),
+        cross_validation_folds=0,
+        contamination=contamination,
+    )
+    validate_target_columns(frame, task, params_targets)
+    feature_columns = resolve_automl_feature_columns(frame, None, params.get("input_columns"))
+    # 无监督特征专项清洗（方案 §3.4 S2）：全 NaN 列与常数列毒害距离模型，直接剔除。
+    removed_columns: dict[str, str] = {}
+    usable_columns: list[str] = []
+    for column in feature_columns:
+        values = frame[column]
+        if not values.notna().any():
+            removed_columns[str(column)] = "all_nan"
+        elif values.nunique(dropna=True) <= 1:
+            removed_columns[str(column)] = "constant"
+        else:
+            usable_columns.append(column)
+    feature_columns = usable_columns
+    if not feature_columns:
+        raise ValueError("AutoML anomaly detection requires at least one usable numeric feature column")
+    features = frame.loc[:, feature_columns].dropna(how="all")
+    if len(features) < ANOMALY_MIN_ROWS:
+        raise ValueError(
+            f"AutoML anomaly detection requires at least {ANOMALY_MIN_ROWS} rows, got {len(features)}"
+        )
+
+    strength_estimators = {"light": 40, "medium": 80, "high": 160, "ultra": 320}
+    search_strength = str(params.get("search_strength", "medium")).lower()
+    if search_strength not in strength_estimators:
+        raise ValueError("AUTOML_SEARCH_CONFIG_INVALID")
+    method = str(params.get("search_method") or "strength")
+    if method == "multi_fidelity":
+        # Hyperband 资源 rung 是 int 语义，与 OC-SVM（nu 为 float）不匹配（方案 §4.5）。
+        raise ValueError("AUTOML_ANOMALY_METHOD_UNSUPPORTED")
+    deadline = dependencies.monotonic() + float(params.get("time_budget", 3600))
+    requested_trials = int(params.get("max_trials") or SEARCH_STRENGTH_TRIALS[search_strength])
+    families = resolve_algorithm_families(list(params.get("algorithm_ids") or []), task=task)
+
+    condition_column = str(params.get("condition_column") or "").strip() or None
+    if condition_column and condition_column not in frame.columns:
+        condition_column = None  # 分组列缺失时静默降级单段（与回流自愈同语义）
+
+    def check_control():
+        if dependencies.cancellation_requested:
+            cancelled = dependencies.cancellation_requested(job.id)
+        else:
+            with dependencies.session_factory() as control_db:
+                cancelled = control_db.query(TrainingJob.status).filter(
+                    TrainingJob.id == job.id,
+                ).scalar() == "cancel_requested"
+        if cancelled:
+            raise AutoMLCancelled("AutoML cancellation requested")
+        if dependencies.monotonic() >= deadline:
+            raise TimeoutError("AutoML time budget exceeded")
+        job.heartbeat_at = utcnow()
+        db.commit()
+
+    # 分段切分（§6.3 分片）：按工况值 groupby，段 ≥100 行；不足段行并入
+    # 默认段（label=None）并留痕。单段模式（无工况列）= 全量一段。
+    segments: list[tuple[str | None, pd.DataFrame]] = []
+    merged_note: dict | None = None
+    if condition_column:
+        condition_values = frame.loc[features.index, condition_column]
+        large_masks: list[tuple[str, pd.Series]] = []
+        small_frames: list[pd.DataFrame] = []
+        for value, group in features.groupby(condition_values):
+            label = f"{condition_column}={value}"
+            if len(group) >= 100:
+                large_masks.append((label, group.index))
+            else:
+                small_frames.append(group)
+        for label, index in large_masks:
+            segments.append((label, features.loc[index]))
+        if small_frames:
+            default_frame = pd.concat(small_frames)
+            if len(default_frame) >= ANOMALY_MIN_ROWS:
+                segments.append((None, default_frame))
+                merged_note = {
+                    "merged_small_segments": len(small_frames),
+                    "rows": int(len(default_frame)),
+                }
+            elif segments:
+                merged_note = {"merged_small_segments": len(small_frames), "rows": int(len(default_frame)), "dropped": True}
+    else:
+        segments.append((None, features))
+
+    segment_payloads: list[dict] = []
+    budget_exhausted = False
+    total_trials: list[dict] = []
+    for segment_label, segment_frame in segments:
+        payload = _execute_anomaly_segment_job(
+            job=job,
+            db=db,
+            artifact_service=artifact_service,
+            dataset=dataset,
+            segment_frame=segment_frame,
+            segment_label=segment_label,
+            feature_columns=feature_columns,
+            removed_columns=removed_columns,
+            params=params,
+            task=task,
+            contract=contract,
+            contamination=contamination,
+            search_strength=search_strength,
+            method=method,
+            requested_trials=requested_trials,
+            families=families,
+            deadline=deadline,
+            check_control=check_control,
+            parent=parent,
+            tracking=tracking,
+            dependencies=dependencies,
+        )
+        segment_payloads.append({"segment": segment_label, **payload})
+        total_trials.extend(payload["trials"])
+        budget_exhausted = budget_exhausted or payload["budget_exhausted"]
+
+    # 汇总冠军 = 最差段（synthetic_auc 最低——任一工况不可用即整体不可用，
+    # §6.3 分片口径；单段时即该段自身）。
+    champion_payload = min(
+        segment_payloads,
+        key=lambda item: float(item["evaluation"]["synthetic_auc"] or 0.0),
+    )
+
+    best = champion_payload
+    algorithm_id = best["algorithm_id"]
+    evaluation = best["evaluation"]
+    input_contract = best["input_contract"]
+    preprocessing = best["preprocessing"]
+    feature_schema = best["feature_schema"]
+    candidate_result_rows = best["candidate_result_rows"]
+    trials = total_trials
+    model_artifact = best["model_artifact"]
+    stats_artifact = best["stats_artifact"]
+
+    condition_rows = [
+        {
+            "segment": item["segment"],
+            "synthetic_auc": item["evaluation"]["synthetic_auc"],
+            "normal_fpr": item["evaluation"]["normal_fpr"],
+            "stability": item["evaluation"]["stability"],
+            "rows": item["segment_rows"],
+        }
+        for item in segment_payloads
+    ]
+
+    job.metrics = {
+        "task_type": task,
+        "paradigm": "unsupervised",
+        "best_candidate": algorithm_id,
+        "best_algorithm": best["best_family"].id,
+        "best_model": {
+            "algorithm_id": best["best_family"].id,
+            "model_artifact_id": str(model_artifact.id),
+            "aggregate": {
+                "synthetic_auc": evaluation["synthetic_auc"],
+                "normal_fpr": evaluation["normal_fpr"],
+                "stability": evaluation["stability"],
+            },
+        },
+        "score_artifact_id": str(stats_artifact.id),
+        "algorithm_results": candidate_result_rows,
+        "all_results": candidate_result_rows,
+        "aggregate": {
+            "synthetic_auc": evaluation["synthetic_auc"],
+            "normal_fpr": evaluation["normal_fpr"],
+            "stability": evaluation["stability"],
+        },
+        "evaluation": evaluation,
+        "cv_strategy": "synthetic_benchmark",
+        "input_contract": input_contract,
+        "preprocessing": preprocessing,
+        "condition_column": condition_column,
+        "condition_segments": condition_rows,
+        **({"condition_merged_note": merged_note} if merged_note else {}),
+        "search": {
+            "method": method,
+            "strength": search_strength,
+            "time_budget": params.get("time_budget", 3600),
+            "n_estimators": strength_estimators[search_strength],
+            "selected_algorithm": best["best_family"].id,
+            "selected_params": best["best_params"],
+            "max_trials": requested_trials,
+            "completed_trials": sum(item.get("status") in {"complete", "completed"} for item in trials),
+            "trials": trials,
+            "budget_exhausted": budget_exhausted,
+        },
+        "prediction_source": "synthetic_benchmark",
+    }
     job.feature_schema = feature_schema
     job.target_schema = []
     job.preprocessing = preprocessing
@@ -2357,7 +2562,7 @@ def _execute_anomaly_job(
     job.heartbeat_at = utcnow()
     tracking.set_tags(parent.run_id, {
         "platform.best_candidate": algorithm_id,
-        "platform.best_algorithm": best_family.id,
+        "platform.best_algorithm": best["best_family"].id,
         "platform.model_artifact_id": str(model_artifact.id),
         "platform.paradigm": "unsupervised",
     })

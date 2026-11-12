@@ -512,6 +512,36 @@ class TestAnomalyExecution(unittest.TestCase):
             assert job.status == "failed"
             assert "METHOD_UNSUPPORTED" in str(job.error_code) or "METHOD_UNSUPPORTED" in str(job.error_message)
 
+    def test_execution_condition_sharding_trains_per_segment(self):
+        """分片训练（技术方案 §6.3）：condition_column 切分独立建模，段证据落 metrics。"""
+        rng = np.random.default_rng(42)
+        matrix = rng.normal(size=(2400, 3))
+        header = "s1,s2,s3,shift"
+        rows = [
+            ",".join([
+                f"{matrix[row, 0]:.6f}", f"{matrix[row, 1]:.6f}", f"{matrix[row, 2]:.6f}",
+                "A" if row % 2 == 0 else "B",
+            ])
+            for row in range(2400)
+        ]
+        self.dataset_path.write_text("\n".join([header, *rows]), encoding="utf-8")
+        job_id = self.create_job(self._base_params(
+            input_columns=["s1", "s2", "s3"],
+            condition_column="shift",
+            algorithm_ids=["iforest"],
+            search_strength="light",
+        ))
+        result = self.run_job(job_id)
+        assert result.status == "completed"
+        with self.Session() as db:
+            job = db.query(TrainingJob).filter(TrainingJob.id == job_id).one()
+            metrics = job.metrics
+            segments = metrics["condition_segments"]
+            assert {item["segment"] for item in segments} == {"shift=A", "shift=B"}
+            assert all(item["synthetic_auc"] >= 0.85 for item in segments)
+            assert metrics["condition_column"] == "shift"
+            assert metrics["best_candidate"] in {"iforest", "ocsvm"}
+
 
 def test_normalize_evaluation_config_disabled_for_anomaly():
     assert normalize_evaluation_config(False, None) == {

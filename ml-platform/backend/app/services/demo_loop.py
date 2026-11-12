@@ -122,6 +122,44 @@ def _scalar_label(value):
     return value
 
 
+_ANOMALY_PREDICTION_THRESHOLD_CACHE: dict[str, float] = {}
+
+
+def _anomaly_prediction_threshold(db, version) -> float | None:
+    """部署版本的标定阈值（score_stats.threshold_score，§6.6A 判定统一）。
+
+    与 API enrich 同链同口径；进程级缓存（version 不可变）。
+    """
+    key = str(version.id)
+    if key in _ANOMALY_PREDICTION_THRESHOLD_CACHE:
+        return _ANOMALY_PREDICTION_THRESHOLD_CACHE[key]
+    try:
+        from app.models.model_library import ModelLibrary
+        from app.models.training import TrainingJob
+
+        library = db.query(ModelLibrary).filter(
+            ModelLibrary.id == version.source_model_library_id,
+        ).first()
+        if library is None or not library.training_job_id:
+            return None
+        job = db.query(TrainingJob).filter(TrainingJob.id == library.training_job_id).first()
+        score_artifact_id = (job.metrics or {}).get("score_artifact_id") if job else None
+        if not score_artifact_id:
+            return None
+        artifact = db.query(Artifact).filter(Artifact.id == str(score_artifact_id)).first()
+        if artifact is None:
+            return None
+        service = build_artifact_service(db)
+        with service.materialize(artifact.id, job.project_id, expected_type="report") as path:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        threshold = payload.get("threshold_score")
+        result = float(threshold) if threshold is not None else None
+    except Exception:
+        return None
+    _ANOMALY_PREDICTION_THRESHOLD_CACHE[key] = result
+    return result
+
+
 class DemoLoopService:
     """One service instance per request/session; concurrency handled per config."""
 
@@ -498,11 +536,16 @@ class DemoLoopService:
 
         predicted, confidence, anomaly_score = self._run_prediction(config, deployment, version, record)
 
-        # 无监督报警判定（技术方案 §3.6）：anomaly 部署无 error_classes 语义
-        # （ONNX label=-1 即异常，M3 is_anomaly 同映射）；有监督保持类别匹配。
+        # 无监督报警判定（技术方案 §6.6A 判定统一）：anomaly 部署按标定阈值
+        # （score_stats.threshold_score）判 anomaly_score，与 API enrich 同口径；
+        # 阈值不可得时回退 label 端口。有监督保持类别匹配。
         output_schema = version.output_schema if isinstance(version.output_schema, dict) else {}
         if output_schema.get("task") == "anomaly":
-            is_error = str(predicted) == "-1"
+            threshold = _anomaly_prediction_threshold(self.db, version)
+            if threshold is not None and anomaly_score is not None:
+                is_error = anomaly_score >= threshold
+            else:
+                is_error = str(predicted) == "-1"
         else:
             is_error = str(predicted) in (config.error_classes or [])
         if dry_run:
