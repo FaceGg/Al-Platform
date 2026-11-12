@@ -767,7 +767,7 @@ export default function AutoMLPage() {
         .paradigm-card:hover { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(24,144,255,0.18); border-color: #69b1ff !important; }
         .paradigm-card:hover .paradigm-card-icon { background: #1890ff; color: #fff; }
       `}</style>
-      <Row gutter={[16, 16]} style={{ marginBottom: paradigmChosen ? 4 : 0 }}>
+      <Row gutter={[16, 16]} style={{ marginBottom: paradigmChosen ? 16 : 0 }}>
           <Col xs={24} sm={12}>
             <div role="button" aria-label="范式：有监督建模" tabIndex={0}
               onClick={() => { setParadigmChosen(true); handleTaskTypeChange("classification"); }}
