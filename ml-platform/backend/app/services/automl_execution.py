@@ -2535,6 +2535,18 @@ def _execute_anomaly_job(
         "preprocessing": preprocessing,
         "condition_column": condition_column,
         "condition_segments": condition_rows,
+        # 分片 bundle 清单（M7 注册挂载的数据基础）：每工况独立 artifact，
+        # 换模时为每段注册版本并以 condition_value 标注 target
+        "condition_bundles": [
+            {
+                "condition_value": (item["segment"].split("=", 1)[1] if item["segment"] else None),
+                "model_artifact_id": str(item["model_artifact"].id),
+                "stats_artifact_id": str(item["stats_artifact"].id),
+                "synthetic_auc": item["evaluation"]["synthetic_auc"],
+                "rows": item["segment_rows"],
+            }
+            for item in segment_payloads if item["segment"]
+        ],
         **({"condition_merged_note": merged_note} if merged_note else {}),
         "search": {
             "method": method,
