@@ -89,9 +89,11 @@ export interface DemoLoopStatus {
   retrain_cool_until?: string | null;
   retrain_input_columns?: string[];
   /** 无监督漂移治理（技术方案 §3.6）：最近一次 PSI 评估结果 */
-  psi_state?: { last_total?: number; psi?: number | null; level?: string; sample_count?: number } | null;
+  psi_state?: { last_total?: number; psi?: number | null; level?: string; sample_count?: number; per_shard?: { condition_value: string | null; psi: number; level: string }[] } | null;
   psi_enabled?: boolean;
   psi_threshold?: number;
+  /** 部署 id（机群分片概览面板拉取 fleet-overview 用，三期 M10） */
+  deployment_id?: string | null;
 }
 
 export interface ReflowRow {

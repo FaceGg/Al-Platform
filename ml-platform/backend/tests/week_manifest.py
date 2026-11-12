@@ -125,6 +125,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_condition_shard_routing",
         "test_anomaly_ae_preflight",
         "test_automl_anomaly_ae",
+        # 三期 M8/M9/M10（2026-11-12）：机群设备级标定与迁移
+        "test_fleet_device_calibration",
         "test_label_schema",
         "test_label_schema_api",
         "test_run_suite",

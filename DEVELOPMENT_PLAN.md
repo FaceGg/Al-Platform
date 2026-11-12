@@ -880,3 +880,14 @@ M7 全块落地（技术方案 §6.3/§6.6E/F/G）。主块一（前批）：迁
 3. **验收③交叉注入为路由级而非语义级**（§6.4）：专项测试以 stub runtime 按 target 返回不同分数验证了「路由各归其模」，方案要求的「A 工况异常在 B 分片下分数显著不同」的**模型语义级**交叉注入专项验证未做（M7 前置批次的分片训练端到端只验证了双段 AUC 达标）。
 
 其余条款（§6.0 全部输入、§6.1 除早停外全部、§6.2 顺延路径、§6.3 除 PSI 外全部、§6.4 判据①④、§6.5 全部预案、§6.6 A-G 全部）与交付一致；实现形态偏差仅一处：onnx_worker 的 AE 走独立 `autoencoder` 分支而非加入 `ANOMALY_PIPELINE_DETECTORS` 集合（skl2onnx 不支持 torch 估计器，无法共用转换路径）——二期位已扩展，语义等效。
+
+## 2026-11-12 二期缺口补全（574b3617）：PSI per-shard + 闭环分片重拟合链 + AE 早停 + 交叉注入语义级
+
+复核登记的 3 缺口全部补齐并推送（复核=受影响面回归 202 passed）：
+
+1. **PSI per-shard**（§6.3/§6.4 M7 分片化前半补全）：`_score_stats_payload_for_version` 统一解析（分片阈值指针 `conversion_metadata.anomaly_score_stats_artifact_id` 优先，普通版本走旧链）；`_psi_baseline_points` 分片部署返回 `dict[condition_value → 分位表]`（每分片各自基线），普通部署 list 不变；`_reflow_scores_by_condition` 流内分数按工况列分列（未匹配归通配键）；`_evaluate_psi_drift` 分片评估取**最差分片**口径（max PSI，与 retention/冠军同语义），per_shard 明细进 psi_state。
+2. **关联缺口：闭环分片重拟合链**——`trigger_retrain_job` 此前不转发 condition_column，闭环分片重拟合会退化单段全量训练、换模后分片 targets 断。补参数转发 + demo_loop 分片部署触发时携带部署工况列（`_trigger_retrain_inner` 读 deployment.condition_column）。
+3. **AE 保留集早停**（§6.1 训练协议补全）：`early_stopping/patience/validation_fraction`（clone 协议参数齐备），验证重构损失连续 patience 无改善提前停，`n_epochs_/best_val_mse_` 留痕——epochs 上限 trial 不再跑满。
+4. **交叉注入语义级验证**（§6.4 判据③补全）：真实训练双工况 AE 分片模型——邻工况正常样本错分片误报（>2×）、向邻包络偏移的异常错分片漏检、对称性断言；此前仅 stub 路由级验证。
+
+**验证**：`test_condition_shard_routing` 25 + AE 专项 13 + 引擎 33 passed；受影响面回归 202 passed（闭环重训白名单断言同步三族）。

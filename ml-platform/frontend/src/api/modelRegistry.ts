@@ -407,6 +407,32 @@ export async function listRollouts(deploymentId: string): Promise<ListResponse<D
   return normalizePagedList<DeploymentRollout>(response.data);
 }
 
+// 机群监控聚合（技术方案 §7 三-3，三期 M10）：部署面 per-device 分片概览
+export interface FleetShardView {
+  condition_value: string | null;
+  model_version_id: string;
+  version_number: number;
+  weight_bps: number;
+  threshold_score: number | null;
+  fleet_compatible: boolean | null;
+  recalibration: boolean;
+  backtest: { synthetic_auc: number; per_class_recall: Record<string, number>; holdout_rows: number } | null;
+}
+
+export interface FleetOverview {
+  deployment_id: string;
+  condition_column: string | null;
+  revision_id: string | null;
+  revision_number: number | null;
+  shards: FleetShardView[];
+  psi_per_shard: { condition_value: string | null; psi: number; level: string }[] | null;
+}
+
+export async function fetchFleetOverview(deploymentId: string): Promise<FleetOverview> {
+  const response = await apiClient.get(`/inference-deployments/${deploymentId}/fleet-overview`);
+  return response.data;
+}
+
 async function commandRollout(
   deploymentId: string,
   rolloutId: string,

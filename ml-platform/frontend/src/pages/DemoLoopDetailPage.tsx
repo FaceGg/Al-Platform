@@ -10,6 +10,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import AppLayout from "../components/AppLayout";
 import PageHeading from "../components/PageHeading";
 import LoopConfigModal, { type FieldDescTask, type LoopEditorState } from "../components/loop/LoopConfigModal";
+import FleetShardPanel from "../components/loop/FleetShardPanel";
 import { formatApiError } from "../api/client";
 import { listAnnotationTasks } from "../api/annotationTasks";
 import {
@@ -517,6 +518,9 @@ export default function DemoLoopDetailPage() {
                   )}
                 />
               )}
+              {/* 机群分片概览（技术方案 §7 三-3，三期 M10）：分片部署时展示
+                  per-device 阈值/兼容性/回测 + PSI 分片明细；普通部署不渲染 */}
+              <FleetShardPanel deploymentId={status?.deployment_id ?? null} />
               <ReflowFeedbackPanel projectId={projectId} loopId={loopId} />
               <div style={{ maxHeight: 320, overflowY: "auto" }}>
                 <Timeline

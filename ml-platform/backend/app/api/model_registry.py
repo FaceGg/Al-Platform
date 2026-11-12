@@ -21,6 +21,8 @@ from app.models.user import User
 from app.schemas.model_registry import (
     DeploymentCreate,
     ApiKeyCreate,
+    DeviceRecalibrateRequest,
+    FleetShardCreate,
     LifecycleComment,
     MetricQuery,
     ModelCardGuidanceUpdate,
@@ -533,6 +535,31 @@ def build_model_registry_router(
                 _error(error)
         return _version_view(version)
 
+    @router.post("/api/model-versions/{version_id}/recalibrate-device", status_code=201)
+    def recalibrate_device(version_id: str, data: DeviceRecalibrateRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        """新设备重标定（技术方案 §7.2，三期 M9）：不动检测器主体，只重跑
+        标定层并注册迁移版本；响应带机群形态判定（unfit 不硬迁）与合成基准
+        回测。注册在 `{action}` 通配路由之前——FastAPI 按顺序匹配，通配在
+        前会把本路由吞成 LifecycleComment body（422 extra_forbidden）。"""
+        version, _access = _version_access(db, version_id, current_user.id)
+        from app.services.anomaly_device_calibration import (
+            DeviceCalibrationError,
+            recalibrate_device_version,
+        )
+
+        try:
+            result = recalibrate_device_version(
+                db,
+                source_version_id=version.id,
+                calibration_artifact_id=data.calibration_artifact_id,
+                condition_value=data.condition_value,
+                actor_id=current_user.id,
+                contamination=data.contamination,
+            )
+        except DeviceCalibrationError as error:
+            _error(error)
+        return result
+
     @router.post("/api/model-versions/{version_id}/approve")
     def approve(version_id: str, data: LifecycleComment, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         return lifecycle(version_id, data, request, db, current_user, "approve", "model_version.approve")
@@ -611,6 +638,57 @@ def build_model_registry_router(
     def deployment_detail(deployment_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         deployment, _access = _deployment_access(db, deployment_id, current_user.id)
         return _deployment_view(deployment)
+
+    @router.post("/api/inference-deployments/{deployment_id}/fleet-shards", status_code=201)
+    def add_fleet_shard(deployment_id: str, data: FleetShardCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        """迁移版本挂载为部署分片 target（§7.1.4，三期 M9）：新 stable
+        revision = 现有分片全量复制 + 新分片。"""
+        deployment, access = _deployment_access(db, deployment_id, current_user.id)
+        from app.services.anomaly_device_calibration import (
+            DeviceCalibrationError,
+            add_fleet_shard_to_deployment,
+        )
+
+        try:
+            with audit_service(db).project_action(
+                db, request=request, actor=current_user, access=access,
+                permission="deployment.create",
+                intent=AuditIntent(
+                    project_id=deployment.project_id,
+                    action="inference_deployment.fleet_shard.create",
+                    resource_type="inference_deployment",
+                    resource_id=str(deployment.id),
+                    changes={"model_version_id": str(data.model_version_id),
+                             "condition_value": data.condition_value},
+                ),
+                allowed_changes={"model_version_id", "condition_value", "weight_bps"},
+            ):
+                result = add_fleet_shard_to_deployment(
+                    db,
+                    deployment_id=deployment.id,
+                    version_id=data.model_version_id,
+                    condition_value=data.condition_value,
+                    actor_id=current_user.id,
+                    weight_bps=data.weight_bps,
+                )
+        except DeviceCalibrationError as error:
+            _error(error)
+        return result
+
+    @router.get("/api/inference-deployments/{deployment_id}/fleet-overview")
+    def fleet_overview(deployment_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        """机群监控聚合（技术方案 §7 三-3，三期 M10）：部署面 per-device
+        分片概览（阈值/机群兼容性/回测）+ PSI 分片明细。"""
+        deployment, _access = _deployment_access(db, deployment_id, current_user.id)
+        from app.services.anomaly_device_calibration import (
+            DeviceCalibrationError,
+            fleet_overview as fleet_overview_service,
+        )
+
+        try:
+            return fleet_overview_service(db, deployment_id=deployment.id)
+        except DeviceCalibrationError as error:
+            _error(error)
 
     @router.delete("/api/inference-deployments/{deployment_id}")
     def delete_deployment(deployment_id: str, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

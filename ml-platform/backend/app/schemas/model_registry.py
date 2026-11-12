@@ -78,6 +78,20 @@ class RolloutCommand(StrictSchema):
     expected_lock_version: StrictInt | None = Field(default=None, ge=1)
 
 
+class DeviceRecalibrateRequest(StrictSchema):
+    """新设备重标定（技术方案 §7.2，三期 M9）：只重跑标定层，不动检测器主体。"""
+    calibration_artifact_id: UUID
+    condition_value: StrictStr = Field(min_length=1, max_length=128)
+    contamination: StrictFloat | None = Field(default=None, gt=0, le=0.5)
+
+
+class FleetShardCreate(StrictSchema):
+    """迁移版本挂载为部署分片 target（§7.1.4，三期 M9）。"""
+    model_version_id: UUID
+    condition_value: StrictStr = Field(min_length=1, max_length=128)
+    weight_bps: StrictInt | None = Field(default=None, ge=0, le=10000)
+
+
 class ApiKeyCreate(StrictSchema):
     scopes: list[Literal["inference.predict"]] = Field(min_length=1, max_length=1)
     expires_at: datetime | None = None

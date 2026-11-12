@@ -2007,6 +2007,8 @@ class DemoLoopService:
             "psi_state": config.psi_state if isinstance(config.psi_state, dict) else None,
             "psi_enabled": bool(getattr(config, "psi_enabled", False)),
             "psi_threshold": float(getattr(config, "psi_threshold", 0.25) or 0.25),
+            # 部署 id（§7 三-3，三期 M10）：机群分片概览面板拉取 fleet-overview
+            "deployment_id": str(config.deployment_id) if config.deployment_id else None,
             "review_task_id": str(config.review_task_id) if config.review_task_id else None,
             "swapped_model_version_id": (
                 str(config.swapped_model_version_id) if config.swapped_model_version_id else None
