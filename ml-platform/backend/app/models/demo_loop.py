@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -49,6 +50,16 @@ class DemoLoopConfig(Base):
     review_annotator_ids = Column(JSON, nullable=False, default=list)
     retrain_enabled = Column(Boolean, nullable=False, default=False)
     retrain_threshold_rows = Column(Integer, nullable=False, default=0)
+    # 无监督分数漂移治理（技术方案 §3.6，迁移 20261112_98）：开启后回流分数
+    # 分布对训练基线（score_stats.json 分位表）的 PSI ≥ 阈值即触发重拟合
+    # 预警（分数漂移比单特征漂移更早发现模型失配）。默认关闭=存量零变化。
+    psi_enabled = Column(Boolean, nullable=False, default=False)
+    psi_threshold = Column(Float, nullable=False, default=0.25)
+    # PSI 评估节流与最近结果 {"last_total", "psi", "level"}；total_count 未变跳过重算
+    psi_state = Column(JSON, nullable=True)
+    # 报警确认反馈（§3.6 弱监督）：{"<artifact_id>": {"<row_index>": mark}}；
+    # 物化时打 feedback 列——false_alarm=排除集、confirmed_fault=换模验证集
+    feedback_marks = Column(JSON, nullable=True)
     retrain_dataset_artifact_id = Column(
         UUID(as_uuid=True),
         ForeignKey("artifacts.id", ondelete="SET NULL"),

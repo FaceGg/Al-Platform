@@ -88,7 +88,28 @@ export interface DemoLoopStatus {
   retrain_mode?: "engine" | "agent";
   retrain_cool_until?: string | null;
   retrain_input_columns?: string[];
+  /** 无监督漂移治理（技术方案 §3.6）：最近一次 PSI 评估结果 */
+  psi_state?: { last_total?: number; psi?: number | null; level?: string; sample_count?: number } | null;
+  psi_enabled?: boolean;
+  psi_threshold?: number;
 }
+
+export interface ReflowRow {
+  row_index: number;
+  record: Record<string, unknown>;
+  anomaly_score: number | null;
+  feedback: string;
+}
+
+/** 报警确认反馈（§3.6 弱监督回流）：回流行列表 + 行级标记 */
+export const fetchReflowRows = (projectId: string, loopId: string, limit = 50) =>
+  apiGet(`/projects/${projectId}/demo-loop/loops/${loopId}/reflow-rows?limit=${limit}`);
+
+export const markReflowRow = (
+  projectId: string,
+  loopId: string,
+  payload: { artifact_id: string; row_index: number; mark: "confirmed_fault" | "false_alarm" | "none" },
+) => apiPost(`/projects/${projectId}/demo-loop/loops/${loopId}/reflow-rows/feedback`, payload);
 
 export interface DemoLoopPredictResult {
   prediction: string;

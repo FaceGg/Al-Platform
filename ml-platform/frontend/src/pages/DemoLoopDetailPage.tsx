@@ -13,9 +13,10 @@ import LoopConfigModal, { type FieldDescTask, type LoopEditorState } from "../co
 import { formatApiError } from "../api/client";
 import { listAnnotationTasks } from "../api/annotationTasks";
 import {
-  type DemoLoopConfig, type DemoLoopPredictResult, type DemoLoopStatus,
+  type DemoLoopConfig, type DemoLoopPredictResult, type DemoLoopStatus, type ReflowRow,
   fetchDemoLoopAnnotators, fetchDemoLoopDatasets, fetchDemoLoopDeployments,
-  fetchDemoLoops, fetchDemoLoopStatusScoped, predictDemoLoopRowScoped,
+  fetchDemoLoops, fetchDemoLoopStatusScoped, fetchReflowRows, markReflowRow,
+  predictDemoLoopRowScoped,
   resetDemoLoopScoped,
 } from "../api/demoLoop";
 import { useI18n } from "../i18n";
@@ -73,6 +74,82 @@ const EVENT_COLORS: Record<string, string> = {
   retrain_casting_started: "purple", retrain_reservitize_manual: "gold",
   model_swapped: "gold", swap_failed: "red", loop_reset: "blue",
 };
+/** 报警确认反馈面板（技术方案 §3.6 弱监督回流）：回流行逐条「确认故障/误报」。
+ *
+ * 标记随下次重拟合消费——误报行进排除集（收窄误包络）、确认故障行进换模
+ * 门禁验证集（防重拟合洗掉历史检出能力）。状态 2s 轮询自愈，无需本地刷新。
+ */
+function ReflowFeedbackPanel({ projectId, loopId, onChanged }: {
+  projectId: string; loopId: string; onChanged?: () => void;
+}) {
+  const [rows, setRows] = useState<ReflowRow[]>([]);
+  const [artifactId, setArtifactId] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [marking, setMarking] = useState<number | null>(null);
+
+  const load = useCallback(() => {
+    if (!projectId || !loopId) return;
+    fetchReflowRows(projectId, loopId, 50)
+      .then((res: any) => {
+        setRows(res?.rows || []);
+        setArtifactId(res?.artifact_id || null);
+      })
+      .catch(() => undefined);
+  }, [projectId, loopId]);
+
+  useEffect(() => {
+    if (open) load();
+  }, [open, load]);
+
+  const mark = async (rowIndex: number, mark: "confirmed_fault" | "false_alarm" | "none") => {
+    if (!artifactId) return;
+    setMarking(rowIndex);
+    try {
+      await markReflowRow(projectId, loopId, { artifact_id: artifactId, row_index: rowIndex, mark });
+      onChanged?.();
+    } catch (error: any) {
+      message.error(formatApiError(error, "标记失败"));
+    } finally {
+      setMarking(null);
+      load();
+    }
+  };
+
+  if (!rows.length) return null;
+  return (
+    <div style={{ border: "1px solid var(--v2-line, #eee)", borderRadius: 8, padding: "8px 12px" }}>
+      <Space style={{ width: "100%", justifyContent: "space-between" }}>
+        <Text strong style={{ fontSize: 13 }}>报警确认（回流行标记 · 影响下次重拟合）</Text>
+        <Button type="link" size="small" onClick={() => setOpen(!open)}>{open ? "收起" : `展开（${rows.length} 行）`}</Button>
+      </Space>
+      {open && (
+        <div style={{ maxHeight: 240, overflowY: "auto", marginTop: 6 }}>
+          {rows.map((row) => (
+            <div key={row.row_index} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", borderBottom: "1px dashed var(--v2-line, #f0f0f0)" }}>
+              <Text type="secondary" style={{ fontSize: 12, minWidth: 46 }}>#{row.row_index}</Text>
+              <Text style={{ fontSize: 12, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {Object.entries(row.record || {}).slice(0, 4).map(([key, value]) => `${key}=${String(value)}`).join(" · ")}
+              </Text>
+              {row.anomaly_score != null && <Tag color="orange" style={{ fontSize: 11 }}>分数 {row.anomaly_score}</Tag>}
+              {row.feedback === "confirmed_fault" && <Tag color="red">确认故障</Tag>}
+              {row.feedback === "false_alarm" && <Tag color="green">误报</Tag>}
+              {!row.feedback && (
+                <>
+                  <Button size="small" danger loading={marking === row.row_index} onClick={() => void mark(row.row_index, "confirmed_fault")}>确认故障</Button>
+                  <Button size="small" loading={marking === row.row_index} onClick={() => void mark(row.row_index, "false_alarm")}>误报</Button>
+                </>
+              )}
+              {row.feedback && (
+                <Button size="small" type="text" loading={marking === row.row_index} onClick={() => void mark(row.row_index, "none")}>撤销</Button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const EVENT_LABELS: Record<string, string> = {
   row_predicted: "正常预测", error_row: "命中报错类别", error_appended: "错误数据回流",
   alert_triggered: "触发管理员告警", review_task_created: "创建人工审核任务",
@@ -423,6 +500,24 @@ export default function DemoLoopDetailPage() {
               {status?.retrain_job_id && (
                 <Alert type="info" showIcon message={<a href={`/automl/task/${status.retrain_job_id}`}>{isAgentMode ? (tr.view_casting || "查看铸造任务（重放验收后的部署模型）") : (tr.view_retrain || "查看自动建模任务")}</a>} />
               )}
+              {/* 无监督漂移治理（技术方案 §3.6）：PSI 状态展示 + 报警行确认反馈 */}
+              {status?.psi_enabled && (
+                <Alert
+                  type={status?.psi_state?.level === "alert" ? "warning" : "info"}
+                  showIcon
+                  message={(
+                    <span>
+                      分数漂移 PSI（阈值 {status?.psi_threshold ?? 0.25}）：
+                      <Text strong>{status?.psi_state?.psi ?? "—"}</Text>
+                      <Tag color={status?.psi_state?.level === "alert" ? "orange" : status?.psi_state?.level === "watch" ? "gold" : "green"} style={{ marginLeft: 6 }}>
+                        {status?.psi_state?.level === "alert" ? "漂移预警" : status?.psi_state?.level === "watch" ? "观察" : status?.psi_state?.level === "no_data" ? "无回流分数" : "稳定"}
+                      </Tag>
+                      <Text type="secondary" style={{ fontSize: 12 }}>（样本 {status?.psi_state?.sample_count ?? 0} 行）</Text>
+                    </span>
+                  )}
+                />
+              )}
+              <ReflowFeedbackPanel projectId={projectId} loopId={loopId} />
               <div style={{ maxHeight: 320, overflowY: "auto" }}>
                 <Timeline
                   items={(status?.events || []).slice().reverse().map((event) => ({

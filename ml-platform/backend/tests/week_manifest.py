@@ -120,6 +120,7 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_weighted_clustering_umap",
         "test_automl_multioutput",
         "test_automl_anomaly",
+        "test_anomaly_drift",
         "test_label_schema",
         "test_label_schema_api",
         "test_run_suite",

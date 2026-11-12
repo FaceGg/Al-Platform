@@ -118,6 +118,8 @@ export interface AgentRunCreatePayload {
       prompts?: string[];
       // 无监督专用：预期异常比例先验 (0, 0.5]，宁低勿高缺省 0.01
       contamination?: number;
+      // 分工况建模（§3.6）：可选工况列，随配方固化（部署路由拓扑二期）
+      condition_column?: string;
     };
     evaluation?: { custom_test_dataset_id?: string | null; metric_gates?: Record<string, number>; review_focus?: string[] };
     pause_at_stages?: string[];

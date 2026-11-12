@@ -339,12 +339,12 @@ def build_fixation_content(run, memory: dict, smoke_row: dict | None = None,
     }
     if is_anomaly:
         # 无监督配方段（技术方案 §3.7）：重放走同一合同；condition_column
-        # 为 M4 分工况建模预留（一期恒 None=全量单模型）。
+        # 随 guidance 固化（M4 合同链；部署路由拓扑二期）。
         content["anomaly"] = {
             "task_type": "anomaly_detection",
             "method": (run.result_json or {}).get("s3_champion", {}).get("algorithm") or "",
             "contamination": modeling.get("contamination") or 0.01,
-            "condition_column": None,
+            "condition_column": modeling.get("condition_column") or None,
         }
         # 无监督无目标语义：置空防止 derive_error_classes 拿空标签误推导
         content["target_semantics"] = {}

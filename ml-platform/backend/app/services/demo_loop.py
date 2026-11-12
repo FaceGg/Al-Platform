@@ -400,6 +400,16 @@ class DemoLoopService:
             config.retrain_target_column = str(data["retrain_target_column"] or "").strip()[:128]
         if "collect_correct_enabled" in data:
             config.collect_correct_enabled = bool(data["collect_correct_enabled"])
+        # 无监督漂移治理（技术方案 §3.6）：PSI 触发配置
+        if "psi_enabled" in data:
+            config.psi_enabled = bool(data["psi_enabled"])
+        if "psi_threshold" in data:
+            threshold = data.get("psi_threshold")
+            if threshold is not None:
+                threshold = float(threshold)
+                if not 0.0 < threshold <= 1.0:
+                    raise DemoLoopError("DEMO_LOOP_CONFIG_INVALID", "psi_threshold 必须在 (0, 1] 区间")
+                config.psi_threshold = threshold
         if "correct_sample_ratio" in data:
             ratio = str(data.get("correct_sample_ratio") or "").strip()
             if not ratio:
@@ -486,13 +496,20 @@ class DemoLoopService:
         deployment = self._deployment(config)
         version = self._current_model_version(deployment)
 
-        predicted, confidence = self._run_prediction(config, deployment, version, record)
+        predicted, confidence, anomaly_score = self._run_prediction(config, deployment, version, record)
 
-        is_error = str(predicted) in (config.error_classes or [])
+        # 无监督报警判定（技术方案 §3.6）：anomaly 部署无 error_classes 语义
+        # （ONNX label=-1 即异常，M3 is_anomaly 同映射）；有监督保持类别匹配。
+        output_schema = version.output_schema if isinstance(version.output_schema, dict) else {}
+        if output_schema.get("task") == "anomaly":
+            is_error = str(predicted) == "-1"
+        else:
+            is_error = str(predicted) in (config.error_classes or [])
         if dry_run:
             return {
                 "prediction": str(predicted),
                 "confidence": confidence,
+                "anomaly_score": anomaly_score,
                 "model_version_id": str(version.id),
                 "error_matched": is_error,
                 "appended": False,
@@ -526,6 +543,11 @@ class DemoLoopService:
                 "prediction": str(predicted),
                 "confidence": confidence,
             })
+            # 无监督分数回流（技术方案 §3.6）：回流行=特征+分数+判定（无标签
+            # 要求）；anomaly_score 列随行写入，schema evolution 加列即生效。
+            # 无监督任务无 retrain_target_column（镜像互斥），该段自然跳过。
+            if anomaly_score is not None:
+                labeled["anomaly_score"] = anomaly_score
             # 回流行自带推理结果作为标签列：与重训目标列同名，合并重训时
             # 无需人工标注（报错数据自动携带 fault=<预测类别>）。
             if config.retrain_target_column:
@@ -536,12 +558,13 @@ class DemoLoopService:
             self._after_error_append(config, str(predicted), actor_id)
         elif config.collect_correct_enabled:
             # 正确数据收集：缓存正常预测行，回流时按比例随报错行并入
-            self._buffer_correct_row(config, record, str(predicted), confidence)
+            self._buffer_correct_row(config, record, str(predicted), confidence, anomaly_score)
 
         self.db.commit()
         return {
             "prediction": str(predicted),
             "confidence": confidence,
+            "anomaly_score": anomaly_score,
             "model_version_id": str(version.id),
             "error_matched": is_error,
             "appended": appended,
@@ -587,11 +610,22 @@ class DemoLoopService:
                 predicted = _scalar_label(predictions[0])
                 probabilities = result.get("probabilities") or []
                 confidence = None
+                anomaly_score = None
+                # 无监督分数回流（技术方案 §3.6）：ONNX scores=decision_function
+                # （正=正常），anomaly_score 取负统一「越高越异常」。scores 端口
+                # 输出形状 [N] 张量 → _json_value 得 list，取首元素。
+                output_schema = version.output_schema if isinstance(version.output_schema, dict) else {}
+                if output_schema.get("task") == "anomaly" and probabilities:
+                    row_value = _json_value(probabilities[0])
+                    if isinstance(row_value, list) and row_value:
+                        row_value = row_value[0]
+                    if isinstance(row_value, (int, float)) and not isinstance(row_value, bool):
+                        anomaly_score = round(-float(row_value), 6)
                 if probabilities:
                     row = _json_value(probabilities[0])
                     if isinstance(row, list) and row:
                         confidence = round(float(max(row)), 4)
-                return predicted, confidence
+                return predicted, confidence, anomaly_score
             except DemoLoopError:
                 raise
             except (InferenceDeploymentError, RuntimeError) as error:
@@ -757,13 +791,23 @@ class DemoLoopService:
             ) from error
         predicted = _scalar_label(prediction[0])
         confidence = None
+        anomaly_score = None
         if hasattr(model, "predict_proba"):
             try:
                 proba = model.predict_proba(frame)
                 confidence = round(float(np.asarray(proba)[0].max()), 4)
             except Exception:
                 confidence = None
-        return predicted, confidence
+        # 无监督进程内兜底：分数从 joblib 管线直接取（统一「越高越异常」口径）。
+        output_schema = version.output_schema if isinstance(version.output_schema, dict) else {}
+        if output_schema.get("task") == "anomaly":
+            try:
+                detector = model[-1] if hasattr(model, "steps") else model
+                if hasattr(detector, "decision_function"):
+                    anomaly_score = round(float(-detector.decision_function(frame)[0]), 6)
+            except Exception:
+                anomaly_score = None
+        return predicted, confidence, anomaly_score
 
     def _feature_columns(self, model, version: ModelVersion) -> list[str]:
         columns = getattr(model, "feature_names_in_", None)
@@ -902,13 +946,18 @@ class DemoLoopService:
                    payload={"artifact_id": str(artifact.id)})
         return artifact
 
-    def _buffer_correct_row(self, config: DemoLoopConfig, record: dict, predicted: str, confidence) -> None:
+    def _buffer_correct_row(self, config: DemoLoopConfig, record: dict, predicted: str, confidence, anomaly_score=None) -> None:
         """缓存正常预测行，供回流时按比例收集进正确数据集。"""
         state = self._correct_buffer(config)
-        state["rows"].append(dict(record, **{
+        labeled = dict(record, **{
             "prediction": predicted,
             "confidence": confidence,
-        }))
+        })
+        # 无监督分数回流（§3.6）：正常行同样携带分数——PSI 基线需要全部
+        # 推理行的分数分布，只看报错行会把「异常偏置」误读成「漂移」。
+        if anomaly_score is not None:
+            labeled["anomaly_score"] = anomaly_score
+        state["rows"].append(labeled)
         # 上限防止长跑任务无限增长（比例单周期最多 10 倍，200 条足够）
         state["rows"] = state["rows"][-200:]
         config.correct_buffer = state
@@ -1001,11 +1050,158 @@ class DemoLoopService:
                     self._emit(config, "review_skipped", "已开启人工审核但未配置标注员", severity="warning")
         if (
             config.retrain_enabled
-            and int(config.retrain_threshold_rows or 0) > 0
+            and (
+                int(config.retrain_threshold_rows or 0) > 0
+                or getattr(config, "psi_enabled", False)
+            )
         ):
             self._maybe_trigger_retrain(config, actor_id)
 
     # ---------------------------------------------------------------- retrain mode
+
+    def _anomaly_retrain_params(self, config: DemoLoopConfig) -> dict | None:
+        """无监督重拟合参数（技术方案 §3.6）：部署模型是 anomaly 检测器时返回
+        ``{"threshold_score", "contamination"}``（score_stats.json 训练基线），
+        否则 None（有监督闭环合同不变）。"""
+        try:
+            deployment = self._deployment(config)
+            version = self._current_model_version(deployment)
+            output_schema = version.output_schema if isinstance(version.output_schema, dict) else {}
+            if output_schema.get("task") != "anomaly":
+                return None
+            from app.models.model_library import ModelLibrary
+
+            library = self.db.query(ModelLibrary).filter(
+                ModelLibrary.id == version.source_model_library_id,
+            ).first()
+            if library is None or not library.training_job_id:
+                return None
+            job = self.db.query(TrainingJob).filter(
+                TrainingJob.id == library.training_job_id,
+            ).first()
+            score_artifact_id = (job.metrics or {}).get("score_artifact_id") if job else None
+            if not score_artifact_id:
+                return None
+            # JSON 列取出的 id 恒为 str：UUID 列绑定必须转 uuid 对象（str 直传崩 .hex）
+            artifact = self.db.query(Artifact).filter(
+                Artifact.id == uuid.UUID(str(score_artifact_id)),
+            ).first()
+            if artifact is None:
+                return None
+            with self._artifact_service().materialize(
+                artifact.id, config.project_id, expected_type="report",
+            ) as path:
+                payload = json.loads(Path(path).read_text(encoding="utf-8"))
+            threshold = payload.get("threshold_score")
+            contamination = payload.get("contamination")
+            return {
+                "threshold_score": float(threshold) if threshold is not None else None,
+                "contamination": float(contamination) if contamination is not None else None,
+            }
+        except Exception:
+            return None
+
+    def _psi_baseline_points(self, config: DemoLoopConfig) -> list[float] | None:
+        """部署模型版本的训练期分数分位表（score_stats.json，M1 产物）。
+
+        链路：部署 → 版本 → 模型库（training_job_id）→ 训练任务 metrics.
+        score_artifact_id → 工件 JSON。任一环节缺失返回 None（无证据不触发）。
+        """
+        try:
+            deployment = self._deployment(config)
+            version = self._current_model_version(deployment)
+            output_schema = version.output_schema if isinstance(version.output_schema, dict) else {}
+            if output_schema.get("task") != "anomaly":
+                return None
+            from app.models.model_library import ModelLibrary
+
+            library = self.db.query(ModelLibrary).filter(
+                ModelLibrary.id == version.source_model_library_id,
+            ).first()
+            if library is None or not library.training_job_id:
+                return None
+            job = self.db.query(TrainingJob).filter(
+                TrainingJob.id == library.training_job_id,
+            ).first()
+            score_artifact_id = (job.metrics or {}).get("score_artifact_id") if job else None
+            if not score_artifact_id:
+                return None
+            # JSON 列取出的 id 恒为 str：UUID 列绑定必须转 uuid 对象
+            artifact = self.db.query(Artifact).filter(
+                Artifact.id == uuid.UUID(str(score_artifact_id)),
+            ).first()
+            if artifact is None:
+                return None
+            with self._artifact_service().materialize(
+                artifact.id, config.project_id, expected_type="report",
+            ) as path:
+                payload = json.loads(Path(path).read_text(encoding="utf-8"))
+            points = ((payload.get("calibration") or {}).get("quantile_points")) or []
+            return [float(value) for value in points] if len(points) >= 2 else None
+        except Exception:
+            # 基线缺失/文件丢失：无证据不触发，静默降级（与回流数据集自愈同语义）
+            return None
+
+    def _reflow_scores(self, config: DemoLoopConfig) -> list[float]:
+        """回流分数样本：报错 + 正确数据集的 anomaly_score 列（§3.6 全部推理行）。
+
+        只看报错行会把「异常偏置」误读成「漂移」——基线需要全部推理行的
+        分数分布。数据集缺失/无分数列返回空表。只读已有工件（不走
+        获取或创建 helper——PSI 评估不该建数据集）。
+        """
+        scores: list[float] = []
+        artifact_ids = [config.error_artifact_id, getattr(config, "correct_artifact_id", None)]
+        service = None
+        for artifact_id in artifact_ids:
+            if not artifact_id:
+                continue
+            try:
+                artifact = self.db.query(Artifact).filter(
+                    Artifact.id == artifact_id,
+                    Artifact.project_id == config.project_id,
+                ).first()
+                if artifact is None:
+                    continue
+                service = service or self._artifact_service()
+                with service.materialize(
+                    artifact.id, config.project_id, expected_type="dataset",
+                ) as path:
+                    frame = pd.read_csv(Path(path))
+            except Exception:
+                continue
+            if "anomaly_score" in frame.columns:
+                column = pd.to_numeric(frame["anomaly_score"], errors="coerce").dropna()
+                scores.extend(float(value) for value in column.tolist())
+        return scores
+
+    def _evaluate_psi_drift(self, config: DemoLoopConfig) -> dict | None:
+        """回流分数 PSI 对训练基线（§3.6）：total_count 未变时跳过重算（节流）。"""
+        state = dict(config.psi_state or {})
+        total = int(getattr(config, "total_count", 0) or 0)
+        if state.get("last_total") == total and "psi" in state:
+            return {
+                "psi": float(state.get("psi") or 0.0),
+                "level": str(state.get("level") or "stable"),
+                "alert_threshold": float(config.psi_threshold or 0.25),
+                "watch_threshold": 0.10,
+                "sample_count": int(state.get("sample_count") or 0),
+            }
+        baseline_points = self._psi_baseline_points(config)
+        scores = self._reflow_scores(config) if baseline_points else []
+        from app.services.anomaly_drift import evaluate_score_drift
+
+        if not baseline_points or not scores:
+            drift = {"psi": None, "level": "no_data", "sample_count": len(scores)}
+        else:
+            drift = evaluate_score_drift(baseline_points, scores)
+        state.update({
+            "last_total": total,
+            "psi": drift.get("psi"),
+            "level": drift.get("level"),
+            "sample_count": drift.get("sample_count") or 0,
+        })
+        config.psi_state = state
+        return drift
 
     def _maybe_trigger_retrain(self, config: DemoLoopConfig, actor_id) -> None:
         """统一触发评估（报错回流 + 轮次终态追赶共用，幂等）。
@@ -1015,11 +1211,20 @@ class DemoLoopService:
         服务，回流信号不作废。部署级单飞沿用 retrain_status/retrain_job_id/
         retrain_agent_run_id 三重守卫；agent 模式再过冷却/熔断/项目并发闸门
         （loop_retrain.trigger_agent_retrain），引擎模式行为与历史一致。
+
+        PSI 触发（§3.6）：psi_enabled 时回流分数分布对训练基线的 PSI ≥ 阈值
+        即触发——与行数增量是「或」关系（分数漂移先于误报显性化，正常行
+        漂移也能预警）。PSI 节流：total_count 未变跳过重算。
         """
         # 启用+阈值守卫必须在统一入口：状态轮询的追赶评估曾绕过它，阈值 0
         # （界面语义=关闭）时 0-0<0 不成立 → 大屏每次轮询都对报错集触发重训，
         # 换模推进基线后再次满足，连环空转。
-        if not config.retrain_enabled or int(config.retrain_threshold_rows or 0) <= 0:
+        if not config.retrain_enabled:
+            return
+        if (
+            int(config.retrain_threshold_rows or 0) <= 0
+            and not getattr(config, "psi_enabled", False)
+        ):
             return
         if config.retrain_status not in {"idle", "failed", ""}:
             return
@@ -1027,8 +1232,24 @@ class DemoLoopService:
             return
         if getattr(config, "retrain_agent_run_id", None) is not None:
             return
+        threshold_rows = int(config.retrain_threshold_rows or 0)
         baseline = int(getattr(config, "retrain_trained_baseline_count", 0) or 0)
-        if int(config.error_count or 0) - baseline < int(config.retrain_threshold_rows or 0):
+        rows_reached = (
+            threshold_rows > 0
+            and int(config.error_count or 0) - baseline >= threshold_rows
+        )
+        psi_reached = False
+        if getattr(config, "psi_enabled", False):
+            drift = self._evaluate_psi_drift(config)
+            if drift and drift.get("level") == "alert" and float(drift.get("psi") or 0.0) >= float(config.psi_threshold or 0.25):
+                psi_reached = True
+                self._emit(
+                    config, "psi_alert",
+                    f"分数漂移 PSI={drift.get('psi')} ≥ {drift.get('alert_threshold')}，触发重拟合预警",
+                    severity="warning",
+                    payload=drift,
+                )
+        if not rows_reached and not psi_reached:
             return
         mode = (getattr(config, "retrain_mode", None) or "engine").strip() or "engine"
         if mode == "agent":
@@ -1258,12 +1479,17 @@ class DemoLoopService:
         dataset_ids = resolve_retrain_dataset_ids(config)
         if not dataset_ids:
             raise DemoLoopError("DEMO_LOOP_RETRAIN_DATASET_MISSING", "未配置重训数据集")
+        # 无监督重拟合（技术方案 §3.6）：部署模型是 anomaly 检测器时走无监督
+        # 合同——目标列必须为空（镜像互斥），阈值/污染率从训练基线 score_stats 读。
+        anomaly_params = self._anomaly_retrain_params(config)
+        is_anomaly = anomaly_params is not None
         target_column = (config.retrain_target_column or "").strip()
-        if not target_column:
-            # 默认取部署模型版本的 label 列（AutoML 注册时写入 output_schema.target_columns）。
-            target_column = self._deployment_default_target(config)
-        if not target_column:
-            raise DemoLoopError("DEMO_LOOP_RETRAIN_TARGET_MISSING", "未配置重训目标列")
+        if not is_anomaly:
+            if not target_column:
+                # 默认取部署模型版本的 label 列（AutoML 注册时写入 output_schema.target_columns）。
+                target_column = self._deployment_default_target(config)
+            if not target_column:
+                raise DemoLoopError("DEMO_LOOP_RETRAIN_TARGET_MISSING", "未配置重训目标列")
         # 绑定表以 experiment_id 为主键（实验↔AutoML 任务 1:1），且重训幂等
         # 指纹含实验名；实验名必须按周期唯一，否则同轮次触发绑定冲突或重放旧任务。
         cycle = uuid.uuid4().hex[:8]
@@ -1286,10 +1512,20 @@ class DemoLoopService:
             algorithm_ids=list(getattr(config, "retrain_algorithm_ids", None) or []) or None,
             # 重训特征列白名单（稀疏宽表必配，空 = 全 numeric）
             input_columns=list(getattr(config, "retrain_input_columns", None) or []) or None,
+            task_type="anomaly_detection" if is_anomaly else "classification",
+            **(
+                {
+                    "anomaly_threshold_score": anomaly_params.get("threshold_score"),
+                    "anomaly_contamination": anomaly_params.get("contamination"),
+                    "feedback_marks": config.feedback_marks,
+                }
+                if is_anomaly
+                else {}
+            ),
         )
         config.retrain_job_id = job.id
         config.retrain_status = "queued"
-        if not config.retrain_target_column:
+        if not is_anomaly and not config.retrain_target_column:
             # 未显式配置时回填模型 label 列，便于前端展示与后续轮次一致。
             config.retrain_target_column = target_column
         self.db.commit()
@@ -1494,6 +1730,8 @@ class DemoLoopService:
             config.retrain_agent_run_id = None
             config.retrain_agent_started_at = None
             config.retrain_cool_until = None
+            # PSI 状态一并清零：reset 后回流分数样本从零积累，旧 PSI 结论失效
+            config.psi_state = None
             self.db.query(DemoLoopEvent).filter(DemoLoopEvent.config_id == config.id).delete()
             self._emit(config, "loop_reset", "闭环状态已重置（配置与数据集保留）")
             self.db.commit()
@@ -1551,6 +1789,10 @@ class DemoLoopService:
             "retrain_cool_until": (
                 config.retrain_cool_until.isoformat() if getattr(config, "retrain_cool_until", None) else None
             ),
+            # 无监督漂移治理（§3.6）：最近一次 PSI 评估结果随状态下发（大屏展示）
+            "psi_state": config.psi_state if isinstance(config.psi_state, dict) else None,
+            "psi_enabled": bool(getattr(config, "psi_enabled", False)),
+            "psi_threshold": float(getattr(config, "psi_threshold", 0.25) or 0.25),
             "review_task_id": str(config.review_task_id) if config.review_task_id else None,
             "swapped_model_version_id": (
                 str(config.swapped_model_version_id) if config.swapped_model_version_id else None

@@ -128,6 +128,10 @@ class GuidanceModeling(BaseModel):
     # 无监督（anomaly_detection）专用：预期异常比例先验，宁低勿高（§3.4）。
     # 有监督任务恒为 None；trainer/gate 按 task_type 分支消费。
     contamination: float | None = Field(default=None, gt=0.0, le=0.5)
+    # 分工况建模（§3.6）：指定工况列后按工况值切分数据集分别建模、部署多
+    # 模型路由。一期落地合同与固化链（随配方重放延续）；部署路由的拓扑面
+    # （DeploymentTarget 工况分片语义）二期实现，当前值仅校验与留痕。
+    condition_column: str | None = Field(default=None, max_length=128)
 
 
 class GuidanceEvaluation(BaseModel):

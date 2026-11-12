@@ -231,7 +231,44 @@ def notify_project_admins(
 # ---------------------------------------------------------------- retrain
 
 
-def build_retrain_frame(frames: list[pd.DataFrame], target_column: str) -> pd.DataFrame:
+RETRAIN_METADATA_COLUMNS = ("prediction", "confidence", "anomaly_score", "feedback")
+
+
+def apply_feedback_marks(frame: pd.DataFrame, marks: dict | None) -> pd.DataFrame:
+    """把报警确认标记打为 ``feedback`` 列（技术方案 §3.6 弱监督回流）。
+
+    ``marks`` 形态 ``{"<artifact_id>": {"<row_index>": mark}}``；frame 是单个
+    数据集物化后的整帧（行号=CSV 行序，append-only 不漂移）。mark 仅接受
+    ``confirmed_fault``/``false_alarm``，其余值忽略。
+    """
+    if not marks:
+        return frame
+    applied = 0
+    feedback = [""] * len(frame)
+    for artifact_marks in (marks or {}).values():
+        if not isinstance(artifact_marks, dict):
+            continue
+        for raw_index, mark in artifact_marks.items():
+            try:
+                index = int(raw_index)
+            except (TypeError, ValueError):
+                continue
+            if not 0 <= index < len(frame) or str(mark) not in {"confirmed_fault", "false_alarm"}:
+                continue
+            feedback[index] = str(mark)
+            applied += 1
+    if applied:
+        frame = frame.copy()
+        frame["feedback"] = feedback
+    return frame
+
+
+def build_retrain_frame(
+    frames: list[pd.DataFrame],
+    target_column: str,
+    *,
+    anomaly_threshold_score: float | None = None,
+) -> pd.DataFrame:
     """Merge retrain source frames, auto-label reflow rows and strip leakage.
 
     Shared by the engine retrain path (:func:`trigger_retrain_job`) and the
@@ -241,8 +278,32 @@ def build_retrain_frame(frames: list[pd.DataFrame], target_column: str) -> pd.Da
 
     自动标注：回流数据集没有人工标签列，但回流行自带 prediction 列
     （推理结果）。目标列整列缺失时直接由推理结果生成；部分缺失时补齐。
+
+    无监督模式（``target_column`` 为空，技术方案 §3.6 仅正常数据重拟合）：
+    - 剔除高分回流行（anomaly_score ≥ 阈值）——防把缓变故障学进正常包络；
+      确认故障行（分数天然高分）随之自然排除；
+    - 剔除用户标记的误报行（feedback=false_alarm，排除集）——重拟合收窄
+      误包容（§3.6 弱监督反馈闭环的消费端）；
+    - anomaly_score/feedback 列不进特征；无监督任务无目标列，不做标注。
     """
     frame = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+    anomaly_mode = not target_column
+    if anomaly_mode:
+        if "feedback" in frame.columns:
+            feedback = frame["feedback"].fillna("").astype(str).str.strip()
+            frame = frame[feedback != "false_alarm"]
+        if anomaly_threshold_score is not None and "anomaly_score" in frame.columns:
+            scores = pd.to_numeric(frame["anomaly_score"], errors="coerce")
+            # 无分数行（旧回流）保留——剔除判据只对带分数的行生效
+            frame = frame[scores.isna() | (scores < float(anomaly_threshold_score))]
+        frame = frame.drop(columns=list(RETRAIN_METADATA_COLUMNS), errors="ignore")
+        if len(frames) > 1:
+            common = set(frames[0].columns) - set(RETRAIN_METADATA_COLUMNS)
+            for part in frames[1:]:
+                common &= set(part.columns) - set(RETRAIN_METADATA_COLUMNS)
+            keep = [column for column in frame.columns if column in common]
+            frame = frame[keep]
+        return frame
     if target_column not in frame.columns:
         if "prediction" not in frame.columns:
             raise ClosedLoopError(
@@ -264,13 +325,13 @@ def build_retrain_frame(frames: list[pd.DataFrame], target_column: str) -> pd.Da
     if coerced.notna().all():
         frame[target_column] = coerced
     # 回流元数据列不能进特征（标签泄漏）：标注完成后从训练帧剔除。
-    frame = frame.drop(columns=["prediction", "confidence"], errors="ignore")
+    frame = frame.drop(columns=list(RETRAIN_METADATA_COLUMNS), errors="ignore")
     if len(frames) > 1:
         # 多数据集列体系可能不同（特征工程后 vs 原始报告列）；取交集保行数，
         # 否则并集列在来源缺之行全 NaN，drop_rows 策略会把所有行丢光。
-        common = set(frames[0].columns) - {"prediction", "confidence"}
+        common = set(frames[0].columns) - set(RETRAIN_METADATA_COLUMNS)
         for part in frames[1:]:
-            common &= set(part.columns) - {"prediction", "confidence"}
+            common &= set(part.columns) - set(RETRAIN_METADATA_COLUMNS)
         common.add(target_column)
         keep = [column for column in frame.columns if column in common]
         if target_column not in keep:
@@ -303,11 +364,15 @@ def resolve_retrain_dataset_ids(config) -> list[str]:
 
 def trigger_retrain_job(
     db, *, project_id, actor_id, experiment_name: str, job_name: str,
-    dataset_artifact_id=None, dataset_artifact_ids=None, target_column: str,
+    dataset_artifact_id=None, dataset_artifact_ids=None, target_column: str = "",
     max_trials: int = 10,
     ensemble: dict | None = None,
     algorithm_ids: list[str] | None = None,
     input_columns: list[str] | None = None,
+    task_type: str = "classification",
+    anomaly_threshold_score: float | None = None,
+    anomaly_contamination: float | None = None,
+    feedback_marks: dict | None = None,
 ) -> TrainingJob:
     """Create and dispatch one AutoML job on the given dataset(s)/target.
 
@@ -318,6 +383,10 @@ def trigger_retrain_job(
     ``algorithm_ids``（向导算法白名单）缩小引擎搜索族；空 = 全族。
     ``input_columns``（重训特征列白名单）：稀疏宽表必配——引擎 dropna 只对
     选定列进行，缺列整行剔除的全 numeric 默认会 0 行幸存；空 = 全部数值列。
+
+    无监督重拟合（技术方案 §3.6，task_type="anomaly_detection"）：目标列必须
+    为空（镜像互斥）；``anomaly_threshold_score``（部署模型 score_stats 阈值）
+    驱动「仅正常数据重拟合」剔除；contamination 随合同透传。
     """
     project_id = _as_uuid(project_id)
     actor_id = _as_uuid(actor_id)
@@ -370,8 +439,12 @@ def trigger_retrain_job(
     frames = []
     for source in datasets:
         with service.materialize(source.id, project_id, expected_type="dataset") as path:
-            frames.append(pd.read_csv(path))
-    frame = build_retrain_frame(frames, target_column)
+            frames.append(apply_feedback_marks(pd.read_csv(path), (feedback_marks or {}).get(str(source.id))))
+    is_anomaly = task_type == "anomaly_detection"
+    frame = build_retrain_frame(
+        frames, "" if is_anomaly else target_column,
+        anomaly_threshold_score=anomaly_threshold_score if is_anomaly else None,
+    )
     if len(datasets) > 1:
         # Worker 训练读取 job.dataset_artifact_id 指向的单个数据集；多选时
         # 必须把合并+自动标注后的帧物化为新数据集，否则特征列与训练数据
@@ -389,16 +462,25 @@ def trigger_retrain_job(
             )
     else:
         dataset = datasets[0]
-    task_type = "classification"
-    validate_target_columns(frame, task_type, [target_column])
-    feature_columns = resolve_automl_feature_columns(
-        frame, target_column, None, target_columns=[target_column],
-    )
-    # 向导算法白名单缩小引擎搜索族（空/未配置 = 全族，行为不变）
+    if is_anomaly:
+        validate_target_columns(frame, task_type, [])
+        feature_columns = resolve_automl_feature_columns(frame, None, None, target_columns=[])
+    else:
+        validate_target_columns(frame, task_type, [target_column])
+        feature_columns = resolve_automl_feature_columns(
+            frame, target_column, None, target_columns=[target_column],
+        )
+    # 向导算法白名单缩小引擎搜索族（空/未配置 = 全族，行为不变）；
+    # 按任务过滤白名单（M1 目录互斥）：anomaly 全族 = iforest/ocsvm。
     families = resolve_algorithm_families(
         [str(item) for item in (algorithm_ids or [])] or list(AUTOML_FAMILY_IDS),
+        task=task_type,
     )
-    evaluation = normalize_evaluation_config(True, 3)
+    evaluation = (
+        normalize_evaluation_config(False, None)
+        if is_anomaly
+        else normalize_evaluation_config(True, 3)
+    )
     controls = normalize_search_controls(strength="light", time_budget=600, class_weight=True)
     trials = max(int(max_trials or 10), len(families))
     fingerprint = hashlib.sha256(json.dumps({
@@ -414,8 +496,10 @@ def trigger_retrain_job(
         name=job_name or f"{experiment_name}-job",
         operator_id="automl",
         params={
-            "target_column": target_column,
-            "target_columns": [target_column],
+            **({
+                "target_column": target_column,
+                "target_columns": [target_column],
+            } if not is_anomaly else {"target_columns": []}),
             # 重训特征列白名单：转发给引擎（resolve_automl_feature_columns 的
             # requested_input_columns），dropna/特征集均按选定列；空 = 全 numeric。
             "input_columns": (
@@ -431,6 +515,7 @@ def trigger_retrain_job(
             "time_budget": controls["time_budget"],
             "search_strength": controls["strength"],
             "class_weight": controls["class_weight"],
+            **({"contamination": float(anomaly_contamination)} if is_anomaly and anomaly_contamination else {}),
             **({"ensemble": dict(ensemble)} if ensemble else {}),
         },
         dataset_artifact_id=dataset.id,
@@ -438,10 +523,11 @@ def trigger_retrain_job(
         status="pending",
         automl_contract={
             "task_type": task_type,
-            "target_columns": [target_column],
-            "cross_validation_folds": evaluation["cross_validation_folds"],
-            "cv_strategy": "stratified",
+            "target_columns": [] if is_anomaly else [target_column],
+            "cross_validation_folds": evaluation.get("cross_validation_folds") or 0,
+            "cv_strategy": "synthetic_benchmark" if is_anomaly else "stratified",
             "random_seed": 42,
+            **({"contamination": float(anomaly_contamination)} if is_anomaly and anomaly_contamination else {}),
             "idempotency_fingerprint": fingerprint,
         },
         automl_idempotency_key=f"closed-loop-{fingerprint[:24]}",
@@ -476,6 +562,102 @@ def candidate_score(row: dict) -> float:
             if isinstance(value, (int, float)):
                 return float(value)
     return 0.0
+
+
+def _anomaly_detection_retention(db, deployment_id, job, best) -> dict | None:
+    """无监督换模门禁评估（技术方案 §3.6）：新模型对基线期已知报警样本分数不下降。
+
+    样本池 = 报错数据集 ``feedback="confirmed_fault"`` 行（报警确认弱监督回流的
+    验证集）；旧命中 = 回流行 ``anomaly_score``（旧模型推理时写下的分数）≥ 旧
+    阈值（部署版本 score_stats 基线，零额外打分）；新命中 = 候选模型管线对该批
+    特征打分 ≥ 新阈值（候选 bundle 自带）。返回 ``{"old_hit_rate", "new_hit_rate"}``；
+    无确认样本/旧分数缺失/部署缺失 → None（不设门禁，保持可换模）。
+    """
+    import joblib as _joblib
+
+    from app.models.demo_loop import DemoLoopConfig
+    from app.services.automl_anomaly import pipeline_anomaly_scores
+
+    deployment = db.query(InferenceDeployment).filter(
+        InferenceDeployment.id == _as_uuid(deployment_id),
+    ).first()
+    if deployment is None:
+        return None
+    config = db.query(DemoLoopConfig).filter(
+        DemoLoopConfig.deployment_id == deployment.id,
+    ).first()
+    if config is None or not config.error_artifact_id:
+        return None
+    service = build_artifact_service(db)
+    try:
+        with service.materialize(config.error_artifact_id, config.project_id, expected_type="dataset") as path:
+            frame = pd.read_csv(path)
+    except Exception:
+        return None
+    frame = apply_feedback_marks(frame, config.feedback_marks)
+    confirmed = frame[frame["feedback"].fillna("").astype(str).str.strip() == "confirmed_fault"]
+    if confirmed.empty or "anomaly_score" not in confirmed.columns:
+        return None
+    old_scores = pd.to_numeric(confirmed["anomaly_score"], errors="coerce").dropna()
+    if old_scores.empty:
+        return None
+    old_threshold = _deployment_score_threshold(db, deployment)
+    if old_threshold is None:
+        return None
+    old_hit_rate = float((old_scores >= old_threshold).mean())
+    # 新候选模型打分：候选工件（type=model，M1 bundle 含 Pipeline 与 score_stats）
+    try:
+        artifact = service.resolve(
+            _as_uuid(best.get("model_artifact_id")), job.project_id, expected_type="model",
+        )
+        with service.materialize(artifact.id, job.project_id, expected_type="model") as path:
+            payload = _joblib.load(path)
+        model = payload.get("model")
+        feature_columns = [item["name"] for item in (payload.get("feature_schema") or []) if item.get("name")]
+        new_threshold = float((payload.get("score_stats") or {}).get("threshold_score") or 0.0)
+        if model is None or not feature_columns:
+            return None
+        features = confirmed.reindex(columns=feature_columns)
+        scores = pipeline_anomaly_scores(model, features.to_numpy(dtype=float))
+        new_hit_rate = float((scores >= new_threshold).mean())
+    except Exception:
+        return None
+    return {"old_hit_rate": round(old_hit_rate, 4), "new_hit_rate": round(new_hit_rate, 4)}
+
+
+def _deployment_score_threshold(db, deployment) -> float | None:
+    """部署版本关联训练任务的分数阈值（score_stats.threshold_score）。"""
+    import json as _json
+
+    from app.models.model_registry import ModelLibrary
+
+    try:
+        version = db.query(ModelVersion).filter(
+            ModelVersion.id == deployment.model_version_id,
+        ).first()
+        if version is None or not version.source_model_library_id:
+            return None
+        library = db.query(ModelLibrary).filter(
+            ModelLibrary.id == version.source_model_library_id,
+        ).first()
+        if library is None or not library.training_job_id:
+            return None
+        job = db.query(TrainingJob).filter(TrainingJob.id == library.training_job_id).first()
+        score_artifact_id = (job.metrics or {}).get("score_artifact_id") if job else None
+        if not score_artifact_id:
+            return None
+        # JSON 列取出的 id 恒为 str：UUID 列绑定必须转 uuid 对象
+        artifact = db.query(Artifact).filter(Artifact.id == uuid.UUID(str(score_artifact_id))).first()
+        if artifact is None:
+            return None
+        with build_artifact_service(db).materialize(
+            artifact.id, job.project_id, expected_type="report",
+        ) as path:
+            payload = _json.loads(Path(path).read_text(encoding="utf-8"))
+        threshold = payload.get("threshold_score")
+        return float(threshold) if threshold is not None else None
+    except Exception:
+        return None
 
 
 def complete_retrain_swap(
@@ -542,6 +724,12 @@ def _complete_retrain_swap_locked(
             if not gate_report.passed:
                 # 门禁一票否决：不注册不批准不换模，闭环保持旧模型继续服务。
                 return None
+    if str((job.metrics or {}).get("task_type") or "") == "anomaly_detection":
+        # 无监督换模门禁（技术方案 §3.6）：新模型对基线期已知报警样本（报警
+        # 确认弱监督回流的验证集）分数不下降——防重拟合洗掉历史检出能力。
+        retention = _anomaly_detection_retention(db, deployment_id, job, best)
+        if retention is not None and retention["new_hit_rate"] < retention["old_hit_rate"]:
+            return None
     candidate_id = best.get("candidate_id") or best.get("id")
     # registered_models has a (project_id, name) unique constraint — one model
     # entry per retrain cycle, suffixed by job id for determinism/idempotency.

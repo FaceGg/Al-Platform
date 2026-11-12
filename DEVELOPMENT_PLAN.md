@@ -778,3 +778,22 @@ M2 同日续作（方案 §3.5）。**双族转换与一致性按方案要求先
 **验证**：M3 四文件集（onnx 转换/inference 部署/production/automl_anomaly）+ 推理链回归（runtime/production_stack/model_registry_api/model_port）全绿。方案 §3.5 验收三项达成：双族 ONNX 转换实测通过、joblib vs onnx 一致性抽验（label 全等+分数容差 1e-4）、归因方向与构造场景一致（敏感特征居首带符号）。
 
 **坑（新）**：①ONNX `scores` 端口方向必须实测——skl2onnx 各估计器的 scores 语义不统一（IF 是 decision_function 含 offset，非 score_samples 取负），照文档猜方向会上线即反向。②UUID 对象与 str 比较恒 False：predict 路径的 runtime_key 初值是 `deployment.id`（UUID），加分支时用 str() 统一比较，否则条件永不命中且 else 分支 IndexError。③归因/一致性测试的目标行要用「围栏内异常点」（分位错配）而非包围盒外极端点——树模型在饱和区梯度为 0。
+
+## 2026-11-12 无监督异常检测 M4：闭环漂移治理 + 弱监督反馈（一期收官）
+
+M3 同日续作（方案 §3.6/§3.7）。迁移 20261112_98（demo_loop_configs 四列：psi_enabled/psi_threshold/psi_state/feedback_marks，默认值保证存量零变化）。
+
+**实现**：
+1. **新模块 anomaly_drift.py**：分数 PSI（10 等概率箱，基线=score_stats 201 点分位表插值箱界）；alert（≥0.25）/watch（0.10-0.25）两级判定；与 M1 标定器产物对接测试。
+2. **分数回流**（demo_loop._run_prediction/predict/_buffer_correct_row）：anomaly 部署回流行带 `anomaly_score`（ONNX scores 取负；进程内兜底从 joblib 管线取 decision_function 取负）——schema evolution 加列即生效零迁移；正常行同样带分数（PSI 基线需要全部推理行分布，只看报错行会把异常偏置误读成漂移）；**无监督报警判定改用 ONNX label==-1**（error_classes 是有监督类别语义，anomaly 部署不再匹配）。
+3. **PSI 触发**（_evaluate_psi_drift + _maybe_trigger_retrain 或分支）：baseline 链=部署→版本→ModelLibrary→training_job→score_stats 工件；节流（total_count 未变跳过重算，psi_state 落列）；psi_alert 事件 + 与行数增量「或」触发（行数阈值 0 时纯 PSI 路径可用——实测验证）；reset 清 psi_state；build_status 暴露 psi_state（大屏）。
+4. **仅正常数据重拟合**（build_retrain_frame anomaly 分支）：按部署模型 score_stats.threshold_score 剔除高分回流行（防缓变故障学进正常包络）+ feedback=false_alarm 排除集 + 元数据列剔除；无监督不做 prediction 自动标注；trigger_retrain_job 增 task_type/anomaly_threshold_score/anomaly_contamination/feedback_marks 参数——anomaly 任务下发走 M1 引擎合同（target_columns=[]、cv off、iforest/ocsvm 白名单、synthetic_benchmark），**无监督回流→重训→换模全链打通（实测：anomaly 部署回流一行即触发 anomaly 合同重训任务）**。
+5. **换模门禁新语义**（_anomaly_detection_retention）：新模型对基线期已知报警样本（feedback=confirmed_fault 行）分数不下降（旧命中=回流行 anomaly_score≥旧阈值 零额外打分；新命中=候选 bundle 打分≥新阈值）——防重拟合洗掉历史检出能力，一票否决不注册不换模。
+6. **报警确认反馈**（API 两端点 + feedback_marks 列）：`GET .../loops/{id}/reflow-rows`（报错数据集尾部行+标记状态）+ `POST .../reflow-rows/feedback`（confirmed_fault/false_alarm/none）；标记存配置列而非回写工件（防破坏存储完整性），消费端物化时打 feedback 列（append-only 行号稳定）；前端 ReflowFeedbackPanel（回流行列表+行级标记按钮+撤销）+ PSI 状态 Alert。
+7. **分工况建模合同链**（方案 §3.6 一期范围）：GuidanceModeling.condition_column + 向导「工况列（可选）」select（anomaly 时显出）+ 配方 anomaly 段固化随 guidance 延续；**部署路由拓扑（DeploymentTarget 工况分片语义）如实记入二期**——现 WeightedTargetRouter 是纯权重灰度语义（测试锁死），特征值路由需新 Router，不在本批次硬改。
+
+**验证**：test_anomaly_drift 5 passed（稳定分布近零/漂移 alert/观察级/退化输入/真实标定器对接）；test_agent_loop_retrain 47 passed（新 4 用例：anomaly 回流触发无监督重训合同〔分数 6.0 落行+target_columns=[]+双族白名单〕/PSI 纯路径触发〔行数阈值 0〕/反馈 API roundtrip/仅正常重拟合帧构造）；test_demo_loop 27 passed（存量全绿）；closed_loop_ensemble/demo_loop_api 全绿；前端 3 passed + tsc 零错误。
+
+**M4 验收判据对照（方案 §4.2 判据⑤）**：注入漂移→PSI 预警→重拟合→误报率回落实测——前两环已自动化验证（漂移分数→psi_alert 事件→重训触发；重拟合剔除逻辑单测覆盖）；「误报率回落」需真实部署数据的长周期观察，一期以「PSI 预警自动触发重拟合+重拟合仅用正常数据」的机制闭环交付。
+
+**坑（新）**：①**ModelLibrary 在 app/models/model_library.py 不在 model_registry.py**——两处 helper 的 import 错了被 `except Exception: return None` 静默吞掉（同文件测试 fixture 也犯了一模一样的错），链路断在看不见的地方；静默降级的 helper 调试时优先核对 import。②JSON 列取出的 artifact id 恒为 str，UUID 列绑定必须 `uuid.UUID(str(x))`（在册坑第 N 次变体，这次是查询 WHERE 侧）。③改造触发函数时若把数值比较重构成布尔量（rows_reached），必须同步补回提前返回守卫——漏掉会把「阈值未达」变成「每次回流都触发」，占住状态槽后续全挡。④测试 harness 改共享 helper 的硬编码参数为 setdefault 时，别丢原有的 UUID 转换（sa.Uuid+str 崩 .hex 第 N 次变体）。⑤predict API `_require_config` 按 project 取 first config——多 config 测试用例间会互相截流（前序用例的 config 抢占 first），新用例建 config 前先清 project 下旧 config。

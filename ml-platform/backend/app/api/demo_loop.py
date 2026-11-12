@@ -45,6 +45,9 @@ class DemoLoopConfigUpdate(BaseModel):
     retrain_input_columns: list[str] | None = None
     retrain_mode: str | None = Field(default=None, max_length=16)
     retrain_agent_recipe_id: str | None = Field(default=None, max_length=64)
+    # 无监督漂移治理（技术方案 §3.6）：PSI 触发重拟合预警（默认关=存量零变化）
+    psi_enabled: bool | None = None
+    psi_threshold: float | None = Field(default=None, gt=0.0, le=1.0)
     collect_correct_enabled: bool | None = None
     correct_sample_ratio: str | None = None
     field_descriptions: dict | None = None
@@ -150,6 +153,8 @@ def _config_view(db: Session, config: DemoLoopConfig) -> dict:
         ),
         "collect_correct_enabled": bool(config.collect_correct_enabled),
         "correct_sample_ratio": config.correct_sample_ratio or "1:1",
+        "psi_enabled": bool(getattr(config, "psi_enabled", False)),
+        "psi_threshold": float(getattr(config, "psi_threshold", 0.25) or 0.25),
         "field_descriptions": config.field_descriptions or {},
         "error_artifact_id": (
             str(config.error_artifact_id) if config.error_artifact_id else None
@@ -369,3 +374,100 @@ def demo_loop_reset_scoped(
     config = _require_loop(db, project_id, loop_id, service)
     service.reset(config, current_user.id)
     return service.build_status(config)
+
+
+class ReflowFeedbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_id: str = Field(min_length=1, max_length=64)
+    row_index: int = Field(ge=0)
+    mark: str = Field(pattern="^(confirmed_fault|false_alarm|none)$")
+
+
+def _reflow_rows_payload(db: Session, config, limit: int) -> dict:
+    """回流行列表（报警确认反馈的数据源）：报错数据集行 + 已标记状态。"""
+    import pandas as pd
+
+    from app.services.artifact_service import build_artifact_service
+
+    if not config.error_artifact_id:
+        return {"rows": [], "artifact_id": None, "total": 0}
+    artifact = db.query(Artifact).filter(Artifact.id == config.error_artifact_id).first()
+    if artifact is None:
+        return {"rows": [], "artifact_id": None, "total": 0}
+    marks = (config.feedback_marks or {}).get(str(artifact.id), {})
+    service = build_artifact_service(db)
+    with service.materialize(artifact.id, config.project_id, expected_type="dataset") as path:
+        frame = pd.read_csv(path)
+    total = int(len(frame))
+    tail = frame.tail(limit)
+    start = total - len(tail)
+    rows = []
+    for offset, (index, row) in enumerate(tail.iterrows()):
+        rows.append({
+            "row_index": int(start + offset),
+            "record": {str(key): (None if pd.isna(value) else value) for key, value in row.items()
+                       if str(key) not in {"anomaly_score", "feedback"}},
+            "anomaly_score": None if pd.isna(row.get("anomaly_score")) else float(row.get("anomaly_score")),
+            "feedback": str((marks or {}).get(str(start + offset)) or row.get("feedback") or ""),
+        })
+    return {"rows": rows, "artifact_id": str(artifact.id), "total": total}
+
+
+@router.get("/api/projects/{project_id}/demo-loop/loops/{loop_id}/reflow-rows")
+def list_reflow_rows(
+    project_id: uuid.UUID,
+    loop_id: uuid.UUID,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """回流行列表（技术方案 §3.6 弱监督反馈的数据源）：报错数据集尾部行 + 标记状态。"""
+    require_project_access(db, project_id, current_user.id, "project.read")
+    service = _service(db)
+    config = _require_loop(db, project_id, loop_id, service)
+    return _reflow_rows_payload(db, config, max(1, min(int(limit or 50), 200)))
+
+
+@router.post("/api/projects/{project_id}/demo-loop/loops/{loop_id}/reflow-rows/feedback")
+def mark_reflow_row(
+    project_id: uuid.UUID,
+    loop_id: uuid.UUID,
+    data: ReflowFeedbackRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """行级报警确认（弱监督核心机制，§3.6）：确认故障→验证集、误报→排除集。
+
+    标记存 ``feedback_marks``（{"artifact_id": {"row_index": mark}}）——不回写
+    工件文件；重拟合消费端物化时打 feedback 列（append-only 行号稳定）。
+    """
+    require_project_access(db, project_id, current_user.id, "resource.create")
+    service = _service(db)
+    config = _require_loop(db, project_id, loop_id, service)
+    artifact_uuid = uuid.UUID(data.artifact_id)
+    artifact = db.query(Artifact).filter(
+        Artifact.id == artifact_uuid,
+        Artifact.project_id == project_id,
+    ).first()
+    if artifact is None:
+        raise HTTPException(404, {"code": "DEMO_LOOP_ARTIFACT_NOT_FOUND", "message": "回流数据集不存在"})
+    marks = dict(config.feedback_marks or {})
+    artifact_marks = dict(marks.get(str(artifact.id)) or {})
+    if data.mark == "none":
+        artifact_marks.pop(str(data.row_index), None)
+    else:
+        artifact_marks[str(data.row_index)] = data.mark
+    if artifact_marks:
+        marks[str(artifact.id)] = artifact_marks
+    else:
+        marks.pop(str(artifact.id), None)
+    config.feedback_marks = marks
+    service._emit(
+        config, "reflow_feedback",
+        f"回流行 #{data.row_index} 标记为 {data.mark}",
+        severity="info",
+        payload={"artifact_id": str(artifact.id), "row_index": data.row_index, "mark": data.mark},
+    )
+    db.commit()
+    return {"feedback_marks": marks, "mark": data.mark}
