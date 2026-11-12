@@ -324,6 +324,9 @@ class DeploymentTarget(Base):
     )
     weight_bps = Column(Integer, nullable=False)
     role = Column(String(16), nullable=False)
+    # 工况分片路由（技术方案 §6.3，迁移 20261112_99）：该 target 服务的
+    # 工况值（NULL=默认/通配分片）——ConditionValueRouter 按请求工况精确匹配
+    condition_value = Column(String(128), nullable=True)
 
     revision = relationship("DeploymentRevision", back_populates="targets")
     model_version = relationship("ModelVersion")

@@ -53,6 +53,45 @@ class RoutedTarget:
     model_version_id: UUID | str
 
 
+class ConditionValueRouter:
+    """工况分片路由（技术方案 §6.3，二期 M7）：按请求工况值精确匹配 target。
+
+    与 WeightedTargetRouter（纯权重灰度，测试锁死）互斥挂载——部署声明
+    routing_mode 决定使用哪个 Router。匹配语义：DeploymentTarget.condition_value
+    精确等于请求工况值的 target 命中；未命中回退 weight 最高的 target
+    （默认分片，通配）。runtime session 由既有 start/reconcile 机制加载
+    （key=`{revision_id}:{model_version_id}`，与灰度共用）。
+    """
+
+    def __init__(self, condition_column: str):
+        self.condition_column = str(condition_column or "").strip()
+
+    def select_for_record(self, deployment, record: dict, *, targets=None) -> RoutedTarget:
+        """按 record 工况值匹配 target。targets 为 DeploymentTarget 列表
+        （含 condition_value 标注）；调用方从 stable revision 解析。"""
+        candidates = list(targets or [])
+        if not candidates:
+            raise InferenceRolloutError("ROLLOUT_TARGETS_EMPTY")
+        request_value = str(record.get(self.condition_column, ""))
+        matched = None
+        default = None
+        highest_weight = -1
+        for target in candidates:
+            if target.weight_bps > highest_weight:
+                highest_weight = target.weight_bps
+                default = target
+            if (
+                request_value
+                and getattr(target, "condition_value", None) == request_value
+            ):
+                matched = target
+        chosen = matched or default
+        return RoutedTarget(
+            revision_id=chosen.revision_id,
+            model_version_id=chosen.model_version_id,
+        )
+
+
 class WeightedTargetRouter:
     """Select a deterministic target from immutable basis-point weights."""
 
