@@ -1196,3 +1196,9 @@ AE 的 ONNX label 端口是**占位全 1**（`automl_anomaly_ae.py:98` `(mse*0)+
 **跨路径复核（本轮补做）**：闭环换模的 `condition_bundles` 挂载路径（`closed_loop_actions.py:1039-1054`）与本轮修的 `add_fleet_shard_to_deployment` 是两条独立路径——前者按段行数比例分配权重且末项取余量，权重和**恒为 10000**（余量恒正，无同类缺陷）；后者原为「原权重复制 + 新分片取整除」导致 15000≠10000，本轮已修。两条路径无同类缺陷互相遗漏。
 
 **推送状态（如实）**：本轮提交 `e112119f` 已由并行会话的 push **连带带上 origin/main**（共享工作树，主干共用）——本地 `origin/main..HEAD` 为空时即已在上远端，无需重复推送。
+
+### fleet_shared 端到端验证（241f222f 合同 + worker 重建后）
+
+平台 API 端到端（job 5d58e19e run2 c69b27e4，fleet_mode=shared + condition_column=STATION）：**5 段 = 4 工位段（AUC 0.975-0.996，unfit=False）+ 联合段 __FLEET_GLOBAL__（condition_value=None 通配，AUC 0.9780，8,000 行）**；bundles 带 fleet_global/unfit 标记；冠军 ocsvm。挂载语义（§7.5）：unfit 段跳过挂载、通配全局兜底路由。
+
+**坑（复现确认）**：改引擎代码只重建 backend 时，**worker 走旧镜像路径**（fleet_shared 静默退化为普通分片，无报错）——compose 每服务独立标签，改引擎必须 worker/scheduler 同批重建（memory WSL 条既有坑的又一次实证）。
