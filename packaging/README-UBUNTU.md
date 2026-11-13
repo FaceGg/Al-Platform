@@ -116,7 +116,7 @@ docker compose build --build-arg WITH_TORCH=1 backend migrate worker scheduler
 docker compose up -d --force-recreate backend worker scheduler
 ```
 
-torch 从 PyTorch 官方 CPU 源下载（切勿用默认 PyPI 源装 linux 版 torch——那是 CUDA 版，带 GB 级 nvidia 依赖链）。构建后重启服务即生效。
+torch 通过 `--find-links` 从 PyTorch 官方 CPU wheel 目录（download.pytorch.org/whl/cpu/torch/）拉取——切勿用默认 PyPI 源装 linux 版 torch（那是 CUDA 版，带 GB 级 nvidia 依赖链）。构建后重启服务即生效。若现场策略要求显式声明源，可追加 `--build-arg TORCH_WHEEL_INDEX=<相同 URL>`。
 
 **方式 B（完全离线）：补件 wheel 拷入 wheelhouse**
 

@@ -46,12 +46,16 @@ COPY . .
 # 按需启用。WITH_TORCH=1 时装 torch（AE 自编码器族随之可用）；默认 0，
 # AE 族自动缺席（AlgorithmUnavailable，IF/OC-SVM 不受影响）。
 # 安装源二选一：
-#   a) 补件 wheel：torch-* wheel 拷入 wheelhouse 后 build（纯离线，优先）；
-#   b) 在线兜底：PyTorch 官方 CPU 源（PyPI 的 linux torch 默认是 CUDA 版，
-#      带 GB 级 nvidia 依赖链，绝不可用默认源）。
+#   a) 补件 wheel：torch + 依赖闭包 wheel 拷入 wheelhouse 后 build（纯离线，
+#      优先）；依赖闭包下载命令见 packaging/README-UBUNTU.md「启用自编码器族」。
+#   b) 在线兜底：--find-links 指向 PyTorch 官方 CPU wheel 目录（默认值；
+#      PyPI 的 linux torch 默认是 CUDA 版，带 GB 级 nvidia 依赖链，绝不可用
+#      默认 PyPI 源）。Dockerfile 源码刻意不写显式 index 切换参数
+#      （离线构建纪律合同 test_ci_workflow；find-links 目录页为官方源）。
 # 依赖链（filelock/sympy/networkx/jinja2/fsspec/typing-extensions）随安装
-# 自动解析；离线补件请用 pip download 全集（见部署文档）。
+# 自动解析。
 ARG WITH_TORCH=0
+ARG TORCH_WHEEL_INDEX="https://download.pytorch.org/whl/cpu/torch/"
 RUN --mount=type=bind,target=/wheels,source=wheelhouse \
     --mount=type=cache,target=/root/.cache/pip \
     set -eu; \
@@ -63,8 +67,8 @@ RUN --mount=type=bind,target=/wheels,source=wheelhouse \
         echo "torch addon wheel found: offline install"; \
         python3.11 -m pip install --no-index --find-links /wheels "torch==2.15.0"; \
     else \
-        echo "torch addon wheel absent: online install from PyTorch CPU index"; \
-        python3.11 -m pip install --index-url https://download.pytorch.org/whl/cpu \
+        echo "torch addon wheel absent: online install from PyTorch CPU wheel index"; \
+        python3.11 -m pip install --find-links "$TORCH_WHEEL_INDEX" \
             --retries 5 --timeout 120 "torch==2.15.0"; \
     fi; \
     python3.11 -c "import torch; print('torch', torch.__version__, 'ok')"
