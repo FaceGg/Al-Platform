@@ -262,6 +262,9 @@ class TestProductionInferenceApi(unittest.TestCase):
             ("INFERENCE_SCHEMA_MISMATCH", 422),
             ("INFERENCE_LIMIT_EXCEEDED", 413),
             ("DEPLOYMENT_NOT_READY", 409),
+            # 无监督标定阈值不可得（AE 无可用判定源）——具名错误码必须透传，
+            # 不得被折叠成 INFERENCE_RUNTIME_UNAVAILABLE（2026-11-13 审计 P0-2）。
+            ("ANOMALY_THRESHOLD_UNAVAILABLE", 503),
         )
         for code, expected_status in cases:
             with self.subTest(code=code):

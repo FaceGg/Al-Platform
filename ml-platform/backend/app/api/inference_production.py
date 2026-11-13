@@ -34,6 +34,7 @@ from app.services.inference_deployment import (
     InferenceDeploymentError,
     InferenceDeploymentService,
     anomaly_predict_enrichment,
+    anomaly_threshold_for_version,
 )
 from app.services.inference_observability import InferenceObservability
 from app.services.inference_rate_limit import RateLimitBackendUnavailable, RedisTokenBucket
@@ -108,6 +109,10 @@ def _runtime_error(error) -> str:
     allowed = {
         "DEPLOYMENT_NOT_READY", "MODEL_VERSION_NOT_FOUND",
         "STABLE_REVISION_NOT_FOUND", "TARGET_WEIGHTS_INVALID",
+        # 无监督标定阈值不可得（AE 无可用判定源）——保留具名错误码，
+        # 否则被折叠成 INFERENCE_RUNTIME_UNAVAILABLE，现场无从定位
+        # score_stats 断链（2026-11-13 审计 P0-2）。
+        "ANOMALY_THRESHOLD_UNAVAILABLE",
     }
     return code if isinstance(code, str) and (code.startswith("INFERENCE_") or code in allowed) else "INFERENCE_RUNTIME_UNAVAILABLE"
 
@@ -400,6 +405,9 @@ def build_inference_production_router(
                 feature_schema=version.feature_schema,
                 output_schema=version.output_schema,
                 conversion_metadata=version.conversion_metadata,
+                # §6.6A 判定统一：生产端点此前未传标定阈值 → 恒走 label 端口
+                # 回退（AE 的 label 是占位全 1 → 部署后静默全判「正常」）。
+                threshold_score=anomaly_threshold_for_version(db, version),
             )
             duration_ms = max(0, int((perf_counter() - started) * 1000))
             if isinstance(observation, InferenceObservability):

@@ -801,10 +801,14 @@ class TestShardedPsiDrift(unittest.TestCase):
             revision_id=self.revision.id, model_version_id=self.versions["b"].id,
             weight_bps=4000, role="stable", condition_value="B",
         ))
-        # 回流帧：A 分片贴基线（稳定），B 分片漂移到远离 B 基线的分布
+        # 回流帧：A 分片贴基线（稳定），B 分片漂移到远离 B 基线的分布。
+        # prediction 列是回流写入侧真实列名（§3.3 第三层「阈值法报警数」口径
+        # 读取该列）——早期实现读 "predicted" 致计数恒 0，此处按真实 schema 造数。
         reflow_rows = (
-            [{"station": "A", "anomaly_score": 0.0005 * index} for index in range(100)]
-            + [{"station": "B", "anomaly_score": 50.0 + index} for index in range(100)]
+            [{"station": "A", "anomaly_score": 0.0005 * index,
+              "prediction": "-1" if index < 50 else "0"} for index in range(100)]
+            + [{"station": "B", "anomaly_score": 50.0 + index,
+                "prediction": "0"} for index in range(100)]
         )
         reflow_path = Path(self.directory) / "reflow.csv"
         pd.DataFrame(reflow_rows).to_csv(reflow_path, index=False)
@@ -879,12 +883,18 @@ class TestShardedPsiDrift(unittest.TestCase):
         self.assertEqual(captured.get("task_type"), "anomaly_detection")
 
     def test_alert_comparison_counts_model_alerts(self):
-        """运行期报警对比（§3.3 第三层）：同一批回流行上阈值法 vs 模型口径。"""
+        """运行期报警对比（§3.3 第三层）：同一批回流行上阈值法 vs 模型口径。
+
+        回归锁：阈值法口径读回流真实列名 ``prediction``（写入侧 schema）。
+        历史实现读 ``predicted`` → 列不存在 → threshold_alerts 恒 0，
+        对比曲线失真且无任何报错（2026-11-13 审计 P0-1）。
+        """
         comparison = self.service._alert_comparison(self.config)
         self.assertIsNotNone(comparison)
         self.assertEqual(comparison["rows"], 200)
-        # 帧无 predicted 列、error_classes 空 → 阈值法口径（==-1）不命中
-        self.assertEqual(comparison["threshold_alerts"], 0)
+        # 阈值法口径：prediction 列命中 ==-1 的行（A 分片前 50 行）
+        self.assertEqual(comparison["threshold_alerts"], 50)
+        self.assertEqual(comparison["threshold_alert_rate"], 0.25)
         # 模型口径：A 分片分数 0~0.05（<0.5 阈值不报警）、B 分片 50+（全报警）
         self.assertEqual(comparison["model_alerts"], 100)
         self.assertEqual(comparison["model_alert_rate"], 0.5)

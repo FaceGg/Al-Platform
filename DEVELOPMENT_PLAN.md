@@ -959,3 +959,130 @@ deep 扫描（scan-2026-11-13T03-11-00.028Z-cc5beb521a90，seal sha256:b1010e95�
 1. **补全：M10 per-device fpr（c5318071）**——方案 §7.3 M10 明文「per-device fpr/PSI 聚合大屏」，此前 fleet_overview 只聚合了 PSI。补分片运行期报警率（回流帧按工况分组×各分片自身阈值，无标签下报警率为 fpr proxy，与部署级 alert_comparison 同口径）；test 11 passed。
 2. **如实登记：§2.3.3 弱监督演进派生流**——「确认标签积累后派生监督任务（带标签导出、预填特征）」机制可组合（回流数据集自带 feedback 列可直接建监督任务、部署可切换+回退），但**无产品化一键派生流**；与 M6 同门（confirmed=0 无用户），随 M6 解锁一并产品化。
 3. **如实登记：判据①点焊域口径**——方案 M1 验收写「点焊/拧紧历史正常数据」，实跑仅拧紧域（28 万行达标）；本地点焊数据为 2 千行合成脚本产物（generate_spot_weld_synthetic），不满足 ≥1 万行历史正常数据门槛，随真实点焊数据接入补跑（同批次三期设备数据）。
+
+## 2026-11-13 第四轮独立审计（三文档交叉核对 + 三路代码级复核）：3 处 P0 已修 + 6 处过宽表述更正 + 遗留缺口登记
+
+用户要求以「方案 `ml-platform/docs/技术方案-无监督弱监督异常检测.md` + 台账本文件 + project memory `unsupervised-anomaly-plan.md`」三文档为基准，核对一期/二期/三期是否完全按方案复现。审计方法：三路独立代码级复核（一期 M1-M4 / 二期 M5-M7 / 三期 M8-M10）逐条对照方案条款与台账声称，关键结论由主会话复验（含本地实跑复现）。
+
+**总体判定**：机制骨架基本按方案落地（引擎合同镜像互斥 / 三族同台 / 合成基准三层评估 / ONNX 双族+三要素 / 工况分片路由 + per-shard PSI 与 retention / 反馈闭环 / 机群标定与迁移均有代码与测试支撑），但**证据层与记录层有实质缺口**——此前「全部条款复现完成」的表述偏宽。按此结论修三处 P0（均已验证），其余缺口如实登记。
+
+### P0-1：运行期误报实证（方案 §3.3 第三层）对比恒为 0 —— 已修
+
+`demo_loop._alert_comparison` 读回流标签列 `"predicted"`，而回流写入侧 schema（`_run_prediction`/`_buffer_correct_row`/`_correct_artifact`）实际写的是 `"prediction"` → 列不存在 → `threshold_alerts` 恒 0，闭环详情页恒显「阈值法 0 次」，**判据④ 的运行期口径无有效证据**。原测试还把 `threshold_alerts == 0` 锁成期望值。
+- 修：`demo_loop.py:1336` 改为按真实列名取（`prediction` 优先、`predicted` 兼容旧名）；测试 fixture 按真实 schema 造数（A 分片 50 行 prediction="-1"、B 分片全 "0"）并断言 `threshold_alerts=50 / rate=0.25`、`model_alerts=100`。
+- 证据：`tests/test_condition_shard_routing.py` 25 passed。
+
+### P0-2：阈值不可解析时 AE 静默全判「正常」 —— 已修（三处根因同修）
+
+AE 的 ONNX label 端口是**占位全 1**（`automl_anomaly_ae.py:98` `(mse*0)+1`），不是判定源；而 `anomaly_predict_enrichment` 在 `threshold_score is None` 时回退 label 端口 → AE 每条都判 `is_anomaly=False`，**监控静默失能且无任何报错**。三处根因：
+1. **生产端点从未传阈值**：`api/inference_production.py` 的 enrich 调用缺 `threshold_score` → 生产侧恒走回退路径（IF/OC-SVM 是 offset 语义尚可，AE 直接失能）。修：按服务版本解析 `anomaly_threshold_for_version` 下发。
+2. **智能体 S3 冠军链无 TrainingJob 载体** → `job.metrics.score_artifact_id` 恒无 → 永无阈值。修：`runner._persist_anomaly_score_stats` 物化标定工件（`threshold_score` + 201 点分位表 + contamination + feature_columns，type=report / kind=anomaly_score_stats），冠军工件 metadata 带 `anomaly_score_stats_artifact_id`，注册时由 `model_registry._conversion_metadata` 透传进 `version.conversion_metadata`（复用既有分片阈值指针解析链）。
+3. **阈值解析异常被静默吞掉**（`anomaly_threshold_for_version` 宽 `except` 返回 None）。修：改为 ERROR 日志留痕。
+- 判定口径修正：**AE 无阈值时显式失败**（`InferenceDeploymentError("ANOMALY_THRESHOLD_UNAVAILABLE")` / 闭环 `DemoLoopError` 同码），不再产出「恒判正常」的错误结论；IF/OC-SVM 保留 label 端口回退（是 sklearn predict 的真实输出）但留 WARNING。
+- **附带修正（自查发现）**：生产端点的错误码白名单（`_runtime_error` 的 `allowed` 集合）会把不在名单/非 `INFERENCE_` 前缀的码折叠成 `INFERENCE_RUNTIME_UNAVAILABLE`——新增错误码必须进名单，否则具名诊断在现场丢失。已加入 `ANOMALY_THRESHOLD_UNAVAILABLE`（映射 503：标定断链时无法给出正确判定，对外不可用语义正确）。
+- 证据：`test_inference_deployment.py` 16 passed（新增 3 例：AE 无阈值显式失败 + 非 AE 回退保留 + 阈值优先于 label 端口）；`test_agent_runner.py` 17 passed（新增 2 例：标定工件落盘内容 + 监督链路零影响）；`test_api_inference_production` / `test_model_registry_*` / `test_agent_loop_retrain` / `test_automl_anomaly*` 全绿。
+
+### P0-3：点焊验收文档把生成器合成数据标为「真实数据」 —— 已修
+
+`ml-platform/docs/验收-点焊真实数据.md`（354d4264 落档）称「2,072 行真实特征工程数据」「236 个 fault=1 真实异常」，据此下了「真实异常形态 ≠ 合成构造形态」的域结论。复核溯源：该数据集由 `C:\Users\17723\Desktop\点焊数据\generate_spot_weld_synthetic_v2.py` 生成（fault 为生成式注入的 under_current 55 / short_time 30 / shunting 35 / electrode_wear 35 / spatter 30 / pressure_instability 15 六形态），**是带标签的合成数据，不是产线实测**。本文件第三轮审计（第 961 行）此前已如实登记同一事实，被新文档无声推翻。
+- 修：验收文档改为「生成器合成数据」定性 + 列出六形态与限定（结论只成立为「平台合成基准的分位错配形态不覆盖生成器的物理劣化形态」，不成立为产线真实劣化证据）；脚本 `run_spot_weld_real_experiment.py` 增 `--data-provenance`（generator-synthetic / production-real / unknown，默认 generator-synthetic）并随产物 JSON 落 provenance 声明，字段 `real_anomaly_*` 改名 `labeled_anomaly_*`；产物 JSON 按新口径重跑（数值与原 JSON 完全一致：2072/1836/236、0.7585/0.5763/0.4619、ocsvm holdout_fpr 0.049）。
+- **证据入库**：两份验收 JSON 原只存在于被 `.gitignore` 的仓库根 `docs/`（AE 立项门槛的唯一依据不入库）→ 迁入 `ml-platform/docs/`，并补 provenance 字段（拧紧数据标 `customer-production-derived`，源链 拧紧数据.xlsx → tighten_train.csv → tighten_train_clean.csv；源 Excel 不在仓库，换机器复跑需同口径 CSV）。原 `验收-点焊真实数据.md` 指向的 JSON 链接失效一并修复。
+
+### 此前过宽表述的更正（按 AGENTS.md「保留历史记录，只增不改」——此处不重写原文，登记更正）
+
+1. 「一期总验收判据①②③④⑤全部闭环」（第 814 行）→ **更正**：④为离线脚本口径（实测 85.3%）、⑤为合成量化，**运行期口径此前因 P0-1 缺陷无有效证据**（已修）。
+2. 「§6.6 A-G 全部与交付一致」（第 882 行）→ **更正**：§6.6A 的 label 端口回退对 AE 是静默失能路径（已修为显式失败）；§6.6C 字面未继承 `BaseEstimator`（手写 get_params/set_params，`clone()` 实测可用，语义等效）。
+3. 「判据①点焊域口径」登记（第 961 行）→ **本轮被 354d4264 文档推翻又已复原**：以本条为准，点焊数据为生成器合成产物。
+4. 「M10 补全 per-device fpr 聚合」（第 959 行）→ **更正**：后端聚合已实现，`FleetShardPanel.tsx` 无该列（前端未接）；且 `fleet_overview` 的回测 AUC **恒为 null**（数据写入 `version.metrics["recalibration"]`，读取却用 `conversion_metadata["recalibration"]`）。
+5. 「M6 按 §6.2 自动顺延」（第 872 行）→ **更新**：792853d5 已交付档 1 机制（加权阈值 + 门槛 fail-closed + 误报形态报表 + `label_recalibrate_version` + §2.3.3 派生导出），**但无 API 入口**、新版本 `approval_status="pending"` 无自动挂载 → 「阈值在推理侧生效」当前不可端到端达成。
+6. 「§2.3.3 无产品化一键派生流」（第 960 行）→ **更新**：792853d5 已交付 `export_labeled_reflow_dataset`（带标签数据集导出），仍无 API 入口。
+
+### 仍未闭环的缺口（如实登记，按严重度）
+
+> **后续更正（2026-11-13 第五轮）**：本清单中「`fleet_feature_diff` 工具从未实跑」「§7.1/§7.2 判据未闭环」两项已由同日并行会话 `ef89c8e5`（三期真实工位实验）部分/全部关闭；**「判据④ 真实标签口径不通过」是更晚且更强的证据，见第五轮章节**——本节「复核结论」的 85.3% 结论仅限合成代测口径。
+
+- **[高] 判据④ 真实标签口径不通过**（第五轮补入）——真实标签下模型误报率反而约为阈值基线的 26 倍（降幅 -25%），根因是该数据源的合格判定本身即按力矩上下限规则执行 → 阈值规则定义性近零误报。**方案 §1.1「降误报」价值主张在「阈值规则已自洽」的数据场景不成立**；达成条件需接入「现场报警误报率高」的产线数据。
+- **[高]** §7.1 核心架构偏差：方案要「全局共享检测器主体 + 设备级标定」，引擎路径仍是 M7 分片链（**每设备各训一个独立模型**），共享主体只存在于 M9 迁移流；且 `condition_column` 未从特征剔除（`automl_execution.py:2370`→`:1881`，引擎路径数值型 device_id 会留在特征里；agent 路径已剔除）。**方案与实现二选一需决策：改方案为分片独立模型，或实现全局共享检测器。**
+- **[中]** §6.4②「precision@k 提升 + 合成基准不破」**零 artifact、零测试**（重标定从未在真实标签上执行）。
+- **[中]** M10 `fleet_overview` 回测 AUC 恒 null（读错容器）；per-device fpr 未进前端大屏。
+- **[中]** 机群分片挂载：同一 `condition_value` 可重复挂载（幂等仅按 model_version_id，路由结果依赖 DB 行序）；权重不重平衡（实测两分片权重和 15000≠10000）；部署已有 `condition_column` 时新分片条件值永不相配。
+- **[中]** M6 档 1 无 API 入口 + 新版本 pending 无自动挂载。
+- **[中]** anomaly 配方**无「可执行重放」路径**：引擎重铸端点强制 target_column → 422；agent 重放同理（§3.4/§3.7「重放走同一合同」仅在配方内容层成立）。
+- **[中]** `fleet_feature_diff.py` 已交付但**从未实跑**（无输出/无测试）→ §7.4②/§7.5 预案仍开。**（第五轮更正：已由 `ef89c8e5` 在 4 个真实工位实跑并抓到真实特征集不对齐——此项关闭，见第五轮 §2）**
+- **[低]** 误报形态报表 `dense_features` 按原始均值而非 z 值排序（字段名却是 `mean_z`）→ 「哪些参数区域误报密集」结论失真。
+- **[低]** `TorchAutoencoder` 未继承 `BaseEstimator`（§6.6C 字面偏差，`clone()` 可用）。
+- **[低]** 已知异常验证无「≥10 条」下限；向导 S4 `normal_fpr` 硬编码 0.015（非常识 contamination×1.5）；判据① 验收实跑拟合矩阵 9,600 行 < 方案「≥1 万」；API 互斥返回 400 而方案文字为 422（口径不一）。
+
+### 复核结论（对方案既有验收数据的独立复测）
+
+**判据④ 的 85.3% 在「合成越界点代测」口径内成立**。曾质疑「模型阈值在留出集自标定、阈值法基线却在训练集标定」为不对称比较——本地 out-of-sample 复测（留出集对半切：cal 半标定阈值 / eval 半测误报率，20 次随机切分）结果：基线 Tukey 围栏 fpr 6.79%、模型 in-sample 1.00%、**out-of-sample 均值 1.00%（中位 0.92%，p05 0.57%，p95 1.60%）→ 降幅 85.2%**，与台账 85.3% 一致，**≥30% 门槛在该口径内稳健**。原假设被数据推翻。
+
+> **口径限定（第五轮更正，重要）**：上述复测只验证「合成越界点代测口径内」的标定稳健性，**不涉及该口径本身是否成立**。同日真实标签口径复测（第五轮 §1）判据④ **不通过**（降幅 -25%）——**正式结论以真实标签口径为准**，合成代测的 85.3% 只能作为「相对 Tukey 围栏基线」这一特定对照下的历史落档值保留。
+
+### 验证与未验证
+
+- **本批验证**：受影响面回归全绿——`test_condition_shard_routing` 25、`test_inference_deployment` 16、`test_api_inference_production` + `test_demo_loop` + `test_condition_shard_routing` 合计 77、`test_agent_runner`/`test_agent_executor`/`test_agent_loop_retrain`/`test_automl_anomaly`/`test_automl_anomaly_ae` 合计 124、`test_api_model_registry`/`test_model_registry_service`/`test_model_registry_models` 42；点焊实验脚本按新口径重跑复现原数值。
+- **未验证**：全量 CI 六 job 未跑（本机 `gh` 未安装，无法核对 HEAD 的 CI 状态）；真实部署数据上的判据④⑤（无生产回流数据）；≥3 台真实同型设备链路（无数据）；前端 vitest/tsc 未执行（UI 行为仅按源码断言）；PostgreSQL 迁移 99/100 的实际 apply 与 CHECK 约束行为未实跑（仅 SQLite）。**（第五轮更正：「≥3 台真实同型设备无数据」已过时——`ef89c8e5` 已落地 4 个真实工位的机群基线与双向迁移对照）**
+- **并发提示**：审计期间有并行会话提交 `354d4264`（点焊端到端实验落档）与 `e5634437`（automl/run 合同补全 condition_column），本批改动基于 `e5634437` 之上。
+
+## 2026-11-13 第五轮：并行会话三提交入账 + 判据④真实口径改判（**不通过**）+ 证据链补齐
+
+**背景**：第四轮独立审计落档后，同日并行会话又落三个提交（`a9f1e391` / `ef89c8e5` / `df914c0e`，均已上 origin/main）。其中 `df914c0e` 用**真实标签口径**复测判据④，结论与一期落档的 85.3% **相反**。按 AGENTS.md「保留历史记录、只增不改」，本节记录新结论并更正第四轮审计中受影响的表述。
+
+### 1. 判据④：真实标签口径**不通过**（df914c0e）
+
+- **数据**：拧紧全量 **280,373 行**（DECIDE=1 合格 222,866 / DECIDE=0 不合格 57,507）
+- **口径**：正常行 = DECIDE==1（现场判定合格）；阈值基线 = `ACTUAL_TORQUE` 超出 `[LOWER_LIMIT, UPPER_LIMIT]`（现场固定阈值规则单轴口径）；模型 = 三族 contamination=0.01 保留集分位标定；eval_rows 44,573
+- **结果**：
+
+  | 族 | 模型误报率 | 基线误报率 | 降幅 | 判据④（≥30%） |
+  |---|---|---|---|---|
+  | iforest | 1.023% | 0.038% | **-25.8%** | ❌ |
+  | ocsvm | 0.992% | 0.038% | **-25.0%** | ❌ |
+  | autoencoder | 0.994% | 0.038% | **-25.1%** | ❌ |
+
+  基线在**全量合格行**上的误报率 0.034%（定义性近零）→ 模型反而差约 26 倍，**三族全部不通过**。
+- **漏检侧补充**：DECIDE=0 中「双轴均在限内」的规则漏检候选 **3,829** 个 → 模型额外检出 iforest **1.8%**（68）/ ocsvm **6.0%**（230）——增益微弱。
+- **根因（数据说话）**：该数据源的 DECIDE 合格判定**本身按力矩上下限规则执行** → 合格行的定义域 = 规则内 → 阈值规则在合格行上**定义性近零误报**；无监督模型以 1% 异常率先验标定，天然无法优于定义性零误报规则。
+- **对一期 85.3% 的边界说明**：一期 85.3%（第四轮审计另做 out-of-sample 复测仍 85.2%）来自「**合成越界点代测**」——其中阈值基线「误报率高」是构造出来的对照（越界点定义上触发阈值报警）。第四轮审计的复测**只验证该合成口径内的标定稳健性**，不涉及口径本身是否成立。两口径并列如实呈现，**正式口径以真实标签为准**。
+- **对方案价值主张的修正**：无监督异常检测在「阈值规则已自洽」的数据场景**无法兑现降误报主张**。差异化价值需重新定位到：①阈值规则**未覆盖**的劣化维度（需更丰富特征：波形级/多参数联动）②**报警确认回流**驱动的半监督精调（M6，待标注）③阈值规则误报率高的场景（方案原文前提，需现场排查哪条产线符合）。**判据④ 的真实达成条件 = 接入「现场报警误报率高」的产线数据，按同口径复测。**
+
+### 2. 三期真实判据预演首次落地（ef89c8e5）
+
+- **§7.4 前置② 特征集 diff 工具首战**：4 工位原始 CSV 全列 diff → **FAIL**（SPECIFICATION 等文本维度列 dtype 工位间漂移）；数值特征子集（11 列）→ **PASS**（同构）。工具价值直接实证（不跑 diff 直接混训会踩 §7.5 预案的坑）→ **第四轮审计登记的「fleet_feature_diff 工具从未实跑」缺口关闭**。
+- **§7.1 机群基线**：4 工位（ZZQX113 / DPQX111 / DPX07 / DPQQ02）各 2,000 行 = 8,000 行，`condition_column=STATION(工位号)`，三族 light（job `4de148e0`）→ **4 分片全过门禁**（分片冠军 = 最差段口径），各分片独立标定：
+
+  | 分片（工位） | synthetic_auc | normal_fpr | 行数 |
+  |---|---|---|---|
+  | DPQQ02 | 0.9955 | 0.010 | 2,000 |
+  | ZZQX113 | 0.9919 | 0.010 | 2,000 |
+  | DPX07 | 0.9830 | 0.010 | 2,000 |
+  | DPQX111 | 0.9755 | 0.010 | 2,000 |
+
+- **§7.2 跨设备迁移双向真实对照**：同工位新批次 fleet_fpr **0.0125 ≤ 0.015 → compatible**（重标定版本注册 + 回测 AUC 0.9919）；跨工位数据 fleet_fpr **1.0 → unfit**（**不硬迁**——版本仍产出但标记 unfit_for_fleet，挂载决策留调用方）→ §7.2「不适配自动降级」首次在真实数据上验证。
+- 触发方式：**平台 API 端到端**（版本 `23363d8a` 基线 / `46b6bbb4` 迁移）。
+
+### 3. 标定/重标定临时目录权限修复（a9f1e391）
+
+`anomaly_device_calibration.py` / `anomaly_threshold_recalibration.py` 的临时目录改系统 temp——**容器内 app 用户无工作目录写权限**（PermissionError 实测）。与第四轮审计 P0-2 同链路（该链路的首次真实容器运行暴露）。
+
+### 4. 证据链补齐（本批）
+
+并行会话新落档并已上 origin/main 的 `验收-判据四真实口径.md` 引用了两个**仅存在于被 gitignore 的仓库根 `docs/`** 的 JSON 与一个**未入库**的脚本——与第四轮审计 P0-3 同款证据断链：
+- `验收-判据四真实口径.json`（806B）、`判据四漏检侧对照.json`（234B）→ **迁入 `ml-platform/docs/`**（可跟踪）
+- `tools/acceptance/run_criterion4_real.py` → **补入库**，并把脚本产物输出路径从 gitignored 的根 `docs/` 改到 `ml-platform/docs/`（复跑不再产生断链）
+- 根 `docs/` 另存有**旧版** `验收-点焊真实数据.json`（无 provenance 字段）与 `验收-无监督异常检测-AE对照.json`（无 provenance）——**以 `ml-platform/docs/` 下的可跟踪版本为准**，根目录副本为本地暂存残留。
+
+### 5. 第四轮审计受影响的表述更正（指向本节，原文不改）
+
+1. 第四轮审计「判据④ 的 85.3% 成立」→ **口径限定**：仅在**合成越界点代测口径**内成立（该口径内的标定稳健性已复测）；**真实标签口径下判据④ 不通过**（本节 §1）——**以真实标签口径为正式结论**。
+2. 第四轮审计遗留缺口「`fleet_feature_diff` 工具从未实跑」→ **关闭**（本节 §2）。
+3. 第四轮审计遗留缺口「§7.1/§7.2 判据未闭环（合成验证）」→ **部分关闭**：真实 4 工位机群基线 + 双向迁移对照已落地（本节 §2）。**仍未闭环**：§7.4 前置①（M7 真实多工况生产数据长周期验证）、前置③（机群确认报警样本）、以及 §7.1「全局共享检测器 + 设备级标定」的**架构口径二选一**（本批走的是分片独立模型路径）。
+4. 第四轮审计遗留缺口「§6.4② precision@k 零证据」→ **仍开放**（真实标签确认样本未到位）。
+
+### 6. 验证
+
+- 第四轮审计三 P0 修复的受影响面回归：**302 passed / 1 skipped（POSIX-only，与改动无关）/ 15 subtests passed**（16 个模块，含泛化门禁 `test_genericization_contract`）
+- 泛化门禁扫描（`app/` 生产源码禁词）通过——新增的 `generate_spot_weld_synthetic_v2.py` 字样只出现在 `tools/acceptance/` 与文档，不在扫描范围
+- `git diff --check`：md/json 全干净；.py 的 trailing-whitespace 标记为**仓库既有约定**（index 存 CRLF，`git ls-files --eol` = `i/crlf`），并行会话自身提交 `e5634437` 同款 10 处——非本批引入
+- **未验证**：全量 CI 六 job 未跑（本机 `gh` 未安装）；4 工位之外的产线数据；前端 vitest/tsc 未执行；PostgreSQL 迁移实际 apply 未实跑

@@ -188,6 +188,10 @@ def _train_single(frame, hints: dict, contamination: float, full_data: bool) -> 
             "acceptance_gates": champion_result.get("acceptance_gates"),
             "detection_recall_per_class": champion_result.get("detection_recall_per_class"),
             "threshold_score": champion_result.get("threshold_score"),
+            "calibrated_threshold": champion_result.get("calibrated_threshold"),
+            # 201 点分位标定表——随模型持久化（§3.2「阈值随模型持久化」）：
+            # 推理侧判定锚点 + 运行期 PSI 漂移基线都依赖它。
+            "calibration": champion_result.get("calibration"),
             "score_histograms": champion_result.get("score_histograms"),
             # 注入强度-检出率曲线（§3.3 第二层 S4 证据）
             "strength_curve": champion_result.get("strength_curve"),

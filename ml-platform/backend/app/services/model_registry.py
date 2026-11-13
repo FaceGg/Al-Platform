@@ -495,8 +495,8 @@ class ModelRegistryService:
         return int(current or 0) + 1
 
     @staticmethod
-    def _conversion_metadata(result) -> dict[str, object]:
-        return {
+    def _conversion_metadata(result, *, anomaly_score_stats_artifact_id=None) -> dict[str, object]:
+        metadata: dict[str, object] = {
             "converter": result.converter,
             "opset": result.opset,
             "input_names": list(result.input_names),
@@ -504,6 +504,9 @@ class ModelRegistryService:
             "sha256": result.sha256,
             "size": result.size,
         }
+        if anomaly_score_stats_artifact_id:
+            metadata["anomaly_score_stats_artifact_id"] = str(anomaly_score_stats_artifact_id)
+        return metadata
 
     def register_platform_version(
         self,
@@ -706,7 +709,16 @@ class ModelRegistryService:
                 feature_schema=deepcopy(result.feature_schema),
                 output_schema=deepcopy(result.output_schema),
                 metrics=deepcopy(library.metrics or {}),
-                conversion_metadata=self._conversion_metadata(result),
+                conversion_metadata=self._conversion_metadata(
+                    result,
+                    # 无监督标定工件指针透传（§3.2「阈值随模型持久化」）：
+                    # 智能体 S3 冠军链无 TrainingJob 载体，标定阈值只能靠
+                    # 源工件 metadata 里的指针带到版本上，否则推理侧解析不到
+                    # 阈值 → 回退 ONNX label 端口（AE 是占位全 1 → 恒判正常）。
+                    anomaly_score_stats_artifact_id=(
+                        (artifact.metadata_ or {}).get("anomaly_score_stats_artifact_id")
+                    ),
+                ),
                 approval_status="pending",
                 created_by_id=actor_id,
             )

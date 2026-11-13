@@ -1,0 +1,29 @@
+{
+  "date": "2026-11-13",
+  "criterion": "§4.2 判据④真实口径（DECIDE 标签直接对比，替换合成越界点代测）",
+  "total_rows": 280373,
+  "normal_rows_decide1": 222866,
+  "eval_rows": 44573,
+  "baseline_rule": "ACTUAL_TORQUE 超出 [LOWER_LIMIT, UPPER_LIMIT]",
+  "baseline_fpr_full_normal": 0.000337,
+  "families": {
+    "iforest": {
+      "model_fpr": 0.01023,
+      "baseline_fpr": 0.000381,
+      "reduction": -25.8235,
+      "criterion_4_pass": false
+    },
+    "ocsvm": {
+      "model_fpr": 0.009916,
+      "baseline_fpr": 0.000381,
+      "reduction": -25.0,
+      "criterion_4_pass": false
+    },
+    "autoencoder": {
+      "model_fpr": 0.009939,
+      "baseline_fpr": 0.000381,
+      "reduction": -25.0588,
+      "criterion_4_pass": false
+    }
+  }
+}

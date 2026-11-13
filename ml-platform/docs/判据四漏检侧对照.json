@@ -1,0 +1,12 @@
+{
+ "iforest": {
+  "leak_candidates": 3829,
+  "model_detected": 68,
+  "model_detection_rate_on_leaks": 0.0178
+ },
+ "ocsvm": {
+  "leak_candidates": 3829,
+  "model_detected": 230,
+  "model_detection_rate_on_leaks": 0.0601
+ }
+}

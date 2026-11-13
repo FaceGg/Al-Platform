@@ -466,6 +466,69 @@ class TestAnomalyEnrichment(unittest.TestCase):
         )
         self.assertNotIn("anomaly_score", supervised)
 
+    def test_autoencoder_without_threshold_fails_loudly(self):
+        """回归锁（2026-11-13 审计 P0-2）：AE 无标定阈值时不得静默判「正常」。
+
+        AE 的 ONNX label 端口是占位全 1（不是判定源），回退它会让每条记录
+        都判 is_anomaly=False——监控静默失能且无任何报错。故必须显式失败。
+        """
+        from app.services.inference_deployment import (
+            InferenceDeploymentError,
+            anomaly_predict_enrichment,
+        )
+
+        runtime = _AnomalyRuntime()
+        version = type("Version", (), {
+            "feature_schema": [{"name": "f0", "dtype": "float64"}],
+            "output_schema": {"task": "anomaly"},
+        })()
+        # AE 融合图：label 端口恒为占位 1，scores = -MSE
+        result = {"predictions": [1], "probabilities": [-12.0], "duration_ms": 1}
+        with self.assertRaises(InferenceDeploymentError) as raised:
+            anomaly_predict_enrichment(
+                runtime, "key", [{"f0": 12.0}], result,
+                feature_schema=version.feature_schema, output_schema=version.output_schema,
+                conversion_metadata={"converter": "torch"},
+            )
+        self.assertEqual(raised.exception.args[0], "ANOMALY_THRESHOLD_UNAVAILABLE")
+        # 关键：不得产出「恒判正常」的结论
+        self.assertNotIn("is_anomaly", result)
+
+    def test_non_ae_without_threshold_keeps_label_port_fallback(self):
+        """IF/OC-SVM 的 label 端口是真实 predict 输出（offset 语义）——回退保留。"""
+        from app.services.inference_deployment import anomaly_predict_enrichment
+
+        runtime = _AnomalyRuntime()
+        version = type("Version", (), {
+            "feature_schema": [{"name": "f0", "dtype": "float64"}],
+            "output_schema": {"task": "anomaly"},
+        })()
+        enriched = anomaly_predict_enrichment(
+            runtime, "key", [{"f0": 2.0}], {"predictions": [-1], "probabilities": [-2.0]},
+            feature_schema=version.feature_schema, output_schema=version.output_schema,
+            conversion_metadata={"converter": "skl2onnx"},
+        )
+        self.assertEqual(enriched["anomaly_score"], [2.0])
+        self.assertEqual(enriched["is_anomaly"], [True])
+
+    def test_threshold_takes_precedence_over_label_port(self):
+        """§6.6A 判定统一：有标定阈值时 is_anomaly 只看 anomaly_score ≥ threshold。"""
+        from app.services.inference_deployment import anomaly_predict_enrichment
+
+        runtime = _AnomalyRuntime()
+        version = type("Version", (), {
+            "feature_schema": [{"name": "f0", "dtype": "float64"}],
+            "output_schema": {"task": "anomaly"},
+        })()
+        enriched = anomaly_predict_enrichment(
+            runtime, "key", [{"f0": 2.0}], {"predictions": [-1], "probabilities": [-2.0]},
+            feature_schema=version.feature_schema, output_schema=version.output_schema,
+            conversion_metadata={"converter": "torch"},
+            threshold_score=5.0,
+        )
+        # label 端口说 -1（异常），但标定阈值 5.0 > score 2.0 → 不报警
+        self.assertEqual(enriched["is_anomaly"], [False])
+
 
 if __name__ == "__main__":
     unittest.main()

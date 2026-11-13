@@ -240,6 +240,11 @@ class AgentRunner:
         工件 metadata 带 feature_schema/算法/指标——cast-deployment 的 s3
         模式据此走 ModelLibrary→注册→ONNX 端口→部署链。任何失败只记日志，
         不改 accepted 终态（回落引擎铸造路径仍可用）。
+
+        无监督分支额外物化 score_stats 工件（§3.2「阈值随模型持久化」）：
+        标定阈值 + 201 点分位表是推理判定锚点（§6.6A）与运行期 PSI 漂移
+        基线的唯一来源——缺失会让推理侧回退 ONNX label 端口，而 AE 的 label
+        端口是占位全 1（恒判正常），等于部署后静默丧失报警能力。
         """
         champion = self._s3_champion or {}
         model = champion.get("model")
@@ -247,6 +252,7 @@ class AgentRunner:
             return None
         try:
             import joblib as _joblib
+            import json
             import tempfile
             from pathlib import Path
 
@@ -279,6 +285,9 @@ class AgentRunner:
                     path,
                 )
                 artifact_service = build_artifact_service(self.db)
+                stats_artifact_id = self._persist_anomaly_score_stats(
+                    artifact_service, trainer_result, champion, tmp,
+                )
                 artifact = artifact_service.create_from_file(
                     self.run.project_id,
                     path,
@@ -291,12 +300,67 @@ class AgentRunner:
                         "metrics": dict(trainer_result.get("metrics") or {}),
                         "feature_schema": champion.get("features") or [],
                         "row_count": int((trainer_result.get("data_fidelity") or {}).get("total_rows") or 0),
+                        # 无监督标定工件指针：注册阶段透传进 version.conversion_metadata，
+                        # 推理侧据此解析版本标定阈值（anomaly_threshold_for_version）。
+                        **(
+                            {"anomaly_score_stats_artifact_id": stats_artifact_id}
+                            if stats_artifact_id else {}
+                        ),
                     },
                 )
             return str(artifact.id)
         except Exception:  # noqa: BLE001 - 物化失败不阻断验收终态
             logger.warning("s3 champion persist failed for run %s", self.run.id, exc_info=True)
             return None
+
+    def _persist_anomaly_score_stats(
+        self, artifact_service, trainer_result: dict, champion: dict, tmp: str,
+    ) -> str | None:
+        """无监督冠军的标定工件（score_stats.json）——与引擎 M1 产物同合同。
+
+        返回 artifact id；非无监督分支或阈值缺失时返回 None（监督链路不受影响）。
+        """
+        if self.task_type != "anomaly":
+            return None
+        import json
+        from pathlib import Path
+
+        evaluation = trainer_result.get("evaluation") or {}
+        threshold = evaluation.get("threshold_score")
+        if threshold is None:
+            logger.warning(
+                "anomaly champion for run %s has no calibrated threshold; "
+                "inference will fall back to the ONNX label port",
+                self.run.id,
+            )
+            return None
+        contamination = trainer_result.get("contamination")
+        payload = {
+            "task_type": "anomaly_detection",
+            "algorithm_id": champion.get("algorithm") or "",
+            "contamination": float(contamination) if contamination is not None else None,
+            "threshold_score": float(threshold),
+            "calibrated_threshold": evaluation.get("calibrated_threshold"),
+            "calibration": evaluation.get("calibration"),
+            "synthetic_auc": float((trainer_result.get("metrics") or {}).get("synthetic_auc") or 0.0),
+            "normal_fpr": float((trainer_result.get("metrics") or {}).get("normal_fpr") or 0.0),
+            "feature_columns": list(champion.get("features") or []),
+        }
+        stats_path = Path(tmp) / f"s3-score-stats-{str(self.run.id)[:8]}.json"
+        stats_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        artifact = artifact_service.create_from_file(
+            self.run.project_id,
+            stats_path,
+            f"智能体S3标定-{str(self.run.id)[:8]}.json",
+            "report",
+            metadata={
+                "source": "agent_s3_champion",
+                "run_id": str(self.run.id),
+                "kind": "anomaly_score_stats",
+                "best_candidate": champion.get("algorithm") or "",
+            },
+        )
+        return str(artifact.id)
 
     def _l2_references(self) -> list[dict]:
         """§10.4 任务启动/S1 注入：检索 L2 经验（独立引述块）。

@@ -467,6 +467,61 @@ class TestAgentRunnerAnomaly(RunnerHarness, unittest.TestCase):
         self.assertNotIn("recall_minority", entry["s4"]["gates"])
         self.assertTrue(entry["s4"]["gate_passed"])
 
+    def test_anomaly_score_stats_artifact_persists_calibration(self):
+        """回归锁（2026-11-13 审计 P0-2）：无监督冠军必须持久化标定工件。
+
+        标定阈值 + 201 点分位表是推理判定锚点（§6.6A）与运行期 PSI 漂移
+        基线的唯一来源。智能体 S3 冠军链无 TrainingJob 载体——缺失会让
+        推理侧解析不到阈值 → 回退 ONNX label 端口（AE 是占位全 1 → 恒判
+        正常），监控静默失能。
+        """
+        import json
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        runner, db, _ = self.build_anomaly()
+        captured: dict = {}
+
+        class _FakeArtifactService:
+            def create_from_file(self, project_id, path, name, kind, metadata=None, commit=True):
+                captured["name"] = name
+                captured["kind"] = kind
+                captured["metadata"] = dict(metadata or {})
+                captured["payload"] = json.loads(Path(path).read_text(encoding="utf-8"))
+                return SimpleNamespace(id=uuid4())
+
+        trainer_result = {
+            "metrics": {"synthetic_auc": 0.92, "normal_fpr": 0.01},
+            "contamination": 0.02,
+            "evaluation": {
+                "threshold_score": 0.75,
+                "calibrated_threshold": 0.75,
+                "calibration": {"probabilities": [0.0, 1.0], "quantile_points": [-1.0, 1.0]},
+            },
+        }
+        champion = {"algorithm": "iforest", "features": ["f0", "f1"]}
+        with tempfile.TemporaryDirectory() as tmp:
+            stats_id = runner._persist_anomaly_score_stats(
+                _FakeArtifactService(), trainer_result, champion, tmp,
+            )
+        self.assertIsNotNone(stats_id)
+        self.assertEqual(captured["kind"], "report")
+        self.assertEqual(captured["metadata"].get("kind"), "anomaly_score_stats")
+        payload = captured["payload"]
+        self.assertEqual(payload["threshold_score"], 0.75)
+        self.assertEqual(payload["contamination"], 0.02)
+        self.assertEqual(payload["feature_columns"], ["f0", "f1"])
+        self.assertEqual(payload["calibration"]["quantile_points"], [-1.0, 1.0])
+
+    def test_supervised_run_persists_no_score_stats(self):
+        """监督链路不受影响：标定工件只属无监督分支（零回归）。"""
+        runner, db, _ = self.build_anomaly()
+        runner.task_type = "supervised"
+        self.assertIsNone(runner._persist_anomaly_score_stats(
+            object(), {"evaluation": {"threshold_score": 0.5}}, {}, ".",
+        ))
+
     def test_known_anomaly_rows_validated_after_gate_pass(self):
         """已知异常样本弱监督验证（技术方案 §3.4 S4）：门禁通过后冠军模型
         对样本打分，检出率进 metrics 与 s4 digest 证据（不设一票否决）。"""

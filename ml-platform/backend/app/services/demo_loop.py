@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import tempfile
 import uuid
 
@@ -123,6 +124,20 @@ def _scalar_label(value):
 
 
 _ANOMALY_PREDICTION_THRESHOLD_CACHE: dict[str, float] = {}
+
+logger = logging.getLogger(__name__)
+
+
+def _version_is_autoencoder(version) -> bool:
+    """该版本是否为自编码器（ONNX 融合图，converter=="torch"）。
+
+    AE 的 label 端口是占位全 1（不是判定源），阈值不可得时不可回退它——
+    回退等于把每条记录都判成「正常」，监控静默失能（2026-11-13 审计 P0-2）。
+    """
+    metadata = getattr(version, "conversion_metadata", None)
+    if not isinstance(metadata, dict):
+        return False
+    return str(metadata.get("converter") or "") == "torch"
 
 
 def _anomaly_prediction_threshold(db, version) -> float | None:
@@ -524,13 +539,31 @@ class DemoLoopService:
         # 无监督报警判定（技术方案 §6.6A 判定统一）：anomaly 部署按标定阈值
         # （score_stats.threshold_score）判 anomaly_score，与 API enrich 同口径；
         # 工况分片部署按实际路由到的分片版本判定（每分片阈值独立，§6.3）。
-        # 阈值不可得时回退 label 端口。有监督保持类别匹配。
+        # 阈值不可得时回退 label 端口——但 AE 的 label 端口是占位全 1（不是判定
+        # 源），回退会让每条都判「正常」→ 闭环静默失能，故显式报错（2026-11-13
+        # 审计 P0-2）。有监督保持类别匹配。
         output_schema = served_version.output_schema if isinstance(served_version.output_schema, dict) else {}
         if output_schema.get("task") == "anomaly":
             threshold = _anomaly_prediction_threshold(self.db, served_version)
             if threshold is not None and anomaly_score is not None:
                 is_error = anomaly_score >= threshold
+            elif _version_is_autoencoder(served_version):
+                logger.error(
+                    "anomaly threshold unavailable for AE version %s; refusing to "
+                    "fall back to the placeholder label port (score_stats linkage "
+                    "missing — check anomaly_score_stats_artifact_id)",
+                    getattr(served_version, "id", None),
+                )
+                raise DemoLoopError(
+                    "ANOMALY_THRESHOLD_UNAVAILABLE",
+                    "anomaly calibrated threshold unavailable for AE version",
+                )
             else:
+                logger.warning(
+                    "anomaly threshold unavailable for version %s; falling back to "
+                    "the ONNX label port (offset semantics)",
+                    getattr(served_version, "id", None),
+                )
                 is_error = str(predicted) == "-1"
         else:
             is_error = str(predicted) in (config.error_classes or [])
@@ -1314,9 +1347,13 @@ class DemoLoopService:
         """运行期误报实证（技术方案 §3.3 第三层）：同一批回流行上「业务阈值
         法报警」vs「异常检测模型报警」累计对比。
 
-        阈值法口径 = 回流行 predicted 标签命中 error_classes（或 ==-1，监督
+        阈值法口径 = 回流行 prediction 标签命中 error_classes（或 ==-1，监督
         回流的报错回流语义）；模型口径 = anomaly_score ≥ 部署版本标定阈值。
         无回流帧/无阈值 → None（不设对比）。
+
+        回流标签列名 = ``prediction``（回流写入侧 schema，见 ``_buffer_correct_row``
+        /``_run_prediction``）；旧列名 ``predicted`` 保留兼容兜底——口径取错列会
+        让阈值法计数恒为 0（对比曲线失真且无任何报错）。
         """
         try:
             deployment = self._deployment(config)
@@ -1333,8 +1370,10 @@ class DemoLoopService:
                 rows_total += len(frame)
                 scores = pd.to_numeric(frame["anomaly_score"], errors="coerce")
                 model_alerts += int((scores.fillna(-np.inf) >= threshold).sum())
-                if "predicted" in frame.columns:
-                    labels = frame["predicted"].astype(str).str.strip()
+                # 回流标签列（口径列名，写入侧 = prediction；predicted 为旧名兼容）
+                label_column = "prediction" if "prediction" in frame.columns else "predicted"
+                if label_column in frame.columns:
+                    labels = frame[label_column].astype(str).str.strip()
                     if error_classes:
                         threshold_alerts += int(labels.isin(error_classes).sum())
                     else:

@@ -43,8 +43,11 @@ def anomaly_threshold_for_version(db, version):
     链：版本 → 模型库（training_job_id）→ 训练任务 metrics.score_artifact_id
     → 工件 JSON。工况分片版本（M7）优先走 conversion_metadata 里注册时写入的
     anomaly_score_stats_artifact_id——每分片独立标定，job 顶层 score_artifact_id
-    是最差段的，直接复用会张冠李戴。任一环节缺失返回 None（调用方回退 label
-    端口判定）。
+    是最差段的，直接复用会张冠李戴。智能体 S3 冠军链无 TrainingJob 载体，
+    标定工件指针同样走 conversion_metadata 分支（agent 链注册时写入）。
+    任一环节缺失返回 None（调用方按版本族决定回退或显式失败——AE 不可回退
+    label 端口，见 anomaly_predict_enrichment）。解析异常会留 ERROR 日志，
+    不静默吞掉（静默降级是监控失能的源头，2026-11-13 审计 P0-2）。
     """
     cached = _ANOMALY_THRESHOLD_CACHE.get(str(version.id))
     if cached is not None:
@@ -87,6 +90,12 @@ def anomaly_threshold_for_version(db, version):
         threshold = payload.get("threshold_score")
         return float(threshold) if threshold is not None else None
     except Exception:
+        logger.error(
+            "anomaly threshold resolution failed for version %s; "
+            "inference will fall back (AE: explicit failure)",
+            getattr(version, "id", None),
+            exc_info=True,
+        )
         return None
 
 
@@ -98,7 +107,7 @@ def anomaly_predict_enrichment(runtime, runtime_key, records, result, *,
     ONNX `scores` 端口 = sklearn decision_function（正=正常，2026-11-12
     双族实测），anomaly_score 取负统一为「越高越异常」。§6.6A 判定统一：
     is_anomaly 按 anomaly_score ≥ threshold_score（训练标定阈值，随版本
-    score_stats 下发）；threshold 不可得时回退 label 端口（offset 语义）。
+    score_stats 下发）。
     top_contributors 归因：AE（conversion_metadata.converter=="torch"）走
     **逐特征重构误差分解**（ONNX 第三端口 per_feature_error，零额外推理——
     §3.5 AE 专属归因）；IF/OC-SVM 用中心差分扰动归因（每特征 ±1% 各重推理
@@ -106,6 +115,13 @@ def anomaly_predict_enrichment(runtime, runtime_key, records, result, *,
     成本线性放大，一期不做。enable_attribution=False 供工况分片批量路径
     禁用（按总请求数判断归因，防分片子组恰为单行时成本线性放大）。非
     anomaly 部署原样返回。
+
+    阈值不可得时的处置（2026-11-13 审计 P0-2）：
+    - AE（converter=="torch"）的 ONNX label 端口是**占位全 1**（不是判定
+      源），回退它会让每条记录都判「正常」——监控静默失能。故显式报错，
+      不返回错误结论（失败可观测 > 静默漏报）。
+    - IF/OC-SVM 的 label 端口是 sklearn predict 的真实输出（offset 语义，
+      与标定阈值口径不同但方向一致），回退可用，但必须留 WARNING 日志。
     """
     schema = output_schema if isinstance(output_schema, dict) else {}
     if schema.get("task") != "anomaly":
@@ -114,20 +130,35 @@ def anomaly_predict_enrichment(runtime, runtime_key, records, result, *,
     predictions = result.get("predictions")
     if probabilities is None or predictions is None:
         return result
+    metadata = conversion_metadata if isinstance(conversion_metadata, dict) else {}
+    is_autoencoder = str(metadata.get("converter") or "") == "torch"
     result["anomaly_score"] = [-float(value) for value in probabilities]
     if threshold_score is not None:
         result["is_anomaly"] = [
             float(value) >= float(threshold_score) for value in result["anomaly_score"]
         ]
+    elif is_autoencoder:
+        # AE 无可用的替代判定源（label 端口是占位全 1）→ 显式失败，
+        # 杜绝「阈值丢失 → 每条都判正常」的无声失能。
+        logger.error(
+            "anomaly threshold unavailable for AE version at runtime_key=%s; "
+            "refusing to fall back to the placeholder label port "
+            "(score_stats linkage missing — check anomaly_score_stats_artifact_id)",
+            runtime_key,
+        )
+        raise InferenceDeploymentError("ANOMALY_THRESHOLD_UNAVAILABLE")
     else:
+        logger.warning(
+            "anomaly threshold unavailable at runtime_key=%s; falling back to the "
+            "ONNX label port (offset semantics, not the calibrated threshold)",
+            runtime_key,
+        )
         result["is_anomaly"] = [int(value) == -1 for value in predictions]
     names = [
         str(item.get("name"))
         for item in (feature_schema or [])
         if isinstance(item, dict) and item.get("name")
     ]
-    metadata = conversion_metadata if isinstance(conversion_metadata, dict) else {}
-    is_autoencoder = str(metadata.get("converter") or "") == "torch"
     per_feature_error = result.get("per_feature_error") if is_autoencoder else None
     if enable_attribution and len(records) == 1 and names and per_feature_error is not None:
         # AE 专属归因（§3.5）：逐特征重构误差分解——融合图第三端口直接给出
