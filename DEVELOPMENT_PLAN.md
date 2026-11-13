@@ -949,3 +949,5 @@ deep 扫描（scan-2026-11-13T03-11-00.028Z-cc5beb521a90，seal sha256:b1010e95�
 - 依赖扫描 463 包完成；1 个 inconclusive hypothesis（权限检查 candidate，历史同款）
 
 浏览器走查（compose 栈 localhost:5173）：登录 ✓ → AutoML 范式卡片（title/选中角标）✓ → 无监督表单（污染率先验/算法家族三族选项）✓ → 闭环页正常渲染（无 loop 数据面板静默符合设计）✓。**注意：栈正确入口为 localhost:5173（frontend 映射），127.0.0.1:80（nginx）origin 不在 CORS 白名单**。
+
+**WITH_TORCH 合同回归修复（cc344cc9）**：push CI（43357822572）挂 test_ci_workflow——生产 Dockerfile 禁显式 index 切换参数字面量（10-28 不可复现事故的合同化，子串断言连注释都抓）。WITH_TORCH 在线兜底改为 `--find-links` 指向 PyTorch 官方 CPU wheel 目录（默认 URL 内联，find-links 不在断言内；本地 pip download 同 URL 实测拉取成功）。**最新 main 的 push CI 全绿（run 43362237180 @ cc344cc9，含双 OS backend suite+合同测试）**。
