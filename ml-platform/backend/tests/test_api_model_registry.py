@@ -1,4 +1,5 @@
 import io
+import json
 import tempfile
 import unittest
 import uuid
@@ -617,6 +618,428 @@ class TestModelRegistryAPI(unittest.TestCase):
                 PlatformAPI.source_id == uuid.UUID(deployment_id),
             ).count(),
             0,
+        )
+
+
+class TestLabelRecalibrateAPI(unittest.TestCase):
+    """M6 半监督档 1 API 入口：POST /api/model-versions/{id}/recalibrate-labels。
+
+    覆盖：路由顺序坑（不被 `{action}` 通配吞掉）、happy path（新版本 + 新阈值）、
+    门槛 fail-closed 稳定码、非 anomaly 版本拒绝、未知版本/未知数据集 404、
+    请求级 feedback 标记落位、挂载替换语义。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.temporary = tempfile.TemporaryDirectory()
+        cls.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(cls.engine)
+        cls.Session = sessionmaker(bind=cls.engine, expire_on_commit=False)
+        cls.db = cls.Session()
+        cls.user = User(username="m6-api-owner", password_hash="hash")
+        cls.db.add(cls.user)
+        cls.db.flush()
+        cls.project = Project(name="M6 API", owner_id=cls.user.id)
+        cls.db.add(cls.project)
+        cls.db.commit()
+        cls.storage = LocalStorage(Path(cls.temporary.name) / "storage")
+        cls.artifact_service = ArtifactService(cls.db, cls.storage)
+
+        def fake_validator(path, feature_schema, output_schema):
+            return ConversionResult(
+                input_names=("features",), output_names=("label", "probabilities"),
+                opset=17, sha256="a" * 64, size=path.stat().st_size,
+                converter="upload", feature_schema=feature_schema,
+                output_schema=output_schema,
+            )
+
+        def fake_converter(_source, destination, **_kwargs):
+            destination.write_bytes(b"converted-onnx")
+            return ConversionResult(
+                input_names=("features",), output_names=("label", "probabilities"),
+                opset=17, sha256="c" * 64, size=destination.stat().st_size,
+                converter="test-converter",
+                feature_schema=[{"name": "current", "dtype": "float64"}],
+                output_schema={"name": "fault", "dtype": "int64", "task": "classification"},
+            )
+
+        cls.registry_service = ModelRegistryService(
+            artifact_service=cls.artifact_service,
+            converter=fake_converter,
+            validator=fake_validator,
+        )
+        cls.runtime = FakeRuntime()
+        cls.deployment_service = InferenceDeploymentService(cls.runtime, cls.Session)
+        app = FastAPI()
+
+        @app.exception_handler(ProjectAccessError)
+        async def project_access_error(_request, error):
+            return JSONResponse(
+                status_code=404 if error.hidden else 403,
+                content={"detail": {"code": error.code}},
+            )
+
+        cls.router = build_model_registry_router(
+            registry_service=cls.registry_service,
+            deployment_service=cls.deployment_service,
+            session_factory=cls.Session,
+        )
+        app.include_router(cls.router)
+
+        def override_db():
+            yield cls.db
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[get_current_user] = lambda: cls.user
+        cls.app = app
+        cls.client = TestClient(app)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.client.close()
+        cls.db.close()
+        cls.engine.dispose()
+        cls.temporary.cleanup()
+
+    def _make_score_stats_artifact(self, unique, threshold=0.1):
+        path = Path(self.temporary.name) / f"score-stats-{unique}.json"
+        path.write_text(
+            json.dumps({"kind": "anomaly_score_stats", "threshold_score": threshold}),
+            encoding="utf-8",
+        )
+        artifact = Artifact(
+            project_id=self.project.id, name=path.name, type="report",
+            storage_path=str(path), storage_uri="",
+            file_size=path.stat().st_size, format="json", metadata_={},
+        )
+        self.db.add(artifact)
+        self.db.flush()
+        return artifact
+
+    def _make_bundle_artifact(self, unique):
+        """真 joblib bundle（服务在回流行缺分数列时用它补打分）。"""
+        import joblib
+        from sklearn.ensemble import IsolationForest
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import StandardScaler
+
+        pipeline = Pipeline([
+            ("imputer", StandardScaler()),
+            ("detector", IsolationForest(n_estimators=10, random_state=0)),
+        ]).fit([[0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 1.0, 1.0]])
+        path = Path(self.temporary.name) / f"bundle-{unique}.joblib"
+        joblib.dump({
+            "model": pipeline,
+            "feature_schema": [{"name": f"f{i}", "dtype": "float64"} for i in range(4)],
+            "target_schema": [],
+            "score_stats": {"threshold_score": 0.1, "contamination": 0.01},
+        }, path)
+        artifact = Artifact(
+            project_id=self.project.id, name=path.name, type="model",
+            storage_path=str(path), storage_uri="",
+            file_size=path.stat().st_size, format="joblib", metadata_={},
+        )
+        self.db.add(artifact)
+        self.db.flush()
+        return artifact
+
+    def _make_source_version(self, *, task="anomaly", approved=True):
+        unique = uuid.uuid4().hex[:8]
+        bundle = self._make_bundle_artifact(unique)
+        stats = self._make_score_stats_artifact(unique)
+        model = RegisteredModel(
+            project_id=self.project.id, name=f"m6-source-{unique}",
+            created_by_id=self.user.id,
+        )
+        self.db.add(model)
+        self.db.flush()
+        version = ModelVersion(
+            registered_model_id=model.id,
+            version_number=1,
+            source_kind="onnx_artifact",
+            source_model_library_id=None,
+            source_artifact_id=bundle.id,
+            onnx_artifact_id=bundle.id,
+            framework="sklearn",
+            algorithm="iforest",
+            feature_schema=[{"name": f"f{i}", "dtype": "float64"} for i in range(4)],
+            output_schema={"name": "anomaly_score", "dtype": "float64", "task": task},
+            metrics={},
+            approval_status="approved" if approved else "pending",
+            lifecycle_state="enabled" if approved else "pending_review",
+            conversion_metadata={"anomaly_score_stats_artifact_id": str(stats.id)},
+            created_by_id=self.user.id,
+        )
+        self.db.add(version)
+        self.db.commit()
+        return version
+
+    def _make_labeled_dataset(self, *, confirmed=60, false_alarm=30, seed=1, include_feedback=True):
+        import numpy as np
+        import pandas as pd
+
+        rng = np.random.RandomState(seed)
+        rows = []
+        for _ in range(confirmed):
+            row = {f"f{index}": 8.0 + rng.randn() for index in range(4)}
+            row["anomaly_score"] = 5.0
+            if include_feedback:
+                row["feedback"] = "confirmed_fault"
+            rows.append(row)
+        for _ in range(false_alarm):
+            row = {f"f{index}": rng.randn() for index in range(4)}
+            row["anomaly_score"] = -1.0
+            if include_feedback:
+                row["feedback"] = "false_alarm"
+            rows.append(row)
+        path = Path(self.temporary.name) / f"labeled-{uuid.uuid4().hex[:8]}.csv"
+        pd.DataFrame(rows).to_csv(path, index=False)
+        artifact = Artifact(
+            project_id=self.project.id, name=path.name, type="dataset",
+            storage_path=str(path), storage_uri="",
+            file_size=path.stat().st_size, format="csv", metadata_={},
+        )
+        self.db.add(artifact)
+        self.db.commit()
+        return artifact
+
+    def _post(self, version, artifact, **extra):
+        payload = {"labeled_artifact_id": str(artifact.id)}
+        payload.update(extra)
+        return self.client.post(
+            f"/api/model-versions/{version.id}/recalibrate-labels",
+            json=payload,
+        )
+
+    def test_13_route_is_registered_before_wildcard_action_route(self):
+        exact = "/api/model-versions/{version_id}/recalibrate-labels"
+        wildcard = "/api/model-versions/{version_id}/{action}"
+        registered = [route.path for route in self.router.routes]
+        self.assertIn(exact, registered)
+        self.assertIn(wildcard, registered)
+        self.assertLess(registered.index(exact), registered.index(wildcard))
+        openapi_paths = list(self.app.openapi()["paths"].keys())
+        self.assertLess(openapi_paths.index(exact), openapi_paths.index(wildcard))
+        # 实际调用：通配在前会把本路由吞成 LifecycleComment body（422 extra_forbidden）
+        version = self._make_source_version()
+        artifact = self._make_labeled_dataset()
+        response = self._post(version, artifact)
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertNotIn("detail", response.json())
+
+    def test_14_happy_path_creates_version_with_new_threshold(self):
+        version = self._make_source_version()
+        artifact = self._make_labeled_dataset(confirmed=60, false_alarm=30, seed=5)
+        response = self._post(version, artifact)
+        self.assertEqual(response.status_code, 201, response.text)
+        body = response.json()
+        self.assertTrue(body["gate"]["unlocked"])
+        self.assertEqual(body["threshold_score"]["old"], 0.1)
+        self.assertGreater(body["threshold_score"]["new"], body["threshold_score"]["old"])
+        self.assertEqual(body["metrics"]["confirmed_count"], 60)
+        self.assertEqual(body["metrics"]["false_alarm_count"], 30)
+        self.assertEqual(body["approval_status"], "pending")
+        self.assertTrue(body["next_steps"])
+        self.assertIn("false_alarm_report", body)
+        new_version = self.db.query(ModelVersion).filter(
+            ModelVersion.id == uuid.UUID(body["version_id"]),
+        ).one()
+        self.assertTrue((new_version.conversion_metadata or {}).get("m6_recalibration"))
+        self.assertEqual(
+            new_version.conversion_metadata["anomaly_score_stats_artifact_id"],
+            body["stats_artifact_id"],
+        )
+        self.assertEqual(new_version.source_artifact_id, version.source_artifact_id)
+        self.assertEqual(new_version.output_schema["task"], "anomaly")
+
+    def test_15_gate_not_unlocked_surfaces_stable_code(self):
+        version = self._make_source_version()
+        artifact = self._make_labeled_dataset(confirmed=30, false_alarm=20)
+        response = self._post(version, artifact)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "M6_GATE_NOT_UNLOCKED")
+
+    def test_16_non_anomaly_version_is_rejected(self):
+        version = self._make_source_version(task="classification")
+        artifact = self._make_labeled_dataset()
+        response = self._post(version, artifact)
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(
+            response.json()["detail"]["code"],
+            "RECALIBRATE_REQUIRES_ANOMALY_VERSION",
+        )
+
+    def test_17_unknown_version_returns_404(self):
+        response = self.client.post(
+            f"/api/model-versions/{uuid.uuid4()}/recalibrate-labels",
+            json={"labeled_artifact_id": str(uuid.uuid4())},
+        )
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "MODEL_VERSION_NOT_FOUND")
+
+    def test_18_unknown_labeled_dataset_returns_404(self):
+        version = self._make_source_version()
+        response = self.client.post(
+            f"/api/model-versions/{version.id}/recalibrate-labels",
+            json={"labeled_artifact_id": str(uuid.uuid4())},
+        )
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "LABELED_DATASET_NOT_FOUND")
+
+    def test_19_request_feedback_marks_unlock_the_gate(self):
+        version = self._make_source_version()
+        artifact = self._make_labeled_dataset(include_feedback=False)
+        marks = {str(index): "confirmed_fault" for index in range(60)}
+        marks.update({str(60 + index): "false_alarm" for index in range(30)})
+        response = self._post(version, artifact, feedback_marks=marks)
+        self.assertEqual(response.status_code, 201, response.text)
+        body = response.json()
+        self.assertTrue(body["gate"]["unlocked"])
+        self.assertEqual(body["metrics"]["confirmed_count"], 60)
+        self.assertEqual(body["metrics"]["false_alarm_count"], 30)
+
+    def test_20_request_marks_keep_existing_dataset_labels(self):
+        version = self._make_source_version()
+        artifact = self._make_labeled_dataset(confirmed=60, false_alarm=30)
+        # 只标 1 行为 none：其余标签必须保留（apply_feedback_marks 整列覆盖坑）
+        response = self._post(version, artifact, feedback_marks={"0": "none"})
+        self.assertEqual(response.status_code, 201, response.text)
+        body = response.json()
+        self.assertEqual(body["metrics"]["confirmed_count"], 59)
+        self.assertEqual(body["metrics"]["false_alarm_count"], 30)
+
+    def test_21_mount_replaces_source_version_in_deployment(self):
+        version = self._make_source_version()
+        artifact = self._make_labeled_dataset()
+        deployment = self.client.post(
+            f"/api/projects/{self.project.id}/inference-deployments",
+            json={
+                "name": f"m6-mount-{uuid.uuid4().hex[:6]}",
+                "model_version_id": str(version.id),
+            },
+        )
+        self.assertEqual(deployment.status_code, 201, deployment.text)
+        deployment_id = deployment.json()["id"]
+        response = self._post(version, artifact, mount=True)
+        self.assertEqual(response.status_code, 201, response.text)
+        body = response.json()
+        self.assertEqual(body["mount"]["status"], "mounted")
+        self.assertEqual(body["mount"]["deployment_id"], deployment_id)
+        self.assertEqual(body["mount"]["approval"]["status"], "inherited_from_source")
+        self.assertEqual(body["approval_status"], "approved")
+        self.db.expire_all()
+        row = self.db.query(InferenceDeployment).filter(
+            InferenceDeployment.id == uuid.UUID(deployment_id),
+        ).one()
+        self.assertEqual(str(row.model_version_id), body["version_id"])
+        stable = self.db.query(DeploymentRevision).filter(
+            DeploymentRevision.deployment_id == row.id,
+            DeploymentRevision.status == "stable",
+        ).order_by(DeploymentRevision.revision_number.desc()).first()
+        self.assertEqual(
+            [str(target.model_version_id) for target in stable.targets],
+            [body["version_id"]],
+        )
+
+    def test_22_mount_without_deployment_reports_next_steps(self):
+        version = self._make_source_version()
+        artifact = self._make_labeled_dataset()
+        response = self._post(version, artifact, mount=True)
+        self.assertEqual(response.status_code, 201, response.text)
+        body = response.json()
+        self.assertEqual(body["mount"]["status"], "not_mounted")
+        self.assertEqual(body["mount"]["reason"], "SOURCE_VERSION_NOT_MOUNTED")
+        self.assertEqual(body["approval_status"], "pending")
+        self.assertTrue(any("approve" in step for step in body["next_steps"]))
+
+    def test_23_operator_cannot_run_label_recalibration(self):
+        operator = User(username="m6-api-operator", password_hash="hash")
+        self.db.add(operator)
+        self.db.flush()
+        self.db.add(ProjectMember(
+            project_id=self.project.id,
+            user_id=operator.id,
+            role="operator",
+            created_by=self.user.id,
+        ))
+        self.db.commit()
+        version = self._make_source_version()
+        artifact = self._make_labeled_dataset()
+        self.app.dependency_overrides[get_current_user] = lambda: operator
+        try:
+            response = self._post(version, artifact)
+        finally:
+            self.app.dependency_overrides[get_current_user] = lambda: self.user
+        self.assertEqual(response.status_code, 403, response.text)
+
+    def _make_deployment(self, version):
+        created = self.client.post(
+            f"/api/projects/{self.project.id}/inference-deployments",
+            json={
+                "name": f"fleet-shard-{uuid.uuid4().hex[:6]}",
+                "model_version_id": str(version.id),
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        return created.json()["id"]
+
+    def test_24_fleet_shard_accepts_explicit_condition_column(self):
+        """挂载请求可显式声明工况列：服务端据此落 deployment.condition_column
+        （不再只能隐式用 device_id），避免挂出永不被路由命中的分片。"""
+        deployed = self._make_source_version()
+        deployment_id = self._make_deployment(deployed)
+        shard_version = self._make_source_version()
+        response = self.client.post(
+            f"/api/inference-deployments/{deployment_id}/fleet-shards",
+            json={
+                "model_version_id": str(shard_version.id),
+                "condition_value": "ZZQX113",
+                "condition_column": "station",
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.text)
+        body = response.json()
+        # 新分片按 model_version_id 定位（targets 列表顺序不保证）
+        mounted = next(
+            item for item in body["targets"]
+            if str(item["model_version_id"]) == str(shard_version.id)
+        )
+        self.assertEqual(mounted["condition_value"], "ZZQX113")
+        self.assertEqual(len(body["targets"]), 2)
+        self.db.expire_all()
+        row = self.db.query(InferenceDeployment).filter(
+            InferenceDeployment.id == uuid.UUID(deployment_id),
+        ).one()
+        self.assertEqual(row.condition_column, "station")
+
+    def test_25_fleet_shard_rejects_condition_column_mismatch(self):
+        """部署已有工况列时，挂载声明不同工况列必须 fail-closed
+        （FLEET_SHARD_CONDITION_COLUMN_MISMATCH），不得静默产出不可达分片。"""
+        deployed = self._make_source_version()
+        deployment_id = self._make_deployment(deployed)
+        self.db.expire_all()
+        row = self.db.query(InferenceDeployment).filter(
+            InferenceDeployment.id == uuid.UUID(deployment_id),
+        ).one()
+        row.condition_column = "station"
+        self.db.commit()
+        shard_version = self._make_source_version()
+        response = self.client.post(
+            f"/api/inference-deployments/{deployment_id}/fleet-shards",
+            json={
+                "model_version_id": str(shard_version.id),
+                "condition_value": "ZZQX113",
+                "condition_column": "device_id",
+            },
+        )
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(
+            response.json()["detail"]["code"],
+            "FLEET_SHARD_CONDITION_COLUMN_MISMATCH",
         )
 
 

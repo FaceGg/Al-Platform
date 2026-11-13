@@ -90,6 +90,12 @@ class FleetShardCreate(StrictSchema):
     model_version_id: UUID
     condition_value: StrictStr = Field(min_length=1, max_length=128)
     weight_bps: StrictInt | None = Field(default=None, ge=0, le=10000)
+    # 挂载使用的工况列（§7.1.3：device_id 作为 condition_column 的一等应用）。
+    # 部署已有工况列时必须与之一致，否则挂载出的分片永不被 ConditionValueRouter
+    # 命中（不可达分片）——服务端据此 fail-closed 报
+    # FLEET_SHARD_CONDITION_COLUMN_MISMATCH。留空=沿用部署现有工况列；部署
+    # 无工况列时服务端落此值（缺省 device_id）。
+    condition_column: StrictStr | None = Field(default=None, min_length=1, max_length=128)
 
 
 class ApiKeyCreate(StrictSchema):

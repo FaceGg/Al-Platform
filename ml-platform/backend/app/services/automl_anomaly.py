@@ -420,7 +420,11 @@ def evaluate_anomaly_gates(metrics: dict[str, object], *, contamination: float) 
     统计容差放宽下限，避免小样本任务被随机波动误杀。
     """
     synthetic_auc = float(metrics.get("synthetic_auc") or 0.0)
-    normal_fpr = float(metrics.get("normal_fpr") or 1.0)
+    # falsy-zero 陷阱：``normal_fpr=0.0``（零误报——最好情况）会被 ``or 1.0``
+    # 读成 1.0（最差），把「一项门禁必过的完美模型」误判为未过。缺失才用
+    # 缺省 1.0（缺测=否决，fail-closed），实测 0.0 必须按 0.0 读。
+    raw_fpr = metrics.get("normal_fpr")
+    normal_fpr = 1.0 if raw_fpr is None else float(raw_fpr)
     stability = metrics.get("stability")
     holdout_size = int(metrics.get("holdout_size") or 0)
     statistical_margin = (

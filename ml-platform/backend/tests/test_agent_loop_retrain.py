@@ -14,6 +14,7 @@
 
 import atexit
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -1292,6 +1293,296 @@ class TestAnomalyClosedLoop(AgentLoopRetrain):
         self.assertEqual(rows[0]["feedback"], "false_alarm")
         self.assertEqual(rows[0]["row_index"], 0)
         self.assertIn("anomaly_score", rows[0])
+
+
+class AgentAnomalyRecipeReplay(unittest.TestCase):
+    """无监督配方重放（技术方案 §2.1/§3.4/§3.7）：范式随配方固化，重放走同一合同。
+
+    两条曾硬要求「目标列」的重放路径：
+    - 服务化铸造 engine 慢路径（app/api/agent_extras.py cast_deployment）；
+    - 编排智能体重放（app/services/agent/loop_retrain.py）。
+    覆盖：anomaly 配方不再 422 / 不再要求 retrain_target_column，且下发
+    无监督引擎合同（target_columns=[]、CV off、contamination 透传、无监督
+    算法族白名单）；有监督配方缺目标列的行为零变化。
+    """
+
+    DATASET_ROWS = 8
+
+    @classmethod
+    def setUpClass(cls):
+        ensure_admin()
+        cls.h = login()
+        db = SessionLocal()
+        try:
+            cls.user_id = db.query(User).filter(User.username == "admin").one().id
+        finally:
+            db.close()
+        r = client.post("/api/projects", json={
+            "name": f"anomaly-replay-{uuid.uuid4().hex[:8]}",
+            "description": "anomaly recipe replay tests",
+        }, headers=cls.h)
+        assert r.status_code == 201, r.text
+        cls.project_id = r.json()["id"]
+        # mlflow 本地跟踪目录（铸造触发会建实验）——目录不存在时先建。
+        Path("temp_test").mkdir(exist_ok=True)
+
+    # ---------------------------------------------------------------- helpers
+
+    def _db(self):
+        return SessionLocal()
+
+    def _dataset(self, db, *, with_target=False):
+        """无目标列数据集（无监督形态）；with_target=True 时带 label 列。"""
+        import pandas as pd
+
+        from app.services.artifact_service import build_artifact_service
+
+        frame = pd.DataFrame({
+            "f1": [0.1 * index for index in range(self.DATASET_ROWS)],
+            "f2": [1.0 + 0.2 * index for index in range(self.DATASET_ROWS)],
+            "f3": [2.0 - 0.1 * index for index in range(self.DATASET_ROWS)],
+        })
+        if with_target:
+            frame["label"] = [0, 1] * (self.DATASET_ROWS // 2)
+        service = build_artifact_service(db)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "anomaly-dataset.csv"
+            frame.to_csv(path, index=False)
+            artifact = service.create_from_file(
+                uuid.UUID(self.project_id), path,
+                f"anomaly-ds-{uuid.uuid4().hex[:6]}", "dataset",
+                metadata={"row_count": int(len(frame)),
+                          "column_count": int(len(frame.columns))},
+            )
+        return artifact
+
+    def _anomaly_content(self, contamination=0.02):
+        """无监督配方固化 content（与 build_fixation_content 同形状）。"""
+        return {
+            "domain": "test-domain",
+            "inputs": {"target_column": None},
+            "feature_script": "",
+            "acceptance_gates": {"synthetic_auc": 0.85, "normal_fpr": 0.03, "stability": 0.8},
+            "retrain_ensemble": {"enabled": False},
+            "retrain_algorithm_ids": ["iforest", "ocsvm"],
+            "anomaly": {
+                "task_type": "anomaly_detection",
+                "method": "iforest",
+                "contamination": contamination,
+                "condition_column": None,
+            },
+            "guidance": {
+                "task_type": "anomaly",
+                "modeling": {
+                    "contamination": contamination,
+                    "algorithm_whitelist": ["iforest", "ocsvm"],
+                },
+                "evaluation": {"metric_gates": {"synthetic_auc": 0.85}},
+                "auto_servitize": True,
+            },
+            "source_run_id": str(uuid.uuid4()),
+            "smoke_row": {"f1": 0.1, "f2": 1.0, "f3": 2.0},
+        }
+
+    def _supervised_content_without_target(self):
+        """有监督配方但缺目标列（存量形态）——必须照旧报错。"""
+        return {
+            "domain": "test-domain",
+            "inputs": {"target_column": None},
+            "feature_script": "",
+            "acceptance_gates": {"recall_minority": 0.5},
+            "retrain_ensemble": {"enabled": False},
+            "retrain_algorithm_ids": ["logistic"],
+            "guidance": {
+                "task_type": "supervised",
+                "modeling": {"algorithm_whitelist": ["logistic"]},
+                "evaluation": {"metric_gates": {"recall_minority": 0.5}},
+            },
+            "source_run_id": str(uuid.uuid4()),
+        }
+
+    def _recipe(self, db, content):
+        return create_recipe(
+            db,
+            project_id=uuid.UUID(self.project_id),
+            name=f"recipe-{uuid.uuid4().hex[:6]}",
+            content=content,
+            created_by=self.user_id,
+        )
+
+    def _context(self, db):
+        """编排算子上下文替身（artifact_service 走真实实现）。"""
+        from app.services.artifact_service import build_artifact_service
+
+        project_id = uuid.UUID(self.project_id)
+        operator_id = self.user_id
+        service = build_artifact_service(db)
+
+        class _Context:
+            def __init__(self):
+                self.artifact_service = service
+                self.project_id = project_id
+                self.node_id = "node-anomaly-replay"
+                self.operator_id = operator_id
+                self.logger = logging.getLogger("tests.anomaly_replay")
+
+        return _Context()
+
+    # ------------------------------------------------------------------ tests
+
+    def test_anomaly_cast_deployment_submits_unsupervised_contract(self):
+        """anomaly 配方重放：不报 CAST_TARGET_MISSING，下发无监督引擎合同。"""
+        from app.models.training import TrainingJob
+
+        db = self._db()
+        try:
+            recipe = self._recipe(db, self._anomaly_content(contamination=0.02))
+            dataset = self._dataset(db)
+            stub = _StubDispatcher()
+            with patch("app.services.experiment_tracking.resolve_tracking_configuration",
+                       return_value=("sqlite:///./temp_test/ut_mlflow_tracking.db",
+                                     "file:./temp_test/ut_mlflow_artifacts")), \
+                    patch("app.services.closed_loop_actions.automl_dispatcher", return_value=stub):
+                r = client.post("/api/agent/servitize/cast-deployment", json={
+                    "recipe_id": str(recipe.id),
+                    "project_id": self.project_id,
+                    "dataset_artifact_id": str(dataset.id),
+                    "mode": "engine",
+                    "max_trials": 5,
+                }, headers=self.h)
+            self.assertEqual(r.status_code, 201, r.text)
+            job = db.get(TrainingJob, uuid.UUID(r.json()["job_id"]))
+            self.assertIsNotNone(job)
+            # 无监督引擎合同（§3.1）：目标列空、CV off、合成基准口径
+            self.assertEqual(job.params["task"], "anomaly_detection")
+            self.assertEqual(job.params["target_columns"], [])
+            self.assertNotIn("target_column", job.params)
+            self.assertEqual(job.automl_contract["task_type"], "anomaly_detection")
+            self.assertEqual(job.automl_contract["target_columns"], [])
+            self.assertEqual(int(job.automl_contract["cross_validation_folds"]), 0)
+            self.assertEqual(job.automl_contract["cv_strategy"], "synthetic_benchmark")
+            # contamination 随配方透传
+            self.assertAlmostEqual(float(job.automl_contract["contamination"]), 0.02)
+            self.assertAlmostEqual(float(job.params["contamination"]), 0.02)
+            # 无监督算法族白名单（iforest/ocsvm/autoencoder）
+            self.assertTrue(
+                set(job.params["algorithm_ids"]).issubset(
+                    {"iforest", "ocsvm", "autoencoder"}),
+                job.params["algorithm_ids"])
+            # 特征列：数值特征列全带（无监督无目标列可剔除）
+            self.assertEqual(sorted(job.params["input_columns"]), ["f1", "f2", "f3"])
+        finally:
+            db.close()
+
+    def test_supervised_recipe_without_target_still_raises_cast_target_missing(self):
+        """零回归：有监督配方缺目标列仍 422 CAST_TARGET_MISSING。"""
+        db = self._db()
+        try:
+            recipe = self._recipe(db, self._supervised_content_without_target())
+            dataset = self._dataset(db, with_target=True)
+            r = client.post("/api/agent/servitize/cast-deployment", json={
+                "recipe_id": str(recipe.id),
+                "project_id": self.project_id,
+                "dataset_artifact_id": str(dataset.id),
+                "mode": "engine",
+                "max_trials": 5,
+            }, headers=self.h)
+            self.assertEqual(r.status_code, 422, r.text)
+            self.assertEqual(r.json()["detail"]["code"], "CAST_TARGET_MISSING")
+        finally:
+            db.close()
+
+    def test_anomaly_orchestration_replay_does_not_require_target_column(self):
+        """anomaly 重放不再要求 retrain_target_column（画布参数留空也能跑通）。"""
+        from app.services.agent.loop_retrain import orchestration_agent_retrain_execute
+
+        db = self._db()
+        try:
+            recipe = self._recipe(db, self._anomaly_content())
+            dataset = self._dataset(db)
+            context = self._context(db)
+            params = {
+                "dataset_artifact_id": str(dataset.id),
+                "retrain_dataset_artifact_id": str(dataset.id),
+                "agent_recipe_id": str(recipe.id),
+                "swap_deployment_id": str(uuid.uuid4()),
+                "threshold_rows": 1,
+                "retrain_max_trials": 5,
+            }
+            with patch("app.services.agent.executor.launch_agent_run") as launch:
+                result = orchestration_agent_retrain_execute(context, {}, params)
+            triggered = result.outputs["triggered"][0]
+            self.assertTrue(triggered["triggered"], triggered)
+            launch.assert_called_once()
+            run = db.get(AgentRun, uuid.UUID(triggered["agent_run_id"]))
+            self.assertIsNotNone(run)
+            # 无监督重放：run 无目标列，范式随 guidance 快照延续
+            self.assertFalse(run.target_column)
+            self.assertEqual((run.guidance_json or {}).get("task_type"), "anomaly")
+        finally:
+            db.close()
+
+    def test_supervised_orchestration_replay_still_requires_target_column(self):
+        """零回归：有监督重放缺 retrain_target_column 仍报 RuntimeError。"""
+        from app.services.agent.loop_retrain import orchestration_agent_retrain_execute
+
+        db = self._db()
+        try:
+            recipe = self._recipe(db, self._supervised_content_without_target())
+            dataset = self._dataset(db, with_target=True)
+            context = self._context(db)
+            params = {
+                "dataset_artifact_id": str(dataset.id),
+                "retrain_dataset_artifact_id": str(dataset.id),
+                "agent_recipe_id": str(recipe.id),
+                "swap_deployment_id": str(uuid.uuid4()),
+                "threshold_rows": 1,
+                "retrain_max_trials": 5,
+            }
+            with self.assertRaises(RuntimeError) as err:
+                orchestration_agent_retrain_execute(context, {}, params)
+            self.assertIn("retrain_target_column", str(err.exception))
+        finally:
+            db.close()
+
+    def test_anomaly_replay_run_uses_anomaly_trainer(self):
+        """重放 run 走无监督训练器（anomaly_trainer），不是监督 lightweight_trainer。"""
+        from types import SimpleNamespace
+
+        from app.services.agent.anomaly_trainer import anomaly_trainer
+        from app.services.agent.executor import execute_agent_run, lightweight_trainer
+
+        db = self._db()
+        try:
+            dataset = self._dataset(db)
+            run = AgentRun(
+                project_id=uuid.UUID(self.project_id),
+                dataset_artifact_id=dataset.id,
+                target_column=None,
+                status="pending",
+                current_stage="s1",
+                guidance_json={"task_type": "anomaly"},
+                created_by=self.user_id,
+            )
+            db.add(run)
+            db.commit()
+            captured: dict = {}
+
+            class _StubRunner:
+                def __init__(self, _db, **kwargs):
+                    captured.update(kwargs)
+
+                def run_to_completion(self):
+                    return run
+
+            with patch("app.services.agent.executor._resolve_config",
+                       return_value=SimpleNamespace(api_key="test-key")), \
+                    patch("app.services.agent.runner.AgentRunner", _StubRunner):
+                execute_agent_run(run.id)
+            self.assertIs(captured.get("trainer"), anomaly_trainer)
+            self.assertIsNot(captured.get("trainer"), lightweight_trainer)
+        finally:
+            db.close()
 
 
 if __name__ == "__main__":

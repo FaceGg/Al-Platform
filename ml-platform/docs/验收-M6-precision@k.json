@@ -1,0 +1,374 @@
+{
+  "date": "2026-11-13",
+  "criterion": "§6.4 二期总验收 判据②（precision@k 提升 + 合成基准重跑不破门禁 + false_alarm 分布下移）",
+  "mode": "mechanism-verification",
+  "mode_detail": "确定性合成发生器：AR(1) 弱相关正常样本；确认故障类取自独立随机种子（seed+1000）合成基准中**分数超基线阈值**的异常（现场口径：只有触发过报警的样本才可能被确认）；false_alarm 类为正常样本中分数超基线阈值者",
+  "honesty_notice": "mechanism-verification 模式的数字只证明机制在合成标签上成立，不代表 §6.2 真实门槛（confirmed_fault ≥50 条真实确认故障 + ≥2 种真实异常形态）已满足；真实门槛状态见 m6_real_gate。",
+  "data": {
+    "source": "deterministic-synthetic-generator",
+    "data_path": null,
+    "provenance": "generator-synthetic",
+    "seed": 42,
+    "n_features": 6,
+    "feature_names": [
+      "f0",
+      "f1",
+      "f2",
+      "f3",
+      "f4",
+      "f5"
+    ],
+    "train_rows": 640,
+    "holdout_rows": 160,
+    "evaluation_rows": 300,
+    "confirmed_rows": 60,
+    "false_alarm_rows": 40,
+    "normal_background_rows": 200,
+    "fault_shape_counts": {
+      "uniform_outlier": 33,
+      "local_perturbation": 21,
+      "combinatorial_anomaly": 6
+    }
+  },
+  "model": {
+    "family": "iforest",
+    "params": {
+      "n_estimators": 200,
+      "max_samples": 256
+    },
+    "holdout_ratio": 0.2
+  },
+  "contamination": 0.01,
+  "alarm_budget_k": 60,
+  "thresholds": {
+    "baseline_score": 0.57028,
+    "baseline_source": "一期标定：AnomalyScoreCalibrator.fit(holdout_scores, contamination=0.01).threshold_score（保留集 (1-contamination) 分位）",
+    "recalibrated_score": 0.621496,
+    "recalibrated_source": "标签重标定：optimal_threshold_from_labels(confirmed_scores, false_alarm_scores)（漏报罚 2×误报，201 分位网格扫描）",
+    "delta": 0.051216,
+    "recalibration_detail": {
+      "threshold": 0.6214956435263679,
+      "loss": 0.725,
+      "fnr": 0.3,
+      "fpr": 0.125,
+      "confirmed_count": 60,
+      "false_alarm_count": 40
+    }
+  },
+  "precision_at_k": {
+    "definition": "报警预算口径 precision@k：报警集合 A(t)={score≥t}；操作员处置预算 k 条，按到达（时间）序取前 k 条处置，超预算部分被丢弃；precision = 处置批次中真故障（confirmed_fault）占比。该口径含阈值——阈值重标定可直接改善；纯排序口径（runner.py S4：混合池取分数前 k 名）阈值不变，另作对照列出。",
+    "k": 60,
+    "before": {
+      "threshold": 0.57028,
+      "alarm_count": 101,
+      "alarm_budget_k": 60,
+      "budget_exceeded": true,
+      "dropped_over_budget": 41,
+      "processed_count": 60,
+      "true_fault_in_processed": 34,
+      "precision": 0.566667
+    },
+    "after": {
+      "threshold": 0.621496,
+      "alarm_count": 47,
+      "alarm_budget_k": 60,
+      "budget_exceeded": false,
+      "dropped_over_budget": 0,
+      "processed_count": 47,
+      "true_fault_in_processed": 42,
+      "precision": 0.893617
+    },
+    "delta": 0.32695,
+    "improved": true
+  },
+  "precision_at_k_ranking_control": {
+    "definition": "纯排序口径（runner.py S4：混合池分数降序取前 k）——阈值不变，前后必然相同",
+    "k": 60,
+    "top_count": 60,
+    "true_fault_in_top": 45,
+    "precision": 0.75,
+    "threshold_invariant": true
+  },
+  "class_score_distributions": {
+    "confirmed_fault": {
+      "count": 60,
+      "min": 0.570515,
+      "q25": 0.593616,
+      "median": 0.727153,
+      "q75": 0.734462,
+      "max": 0.747652,
+      "mean": 0.673541
+    },
+    "false_alarm": {
+      "count": 40,
+      "min": 0.570626,
+      "q25": 0.575298,
+      "median": 0.580872,
+      "q75": 0.597683,
+      "max": 0.69664,
+      "mean": 0.592176
+    },
+    "normal_background": {
+      "count": 200,
+      "min": 0.379002,
+      "q25": 0.422837,
+      "median": 0.448154,
+      "q75": 0.473181,
+      "max": 0.57083,
+      "mean": 0.451652
+    }
+  },
+  "detection": {
+    "confirmed_fault_detection_rate": {
+      "before": 1.0,
+      "after": 0.7
+    },
+    "false_alarm_alarm_rate_on_false_alarm_class": {
+      "before": 1.0,
+      "after": 0.125
+    },
+    "normal_background_alarm_rate": {
+      "before": 0.005,
+      "after": 0.0
+    }
+  },
+  "false_alarm_shift": {
+    "semantics": "档 1 只动阈值不动检测器主体（§6.2 硬约束）→ 同一误报样本的**分数本身不变**，下移的是「分数相对阈值」的分布：阈值抬高 Δt 后全部误报样本的分数裕度（score − threshold）整体下移 Δt，且仍能触发报警的误报子集分数更低。",
+    "threshold_delta": 0.051216,
+    "false_alarm_alarm_set_before": {
+      "count": 40,
+      "min": 0.570626,
+      "q25": 0.575298,
+      "median": 0.580872,
+      "q75": 0.597683,
+      "max": 0.69664,
+      "mean": 0.592176
+    },
+    "false_alarm_alarm_set_after": {
+      "count": 5,
+      "min": 0.629429,
+      "q25": 0.629666,
+      "median": 0.634534,
+      "q75": 0.652324,
+      "max": 0.69664,
+      "mean": 0.648519
+    },
+    "false_alarm_score_margin_before": {
+      "count": 40,
+      "min": 0.000346,
+      "q25": 0.005018,
+      "median": 0.010593,
+      "q75": 0.027403,
+      "max": 0.12636,
+      "mean": 0.021896
+    },
+    "false_alarm_score_margin_after": {
+      "count": 40,
+      "min": -0.05087,
+      "q25": -0.046198,
+      "median": -0.040623,
+      "q75": -0.023813,
+      "max": 0.075144,
+      "mean": -0.02932
+    },
+    "false_alarm_score_margin_median_shift": -0.051216,
+    "normal_background_alarm_count": {
+      "before": 1,
+      "after": 0,
+      "background_rows": 200
+    },
+    "normal_background_alarm_rate": {
+      "before": 0.005,
+      "after": 0.0
+    },
+    "shifted_down": true
+  },
+  "synthetic_benchmark": {
+    "note": "synthetic_auc（ROC AUC）与 stability（Spearman）由分数排序决定、与判定阈值无关；normal_fpr / perturbation_recall 随阈值变化。重跑用同一模型、同一合成基准，只把判定阈值换成标签重标定阈值。",
+    "baseline": {
+      "threshold_score": 0.57028,
+      "synthetic_auc": 0.9523958333333333,
+      "normal_fpr": 0.0125,
+      "stability": 0.9882894106657931,
+      "perturbation_recall": 0.375,
+      "acceptance_gates": {
+        "synthetic_auc": {
+          "value": 0.9523958333333333,
+          "threshold": 0.85,
+          "passed": true
+        },
+        "normal_fpr": {
+          "value": 0.0125,
+          "threshold": 0.025732132722552273,
+          "passed": true
+        },
+        "stability": {
+          "value": 0.9882894106657931,
+          "threshold": 0.8,
+          "passed": true
+        }
+      },
+      "gates_passed": true
+    },
+    "recalibrated": {
+      "threshold_score": 0.621496,
+      "synthetic_auc": 0.9523958333333333,
+      "normal_fpr": 0.0,
+      "stability": 0.9882894106657931,
+      "perturbation_recall": 0.125,
+      "detection_recall_per_class": {
+        "uniform_outlier": 1.0,
+        "local_perturbation": 0.125,
+        "combinatorial_anomaly": 0.0
+      },
+      "acceptance_gates": {
+        "synthetic_auc": {
+          "value": 0.9523958333333333,
+          "threshold": 0.85,
+          "passed": true
+        },
+        "normal_fpr": {
+          "value": 1.0,
+          "threshold": 0.025732132722552273,
+          "passed": false
+        },
+        "stability": {
+          "value": 0.9882894106657931,
+          "threshold": 0.8,
+          "passed": true
+        }
+      },
+      "gates_passed": false,
+      "acceptance_gates_corrected": {
+        "synthetic_auc": {
+          "value": 0.9523958333333333,
+          "threshold": 0.85,
+          "passed": true
+        },
+        "normal_fpr": {
+          "value": 0.0,
+          "threshold": 0.025732132722552273,
+          "passed": true
+        },
+        "stability": {
+          "value": 0.9882894106657931,
+          "threshold": 0.8,
+          "passed": true
+        }
+      },
+      "gates_passed_corrected": true,
+      "platform_gate_defect": {
+        "gate": "normal_fpr",
+        "platform_reported_value": 1.0,
+        "actual_value": 0.0,
+        "detail": "evaluate_anomaly_gates 用 `float(metrics.get('normal_fpr') or 1.0)` 读数——normal_fpr=0.0（falsy，零误报）被读成 1.0（最差），导致该项门禁被误判为未过",
+        "reference": "app/services/automl_anomaly.py::evaluate_anomaly_gates",
+        "note": "平台既有实现缺陷，本次未修改该文件（不在本任务改动范围）"
+      }
+    }
+  },
+  "m6_mechanism_gate": {
+    "note": "合成/给定标签上跑 meets_m6_gate 的结果（机制门槛，非真实门槛）",
+    "unlocked": true,
+    "confirmed_count": 60,
+    "min_confirmed_required": 50,
+    "morphology_cluster_count": 2
+  },
+  "m6_real_gate": {
+    "unlocked": false,
+    "status": "not_unlocked",
+    "confirmed_count": 0,
+    "morphology_cluster_count": null,
+    "min_confirmed_required": 50,
+    "reason": "mechanism-verification 模式：本次标签为合成标签，不构成 §6.2 真实门槛证据；平台真实 confirmed_fault 标签数 0（DEVELOPMENT_PLAN「2026-11-12 二期开工」登记 M6 按 §6.2 自动顺延），真实门槛未解锁"
+  },
+  "false_alarm_morphology_report": {
+    "clusters": [
+      {
+        "cluster": 0,
+        "sample_count": 8,
+        "dense_features": [
+          {
+            "feature": "f5",
+            "mean_z": -0.3067
+          },
+          {
+            "feature": "f4",
+            "mean_z": -0.9056
+          },
+          {
+            "feature": "f2",
+            "mean_z": -1.2561
+          }
+        ]
+      },
+      {
+        "cluster": 1,
+        "sample_count": 15,
+        "dense_features": [
+          {
+            "feature": "f2",
+            "mean_z": 2.0393
+          },
+          {
+            "feature": "f3",
+            "mean_z": 1.9332
+          },
+          {
+            "feature": "f4",
+            "mean_z": 1.7377
+          }
+        ]
+      },
+      {
+        "cluster": 2,
+        "sample_count": 9,
+        "dense_features": [
+          {
+            "feature": "f0",
+            "mean_z": 1.5804
+          },
+          {
+            "feature": "f1",
+            "mean_z": 1.4937
+          },
+          {
+            "feature": "f2",
+            "mean_z": 0.667
+          }
+        ]
+      },
+      {
+        "cluster": 3,
+        "sample_count": 8,
+        "dense_features": [
+          {
+            "feature": "f5",
+            "mean_z": 2.1776
+          },
+          {
+            "feature": "f4",
+            "mean_z": 2.1311
+          },
+          {
+            "feature": "f3",
+            "mean_z": 1.7217
+          }
+        ]
+      }
+    ],
+    "sample_count": 40
+  },
+  "verdict": {
+    "precision_at_k_improved": true,
+    "synthetic_benchmark_gates_still_pass": true,
+    "synthetic_benchmark_gates_passed_platform_raw": false,
+    "synthetic_benchmark_gates_note": "门禁判定按真实 normal_fpr 复算（平台 evaluate_anomaly_gates 的 `or 1.0` 读数会把 normal_fpr=0.0 读成 1.0，详见 synthetic_benchmark.recalibrated.platform_gate_defect）",
+    "false_alarm_distribution_shifted_down": true,
+    "criterion_2_mechanism_verified": true,
+    "criterion_2_release_ready": false,
+    "release_blockers": [
+      "§6.2 真实标签门槛未解锁（平台真实 confirmed_fault 标签 0 条）"
+    ]
+  }
+}

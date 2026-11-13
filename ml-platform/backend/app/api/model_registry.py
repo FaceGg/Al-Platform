@@ -1,9 +1,11 @@
 """Project-scoped model registry and basic inference API."""
 
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
+from pydantic import BaseModel, ConfigDict, StrictBool
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.auth import get_current_user
@@ -77,6 +79,39 @@ ROLLOUT_AUDIT_ACTIONS = {
 }
 
 
+# M6 半监督档 1（技术方案 §6.2）服务错误码 → HTTP 状态映射。稳定码原样进
+# 响应体（{"code": ..., "message": ...}），调用方可按码分支；未登记码默认 409。
+LABEL_RECALIBRATION_ERROR_STATUS = {
+    "MODEL_VERSION_NOT_FOUND": 404,
+    "LABELED_DATASET_NOT_FOUND": 404,
+    # 非 anomaly 版本不支持阈值重标定 = 请求语义不合法（422）
+    "RECALIBRATE_REQUIRES_ANOMALY_VERSION": 422,
+    # 前置门槛未达（confirmed<50 或形态<2）= 与当前状态冲突，调用方顺延
+    "M6_GATE_NOT_UNLOCKED": 409,
+    "RECALIBRATION_INSUFFICIENT_DATA": 409,
+    "MODEL_BUNDLE_INVALID": 422,
+}
+
+
+class LabelRecalibrateRequest(BaseModel):
+    """M6 半监督档 1（技术方案 §6.2）标签阈值重标定请求。
+
+    - labeled_artifact_id：带 feedback 列的回流标签数据集 artifact id（必填）
+    - feedback_marks：行号 → 标记（confirmed_fault / false_alarm / none），
+      可选；与数据集自带 feedback 列合并（请求优先，none 清除该行标签）
+    - mount：是否把重标定后的新阈值版本替换进源版本所在部署（默认 false）
+
+    本地定义于 API 层：公共 schema 契约模块由其他改动方维护，字段语义与
+    `DeviceRecalibrateRequest`（三期 M9）保持同一风格（extra=forbid）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    labeled_artifact_id: UUID
+    feedback_marks: dict[str, Literal["confirmed_fault", "false_alarm", "none"]] | None = None
+    mount: StrictBool = False
+
+
 def _error(error):
     code = getattr(error, "code", "MODEL_REGISTRY_FAILED")
     message = getattr(error, "detail_message", None) or code
@@ -94,6 +129,252 @@ def _error(error):
     elif code == "INFERENCE_LIMIT_EXCEEDED":
         status = 413
     raise HTTPException(status, {"code": code, "message": message})
+
+
+def _recalibration_error(error):
+    """M6 档 1 服务错误（ThresholdRecalibrationError）→ HTTP 响应。
+
+    稳定码原样进 body（与 `_error` 同一形状），状态按
+    LABEL_RECALIBRATION_ERROR_STATUS 映射：未登记码一律 409（冲突）。
+    """
+    code = getattr(error, "code", "RECALIBRATION_FAILED")
+    message = getattr(error, "detail_message", None) or code
+    status = LABEL_RECALIBRATION_ERROR_STATUS.get(code, 409)
+    raise HTTPException(status, {"code": code, "message": message})
+
+
+def _actor_uuid(value):
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def _merged_feedback_marks(db, labeled_artifact, requested_marks):
+    """请求级行标记 → 服务层 ``apply_feedback_marks`` 的嵌套形态。
+
+    服务层用 ``apply_feedback_marks`` 打 feedback 列：该函数一旦应用了任何
+    合法标记就**整列覆盖**（未标记行被清空）。所以这里先把数据集自带的
+    feedback 列合并进请求标记（请求优先，``none`` 清除该行），避免调用方
+    只补一条标记就把已有标签全冲掉。无请求标记时返回 None——服务层直接用
+    数据集自带的 feedback 列。
+    """
+    if not requested_marks:
+        return None
+    import pandas as pd
+
+    from app.services.artifact_service import build_artifact_service
+
+    service = build_artifact_service(db)
+    with service.materialize(
+        labeled_artifact.id, labeled_artifact.project_id, expected_type="dataset",
+    ) as path:
+        frame = pd.read_csv(path)
+    merged: dict[str, str] = {}
+    if "feedback" in frame.columns:
+        for index, value in enumerate(frame["feedback"].fillna("").astype(str).str.strip()):
+            if value in {"confirmed_fault", "false_alarm"}:
+                merged[str(index)] = value
+    for raw_index, mark in requested_marks.items():
+        if str(mark) == "none":
+            merged.pop(str(raw_index), None)
+        else:
+            merged[str(raw_index)] = str(mark)
+    return {str(labeled_artifact.id): merged}
+
+
+def _mount_recalibrated_version(
+    db, *, source_version, new_version, actor_id, registry, deployment_service,
+):
+    """把重标定后的新版本替换进源版本所在部署（闭环换模同款语义）。
+
+    新版本与源版本**同一检测器主体**（同 source/onnx artifact），只差阈值 →
+    挂载语义是「替换」而不是「新增分片」：新 stable revision 的 targets 复制
+    现有 targets 并把源版本替换为新版本（权重/工况值不变），deployment 的
+    model_version_id 同步指向新版本。推理侧按服务版本取阈值
+    （anomaly_threshold_for_version），新阈值即刻生效；运行时别名由
+    reconcile ≤60s 预载，期间回落旧键（与闭环换模同口径）。
+
+    审批：新版本默认 pending。只有**源版本已 approved 且正在该部署服役**时
+    才沿用源版本的审批结论（同一检测器主体，阈值已过 M6 门槛）并完成替换；
+    否则不审批不挂载，响应给出「需审批 + 需挂载」的明确下一步。
+    """
+    result = {
+        "requested": True,
+        "status": "not_mounted",
+        "deployment_id": None,
+        "revision_id": None,
+        "condition_value": None,
+        "reason": "SOURCE_VERSION_NOT_MOUNTED",
+        "approval": {
+            "status": "unchanged",
+            "source_version_id": str(source_version.id),
+        },
+        "runtime_reload": "skipped",
+        "targets": [],
+        "deployments": [],
+    }
+    if new_version is None:
+        result["reason"] = "NEW_VERSION_NOT_FOUND"
+        return result
+    project_id = source_version.registered_model.project_id
+    deployments: dict[str, dict] = {}
+    rows = db.query(DeploymentTarget, DeploymentRevision, InferenceDeployment).join(
+        DeploymentRevision, DeploymentTarget.revision_id == DeploymentRevision.id,
+    ).join(
+        InferenceDeployment, DeploymentRevision.deployment_id == InferenceDeployment.id,
+    ).filter(
+        DeploymentTarget.model_version_id == source_version.id,
+        DeploymentRevision.status.in_(("stable", "candidate", "draft")),
+        InferenceDeployment.project_id == project_id,
+    ).all()
+    for target, _revision, deployment in rows:
+        deployments.setdefault(str(deployment.id), {
+            "deployment": deployment,
+            "condition_value": getattr(target, "condition_value", None),
+        })
+    for deployment in db.query(InferenceDeployment).filter(
+        InferenceDeployment.model_version_id == source_version.id,
+        InferenceDeployment.project_id == project_id,
+    ).all():
+        deployments.setdefault(str(deployment.id), {
+            "deployment": deployment,
+            "condition_value": None,
+        })
+    if not deployments:
+        return result
+    result["deployment_id"] = sorted(deployments)[0]
+    if source_version.approval_status != "approved":
+        # 源版本尚未审批 → 不审批新版本、不挂载（审批门禁不绕过）
+        result["status"] = "requires_approval"
+        result["reason"] = "SOURCE_VERSION_NOT_APPROVED"
+        return result
+    mounted = False
+    for deployment_id in sorted(deployments):
+        info = deployments[deployment_id]
+        deployment = info["deployment"]
+        stable = db.query(DeploymentRevision).filter(
+            DeploymentRevision.deployment_id == deployment.id,
+            DeploymentRevision.status == "stable",
+        ).order_by(DeploymentRevision.revision_number.desc()).first()
+        existing_targets = list(stable.targets or ()) if stable is not None else []
+        if not existing_targets and str(deployment.model_version_id) != str(source_version.id):
+            continue
+        # 审批：新版本沿用源版本的审批结论（同一检测器主体，仅阈值重标定）
+        if new_version.approval_status != "approved":
+            registry.transition_model_version(
+                db, new_version.id, "approve", actor_id, commit=False,
+            )
+            result["approval"] = {
+                "status": "inherited_from_source",
+                "source_version_id": str(source_version.id),
+            }
+        # 轮换 stable revision：targets 全量复制 + 源版本替换为新版本
+        if stable is not None:
+            stable.status = "superseded"
+        latest = db.query(DeploymentRevision.revision_number).filter(
+            DeploymentRevision.deployment_id == deployment.id,
+        ).order_by(DeploymentRevision.revision_number.desc()).first()
+        revision = DeploymentRevision(
+            deployment_id=deployment.id,
+            revision_number=(int(latest[0]) + 1) if latest is not None else 1,
+            strategy="immediate",
+            status="stable",
+            created_by_id=_actor_uuid(actor_id),
+        )
+        db.add(revision)
+        db.flush()
+        targets = []
+        for target in existing_targets:
+            replaced = str(target.model_version_id) == str(source_version.id)
+            db.add(DeploymentTarget(
+                revision_id=revision.id,
+                model_version_id=(
+                    new_version.id if replaced else target.model_version_id
+                ),
+                weight_bps=int(target.weight_bps),
+                role="stable",
+                condition_value=getattr(target, "condition_value", None),
+            ))
+            targets.append({
+                "model_version_id": str(
+                    new_version.id if replaced else target.model_version_id
+                ),
+                "condition_value": getattr(target, "condition_value", None),
+                "weight_bps": int(target.weight_bps),
+                "replaced_source_version": replaced,
+            })
+        if not existing_targets:
+            db.add(DeploymentTarget(
+                revision_id=revision.id,
+                model_version_id=new_version.id,
+                weight_bps=10000,
+                role="stable",
+                condition_value=info.get("condition_value"),
+            ))
+            targets.append({
+                "model_version_id": str(new_version.id),
+                "condition_value": info.get("condition_value"),
+                "weight_bps": 10000,
+                "replaced_source_version": True,
+            })
+        if str(deployment.model_version_id) == str(source_version.id):
+            deployment.model_version_id = new_version.id
+        db.flush()
+        mounted = True
+        result["deployments"].append({
+            "deployment_id": deployment_id,
+            "revision_id": str(revision.id),
+            "revision_number": int(revision.revision_number),
+            "condition_value": info.get("condition_value"),
+            "targets": targets,
+        })
+        result["revision_id"] = str(revision.id)
+        result["condition_value"] = info.get("condition_value")
+        result["targets"] = targets
+        # 运行中部署：预载新 stable revision 的运行时别名（失败不阻断——别名
+        # 由 reconcile ≤60s 补齐，期间回落旧键，与闭环换模同口径）
+        if (
+            deployment_service is not None
+            and deployment.desired_state == "running"
+            and deployment.observed_state == "running"
+        ):
+            try:
+                deployment_service.start(db, deployment.id)
+                result["runtime_reload"] = "loaded"
+            except Exception:  # noqa: BLE001 - 运行时预载失败不阻断挂载结果
+                result["runtime_reload"] = "failed"
+    if not mounted:
+        return result
+    db.commit()
+    result["status"] = "mounted"
+    result["reason"] = None
+    return result
+
+
+def _recalibration_next_steps(new_version, mount):
+    """响应里的「下一步」：审批 → 挂载 → 复核（操作员可直接照做）。"""
+    version_id = str(new_version.id) if new_version is not None else ""
+    steps = []
+    if new_version is not None and new_version.approval_status != "approved":
+        steps.append(f"审批新版本：POST /api/model-versions/{version_id}/approve")
+    if mount.get("status") == "mounted":
+        steps.append(
+            f"已挂载：部署 {mount.get('deployment_id')} 的 stable revision "
+            f"{mount.get('revision_id')} 已指向新版本，阈值在推理侧生效"
+        )
+    elif mount.get("requested"):
+        steps.append(
+            f"挂载：POST /api/inference-deployments/{mount.get('deployment_id')}"
+            f"/fleet-shards（body: model_version_id={version_id}, "
+            f"condition_value={mount.get('condition_value')}）"
+        )
+    else:
+        steps.append(
+            "如需让新阈值生效：审批后把新版本挂到部署"
+            "（POST /api/inference-deployments/{deployment_id}/fleet-shards）"
+        )
+    return steps
 
 
 def _model_view(model):
@@ -560,6 +841,132 @@ def build_model_registry_router(
             _error(error)
         return result
 
+    @router.post("/api/model-versions/{version_id}/recalibrate-labels", status_code=201)
+    def recalibrate_labels(
+        version_id: str,
+        data: LabelRecalibrateRequest,
+        request: Request,
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
+    ):
+        """M6 半监督档 1（技术方案 §6.2）标签阈值重标定：confirmed_fault /
+        false_alarm 两组回流分数 → 加权损失最小（漏报罚 2×误报）求最优阈值 →
+        新 score_stats 产物 + 迁移形态新版本（同源 artifact，分片阈值指针指向
+        新 stats）。只动阈值，不动特征表示与检测器主体（ONNX 零重训）。
+
+        与三期 M9 `recalibrate-device` 同骨架：请求 schema + 鉴权 + 错误→HTTP
+        映射 + 响应形状。注册在 `{action}` 通配路由之前——FastAPI 按顺序匹配，
+        通配在前会把本路由吞成 LifecycleComment body（422 extra_forbidden）。
+
+        挂载（mount=true）：新版本与源版本同一检测器主体 → 挂载=「替换」：把
+        源版本从所在部署的 stable revision 替换为新版本（权重/工况值不变）。
+        源版本已 approved 且正在服役时才沿用其审批结论并完成替换；否则不审批
+        不挂载，响应给出「需审批 + 需挂载」的明确下一步。
+        """
+        version, _access = _version_access(db, version_id, current_user.id)
+        project_id = version.registered_model.project_id
+        require_project_access(db, project_id, current_user.id, "model.register")
+        if data.mount:
+            require_project_access(db, project_id, current_user.id, "model.approve")
+
+        from app.services.anomaly_threshold_recalibration import (
+            ThresholdRecalibrationError,
+            label_recalibrate_version,
+        )
+
+        labeled_artifact = db.query(Artifact).filter(
+            Artifact.id == data.labeled_artifact_id,
+            Artifact.project_id == project_id,
+        ).first()
+        if labeled_artifact is None:
+            raise HTTPException(404, {
+                "code": "LABELED_DATASET_NOT_FOUND",
+                "message": "LABELED_DATASET_NOT_FOUND",
+            })
+        try:
+            feedback_marks = _merged_feedback_marks(
+                db, labeled_artifact, data.feedback_marks,
+            )
+        except ArtifactAccessError as error:
+            raise HTTPException(404, {
+                "code": "LABELED_DATASET_NOT_FOUND",
+                "message": str(error),
+            })
+
+        try:
+            result = label_recalibrate_version(
+                db,
+                source_version_id=version.id,
+                labeled_artifact_id=labeled_artifact.id,
+                actor_id=current_user.id,
+                feedback_marks=feedback_marks,
+            )
+        except ThresholdRecalibrationError as error:
+            _recalibration_error(error)
+
+        new_version = db.query(ModelVersion).filter(
+            ModelVersion.id == UUID(str(result["version_id"])),
+        ).first()
+        registry, deployment_service = services(db)
+        if data.mount:
+            mount = _mount_recalibrated_version(
+                db,
+                source_version=version,
+                new_version=new_version,
+                actor_id=current_user.id,
+                registry=registry,
+                deployment_service=deployment_service,
+            )
+        else:
+            mount = {
+                "requested": False,
+                "status": "skipped",
+                "deployment_id": None,
+                "revision_id": None,
+                "condition_value": None,
+                "reason": "MOUNT_NOT_REQUESTED",
+                "approval": {
+                    "status": "unchanged",
+                    "source_version_id": str(version.id),
+                },
+                "runtime_reload": "skipped",
+                "targets": [],
+                "deployments": [],
+            }
+        return {
+            "version_id": result["version_id"],
+            "version_number": (
+                int(new_version.version_number) if new_version is not None else None
+            ),
+            "registered_model_id": result["registered_model_id"],
+            "registered_model_name": result["registered_model_name"],
+            "approval_status": (
+                new_version.approval_status if new_version is not None else None
+            ),
+            "lifecycle_state": (
+                new_version.lifecycle_state if new_version is not None else None
+            ),
+            "stats_artifact_id": result["stats_artifact_id"],
+            "source_version_id": str(version.id),
+            "threshold_score": {
+                "old": result.get("old_threshold"),
+                "new": result.get("new_threshold"),
+            },
+            "old_threshold": result.get("old_threshold"),
+            "new_threshold": result.get("new_threshold"),
+            "gate": result.get("gate"),
+            "false_alarm_report": result.get("false_alarm_report"),
+            "metrics": {
+                "loss": result.get("loss"),
+                "fnr": result.get("fnr"),
+                "fpr": result.get("fpr"),
+                "confirmed_count": result.get("confirmed_count"),
+                "false_alarm_count": result.get("false_alarm_count"),
+            },
+            "mount": mount,
+            "next_steps": _recalibration_next_steps(new_version, mount),
+        }
+
     @router.post("/api/model-versions/{version_id}/approve")
     def approve(version_id: str, data: LifecycleComment, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
         return lifecycle(version_id, data, request, db, current_user, "approve", "model_version.approve")
@@ -659,9 +1066,11 @@ def build_model_registry_router(
                     resource_type="inference_deployment",
                     resource_id=str(deployment.id),
                     changes={"model_version_id": str(data.model_version_id),
-                             "condition_value": data.condition_value},
+                             "condition_value": data.condition_value,
+                             "condition_column": data.condition_column},
                 ),
-                allowed_changes={"model_version_id", "condition_value", "weight_bps"},
+                allowed_changes={"model_version_id", "condition_value", "weight_bps",
+                                 "condition_column"},
             ):
                 result = add_fleet_shard_to_deployment(
                     db,
@@ -670,6 +1079,7 @@ def build_model_registry_router(
                     condition_value=data.condition_value,
                     actor_id=current_user.id,
                     weight_bps=data.weight_bps,
+                    condition_column=data.condition_column,
                 )
         except DeviceCalibrationError as error:
             _error(error)

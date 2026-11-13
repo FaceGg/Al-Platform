@@ -408,6 +408,12 @@ export async function listRollouts(deploymentId: string): Promise<ListResponse<D
 }
 
 // 机群监控聚合（技术方案 §7 三-3，三期 M10）：部署面 per-device 分片概览
+export interface FleetShardRunning {
+  rows: number;
+  alerts: number;
+  alert_rate: number | null;
+}
+
 export interface FleetShardView {
   condition_value: string | null;
   model_version_id: string;
@@ -417,6 +423,9 @@ export interface FleetShardView {
   fleet_compatible: boolean | null;
   recalibration: boolean;
   backtest: { synthetic_auc: number; per_class_recall: Record<string, number>; holdout_rows: number } | null;
+  // per-device 运行期报警率（M10「per-device fpr/PSI 聚合」的 fpr 侧）：无标签
+  // 下以该设备回流数据的模型报警率为 fpr proxy（回流/阈值缺失时为 null）。
+  running: FleetShardRunning | null;
 }
 
 export interface FleetOverview {

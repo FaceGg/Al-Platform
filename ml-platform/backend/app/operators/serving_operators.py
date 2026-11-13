@@ -305,7 +305,10 @@ class RetrainThresholdOperator(BaseOperator):
     parameters = [
         ParamSpec("dataset_artifact_id", "str", "", "Accumulated Dataset Artifact ID", required=True),
         ParamSpec("retrain_dataset_artifact_id", "str", "", "Retrain Dataset Artifact ID", required=True),
-        ParamSpec("retrain_target_column", "str", "", "Retrain Target Column", required=True),
+        # 目标列只在**监督**范式必填——无监督（异常检测）重训无目标列，画布层
+        # 强制填写会挡住无监督节点。运行时按部署范式校验（见 execute 内
+        # _deployment_is_anomaly）：监督缺目标列仍报原错误，无监督放行。
+        ParamSpec("retrain_target_column", "str", "", "Retrain Target Column"),
         ParamSpec("threshold_rows", "int", 12, "Threshold Rows", range_min=1),
         ParamSpec("retrain_max_trials", "int", 10, "Max Trials", range_min=5),
         # 编排闭环重训的终选层集成（多模型加权投票）：与闭环自动化配置同义，
@@ -322,6 +325,37 @@ class RetrainThresholdOperator(BaseOperator):
     def validate(self, inputs):
         return True
 
+    @staticmethod
+    def _deployment_is_anomaly(context, params) -> bool:
+        """目标列必填性按部署范式判定：服务版本 output_schema.task=="anomaly"
+        即无监督部署（无目标列）。解析失败一律按监督处理（fail-closed 报错）。"""
+        deployment_id = str(params.get("swap_deployment_id") or "").strip()
+        if not deployment_id or context.artifact_service is None:
+            return False
+        try:
+            import uuid as _uuid
+
+            from app.models.model_registry import (
+                InferenceDeployment,
+                ModelVersion,
+            )
+
+            db = context.artifact_service.db
+            deployment = db.query(InferenceDeployment).filter(
+                InferenceDeployment.id == _uuid.UUID(deployment_id),
+            ).first()
+            if deployment is None or deployment.model_version_id is None:
+                return False
+            version = db.query(ModelVersion).filter(
+                ModelVersion.id == deployment.model_version_id,
+            ).first()
+            if version is None:
+                return False
+            schema = version.output_schema if isinstance(version.output_schema, dict) else {}
+            return str(schema.get("task") or "") == "anomaly"
+        except Exception:  # noqa: BLE001 - 范式探测失败按监督处理
+            return False
+
     def execute(self, context: OperatorContext, inputs, params) -> OperatorResult:
         from app.models.training import TrainingJob
         from app.services.closed_loop_actions import (
@@ -333,7 +367,8 @@ class RetrainThresholdOperator(BaseOperator):
         threshold = max(1, int(params.get("threshold_rows") or 12))
         if not artifact_id:
             raise RuntimeError("dataset_artifact_id is required")
-        if not target_column:
+        if not target_column and not self._deployment_is_anomaly(context, params):
+            # 无监督（异常检测）部署无目标列——按部署范式放行；监督缺列仍报错。
             raise RuntimeError("retrain_target_column is required")
         if context.artifact_service is None or not context.project_id:
             raise RuntimeError("Artifact service and project context are required")
@@ -459,7 +494,10 @@ class AgentRetrainThresholdOperator(BaseOperator):
     parameters = [
         ParamSpec("dataset_artifact_id", "str", "", "Accumulated Dataset Artifact ID", required=True),
         ParamSpec("retrain_dataset_artifact_id", "str", "", "Retrain Dataset Artifact ID", required=True),
-        ParamSpec("retrain_target_column", "str", "", "Retrain Target Column", required=True),
+        # 目标列只在**监督**范式必填——无监督（异常检测）配方无目标列，画布层
+        # 强制填写会挡住无监督节点。范式由配方固化内容判定（services/agent/
+        # loop_retrain.detect_recipe_paradigm），运行时监督缺列仍报原错误。
+        ParamSpec("retrain_target_column", "str", "", "Retrain Target Column"),
         ParamSpec("agent_recipe_id", "str", "", "Fixated Recipe ID (with guidance snapshot)", required=True),
         ParamSpec("swap_deployment_id", "str", "", "Deployment ID to swap after completion", required=True),
         ParamSpec("threshold_rows", "int", 12, "Threshold Rows", range_min=1),

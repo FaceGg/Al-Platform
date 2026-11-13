@@ -1111,3 +1111,81 @@ AE 的 ONNX label 端口是**占位全 1**（`automl_anomaly_ae.py:98` `(mse*0)+
 - **正式架构口径（替代 §7.1 二选一）**：**按族混合**——默认族（iforest）走全局共享主体+设备级标定（B 形态），高精度/核方法族（ocsvm）走分片独立（A 形态）；AE 族（二期采纳）归属待其真实数据复证后定（当前证据倾向 B 形态可用）
 - 方案 §7.1 原文「全局共享检测器」的判据在 iforest 上成立、ocsvm 上不成立——**方案原文与实现现状的偏差以本实验结论收口**（非「二选一」而是「按族混合」）
 - 实验数据：[验收-机群架构AB对比.json](ml-platform/docs/验收-机群架构AB对比.json)（已迁入可跟踪目录）
+
+## 2026-11-13 第六轮：第四轮审计遗留的 6 项缺口逐项修复 + 1 处新缺陷（门禁 falsy-zero）
+
+用户指示「先解决这些问题」——针对第四轮审计登记的 6 项遗留缺口逐项落地。本轮全部修复并附回归测试。
+
+### 1. `fleet_overview` 回测 AUC 恒 null（已修）
+
+`recalibrate_device_version` 把重标定载荷写进 `version.metrics["recalibration"]`，而 `fleet_overview` 从 `version.conversion_metadata` 读 → 迁移分片的「回测 AUC」恒为空。改为**metrics 优先、conversion_metadata 回退**（兼容旧版本）。新增端到端用例：重标定→挂载→概览，AUC 非空。
+
+### 2. 同一 condition_value 可重复挂载（已修）
+
+原幂等只按 `model_version_id` → 同工况值挂不同版本被放行，`ConditionValueRouter` 取遍历到的最后一条，**路由结果依赖 DB 行序**。新增工况值唯一性校验：同值异版本抛新稳定码 `FLEET_SHARD_CONDITION_ALREADY_MOUNTED`；同版本仍走既有 `FLEET_SHARD_ALREADY_MOUNTED`（契约不变）。
+
+### 3. 分片权重不重平衡 + 不可达分片（已修）
+
+原实现把既有分片原权重复制进新 revision 再加新分片（2 分片时权重和 6000+4000+5000=**15000≠10000**）→ `WeightedTargetRouter` 直接 `TARGET_WEIGHTS_INVALID`。新增 `_rebalance_fleet_weights`（最大余额法，单片 ≥1 基点，总和**恒为 10000**）：显式 weight 占用该值、余量按比例分配；未显式指定则等分并让**原权重最高的既有分片严格最高**（它是兜底默认分片，等分并列会让兜底依赖 DB 行序）。
+另修**不可达分片**：部署已有工况列（如 `station`）时挂载的 device_id 分片永不被路由命中 → 挂载路径改为 fail-closed：新增 `condition_column` 入参，与部署现有工况列不一致时抛 `FLEET_SHARD_CONDITION_COLUMN_MISMATCH`（部署无工况列则落本次列，缺省 `device_id`）；API 侧 `FleetShardCreate` 增同名字段并透传。
+
+### 4. M6 档 1 无 API 入口（已修）
+
+新增 `POST /api/model-versions/{version_id}/recalibrate-labels`（201）：请求体带标定数据集 artifact id + 可选 `feedback_marks` 行级标记 + 可选 `mount`；调用既有 `label_recalibrate_version`（加权损失最优阈值，漏报罚 2×误报），响应含新版本号、新阈值、门槛判定、误报形态报表、审批状态与「下一步」指引。
+**路由顺序坑已避开**：注册在 `{action}` 通配路由之前（FastAPI 按序匹配，通配在前会吞成 `LifecycleComment` body → 422 extra_forbidden），并由用例断言「注册序 + OpenAPI paths 序 + 真实 POST 不返回 body 校验错」三重证据。
+错误码 → HTTP：`MODEL_VERSION_NOT_FOUND`/`LABELED_DATASET_NOT_FOUND` → 404；`RECALIBRATE_REQUIRES_ANOMALY_VERSION` → 422；`M6_GATE_NOT_UNLOCKED`/`RECALIBRATION_INSUFFICIENT_DATA` → 409；未登记码 → 409。
+
+### 5. anomaly 配方重放 422（已修）
+
+`cast_deployment` 与 `loop_retrain` 的编排/闭环重放均硬要求目标列 → 无监督配方（`inputs.target_column=None`）重放必 422。改为**按配方固化范式分流**：范式判定只认配方内容里的显式证据（`content["anomaly"]["task_type"]` / `content["guidance"]["task_type"]`），**不以「目标列为空」判定**（否则监督配方缺列会误判）。无监督分支下发无监督引擎合同：`target_columns=[]`、CV off、contamination 透传、无监督三族白名单；监督分支参数逐字不变（零回归）。
+画布层同步：`serving_operators` 两处 `retrain_target_column` 由必填改为可选（无监督节点不再被 UI 挡住），运行时按部署/配方范式校验——监督缺列仍报原错误。
+附带修**既有潜伏缺陷**：`load_replay_contract` 把字符串 recipe id 直绑 UUID 列会炸（`'str' object has no attribute 'hex'`）→ 归一为 UUID，不合法按 `DEMO_LOOP_AGENT_RECIPE_MISSING` fail-closed。
+
+### 6. per-device fpr 未进大屏（已修）
+
+后端早已产出 `running`（按分片阈值统计回流报警率），前端类型缺字段、面板缺列 → 补 `FleetShardRunning` 类型 + 「运行期报警率」列（>1.5% 标橙）。另修台账声称但未兑现的「普通部署静默不渲染」：此前仅按 `shards.length` 判空，普通部署（有 stable revision）也会出面板 → 改为同时要求 `condition_column` 非空。
+
+### 7. §6.4② precision@k 零证据（已补，机制验证口径）
+
+新增可复现验收件 `tools/acceptance/run_m6_precision_at_k.py` + `tests/test_m6_precision_at_k.py` + `docs/验收-M6-precision@k.{md,json}`（产物落**可跟踪**目录 `ml-platform/docs/`，避开仓库根 `docs/` 被 gitignore 的老坑）。数字（默认夹具 seed=42 / iforest / contamination=0.01）：
+
+| 口径 | 一期基线阈值 | 标签重标定阈值 |
+|---|---|---|
+| 阈值 | 0.570280 | **0.621496**（Δ=+0.051216） |
+| **precision@k**（k=60 报警预算） | **0.566667** | **0.893617**（Δ=+0.327） |
+| confirmed_fault 检出率 | 1.0 | 0.7（FNR=0.3） |
+| false_alarm 类报警率 | 1.0 | 0.125 |
+| 正常背景误报率 | 0.005 | 0.0 |
+| 合成基准 synthetic_auc / stability | 0.9524 / 0.9883 | 0.9524 / 0.9883（阈值无关，**门禁不破**） |
+
+误报分数裕度中位数 +0.010593 → −0.040623（位移 = −Δt），仍触发报警的误报 40→5 条；纯排序口径（runner.py S4 口径）对照恒为 0.75 → 提升来自**运行点**而非排序变化。**诚实边界**：合成标签下 `m6_real_gate.unlocked=false`（平台真实 confirmed_fault 仍为 0），机制门槛 `unlocked=true`（60≥50、形态簇 2），`criterion_2_release_ready=false`。
+
+### 8. 新发现并修复：门禁 `normal_fpr` falsy-zero 读数
+
+`evaluate_anomaly_gates` 用 `float(metrics.get("normal_fpr") or 1.0)` 读值 → **`normal_fpr=0.0`（零误报，最好情况）被读成 1.0（最差）**，把「该项必过的完美模型」误判未过。改为「缺失才用缺省 1.0（fail-closed），实测 0.0 按 0.0 读」。实测：`normal_fpr=0.0` → value 0.0 / passed=true（修复前 value 1.0 / passed=false）。
+
+### 9. 本轮验证
+
+- 后端受影响面回归：**414 passed / 35 subtests passed**（17 个模块：fleet / api-model-registry / project-access / agent-loop-retrain / m6-precision / threshold-recalibration / automl-anomaly / automl-anomaly-ae / condition-shard-routing / inference-deployment / api-inference-production / demo-loop / agent-runner / all-operators / operator-contract / suite-manifest / genericization-contract）
+- 分模块增量：`test_fleet_device_calibration` 11→**24**；`test_api_model_registry` 12→**25**（含协调者补的 2 例工况列透传）；`test_agent_loop_retrain` 47→**52**；`test_m6_precision_at_k` **6 passed**（2.65s）
+- 前端：`FleetShardPanel.test.tsx` **3 passed**（新建）+ `DemoLoopDetailPage.test.tsx` 3 passed（嵌入页无回归）+ `tsc --noEmit` 零错
+- 新测试模块已登记 `tests/week_manifest.py` week17（`test_suite_manifest` 断言绿）
+
+### 10. 本轮之后仍然遗留的问题（按严重度，如实登记）
+
+- **[高] 判据④ 真实标签口径不通过**（第五轮结论，本轮未动）——模型误报 ~1.0% vs 阈值基线 0.038%（降幅 −25%）。根因是该数据源合格判定本身按力矩限值执行 → 阈值规则定义性近零误报。**方案 §1.1「降误报」主张在「阈值规则已自洽」场景不成立**；达成条件 = 接入「现场报警误报率高」的产线数据后同口径复测。
+- **[高] §6.2 真实门槛未解锁**——平台真实 confirmed_fault = 0，M6 档 1 只能机制验证；precision@k 证据的夹具前提「真故障分数整体高于误报样本」需真实标签检验。
+- **[中] 存量 revision 权重和可能仍 ≠ 10000**——修复只作用于新挂载产生的 revision，**存量数据需迁移**（本轮未做）。
+- **[中] M6/M9 重标定路由无审计事件**——与 M9 一致（该模块 `PROJECT_WRITE_ACTIONS` 集合全等断言约束），但「阈值重标定会改变生产判定」这类决策变更无审计留痕，是治理缺口。
+- **[中] M6 新版本审批语义待拍板**——当前实现：源版本已 approved 且在服役 → 新版本沿用源审批结论 → 轮换 stable revision 替换 target（依据：同检测器主体、只差阈值、闭环换模本就自动 approve）。若要求「必须人工审批新版本」，改动点集中在 `_mount_recalibrated_version` 一处。
+- **[中] 误报形态报表 `dense_features` 用原始均值而非 z 值**（`anomaly_threshold_recalibration.py:181-183`，字段名却是 `mean_z`；`scaled` 只用于聚类、未用于统计）→「哪些参数区域误报密集」的结论会失真（本轮未修）。
+- **[中] 缺省权重等分丢失行数比例**——挂载 API 无行数输入，以既有权重作行数代理；真正按行数分配需扩挂载入参（§6.3「weight 按段行数比例分配」未完全落地）。
+- **[低] 空 `condition_value` 分片仍不可达**——`ConditionValueRouter` 要求请求值非空才匹配，通配 target 不吃空串。
+- **[低] `TorchAutoencoder` 未继承 `BaseEstimator`**（§6.6C 字面偏差，`clone()` 实测可用，语义等效）。
+- **[低] 已知异常验证无「≥10 条」下限；向导 S4 `normal_fpr` 硬编码 0.015（非常识 contamination×1.5）；判据① 验收实跑拟合 9,600 行 < 方案「≥1 万」；API 互斥返回 400 而方案文字为 422（口径不一）。**
+- **[低] `LabelRecalibrateRequest` 定义在 API 层**（`app/api/model_registry.py`）而非公共契约模块 `app/schemas/`。
+- **未验证**：全量 CI 六 job 未跑（本机 `gh` 未安装）；前端**全量** vitest 未跑（仅本轮相关 2 个文件）；PostgreSQL 迁移实际 apply 与 CHECK 约束未实跑（仅 SQLite）；anomaly 配方重放未端到端跑训练（job 落库后停 pending/queued）；`fleet_mode="shared"`（按族混合的方案 B 形态）实现由并行会话在途，本轮未纳入。
+
+### 11. 并发说明
+
+本轮与并行会话并发：并行会话同期提交 `02ea56a9`（§7.1 A/B 实验结论——**按族混合**：iforest 走全局共享主体+设备标定 B 形态，ocsvm 保持分片独立 A 形态）并在途实现 `automl_execution.py` / `closed_loop_actions.py` 的 `fleet_mode="shared"`。**该两文件不属本轮范围，未纳入本轮提交。** 第四轮登记的 [高]「§7.1 架构口径二选一」由此收口为「按族混合」——方案 §7.1 原文措辞待相应修订。

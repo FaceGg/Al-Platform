@@ -38,7 +38,9 @@ export default function FleetShardPanel({ deploymentId }: { deploymentId: string
   if (failed) {
     return null;
   }
-  if (!overview || !overview.shards.length) {
+  // 普通部署（非工况分片）没有 condition_column → 静默不渲染（本面板只对
+  // 机群/工况分片部署有意义；此前仅按 shards.length 判空导致普通部署也出面板）。
+  if (!overview || !overview.shards.length || !overview.condition_column) {
     return null;
   }
   const psiByValue = new Map(
@@ -91,6 +93,25 @@ export default function FleetShardPanel({ deploymentId }: { deploymentId: string
               render: (_value, record) => {
                 const auc = record.backtest?.synthetic_auc;
                 return auc === undefined || auc === null ? "—" : Number(Number(auc).toFixed(4));
+              },
+            },
+            {
+              // per-device 运行期报警率（M10 per-device fpr 侧）：无标签下以该
+              // 设备回流数据的模型报警率为 fpr proxy，与部署级 alert_comparison 同口径。
+              title: "运行期报警率",
+              key: "running",
+              width: 120,
+              render: (_value, record) => {
+                const running = record.running;
+                if (!running || running.rows === 0 || running.alert_rate === null || running.alert_rate === undefined) {
+                  return "—";
+                }
+                const rate = Number(running.alert_rate);
+                return (
+                  <Tag color={rate > 0.015 ? "orange" : "green"}>
+                    {(rate * 100).toFixed(2)}%
+                  </Tag>
+                );
               },
             },
             {

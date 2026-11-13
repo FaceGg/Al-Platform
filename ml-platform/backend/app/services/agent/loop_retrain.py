@@ -47,6 +47,15 @@ logger = logging.getLogger(__name__)
 
 AGENT_RETRAIN_STATUSES = ("agent_running",)
 
+# ---- 范式感知（技术方案 §2.1 范式互斥：范式随任务固化终身不改） ----
+
+SUPERVISED_PARA_DIGM = "supervised"
+ANOMALY_PARA_DIGM = "anomaly"
+# 引擎侧无监督任务类型（合同镜像互斥的入口标识；AutoMLContract 任务类型）
+ANOMALY_ENGINE_TASK_TYPE = "anomaly_detection"
+# 无监督算法族白名单（方案 §3.2 三族同台搜索：iforest/ocsvm/autoencoder）
+ANOMALY_FAMILY_IDS = ("iforest", "ocsvm", "autoencoder")
+
 
 def finish_agent_cycle(config: DemoLoopConfig) -> None:
     """agent 重放轮终态收尾（成功换模/门禁否决/失败/取消/超时统一调用）：
@@ -96,12 +105,89 @@ def _resolve_target_column(db: Session, config: DemoLoopConfig) -> str:
     target = (config.retrain_target_column or "").strip()
     if target:
         return target
+    # 无监督范式（技术方案 §2.1/§3.4）：无目标列是范式定义的一部分，配方
+    # 已固化 anomaly 段 → 重放走无监督合同，不再要求 retrain_target_column。
+    if recipe_paradigm(
+        db, getattr(config, "retrain_agent_recipe_id", None)
+    ) == ANOMALY_PARA_DIGM:
+        return ""
     from app.services.demo_loop import DemoLoopService
 
     target = DemoLoopService(db)._deployment_default_target(config)
     if not target:
         raise AgentRetrainError("DEMO_LOOP_RETRAIN_TARGET_MISSING")
     return target
+
+
+def detect_recipe_paradigm(content: dict | None) -> str:
+    """配方固化 content → 范式标识（'anomaly' / 'supervised'）。
+
+    只认显式无监督证据（存量配方无标记一律按有监督解释，行为不变）：
+    1. content['anomaly']['task_type'] == 'anomaly_detection'（§3.7 固化段）；
+    2. content['guidance']['task_type'] == 'anomaly'（范式随 guidance 快照固化）。
+
+    **不**以「inputs.target_column 为空」判定范式——有监督配方缺目标列
+    必须照旧报 CAST_TARGET_MISSING / DEMO_LOOP_RETRAIN_TARGET_MISSING。
+    """
+    content = dict(content or {})
+    anomaly = content.get("anomaly")
+    if isinstance(anomaly, dict) and str(
+        anomaly.get("task_type") or ""
+    ).strip() == ANOMALY_ENGINE_TASK_TYPE:
+        return ANOMALY_PARA_DIGM
+    guidance = content.get("guidance")
+    if isinstance(guidance, dict) and str(
+        guidance.get("task_type") or ""
+    ).strip() == ANOMALY_PARA_DIGM:
+        return ANOMALY_PARA_DIGM
+    return SUPERVISED_PARA_DIGM
+
+
+def recipe_anomaly_config(content: dict | None) -> dict:
+    """配方 → 无监督重放参数（contamination / condition_column / 算法白名单）。
+
+    contamination 优先取固化 anomaly 段，其次 guidance.modeling，缺省走
+    引擎缺省 0.01（宁低勿高）；越界值回落缺省而不是让引擎合同炸掉。
+    算法白名单收敛到无监督三族——配方里混入监督族会让
+    resolve_algorithm_families(task='anomaly_detection') 抛
+    AUTOML_SEARCH_CONFIG_INVALID；交集为空 = 全族（引擎侧按任务过滤）。
+    """
+    from app.services.automl_anomaly import normalize_anomaly_contamination
+
+    content = dict(content or {})
+    anomaly = content.get("anomaly") if isinstance(content.get("anomaly"), dict) else {}
+    guidance = content.get("guidance") if isinstance(content.get("guidance"), dict) else {}
+    modeling = guidance.get("modeling") if isinstance(guidance.get("modeling"), dict) else {}
+    raw_contamination = anomaly.get("contamination")
+    if raw_contamination is None:
+        raw_contamination = modeling.get("contamination")
+    try:
+        contamination = float(normalize_anomaly_contamination(raw_contamination))
+    except (TypeError, ValueError):
+        contamination = float(normalize_anomaly_contamination(None))
+    whitelist = [
+        str(item) for item in (content.get("retrain_algorithm_ids") or [])
+        if str(item) in ANOMALY_FAMILY_IDS
+    ]
+    return {
+        "contamination": contamination,
+        "condition_column": str(anomaly.get("condition_column") or "").strip() or None,
+        "algorithm_ids": whitelist or None,
+    }
+
+
+def recipe_paradigm(db: Session, recipe_id) -> str:
+    """按配方当前版本判范式（读不到/缺配方 = supervised，存量行为不变）。"""
+    from app.services.agent.recipe import get_current_version
+
+    recipe_uuid = _as_uuid_safely(recipe_id)
+    if recipe_uuid is None:
+        return SUPERVISED_PARA_DIGM
+    try:
+        version = get_current_version(db, recipe_uuid)
+    except (LookupError, ValueError, TypeError):
+        return SUPERVISED_PARA_DIGM
+    return detect_recipe_paradigm(dict(version.content_json or {}))
 
 
 def load_replay_contract(db: Session, recipe_id) -> tuple[dict, str | None]:
@@ -113,8 +199,14 @@ def load_replay_contract(db: Session, recipe_id) -> tuple[dict, str | None]:
 
     if recipe_id is None:
         raise AgentRetrainError("DEMO_LOOP_AGENT_RECIPE_UNBOUND")
+    # recipe_id 归一为 UUID 对象：编排侧传的是画布参数字符串，直传 UUID
+    # 列会在绑定阶段炸（'str' object has no attribute 'hex'）——配方 id
+    # 形态不合法按「配方缺失」fail-closed。
+    recipe_uuid = _as_uuid_safely(recipe_id)
+    if recipe_uuid is None:
+        raise AgentRetrainError("DEMO_LOOP_AGENT_RECIPE_MISSING")
     try:
-        version = get_current_version(db, recipe_id)
+        version = get_current_version(db, recipe_uuid)
     except (RecipeNotFound, LookupError, ValueError) as error:
         raise AgentRetrainError("DEMO_LOOP_AGENT_RECIPE_MISSING") from error
     content = dict(version.content_json or {})
@@ -272,13 +364,27 @@ def orchestration_agent_retrain_execute(context, inputs, params):
     recipe_key = str(params.get("agent_recipe_id") or "").strip()
     deployment_key = str(params.get("swap_deployment_id") or "").strip()
     threshold = max(1, int(params.get("threshold_rows") or 12))
-    if not artifact_id or not target_column or not recipe_key or not deployment_key:
+    if not artifact_id or not recipe_key or not deployment_key:
         raise RuntimeError(
             "dataset_artifact_id / retrain_target_column / agent_recipe_id / "
             "swap_deployment_id are required")
     if context.artifact_service is None or not context.project_id:
         raise RuntimeError("Artifact service and project context are required")
     db = context.artifact_service.db
+    # 范式感知（技术方案 §2.1/§3.4）：无监督配方没有目标列——目标列不是
+    # 必填项（重放走无监督合同：target_columns=[]、CV off、contamination
+    # 随配方透传）。有监督配方缺目标列仍照旧报错（零回归）。
+    is_anomaly = (
+        recipe_paradigm(db, _as_uuid_safely(recipe_key)) == ANOMALY_PARA_DIGM
+    )
+    if not target_column and not is_anomaly:
+        raise RuntimeError(
+            "dataset_artifact_id / retrain_target_column / agent_recipe_id / "
+            "swap_deployment_id are required")
+    if is_anomaly:
+        # 范式镜像强制（§2.1）：无监督配方没有目标列——即便画布参数里残留
+        # 了目标列也按无监督解释（范式随任务固化终身不改）。
+        target_column = ""
     artifact = context.artifact_service.resolve(
         artifact_id, context.project_id, expected_type="dataset",
     )
@@ -343,8 +449,7 @@ def orchestration_agent_retrain_execute(context, inputs, params):
             else:
                 ensemble = None
             casting_input = str(run.dataset_artifact_id) if run.dataset_artifact_id else artifact_id
-            job = trigger_retrain_job(
-                db,
+            casting_kwargs = dict(
                 project_id=context.project_id,
                 actor_id=context.operator_id,
                 experiment_name=f"编排智能体铸造-{total}-{cycle}",
@@ -357,6 +462,19 @@ def orchestration_agent_retrain_execute(context, inputs, params):
                 or _split_csv("retrain_algorithm_ids"),
                 input_columns=_split_csv("retrain_input_columns"),
             )
+            if is_anomaly:
+                # 无监督引擎合同（技术方案 §3.1/§3.7）：目标列空、CV off、
+                # contamination 随配方透传、算法族收敛无监督白名单。
+                anomaly_cfg = recipe_anomaly_config(content)
+                casting_kwargs.update({
+                    "target_column": "",
+                    "task_type": ANOMALY_ENGINE_TASK_TYPE,
+                    "anomaly_contamination": anomaly_cfg["contamination"],
+                    "condition_column": anomaly_cfg["condition_column"],
+                    "algorithm_ids": anomaly_cfg["algorithm_ids"],
+                    "ensemble": None,
+                })
+            job = trigger_retrain_job(db, **casting_kwargs)
             meta["casting_job_id"] = str(job.id)
             meta["agent_fixated_recipe_id"] = str(recipe.id)
             # 重放轮终态：清 run 引用（轮询段 B 的互斥条件），铸造段由
@@ -835,8 +953,7 @@ def poll_agent_retrain(db: Session, config: DemoLoopConfig, actor_id) -> bool:
                     ] or None
             except Exception:  # noqa: BLE001 - 变换失败回落原始数据集
                 logger.warning("loop cast feature transform failed", exc_info=True)
-        job = trigger_retrain_job(
-            db,
+        casting_kwargs = dict(
             project_id=config.project_id,
             actor_id=actor_id,
             experiment_name=f"{config.name}-智能体铸造-{config.error_count}-{cycle}",
@@ -848,6 +965,19 @@ def poll_agent_retrain(db: Session, config: DemoLoopConfig, actor_id) -> bool:
             algorithm_ids=algorithm_ids,
             input_columns=input_columns,
         )
+        if detect_recipe_paradigm(content) == ANOMALY_PARA_DIGM:
+            # 无监督引擎合同（技术方案 §3.1/§3.7）：目标列空、CV off、
+            # contamination 随配方透传、算法族收敛无监督白名单。
+            anomaly_cfg = recipe_anomaly_config(content)
+            casting_kwargs.update({
+                "target_column": "",
+                "task_type": ANOMALY_ENGINE_TASK_TYPE,
+                "anomaly_contamination": anomaly_cfg["contamination"],
+                "condition_column": anomaly_cfg["condition_column"],
+                "algorithm_ids": anomaly_cfg["algorithm_ids"],
+                "ensemble": None,
+            })
+        job = trigger_retrain_job(db, **casting_kwargs)
         config.retrain_job_id = job.id
         config.retrain_status = "queued"
         _emit(db, config, "retrain_agent_accepted",

@@ -37,6 +37,11 @@ from app.models.model_registry import (
 FLEET_FIT_TOLERANCE = 1.5
 # 标定数据下限：与 M7 分片护栏同源（§6.6E，Binomial 容差教训）
 DEVICE_CALIBRATION_MIN_ROWS = 200
+# 分片权重预算：WeightedTargetRouter 要求 revision 内权重和恒为 10000
+# （否则 TARGET_WEIGHTS_INVALID），单个分片权重 >= 1
+FLEET_TARGET_TOTAL_WEIGHT_BPS = 10000
+# 机群分片的缺省工况列（§7.1.3：device_id 作为 condition_column 的一等应用）
+FLEET_DEFAULT_CONDITION_COLUMN = "device_id"
 
 
 class DeviceCalibrationError(RuntimeError):
@@ -50,6 +55,85 @@ def _sanitize_device_suffix(condition_value) -> str:
     text = str(condition_value).strip() if condition_value is not None else ""
     sanitized = re.sub(r"[^\w-]+", "_", text, flags=re.UNICODE).strip("_")
     return sanitized[:64] or "default"
+
+
+def _distribute_weight_bps(remaining: int, weights: list[int]) -> list[int]:
+    """按 ``weights`` 比例把 ``remaining`` 基点分给各分片（最大余额法）。
+
+    - 每个分片至少 1 基点（WeightedTargetRouter 允许 0，但 0 权重分片在
+      兜底路由里永远选不中，且重平衡契约要求 >= 1）。
+    - 权重全为 0（或缺省）时退化为等分。
+    - 结果总和恒为 ``remaining``（调用方保证 remaining >= len(weights)）。
+    """
+    count = len(weights)
+    if count == 0:
+        return []
+    if count == 1:
+        return [int(remaining)]
+    positive = [max(0, int(item)) for item in weights]
+    total = sum(positive)
+    pool = int(remaining) - count  # 每片先保底 1 基点
+    if pool <= 0:
+        return [1] * count
+    if total <= 0:
+        shares = [pool / count] * count
+    else:
+        shares = [pool * item / total for item in positive]
+    allocated = [int(share) for share in shares]
+    rest = pool - sum(allocated)
+    # 最大余额法：按小数部分降序补齐余数，同分取靠前分片（确定性）
+    order = sorted(range(count), key=lambda index: (-(shares[index] - allocated[index]), index))
+    for index in order[:max(0, rest)]:
+        allocated[index] += 1
+    return [1 + allocated[index] for index in range(count)]
+
+
+def _rebalance_fleet_weights(
+    existing_weights: list[int],
+    explicit_weight: int | None,
+) -> list[int]:
+    """重平衡新 revision 的分片权重：总和恒为 10000，单片权重 >= 1。
+
+    返回 ``[*既有分片权重, 新分片权重]``（顺序与既有分片一致，新分片在末位）。
+
+    - **显式 weight_bps**：新分片占该权重，余下预算按既有分片权重比例
+      （最大余额法）分配；显式值过大时收敛到 ``10000-(N-1)``——其余分片
+      至少各留 1 基点；部署尚无分片（唯一分片）时该片承担全部预算。
+    - **未显式指定**：总额在全部分片间等分（§6.3「最大行数=默认分片」在
+      API 暂无行数输入时的回退），并让**原权重最高的既有分片**保持严格
+      最高——它是 ConditionValueRouter 的兜底默认分片，等分并列会让兜底
+      结果依赖 DB 行序（不可达/漂移分片）。原权重即分片行数的代理（§6.3
+      「weight 按段行数比例分配」），故该分片即默认分片。
+
+    假设分片数 <= 10000（否则无法同时满足「每片 >= 1」与「总和 = 10000」）。
+    """
+    count = len(existing_weights) + 1
+    if explicit_weight is not None:
+        if count == 1:
+            # 唯一分片必须承担全部预算（否则 revision 权重和 != 10000，
+            # WeightedTargetRouter 直接 TARGET_WEIGHTS_INVALID）
+            return [FLEET_TARGET_TOTAL_WEIGHT_BPS]
+        requested = max(0, min(int(explicit_weight), FLEET_TARGET_TOTAL_WEIGHT_BPS))
+        ceiling = FLEET_TARGET_TOTAL_WEIGHT_BPS - (count - 1)
+        requested = max(1, min(requested, ceiling))
+        others = _distribute_weight_bps(
+            FLEET_TARGET_TOTAL_WEIGHT_BPS - requested, list(existing_weights),
+        )
+        return [*others, requested]
+    base, remainder = divmod(FLEET_TARGET_TOTAL_WEIGHT_BPS, count)
+    weights = [base] * count
+    default_index = 0
+    for index, value in enumerate(existing_weights):
+        if int(value) > int(existing_weights[default_index]):
+            default_index = index
+    weights[default_index] += remainder
+    others = [index for index in range(count) if index != default_index]
+    if others:
+        donor = max(others, key=lambda index: (weights[index], -index))
+        if weights[donor] >= weights[default_index] and weights[donor] > 1:
+            weights[donor] -= 1
+            weights[default_index] += 1
+    return weights
 
 
 def recalibrate_device_version(
@@ -337,13 +421,39 @@ def add_fleet_shard_to_deployment(
     condition_value,
     actor_id,
     weight_bps: int | None = None,
+    condition_column: str | None = None,
 ) -> dict:
     """迁移版本挂载为部署分片 target（§7.1.4：机群基线在部署面就是「工况
     分片」的 device 维特例）。
 
     新 stable revision = 现有 stable targets 全量复制 + 新 target
     （condition_value 标注）；旧 revision superseded，换 revision 轮换保证
-    runtime_key 不可变语义与灰度/分片一致。weight 缺省均分（10000//N）。
+    runtime_key 不可变语义与灰度/分片一致。
+
+    **权重重平衡**（新 revision 的权重总和恒为 10000、单片 >= 1——
+    WeightedTargetRouter 的 ``TARGET_WEIGHTS_INVALID`` 前提；旧实现沿用
+    既有分片旧权重 + 新分片 ``10000//N``，两片即 15000，权重路由直接失效）：
+    - 显式 ``weight_bps``：新分片占该权重，余下预算按既有分片权重比例
+      （最大余额法）分配；显式值过大时收敛到 ``10000-(N-1)``（其余分片
+      各留 1 基点）。
+    - 未显式指定：总额在全部分片间等分，并让原权重最高的既有分片保持
+      严格最高——它是 ConditionValueRouter 的兜底默认分片（§6.3「最大行数
+      =默认分片」；API 暂无行数输入，以既有权重作行数代理），等分并列会让
+      兜底结果依赖 DB 行序。
+
+    **工况列一致性**（fail-closed，防不可达分片）：
+    - ``condition_column`` 缺省按 ``"device_id"`` 处理；部署已有工况列且与
+      本次不一致 → ``FLEET_SHARD_CONDITION_COLUMN_MISMATCH``（不静默造出
+      永远匹配不上的分片）。
+    - 部署无工况列 → 落本次工况列（缺省 ``"device_id"``）。
+
+    错误码：
+    - ``FLEET_SHARD_ALREADY_MOUNTED``：同一模型版本已挂载（既有契约）。
+    - ``FLEET_SHARD_CONDITION_ALREADY_MOUNTED``：同一 ``condition_value``
+      已被其他版本占用——ConditionValueRouter 按工况精确匹配，重复挂载会
+      让路由结果取决于 DB 行序。
+    - ``FLEET_SHARD_CONDITION_COLUMN_MISMATCH``：部署工况列与本次挂载的
+      工况列不一致。
     """
     from app.models.model_registry import (
         DeploymentRevision,
@@ -379,12 +489,24 @@ def add_fleet_shard_to_deployment(
     }
     if str(version.id) in existing:
         raise DeviceCalibrationError("FLEET_SHARD_ALREADY_MOUNTED")
-    count = len(existing_targets) + 1
-    total_weight = 10000
-    fallback_weight = max(total_weight // count, 1)
-    if weight_bps is None:
-        weight_bps = fallback_weight
-    weight_bps = max(0, min(int(weight_bps), 10000))
+    normalized_condition = str(condition_value).strip()
+    for target in existing_targets:
+        mounted_condition = str(getattr(target, "condition_value", None) or "").strip()
+        if mounted_condition == normalized_condition:
+            # 同一工况值挂不同版本 → 路由命中哪片取决于 DB 行序，拒绝
+            raise DeviceCalibrationError("FLEET_SHARD_CONDITION_ALREADY_MOUNTED")
+    # 工况列一致性（fail-closed）：部署已有工况列且与本次不一致 → 拒绝挂载
+    requested_column = (
+        str(condition_column or "").strip() or FLEET_DEFAULT_CONDITION_COLUMN
+    )
+    deployment_column = str(deployment.condition_column or "").strip()
+    if deployment_column and deployment_column != requested_column:
+        raise DeviceCalibrationError("FLEET_SHARD_CONDITION_COLUMN_MISMATCH")
+    # 权重重平衡：总和恒为 10000、单片 >= 1（先算后写，校验失败不留脏状态）
+    existing_weights = [
+        int(getattr(target, "weight_bps", 0) or 0) for target in existing_targets
+    ]
+    weights = _rebalance_fleet_weights(existing_weights, weight_bps)
     actor_uuid = _as_uuid(actor_id)
     if stable is not None:
         stable.status = "superseded"
@@ -397,25 +519,25 @@ def add_fleet_shard_to_deployment(
     )
     db.add(revision)
     db.flush()
-    # 现有分片全量复制（新 revision 的 targets 必须自洽完整）
-    for target in existing_targets:
+    # 现有分片全量复制（新 revision 的 targets 必须自洽完整），权重取重平衡结果
+    for target, target_weight in zip(existing_targets, weights[:-1]):
         db.add(DeploymentTarget(
             revision_id=revision.id,
             model_version_id=target.model_version_id,
-            weight_bps=int(target.weight_bps),
+            weight_bps=int(target_weight),
             role="stable",
             condition_value=getattr(target, "condition_value", None),
         ))
     db.add(DeploymentTarget(
         revision_id=revision.id,
         model_version_id=version.id,
-        weight_bps=weight_bps,
+        weight_bps=int(weights[-1]),
         role="stable",
-        condition_value=str(condition_value).strip(),
+        condition_value=normalized_condition,
     ))
     db.flush()
-    if deployment.condition_column is None or not str(deployment.condition_column).strip():
-        deployment.condition_column = "device_id"
+    if not deployment_column:
+        deployment.condition_column = requested_column
     db.flush()
     db.commit()
     return {
@@ -468,6 +590,13 @@ def fleet_overview(
             if version is None:
                 continue
             metadata = version.conversion_metadata if isinstance(version.conversion_metadata, dict) else {}
+            metrics = version.metrics if isinstance(version.metrics, dict) else {}
+            # 重标定载荷写在 version.metrics["recalibration"]（recalibrate_
+            # device_version 的落库位置）；早期版本曾写在 conversion_metadata，
+            # 两者都读，metrics 优先。
+            recalibration_payload = metrics.get("recalibration")
+            if not isinstance(recalibration_payload, dict):
+                recalibration_payload = metadata.get("recalibration")
             stats_id = str(metadata.get("anomaly_score_stats_artifact_id") or "").strip()
             threshold = None
             stats_payload = None
@@ -499,9 +628,11 @@ def fleet_overview(
                 "threshold_score": float(threshold) if threshold is not None else None,
                 "fleet_compatible": metadata.get("fleet_compatible"),
                 "recalibration": metadata.get("device_recalibration") is True,
-                "backtest": (metadata.get("recalibration") or {}).get("backtest")
-                if isinstance(metadata.get("recalibration"), dict) else None,
-                "metrics": version.metrics if isinstance(version.metrics, dict) else {},
+                "backtest": (
+                    recalibration_payload.get("backtest")
+                    if isinstance(recalibration_payload, dict) else None
+                ),
+                "metrics": metrics,
             })
     psi_per_shard = None
     config = db.query(DemoLoopConfig).filter(

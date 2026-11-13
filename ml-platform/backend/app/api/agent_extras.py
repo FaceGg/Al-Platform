@@ -405,7 +405,19 @@ def cast_deployment(
     content = dict(version.content_json or {})
     inputs = content.get("inputs") or {}
     target_column = str(inputs.get("target_column") or "").strip()
-    if not target_column:
+    # 范式感知（技术方案 §2.1/§3.4/§3.7）：无监督配方本就没有目标列——
+    # 配方固化 content 带 anomaly 段，重放走同一无监督引擎合同
+    # （target_columns=[]、CV off、contamination 随配方透传），
+    # 不再因缺目标列 422。有监督配方缺目标列仍照旧报 CAST_TARGET_MISSING。
+    from app.services.agent.loop_retrain import (
+        ANOMALY_ENGINE_TASK_TYPE,
+        ANOMALY_PARA_DIGM,
+        detect_recipe_paradigm,
+        recipe_anomaly_config,
+    )
+
+    is_anomaly = detect_recipe_paradigm(content) == ANOMALY_PARA_DIGM
+    if not target_column and not is_anomaly:
         raise HTTPException(422, detail={"code": "CAST_TARGET_MISSING"})
 
     # 数据集：源 run 重放工件 > 显式传入 > 项目最新用户数据集
@@ -485,7 +497,9 @@ def cast_deployment(
             sandbox = run_sandbox(feature_script, raw_frame, timeout_seconds=300)
             if sandbox.ok and getattr(sandbox, "output", None) is not None:
                 cast_frame = sandbox.output
-                if target_column not in cast_frame.columns and target_column in raw_frame.columns:
+                # 无监督无目标列（target_column=""）→ 不回填目标列。
+                if (target_column and target_column not in cast_frame.columns
+                        and target_column in raw_frame.columns):
                     cast_frame[target_column] = raw_frame[target_column].values
                 import tempfile
                 from pathlib import Path as _Path
@@ -543,8 +557,7 @@ def cast_deployment(
             input_columns = []
 
     cycle = uuid_module.uuid4().hex[:8]
-    job = trigger_retrain_job(
-        db,
+    cast_kwargs = dict(
         project_id=project_uuid,
         actor_id=current_user.id,
         experiment_name=f"服务化铸造-{recipe_row.name[:24]}-{cycle}",
@@ -556,6 +569,21 @@ def cast_deployment(
         algorithm_ids=[str(x) for x in (content.get("retrain_algorithm_ids") or [])] or None,
         input_columns=input_columns or None,
     )
+    if is_anomaly:
+        # 无监督引擎合同（技术方案 §3.1/§3.7，复用引擎既有构造器）：
+        # target_columns=[]、CV off、contamination 随配方透传、算法族收敛
+        # 无监督白名单（iforest/ocsvm/autoencoder）。特征列走数值列推导
+        # （无监督无目标列可剔除）。
+        anomaly_cfg = recipe_anomaly_config(content)
+        cast_kwargs.update({
+            "target_column": "",
+            "task_type": ANOMALY_ENGINE_TASK_TYPE,
+            "anomaly_contamination": anomaly_cfg["contamination"],
+            "condition_column": anomaly_cfg["condition_column"],
+            "algorithm_ids": anomaly_cfg["algorithm_ids"],
+            "ensemble": None,
+        })
+    job = trigger_retrain_job(db, **cast_kwargs)
     # 铸造上下文存配方版本 content（幂等锚点 + 轮询端点取回）
     meta = dict(content.get("cast_deployment") or {})
     meta.update({
