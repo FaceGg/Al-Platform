@@ -42,6 +42,32 @@ RUN --mount=type=bind,target=/wheels,source=wheelhouse \
         graphviz plotly six \
         -r /tmp/requirements-without-boost.txt
 COPY . .
+# AE 可选依赖（技术方案 §6.1，二期 M5）：torch CPU 版不进主安装包——现场
+# 按需启用。WITH_TORCH=1 时装 torch（AE 自编码器族随之可用）；默认 0，
+# AE 族自动缺席（AlgorithmUnavailable，IF/OC-SVM 不受影响）。
+# 安装源二选一：
+#   a) 补件 wheel：torch-* wheel 拷入 wheelhouse 后 build（纯离线，优先）；
+#   b) 在线兜底：PyTorch 官方 CPU 源（PyPI 的 linux torch 默认是 CUDA 版，
+#      带 GB 级 nvidia 依赖链，绝不可用默认源）。
+# 依赖链（filelock/sympy/networkx/jinja2/fsspec/typing-extensions）随安装
+# 自动解析；离线补件请用 pip download 全集（见部署文档）。
+ARG WITH_TORCH=0
+RUN --mount=type=bind,target=/wheels,source=wheelhouse \
+    --mount=type=cache,target=/root/.cache/pip \
+    set -eu; \
+    if [ "$WITH_TORCH" != "1" ]; then \
+        echo "WITH_TORCH=0: skip torch (AE family absent, IF/OC-SVM unaffected)"; \
+        exit 0; \
+    fi; \
+    if ls /wheels/torch-* >/dev/null 2>&1; then \
+        echo "torch addon wheel found: offline install"; \
+        python3.11 -m pip install --no-index --find-links /wheels "torch==2.15.0"; \
+    else \
+        echo "torch addon wheel absent: online install from PyTorch CPU index"; \
+        python3.11 -m pip install --index-url https://download.pytorch.org/whl/cpu \
+            --retries 5 --timeout 120 "torch==2.15.0"; \
+    fi; \
+    python3.11 -c "import torch; print('torch', torch.__version__, 'ok')"
 RUN mkdir -p /home/app data app/uploads /var/lib/tensorboard/runs \
     /var/lib/ml-platform/inference-cache /tmp/ml-platform /app/artifact_store \
     /data/python-script-venv \

@@ -105,6 +105,35 @@ docker image inspect minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1 \
 
 如果镜像存放在批准的私有仓库，请从那里拉取并以以上两个名称打标签，或加载管理员提供的离线镜像归档。在这台旧 CPU 主机上，禁止改标签为 `latest` 或使用更新的 MinIO 版本。
 
+## 启用自编码器族（可选 torch，默认不装）
+
+无监督异常检测的 AutoEncoder 算法族依赖 PyTorch（约 200MB wheel + 依赖）。默认构建**不安装**——该族在算法目录自动缺席，IsolationForest / OC-SVM 双族完全不受影响。需要启用时二选一：
+
+**方式 A（现场有外网）：构建时声明开关，在线拉取 CPU 版**
+
+```bash
+docker compose build --build-arg WITH_TORCH=1 backend migrate worker scheduler
+docker compose up -d --force-recreate backend worker scheduler
+```
+
+torch 从 PyTorch 官方 CPU 源下载（切勿用默认 PyPI 源装 linux 版 torch——那是 CUDA 版，带 GB 级 nvidia 依赖链）。构建后重启服务即生效。
+
+**方式 B（完全离线）：补件 wheel 拷入 wheelhouse**
+
+在有网的机器上按目标平台下载全集（torch CPU 版 + 依赖闭包；依赖须显式列出——platform 模式下只给 torch 会漏下依赖）：
+
+```bash
+pip download torch==2.15.0 filelock sympy jinja2 fsspec typing-extensions networkx \
+  --index-url https://download.pytorch.org/whl/cpu \
+  --extra-index-url https://pypi.org/simple \
+  --platform manylinux_2_28_x86_64 --python-version 3.11 \
+  --only-binary=:all: -d torch-addon/
+```
+
+把 `torch-addon/` 里的**全部** wheel（约 210MB torch + 数个依赖小包）拷到安装包的 `wheelhouse/` 目录，再按方式 A 声明 `WITH_TORCH=1` 构建（检测到 wheelhouse 内有 torch wheel 时走纯离线安装；缺依赖会在构建时报「No matching distribution」明确指出缺哪个）。
+
+启用后无需任何配置：无监督建模任务的算法目录自动出现「AutoEncoder 自编码器」，与 IsolationForest / OC-SVM 同台搜索。未启用时它保持缺席，不产生任何报错。
+
 ## 运维操作
 
 ```bash
