@@ -388,6 +388,35 @@ class TestFleetShardMountAndOverview(unittest.TestCase):
             {"condition_value": "DEV-000", "psi": 0.02, "level": "stable"},
         ])
 
+    def test_fleet_overview_includes_per_device_alert_rate(self):
+        """M10 per-device fpr proxy：回流帧按工况分组，各分片按自身阈值统计
+        报警率（与部署级 alert_comparison 同口径的分片化）。"""
+        import pandas as pd
+
+        reflow_path = Path(self.stats_path.parent) / "reflow.csv"
+        pd.DataFrame([
+            {"device_id": "DEV-000", "anomaly_score": 0.10},
+            {"device_id": "DEV-000", "anomaly_score": 0.20},
+            {"device_id": "DEV-000", "anomaly_score": 0.90},
+            {"device_id": "DEV-999", "anomaly_score": 0.95},
+        ]).to_csv(reflow_path, index=False)
+        reflow_artifact = Artifact(
+            project_id=self.project.id, name="reflow.csv", type="dataset",
+            storage_path=str(reflow_path), storage_uri="",
+            file_size=reflow_path.stat().st_size, format="csv", metadata_={},
+        )
+        self.db.add(reflow_artifact)
+        self.db.flush()
+        self.config.error_artifact_id = reflow_artifact.id
+        self.db.commit()
+        overview = fleet_overview(self.db, deployment_id=self.deployment.id)
+        running = overview["shards"][0].get("running")
+        self.assertIsNotNone(running)
+        # DEV-000 阈值 0.42：3 行中 1 行报警 → 0.3333
+        self.assertEqual(running["rows"], 3)
+        self.assertEqual(running["alerts"], 1)
+        self.assertEqual(running["alert_rate"], 0.3333)
+
 
 class TestFleetApiSmoke(unittest.TestCase):
     """M9/M10 API 端点冒烟：重标定/挂分片/机群概览的认证与成功路径。"""

@@ -510,6 +510,13 @@ def fleet_overview(
     if config is not None:
         state = config.psi_state if isinstance(config.psi_state, dict) else {}
         psi_per_shard = state.get("per_shard")
+    # per-device 运行期报警率（§7 三-3 M10「per-device fpr/PSI 聚合」的 fpr
+    # 侧）：无标签下以该设备回流数据的模型报警率为 proxy（与部署级
+    # alert_comparison 同口径，按分片阈值分组统计）。回流/阈值缺失时留空。
+    running_by_shard = _running_alert_rate_by_shard(db, deployment, config, shards)
+    if running_by_shard:
+        for shard in shards:
+            shard["running"] = running_by_shard.get(shard.get("condition_value"))
     return {
         "deployment_id": str(deployment.id),
         "condition_column": deployment.condition_column,
@@ -518,6 +525,73 @@ def fleet_overview(
         "shards": shards,
         "psi_per_shard": psi_per_shard,
     }
+
+
+def _running_alert_rate_by_shard(db, deployment, config, shards) -> dict:
+    """分片运行期报警率（M10 per-device fpr proxy）：回流帧按工况列分组，
+    各分片按自身阈值统计 anomaly_score≥阈值的行占比。数据/阈值缺失返回 {}。"""
+    if config is None or not shards:
+        return {}
+    condition_column = str(getattr(deployment, "condition_column", None) or "").strip()
+    if not condition_column:
+        return {}
+    thresholds = {
+        shard.get("condition_value"): shard.get("threshold_score")
+        for shard in shards
+        if shard.get("threshold_score") is not None
+    }
+    if not thresholds:
+        return {}
+    import pandas as pd
+
+    from app.models.artifact import Artifact
+
+    frames = []
+    service = None
+    for artifact_id in (config.error_artifact_id, getattr(config, "correct_artifact_id", None)):
+        if not artifact_id:
+            continue
+        try:
+            artifact = db.query(Artifact).filter(
+                Artifact.id == artifact_id,
+                Artifact.project_id == config.project_id,
+            ).first()
+            if artifact is None:
+                continue
+            from app.services.artifact_service import build_artifact_service
+
+            service = service or build_artifact_service(db)
+            with service.materialize(
+                artifact.id, config.project_id, expected_type="dataset",
+            ) as path:
+                frames.append(pd.read_csv(path))
+        except Exception:  # noqa: BLE001 - 视图聚合降级：缺数据不报错
+            continue
+    if not frames:
+        return {}
+    running: dict[str | None, dict] = {}
+    for frame in frames:
+        if "anomaly_score" not in frame.columns or condition_column not in frame.columns:
+            continue
+        condition_series = frame[condition_column].astype(str).str.strip()
+        scores = pd.to_numeric(frame["anomaly_score"], errors="coerce")
+        for shard_value, threshold in thresholds.items():
+            if shard_value is None:
+                mask = ~condition_series.isin({
+                    str(key) for key in thresholds if key is not None
+                })
+            else:
+                mask = condition_series == str(shard_value)
+            rows = scores[mask].dropna()
+            if rows.empty:
+                continue
+            alerts = int((rows >= float(threshold)).sum())
+            entry = running.setdefault(str(shard_value) if shard_value is not None else None, {"rows": 0, "alerts": 0})
+            entry["rows"] += int(len(rows))
+            entry["alerts"] += alerts
+    for entry in running.values():
+        entry["alert_rate"] = round(entry["alerts"] / entry["rows"], 4) if entry["rows"] else None
+    return running
 
 
 def _score_stats_via_job_chain(db, version):
