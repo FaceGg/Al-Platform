@@ -103,6 +103,10 @@ class AutoMLRunRequest(BaseModel):
     # 走 ConditionValueRouter；不指定则全量单模型。三期机群实验以
     # device_id/工位号作为 condition_column 的一等应用。
     condition_column: str | None = Field(default=None, min_length=1, max_length=128)
+    # 机群训练模式（§7.1 混合架构）：shared=追加联合段（全局共享模型，
+    # condition_value=None 通配兜底+unfit 工位段不挂载）；缺省=分片独立
+    # （每工位独立模型，§7.5 unfit 降级路径）。仅 anomaly+condition_column 有效。
+    fleet_mode: str | None = Field(default=None, pattern="^(shared)$")
     candidate_ids: list[str] = Field(default_factory=list)
     algorithm_ids: list[str] = Field(default_factory=list)
     algorithm_params: dict[str, dict[str, float | int | str]] = Field(default_factory=dict)
@@ -813,6 +817,11 @@ def start_automl(
                 **({
                     "condition_column": str(data.condition_column).strip()
                 } if task_type == "anomaly_detection" and str(data.condition_column or "").strip() else {}),
+                # 机群训练模式（§7.1 混合架构）：shared=追加联合段（全局共享
+                # 模型通配兜底+unfit 工位段不挂载）；缺省=分片独立
+                **({
+                    "fleet_mode": str(data.fleet_mode).strip()
+                } if task_type == "anomaly_detection" and data.fleet_mode else {}),
             },
             dataset_artifact_id=dataset.id,
             dataset_path=artifact_service.storage_reference(dataset), status="pending",
