@@ -208,8 +208,9 @@ def chat(
 
     try:
         config = resolve_profile(db, profile_id=profile_id, purpose="chat")
-    except LLMProfileNotFoundError:
-        raise HTTPException(404, detail={"code": "LLM_PROFILE_NOT_FOUND"})
+    except LLMProfileNotFoundError as error:
+        # code 区分：LLM_PROFILE_NOT_FOUND（不存在）/ LLM_PROFILE_DISABLED（已停用）
+        raise HTTPException(404, detail={"code": error.code})
     if not config.api_key:
         payload = {
             "reply": "LLM API key not configured. Please configure an LLM profile.",

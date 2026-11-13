@@ -134,7 +134,14 @@ class _StallGuardedLines:
 
 
 class LLMProfileNotFoundError(LookupError):
-    """Explicit profile_id does not resolve to an existing profile."""
+    """Explicit profile_id does not resolve to an existing profile.
+
+    ``code`` 区分子类语义：LLM_PROFILE_NOT_FOUND（不存在）/
+    LLM_PROFILE_DISABLED（存在但已停用——启用开关的服务端兜底）。"""
+
+    def __init__(self, code: str = "LLM_PROFILE_NOT_FOUND") -> None:
+        super().__init__(code)
+        self.code = code
 
 
 def llm_base_url(api_url: str) -> str:
