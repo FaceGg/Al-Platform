@@ -102,6 +102,14 @@ If the user asks for an audit, plan, or recommendations only, do not edit files.
 
 - Update `DEVELOPMENT_PLAN.md` after a code, configuration, schema, test, workflow, or
   release-evidence change when the current status, risk, or unfinished work changed.
+- **Update the corresponding document with every change, at the time of the change**
+  (2026-11-13 user instruction): a code/config/schema/test/contract change must land
+  together with the document that describes it — the technical plan (`docs/技术方案-*.md`)
+  for scope or wording changes, the acceptance document (`docs/验收-*.md` + `.json`) for
+  evidence changes, and this ledger for status, remaining-work, or decision changes.
+  Do not batch documentation updates to the end of a phase and do not leave them as
+  to-dos. Acceptance evidence artifacts must live in a **tracked** directory — a
+  gitignored path makes committed documents point at nothing.
 - Append to shared development experience only for verified, reusable cross-project
   lessons. Do not log routine documentation edits or unverified guesses.
 - Preserve historical records. Add corrections or new conclusions; do not rewrite old
