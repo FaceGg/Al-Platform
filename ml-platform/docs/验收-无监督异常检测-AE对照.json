@@ -1,0 +1,66 @@
+{
+  "date": "2026-11-12",
+  "data_path": "C:/Users/17723/Desktop/拧紧/tighten_train_clean.csv",
+  "data_provenance": "customer-production-derived",
+  "provenance_note": "数据源链：客户拧紧历史数据 拧紧数据.xlsx → tighten_train.csv → tighten_train_clean.csv（DECIDE_ONE==1 取正常样本）；该目录无合成生成脚本，源 Excel 不在仓库内，换机器复跑需提供同口径 CSV。",
+  "label_column": "DECIDE_ONE",
+  "normal_label": "1",
+  "normal_rows_total": 222942,
+  "eval_rows": 12000,
+  "features": [
+    "TARGET_TORQUE",
+    "UPPER_LIMIT",
+    "LOWER_LIMIT",
+    "ACTUAL_TORQUE",
+    "PROGRAM_NO"
+  ],
+  "contamination": 0.01,
+  "train_rows": 9600,
+  "holdout_rows": 2400,
+  "gates": {
+    "synthetic_auc": 0.85,
+    "normal_fpr": 0.015,
+    "stability": 0.8
+  },
+  "families": {
+    "iforest": {
+      "synthetic_auc": 0.9611539930555556,
+      "perturbation_recall": 0.0155,
+      "normal_fpr": 0.010416666666666666,
+      "stability": 0.9949852910443742,
+      "gates_passed": true,
+      "detection_recall_per_class": {
+        "uniform_outlier": 0.187,
+        "local_perturbation": 0.0155,
+        "combinatorial_anomaly": 0.0
+      },
+      "threshold_score": 0.7473076900748536
+    },
+    "ocsvm": {
+      "synthetic_auc": 0.9929739583333334,
+      "perturbation_recall": 0.968,
+      "normal_fpr": 0.01,
+      "stability": 0.9999001489756113,
+      "gates_passed": true,
+      "detection_recall_per_class": {
+        "uniform_outlier": 1.0,
+        "local_perturbation": 0.968,
+        "combinatorial_anomaly": 0.7945
+      },
+      "threshold_score": -114.65204374070042
+    },
+    "autoencoder": {
+      "synthetic_auc": 0.9988827777777778,
+      "perturbation_recall": 1.0,
+      "normal_fpr": 0.013333333333333334,
+      "stability": 0.9795895563587009,
+      "gates_passed": true,
+      "detection_recall_per_class": {
+        "uniform_outlier": 1.0,
+        "local_perturbation": 1.0,
+        "combinatorial_anomaly": 0.941
+      },
+      "threshold_score": 0.001851200475357473
+    }
+  }
+}

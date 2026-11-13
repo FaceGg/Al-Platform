@@ -1,0 +1,47 @@
+{
+  "date": "2026-11-13",
+  "data_path": "E:\\codex_workspace\\agent_spot_welding\\temp_test\\spot_weld_train_features.csv",
+  "data_provenance": "generator-synthetic",
+  "provenance_note": "generator-synthetic：数据由合成生成器产出，fault 标签是生成式注入形态，不等于产线实测劣化；结论仅限「两类合成形态不重合」这一方法论命题。",
+  "total_rows": 2072,
+  "normal_rows": 1836,
+  "labeled_anomaly_rows": 236,
+  "feature_count": 73,
+  "contamination": 0.01,
+  "calibration_note": "行数口径：正常行 1,836 < 判据①门槛 10,000——小样本数据机制复证，非正式达标",
+  "families": {
+    "iforest": {
+      "threshold_score": 0.63118,
+      "labeled_anomaly_recall": 0.4619,
+      "labeled_anomaly_detected": 109,
+      "holdout_fpr": 0.0109,
+      "synthetic_recall": {
+        "uniform_outlier": 1.0,
+        "local_perturbation": 0.0708,
+        "combinatorial_anomaly": 0.0027
+      }
+    },
+    "ocsvm": {
+      "threshold_score": 0.0,
+      "labeled_anomaly_recall": 0.7585,
+      "labeled_anomaly_detected": 179,
+      "holdout_fpr": 0.049,
+      "synthetic_recall": {
+        "uniform_outlier": 1.0,
+        "local_perturbation": 0.0572,
+        "combinatorial_anomaly": 0.0
+      }
+    },
+    "autoencoder": {
+      "threshold_score": 9.689768,
+      "labeled_anomaly_recall": 0.5763,
+      "labeled_anomaly_detected": 136,
+      "holdout_fpr": 0.0109,
+      "synthetic_recall": {
+        "uniform_outlier": 1.0,
+        "local_perturbation": 0.0163,
+        "combinatorial_anomaly": 0.0
+      }
+    }
+  }
+}
