@@ -864,12 +864,13 @@ export default function LLMGatewayPage() {
     },
   } : null
 
-  // 供应商头开关显示状态绑定组内 enabled（与点击切换的字段一致）：
-  // 此前错绑 is_default——非默认供应商的开关永远显示「关」，点击启用
-  // 只是把本就 true 的 enabled 再设一遍，刷新后依旧显示关（用户实测
-  // 「DeepSeek 不能启用」的根因）。
-  const headerSwitchChecked = !!selected?.profiles.length
-    && selected.profiles.every((p) => p.enabled !== false)
+  // 供应商头开关显示状态 = 组内存在启用模型（any 语义）：关掉单个模型
+  // 不影响供应商开关，只有全部模型关闭才自动显示关；手动切换供应商开关
+  // = 组内全部模型统一启停（停用后调用被后端守卫拒绝，整组不可用）。
+  // 此前曾错绑 is_default（非默认供应商永远显示关）与 every（关单个模型
+  // 头部跟着关——两轮用户实测反馈的根因）。
+  const headerSwitchChecked = !!selected?.profiles
+    .some((p) => p.enabled !== false)
 
   return (
     <AppLayout>
