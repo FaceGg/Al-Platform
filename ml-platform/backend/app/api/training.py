@@ -98,6 +98,11 @@ class AutoMLRunRequest(BaseModel):
     task: str = "classification"
     # 无监督（anomaly_detection）专用：预期异常比例先验，宁低勿高，缺省 0.01。
     contamination: float | None = Field(default=None, gt=0.0, le=0.5)
+    # 工况分片列（技术方案 §6.3/§7.1，M7/M8）：anomaly_detection 专用——
+    # 指定后引擎按工况值分片训练（N bundle，M7 产出链），部署挂 N targets
+    # 走 ConditionValueRouter；不指定则全量单模型。三期机群实验以
+    # device_id/工位号作为 condition_column 的一等应用。
+    condition_column: str | None = Field(default=None, min_length=1, max_length=128)
     candidate_ids: list[str] = Field(default_factory=list)
     algorithm_ids: list[str] = Field(default_factory=list)
     algorithm_params: dict[str, dict[str, float | int | str]] = Field(default_factory=dict)
@@ -803,6 +808,11 @@ def start_automl(
                 "time_budget": controls["time_budget"],
                 **({"contamination": float(data.contamination)} if data.contamination is not None else {}),
                 **({"ensemble": dict(data.ensemble)} if data.ensemble else {}),
+                # 工况分片列（§6.3/§7.1）：引擎按它分片训练 N bundle——
+                # M7 产出链的平台直建入口（与闭环 trigger_retrain_job 同键）
+                **({
+                    "condition_column": str(data.condition_column).strip()
+                } if task_type == "anomaly_detection" and str(data.condition_column or "").strip() else {}),
             },
             dataset_artifact_id=dataset.id,
             dataset_path=artifact_service.storage_reference(dataset), status="pending",
