@@ -938,3 +938,14 @@ M7 全块落地（技术方案 §6.3/§6.6E/F/G）。主块一（前批）：迁
 - 本地双路径实证：默认 build（缓存重用通过）+ 离线补件路径（补件 10 wheel 拷入 wheelhouse → WITH_TORCH=1 → torch 2.15.0+cpu import 成功，验证镜像已清理）
 - **坑**：离线分支显式列依赖名在 --no-index 下必挂（wheelhouse 无 filelock 等）——改为 pip 从 wheels 解析闭包，缺什么报什么
 - wheelhouse 现含补件（166 wheel）：主构建零影响（requirements 不含新包）；packaging/README-UBUNTU.md 新增「启用自编码器族」章
+
+## 2026-11-13 Mimosa 完整深扫（三期批次安全审计）：无新增真缺口
+
+deep 扫描（scan-2026-11-13T03-11-00.028Z-cc5beb521a90，seal sha256:b1010e95…，262 findings / 463 依赖包）分类判定：
+
+- **213 个为 temp_test 构建副本放大**（frontend-dist 资产 / head_build×2 / test-suite 镜像副本——同一源码被 4-5 份重复计数）
+- **真源 49 个**全部为既有形态：operators 沙箱与评估算子（11-03 深扫已归档同类）、python_script_runtime（10-29 治理九加固后的在册形态）、性能工具/打包脚本/竞赛 js（非过程文档）
+- **与本批次相关的 4 个 medium 全部为既有 joblib 形态的新位置**（anomaly_device_calibration×2 / demo_loop / onnx_worker——均为 `joblib.load` 平台自产密封工件，artifact resolve 信任链 + HMAC 密封防线同款），按 11-03 归档口径归档，**无新增真缺口**
+- 依赖扫描 463 包完成；1 个 inconclusive hypothesis（权限检查 candidate，历史同款）
+
+浏览器走查（compose 栈 localhost:5173）：登录 ✓ → AutoML 范式卡片（title/选中角标）✓ → 无监督表单（污染率先验/算法家族三族选项）✓ → 闭环页正常渲染（无 loop 数据面板静默符合设计）✓。**注意：栈正确入口为 localhost:5173（frontend 映射），127.0.0.1:80（nginx）origin 不在 CORS 白名单**。
