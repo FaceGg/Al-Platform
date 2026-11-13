@@ -951,3 +951,11 @@ deep 扫描（scan-2026-11-13T03-11-00.028Z-cc5beb521a90，seal sha256:b1010e95�
 浏览器走查（compose 栈 localhost:5173）：登录 ✓ → AutoML 范式卡片（title/选中角标）✓ → 无监督表单（污染率先验/算法家族三族选项）✓ → 闭环页正常渲染（无 loop 数据面板静默符合设计）✓。**注意：栈正确入口为 localhost:5173（frontend 映射），127.0.0.1:80（nginx）origin 不在 CORS 白名单**。
 
 **WITH_TORCH 合同回归修复（cc344cc9）**：push CI（43357822572）挂 test_ci_workflow——生产 Dockerfile 禁显式 index 切换参数字面量（10-28 不可复现事故的合同化，子串断言连注释都抓）。WITH_TORCH 在线兜底改为 `--find-links` 指向 PyTorch 官方 CPU wheel 目录（默认 URL 内联，find-links 不在断言内；本地 pip download 同 URL 实测拉取成功）。**最新 main 的 push CI 全绿（run 43362237180 @ cc344cc9，含双 OS backend suite+合同测试）**。
+
+## 2026-11-13 第三轮全量审计（逐字重读方案全文+完成项代码级抽验）：1 处补全 + 2 处如实登记
+
+第三轮审计不信任前两轮结论，对「已确认完成」项做代码级抽验（§2.3 并存场景三件/§3.4 S2 专项/§3.7 配方三键/§4.4 测试策略），结果：
+
+1. **补全：M10 per-device fpr（c5318071）**——方案 §7.3 M10 明文「per-device fpr/PSI 聚合大屏」，此前 fleet_overview 只聚合了 PSI。补分片运行期报警率（回流帧按工况分组×各分片自身阈值，无标签下报警率为 fpr proxy，与部署级 alert_comparison 同口径）；test 11 passed。
+2. **如实登记：§2.3.3 弱监督演进派生流**——「确认标签积累后派生监督任务（带标签导出、预填特征）」机制可组合（回流数据集自带 feedback 列可直接建监督任务、部署可切换+回退），但**无产品化一键派生流**；与 M6 同门（confirmed=0 无用户），随 M6 解锁一并产品化。
+3. **如实登记：判据①点焊域口径**——方案 M1 验收写「点焊/拧紧历史正常数据」，实跑仅拧紧域（28 万行达标）；本地点焊数据为 2 千行合成脚本产物（generate_spot_weld_synthetic），不满足 ≥1 万行历史正常数据门槛，随真实点焊数据接入补跑（同批次三期设备数据）。
