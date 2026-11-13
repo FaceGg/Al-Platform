@@ -101,6 +101,16 @@ class TestAutoencoderEvaluateChain(unittest.TestCase):
             self.assertIn(key, metrics)
         self.assertGreaterEqual(float(metrics["synthetic_auc"]), 0.9)
         self.assertTrue(metrics["gates_passed"])
+        # 注入强度-检出率曲线（§3.3 第二层 S4 证据）：三档扫描齐备
+        curve = metrics.get("strength_curve") or []
+        self.assertEqual(len(curve), 3)
+        self.assertEqual(
+            [item["sigma"] for item in curve], [0.5, 1.5, 3.0],
+        )
+        # 衰减剖面健康信号：越强越易检出，最强档 recall ≥ 最温和档
+        self.assertGreaterEqual(
+            float(curve[-1]["detection_recall"]), float(curve[0]["detection_recall"]),
+        )
 
     def test_pipeline_anomaly_scores_direction(self):
         matrix = _synthetic_dataset()
@@ -147,16 +157,24 @@ class TestAutoencoderWorkerConversion(unittest.TestCase):
         }, source)
         info = _convert(source, destination)
         self.assertEqual(info["converter"], "torch")
-        self.assertEqual(info["output_names"], ["label", "scores"])
+        self.assertEqual(info["output_names"], ["label", "scores", "per_feature_error"])
         session = ort.InferenceSession(str(destination), providers=["CPUExecutionProvider"])
-        label, scores = session.run(
-            ["label", "scores"], {"features": matrix[:100].astype(np.float32)},
+        label, scores, per_feature_error = session.run(
+            ["label", "scores", "per_feature_error"], {"features": matrix[:100].astype(np.float32)},
         )
         # 推理侧同款取负（anomaly_score = −scores）后与 joblib 逐位一致
         joblib_scores = pipeline_anomaly_scores(pipeline, matrix[:100])
         max_abs_diff = float(np.max(np.abs(joblib_scores - (-np.asarray(scores)))))
         self.assertLessEqual(max_abs_diff, 1e-4)
         self.assertTrue(np.all(np.asarray(label) == 1))
+        # 第三端口=逐特征平方误差 [N,F]：与 scores=−mean(error) 自洽（AE 归因
+        # 分解 §3.5 的数据源）
+        errors = np.asarray(per_feature_error)
+        self.assertEqual(errors.shape, (100, matrix.shape[1]))
+        reconstructed_mse = errors.mean(axis=1)
+        self.assertLessEqual(
+            float(np.max(np.abs(-reconstructed_mse - np.asarray(scores)))), 1e-5,
+        )
 
 
 class TestAutoencoderEarlyStopping(unittest.TestCase):

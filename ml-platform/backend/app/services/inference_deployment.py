@@ -92,18 +92,20 @@ def anomaly_threshold_for_version(db, version):
 
 def anomaly_predict_enrichment(runtime, runtime_key, records, result, *,
                                feature_schema, output_schema, threshold_score=None,
-                               enable_attribution=True):
+                               enable_attribution=True, conversion_metadata=None):
     """无监督三要素映射 + 单行扰动归因（技术方案 §3.5，平台/生产端点共用）。
 
     ONNX `scores` 端口 = sklearn decision_function（正=正常，2026-11-12
     双族实测），anomaly_score 取负统一为「越高越异常」。§6.6A 判定统一：
     is_anomaly 按 anomaly_score ≥ threshold_score（训练标定阈值，随版本
     score_stats 下发）；threshold 不可得时回退 label 端口（offset 语义）。
-    top_contributors 用中心差分扰动归因（每特征 ±1% 各重推理一次，共
-    2×n_features 次 session.run），仅单行请求时返回——批量归因成本线性
-    放大，一期不做。enable_attribution=False 供工况分片批量路径禁用
-    （按总请求数判断归因，防分片子组恰为单行时成本线性放大）。非 anomaly
-    部署原样返回。
+    top_contributors 归因：AE（conversion_metadata.converter=="torch"）走
+    **逐特征重构误差分解**（ONNX 第三端口 per_feature_error，零额外推理——
+    §3.5 AE 专属归因）；IF/OC-SVM 用中心差分扰动归因（每特征 ±1% 各重推理
+    一次，共 2×n_features 次 session.run）。均仅单行请求时返回——批量归因
+    成本线性放大，一期不做。enable_attribution=False 供工况分片批量路径
+    禁用（按总请求数判断归因，防分片子组恰为单行时成本线性放大）。非
+    anomaly 部署原样返回。
     """
     schema = output_schema if isinstance(output_schema, dict) else {}
     if schema.get("task") != "anomaly":
@@ -124,6 +126,22 @@ def anomaly_predict_enrichment(runtime, runtime_key, records, result, *,
         for item in (feature_schema or [])
         if isinstance(item, dict) and item.get("name")
     ]
+    metadata = conversion_metadata if isinstance(conversion_metadata, dict) else {}
+    is_autoencoder = str(metadata.get("converter") or "") == "torch"
+    per_feature_error = result.get("per_feature_error") if is_autoencoder else None
+    if enable_attribution and len(records) == 1 and names and per_feature_error is not None:
+        # AE 专属归因（§3.5）：逐特征重构误差分解——融合图第三端口直接给出
+        # scaled 空间逐特征平方误差，零额外推理，贡献度排序取 top3。
+        errors = list(per_feature_error[0]) if per_feature_error else []
+        if len(errors) == len(names):
+            contributions = [
+                {"feature": name, "contribution": float(abs(value))}
+                for name, value in zip(names, errors)
+            ]
+            contributions.sort(key=lambda item: float(item["contribution"]), reverse=True)
+            result["top_contributors"] = contributions[:3]
+            result["attribution"] = "ae_reconstruction_decomposition"
+            return result
     if enable_attribution and len(records) == 1 and names:
         row = dict(records[0])
         contributions: list[dict[str, float | str]] = []
@@ -634,6 +652,7 @@ class InferenceDeploymentService:
             output_schema=version.output_schema,
             threshold_score=threshold_score,
             enable_attribution=enable_attribution,
+            conversion_metadata=version.conversion_metadata,
         )
 
     def reconcile(self, db, *, include_rollout_aliases=False):

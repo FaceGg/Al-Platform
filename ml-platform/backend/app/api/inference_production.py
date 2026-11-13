@@ -399,6 +399,7 @@ def build_inference_production_router(
                 result,
                 feature_schema=version.feature_schema,
                 output_schema=version.output_schema,
+                conversion_metadata=version.conversion_metadata,
             )
             duration_ms = max(0, int((perf_counter() - started) * 1000))
             if isinstance(observation, InferenceObservability):

@@ -189,6 +189,8 @@ def _train_single(frame, hints: dict, contamination: float, full_data: bool) -> 
             "detection_recall_per_class": champion_result.get("detection_recall_per_class"),
             "threshold_score": champion_result.get("threshold_score"),
             "score_histograms": champion_result.get("score_histograms"),
+            # 注入强度-检出率曲线（§3.3 第二层 S4 证据）
+            "strength_curve": champion_result.get("strength_curve"),
             "synthetic_class_sizes": champion_result.get("synthetic_class_sizes"),
             "candidates": scored,
         },

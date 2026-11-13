@@ -70,8 +70,10 @@ if TORCH_AVAILABLE:
     class AutoencoderOnnxModule(nn.Module):
         """融合导出模块：前端预处理 + AE + scores=-MSE 单图。
 
-        输入=原始特征向量（含 NaN），输出 ``(label, scores)`` 双端口按位置
-        对齐一期 ONNX 合同（runtime.predict 取 outputs[0]/outputs[1]）：
+        输入=原始特征向量（含 NaN），输出 ``(label, scores, per_feature_error)``
+        按位置对齐一期 ONNX 合同（runtime.predict 取 outputs[0]/outputs[1]；
+        第三端口=逐特征平方误差 [N,F]，runtime 仅单行请求时透传——enrich 的
+        AE 逐特征重构误差分解归因（§3.5 可选增强，三期补全）消费它）：
         scores = −mean((reconstruction − scaled)², dim=1)，正=正常——enrich
         取负后 anomaly_score=+MSE，方向「越高越异常」全局统一。
         label 为全 1 占位（平台阈值判定 §6.6A 以 threshold_score 优先，label
@@ -89,11 +91,12 @@ if TORCH_AVAILABLE:
             filled = torch.where(torch.isnan(features), self.median, features)
             scaled = (filled - self.mean) / self.scale
             reconstruction = self.network(scaled)
-            mse = torch.mean((reconstruction - scaled) ** 2, dim=1)
+            squared_error = (reconstruction - scaled) ** 2
+            mse = torch.mean(squared_error, dim=1)
             scores = -mse
             # 全 1 占位（值恒定、形状跟随 batch）：Mul/Cast/Add 均为版本稳定算子
             label = (mse * 0).to(torch.int64) + 1
-            return label, scores
+            return label, scores, squared_error
 
 
 class TorchAutoencoder:
@@ -277,9 +280,10 @@ class TorchAutoencoder:
         torch.onnx.export(
             module, dummy, str(destination),
             input_names=["features"],
-            output_names=["label", "scores"],
+            output_names=["label", "scores", "per_feature_error"],
             dynamic_axes={
                 "features": {0: "batch"}, "label": {0: "batch"}, "scores": {0: "batch"},
+                "per_feature_error": {0: "batch"},
             },
             opset_version=opset_version,
             dynamo=False,
@@ -308,6 +312,6 @@ def export_pipeline_autoencoder_onnx(pipeline, destination) -> dict:
     )
     return {
         "input_names": ["features"],
-        "output_names": ["label", "scores"],
+        "output_names": ["label", "scores", "per_feature_error"],
         "opset": 13,
     }

@@ -277,4 +277,9 @@ class RuntimeRegistry:
         }
         if len(outputs) > 1:
             response["probabilities"] = self._json_value(outputs[1])
+        # AE 第三端口（§3.5 归因增强，三期补全）：逐特征平方误差 [N,F]——仅
+        # 单行请求透传（批量带宽浪费；enrich 分解归因只消费单行）。非 AE
+        # 模型无此输出，完全不受影响。
+        if len(outputs) > 2 and len(records) == 1:
+            response["per_feature_error"] = self._json_value(outputs[2])
         return response

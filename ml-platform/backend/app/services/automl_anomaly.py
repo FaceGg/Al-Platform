@@ -128,14 +128,20 @@ def _build_uniform_outliers(train_matrix: np.ndarray, count: int, rng) -> np.nda
     return samples
 
 
-def _build_perturbations(holdout_matrix: np.ndarray, train_matrix: np.ndarray, count: int, rng) -> np.ndarray:
-    """局部扰动点：保留集样本 ±1.5σ 高斯扰动（轻微劣化形态，最难检出）。"""
+def _build_perturbations(holdout_matrix: np.ndarray, train_matrix: np.ndarray, count: int, rng,
+                         sigma_multiplier: float | None = None) -> np.ndarray:
+    """局部扰动点：保留集样本 ±kσ 高斯扰动（轻微劣化形态，最难检出）。
+
+    ``sigma_multiplier`` 缺省用基准主强度（ANOMALY_PERTURBATION_SIGMA）；
+    强度-检出率曲线（§3.3 第二层 S4 证据）按多档倍率扫描。
+    """
     if count <= 0:
         return np.empty((0, holdout_matrix.shape[1]), dtype=float)
+    multiplier = float(sigma_multiplier) if sigma_multiplier is not None else ANOMALY_PERTURBATION_SIGMA
     rows = rng.integers(0, len(holdout_matrix), size=count)
     sigma = np.std(train_matrix, axis=0)
     noise = rng.normal(size=(count, holdout_matrix.shape[1])) * np.where(sigma > 0, sigma, 0.0)
-    return holdout_matrix[rows] + ANOMALY_PERTURBATION_SIGMA * noise
+    return holdout_matrix[rows] + multiplier * noise
 
 
 def _build_combinatorial_anomalies(holdout_matrix: np.ndarray, train_matrix: np.ndarray, count: int, rng) -> np.ndarray:
@@ -301,6 +307,26 @@ def evaluate_anomaly_candidate(
     combinatorial_scores = pipeline_anomaly_scores(estimator, benchmark.combinatorial)
 
     all_scores = np.concatenate([holdout_scores, uniform_scores, perturbation_scores, combinatorial_scores])
+    # 注入强度-检出率曲线（§3.3 第二层 S4 证据）：扰动形态按多档强度扫描——
+    # 模型灵敏度随劣化幅度的衰减剖面（S4 面板曲线数据）。温和档在阈值附近
+    # 检出率低是预期（最难度量），曲线单调性是健康信号。
+    strength_curve: list[dict[str, object]] = []
+    curve_count = len(benchmark.perturbations)
+    if curve_count > 0:
+        curve_rng = np.random.default_rng(random_seed)
+        for multiplier in (0.5, float(ANOMALY_PERTURBATION_SIGMA), 3.0):
+            perturbed = _build_perturbations(
+                holdout, matrix, curve_count, curve_rng,
+                sigma_multiplier=multiplier,
+            )
+            recall = float(np.mean(
+                pipeline_anomaly_scores(estimator, perturbed) >= threshold
+            )) if len(perturbed) else 0.0
+            strength_curve.append({
+                "sigma": multiplier,
+                "label": f"±{multiplier:g}σ",
+                "detection_recall": round(recall, 4),
+            })
     labels = np.concatenate([
         np.zeros(len(holdout_scores), dtype=int),
         np.ones(len(all_scores) - len(holdout_scores), dtype=int),
@@ -330,6 +356,8 @@ def evaluate_anomaly_candidate(
             "holdout": score_histogram(holdout_scores),
             "synthetic": score_histogram(all_scores[labels == 1]),
         },
+        # 注入强度-检出率曲线（S4 证据面板）：扰动幅度衰减剖面
+        "strength_curve": strength_curve,
         "synthetic_class_sizes": benchmark.synthetic_class_sizes,
     }
     if compute_stability:

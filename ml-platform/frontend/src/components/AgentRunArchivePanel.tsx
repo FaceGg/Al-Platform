@@ -21,6 +21,19 @@ const statusBadge = (status: string): string => {
   return "v2-bgray";
 };
 
+/** 直方图 sparkline（S4 双峰性可视化）：counts 归一化到块字符密度条。 */
+function sparkHistogram(histogram?: { bin_edges?: number[]; counts?: number[] }): string | null {
+  const counts = histogram?.counts ?? [];
+  if (!counts.length) {
+    return null;
+  }
+  const blocks = "▁▂▃▄▅▆▇█";
+  const max = Math.max(...counts, 1);
+  return counts
+    .map((count) => blocks[Math.min(Math.floor((count / max) * (blocks.length - 1)), blocks.length - 1)])
+    .join("");
+}
+
 function relativeTime(iso?: string | null, zh = true): string {
   const parsed = parseBackendTime(iso);
   if (!parsed) return "-";
@@ -381,6 +394,24 @@ function buildStreamLines(archive: AgentRunDetail, zh: boolean): StreamLine[] {
     if (s4) {
       push(sid, "text", `[S4] ${zh ? "硬门禁" : "Gates"}：${s4.gate_passed ? (zh ? "通过" : "passed") : (zh ? "未过" : "failed")}`, s4.gate_passed ? "ok" : "err");
       for (const f of (s4.gate_failures ?? []).slice(0, 4)) push(sid, "text", `· ${f}`, "warn");
+      // S4 证据可视化（§3.3 第二层）：分数分布 sparkline（holdout 正常峰 vs
+      // 合成异常峰的双峰性）+ 注入强度-检出率衰减剖面 + precision@k。
+      const histograms = s4.metrics?.score_histograms;
+      const holdoutSpark = sparkHistogram(histograms?.holdout);
+      const syntheticSpark = sparkHistogram(histograms?.synthetic);
+      if (holdoutSpark && syntheticSpark) {
+        push(sid, "mono", `[S4] ${zh ? "分数分布 holdout｜合成" : "Scores holdout|synthetic"}：${holdoutSpark}｜${syntheticSpark}`);
+      }
+      const curve = s4.metrics?.strength_curve ?? [];
+      if (curve.length) {
+        push(sid, "mono", `[S4] ${zh ? "强度-检出率" : "Strength→recall"}：${curve
+          .map((point) => `${point.label}→${(point.detection_recall * 100).toFixed(0)}%`)
+          .join("  ")}`);
+      }
+      const precision = s4.metrics?.known_anomaly_precision_at_k;
+      if (precision !== undefined && precision !== null) {
+        push(sid, "text", `[S4] ${zh ? "precision@k" : "precision@k"}：${precision}`, precision >= 0.8 ? "ok" : "warn");
+      }
     }
     const review = round.review;
     if (review) {

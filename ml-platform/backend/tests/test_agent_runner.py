@@ -504,6 +504,10 @@ class TestAgentRunnerAnomaly(RunnerHarness, unittest.TestCase):
         self.assertEqual(validation["sample_count"], 2)
         self.assertIn("detection_rate", validation)
         self.assertIn("per_row", validation)
+        # precision@k（§3.3 第二层）：训练数据抽正常对照混合打分——报警预算
+        # （k=已知异常数）内的真异常占比，检出率的精度侧互补口径
+        self.assertIn("precision_at_k", validation)
+        self.assertIn("precision", validation["precision_at_k"])
 
     def test_anomaly_gate_failure_loops_with_anomaly_metric_hint(self):
         """synthetic_auc 门禁未过 → 打回 S1，hints 带 anomaly 指标名。"""

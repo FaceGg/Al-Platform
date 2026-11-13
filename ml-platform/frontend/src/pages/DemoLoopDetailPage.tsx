@@ -521,6 +521,23 @@ export default function DemoLoopDetailPage() {
               {/* 机群分片概览（技术方案 §7 三-3，三期 M10）：分片部署时展示
                   per-device 阈值/兼容性/回测 + PSI 分片明细；普通部署不渲染 */}
               <FleetShardPanel deploymentId={status?.deployment_id ?? null} />
+              {/* 运行期误报实证（技术方案 §3.3 第三层）：同一批回流行上阈值法
+                  vs 模型报警累计对比（判据④的运行期持续口径） */}
+              {status?.alert_comparison && (
+                <Alert
+                  type="info"
+                  showIcon
+                  message={(
+                    <span>
+                      运行期报警对比（回流 {status.alert_comparison.rows} 行）：
+                      阈值法 <Text strong>{status.alert_comparison.threshold_alerts}</Text> 次
+                      （{status.alert_comparison.threshold_alert_rate != null ? `${(status.alert_comparison.threshold_alert_rate * 100).toFixed(2)}%` : "—"}）
+                      · 异常检测 <Text strong>{status.alert_comparison.model_alerts}</Text> 次
+                      （{status.alert_comparison.model_alert_rate != null ? `${(status.alert_comparison.model_alert_rate * 100).toFixed(2)}%` : "—"}）
+                    </span>
+                  )}
+                />
+              )}
               <ReflowFeedbackPanel projectId={projectId} loopId={loopId} />
               <div style={{ maxHeight: 320, overflowY: "auto" }}>
                 <Timeline

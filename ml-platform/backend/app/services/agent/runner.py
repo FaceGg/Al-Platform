@@ -950,11 +950,53 @@ class AgentRunner:
                                 for i, (s, d) in enumerate(zip(sample_scores, detected))
                             ],
                         }
+                        # precision@k（§3.3 第二层）：已知异常 + S2 特征矩阵抽样
+                        # 正常对照混合打分，按分数降序取前 k（k=已知异常数，
+                        # 即报警预算）中真异常占比——检出率的精度侧互补口径。
+                        # 负例池用 feature_df（S2 处理后特征矩阵，列与
+                        # feature_names 完全对齐——原始 frame 列名不匹配）。
+                        negatives = feature_df.reindex(columns=feature_names).dropna()
+                        if len(negatives) > 0:
+                            sample_size = min(len(known_rows) * 5, 500, len(negatives))
+                            neg_rng = _np.random.default_rng(42)
+                            neg_index = neg_rng.choice(len(negatives), size=sample_size, replace=False)
+                            neg_matrix = _np.array(
+                                negatives.iloc[_np.sort(neg_index)].to_numpy(dtype=float),
+                            )
+                            neg_scores = _scores(champion_model, neg_matrix)
+                            mixed = _np.concatenate([sample_scores, neg_scores])
+                            mixed_labels = _np.concatenate([
+                                _np.ones(len(sample_scores), dtype=int),
+                                _np.zeros(len(neg_scores), dtype=int),
+                            ])
+                            order = _np.argsort(-mixed)
+                            k = min(len(known_rows), len(mixed))
+                            precision_at_k = float(mixed_labels[order[:k]].mean())
+                            known_anomaly_validation["precision_at_k"] = {
+                                "k": k,
+                                "negatives": sample_size,
+                                "precision": round(precision_at_k, 4),
+                            }
+                            metrics_view = dict(trainer_result.get("metrics") or {})
+                            metrics_view["known_anomaly_precision_at_k"] = round(precision_at_k, 4)
                         metrics_view = dict(trainer_result.get("metrics") or {})
                         metrics_view["known_anomaly_detection_rate"] = known_anomaly_validation["detection_rate"]
                         trainer_result["metrics"] = metrics_view
                     except Exception as error:  # noqa: BLE001 - 验证失败不阻断验收
                         known_anomaly_validation = {"error": str(error)[:200]}
+            evaluation_view = trainer_result.get("evaluation") or {}
+            metrics_view = dict(trainer_result.get("metrics") or {})
+            # S4 证据数据（§3.3 第二层可视化）：直方图+强度曲线随 digest 进
+            # 档案（memory_json），前端档案面板渲染双峰直方图与衰减剖面。
+            evidence_metrics = {
+                key: evaluation_view.get(key) or metrics_view.get(key)
+                for key in (
+                    "synthetic_auc", "normal_fpr", "stability", "perturbation_recall",
+                    "score_histograms", "strength_curve",
+                    "known_anomaly_detection_rate", "known_anomaly_precision_at_k",
+                )
+                if (evaluation_view.get(key) or metrics_view.get(key)) is not None
+            }
             self._stage_digest(
                 round_number,
                 "s4",
@@ -962,6 +1004,7 @@ class AgentRunner:
                     "gates": gates,
                     "gate_passed": gate_report.passed,
                     "gate_failures": gate_report.failures[:6],
+                    "metrics": evidence_metrics,
                     **({"known_anomaly_validation": known_anomaly_validation} if known_anomaly_validation else {}),
                 },
             )

@@ -878,6 +878,17 @@ class TestShardedPsiDrift(unittest.TestCase):
         self.assertEqual(captured.get("condition_column"), "station")
         self.assertEqual(captured.get("task_type"), "anomaly_detection")
 
+    def test_alert_comparison_counts_model_alerts(self):
+        """运行期报警对比（§3.3 第三层）：同一批回流行上阈值法 vs 模型口径。"""
+        comparison = self.service._alert_comparison(self.config)
+        self.assertIsNotNone(comparison)
+        self.assertEqual(comparison["rows"], 200)
+        # 帧无 predicted 列、error_classes 空 → 阈值法口径（==-1）不命中
+        self.assertEqual(comparison["threshold_alerts"], 0)
+        # 模型口径：A 分片分数 0~0.05（<0.5 阈值不报警）、B 分片 50+（全报警）
+        self.assertEqual(comparison["model_alerts"], 100)
+        self.assertEqual(comparison["model_alert_rate"], 0.5)
+
 
 class TestCrossConditionInjection(unittest.TestCase):
     """验收③语义级交叉注入（技术方案 §6.4）：两工况正常包络本质不同时，
@@ -927,6 +938,65 @@ class TestCrossConditionInjection(unittest.TestCase):
             float(anomaly_score(ae_b, probe_b).mean()),
             float(anomaly_score(ae_a, probe_b).mean()),
         )
+
+
+class TestAutoencoderAttribution(unittest.TestCase):
+    """AE 专属归因（技术方案 §3.5，三期补全）：逐特征重构误差分解——
+    ONNX 第三端口 per_feature_error 直接给贡献度，零额外推理；IF/OC-SVM
+    仍走中心差分。"""
+
+    def test_ae_decomposition_attribution(self):
+        from app.services.inference_deployment import anomaly_predict_enrichment
+
+        class _Runtime:
+            def predict(self, key, records):
+                return {"predictions": ["1"], "probabilities": [-0.5]}
+
+        # AE 版本（conversion_metadata.converter=="torch"）：result 带
+        # per_feature_error（runtime 单行透传第三端口）→ 分解归因
+        feature_schema = [{"name": f"f{i}", "dtype": "float64"} for i in range(4)]
+        result = {
+            "predictions": ["1"],
+            "probabilities": [-0.5],
+            "per_feature_error": [[0.9, 0.02, 0.5, 0.03]],
+        }
+        enriched = anomaly_predict_enrichment(
+            _Runtime(), "key", [{"f0": 1.0}], result,
+            feature_schema=feature_schema,
+            output_schema={"task": "anomaly"},
+            threshold_score=0.2,
+            conversion_metadata={"converter": "torch"},
+        )
+        contributors = enriched.get("top_contributors") or []
+        self.assertEqual(
+            [item["feature"] for item in contributors], ["f0", "f2", "f3"],
+        )
+        self.assertEqual(enriched.get("attribution"), "ae_reconstruction_decomposition")
+
+    def test_non_ae_keeps_central_difference(self):
+        from app.services.inference_deployment import anomaly_predict_enrichment
+
+        class _Runtime:
+            def __init__(self):
+                self.predict_calls = 0
+
+            def predict(self, key, records):
+                self.predict_calls += 1
+                return {"predictions": ["1"], "probabilities": [-0.5]}
+
+        feature_schema = [{"name": "f0", "dtype": "float64"}, {"name": "f1", "dtype": "float64"}]
+        runtime = _Runtime()
+        result = {"predictions": ["1"], "probabilities": [-0.5]}
+        enriched = anomaly_predict_enrichment(
+            runtime, "key", [{"f0": 1.0, "f1": 2.0}], result,
+            feature_schema=feature_schema,
+            output_schema={"task": "anomaly"},
+            threshold_score=0.2,
+            conversion_metadata={"converter": "skl2onnx"},
+        )
+        # 非 AE：仍走中心差分（runtime 被多次调用，每特征 ±1% 两次）
+        self.assertNotEqual(enriched.get("attribution"), "ae_reconstruction_decomposition")
+        self.assertGreater(runtime.predict_calls, 1)
 
 
 if __name__ == "__main__":

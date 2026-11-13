@@ -1310,6 +1310,47 @@ class DemoLoopService:
                 frames.append(frame)
         return frames
 
+    def _alert_comparison(self, config: DemoLoopConfig) -> dict | None:
+        """运行期误报实证（技术方案 §3.3 第三层）：同一批回流行上「业务阈值
+        法报警」vs「异常检测模型报警」累计对比。
+
+        阈值法口径 = 回流行 predicted 标签命中 error_classes（或 ==-1，监督
+        回流的报错回流语义）；模型口径 = anomaly_score ≥ 部署版本标定阈值。
+        无回流帧/无阈值 → None（不设对比）。
+        """
+        try:
+            deployment = self._deployment(config)
+            version = self._current_model_version(deployment)
+            payload = self._score_stats_payload_for_version(version)
+            threshold = float((payload or {}).get("threshold_score")) if payload else None
+            if threshold is None:
+                return None
+            error_classes = {str(item).strip() for item in (config.error_classes or [])}
+            threshold_alerts = 0
+            model_alerts = 0
+            rows_total = 0
+            for frame in self._reflow_frames(config):
+                rows_total += len(frame)
+                scores = pd.to_numeric(frame["anomaly_score"], errors="coerce")
+                model_alerts += int((scores.fillna(-np.inf) >= threshold).sum())
+                if "predicted" in frame.columns:
+                    labels = frame["predicted"].astype(str).str.strip()
+                    if error_classes:
+                        threshold_alerts += int(labels.isin(error_classes).sum())
+                    else:
+                        threshold_alerts += int((labels == "-1").sum())
+            if rows_total == 0:
+                return None
+            return {
+                "rows": rows_total,
+                "threshold_alerts": threshold_alerts,
+                "model_alerts": model_alerts,
+                "model_alert_rate": round(model_alerts / rows_total, 4) if rows_total else None,
+                "threshold_alert_rate": round(threshold_alerts / rows_total, 4) if rows_total else None,
+            }
+        except Exception:  # noqa: BLE001 - 对比统计失败不影响状态主链
+            return None
+
     def _reflow_scores_by_condition(
         self, config: DemoLoopConfig, condition_column: str,
     ) -> dict[str | None, list[float]]:
@@ -1988,12 +2029,16 @@ class DemoLoopService:
                     "row_count": (artifact.metadata_ or {}).get("row_count", 0),
                 }
         model_score = self._current_model_score(config)
+        alert_comparison = self._alert_comparison(config)
         return {
             "config_id": str(config.id),
             "error_count": int(config.error_count or 0),
             "alert_count": int(config.alert_count or 0),
             "total_count": int(getattr(config, "total_count", 0) or 0),
             "model_score": model_score,
+            # 运行期误报实证（§3.3 第三层）：同一批回流行上「业务阈值法报警」
+            # vs 「异常检测模型报警」累计对比——判据④的运行期持续口径
+            "alert_comparison": alert_comparison,
             "retrain_status": config.retrain_status,
             "retrain_job_id": str(config.retrain_job_id) if config.retrain_job_id else None,
             "retrain_mode": (getattr(config, "retrain_mode", None) or "engine"),

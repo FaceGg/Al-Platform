@@ -92,6 +92,8 @@ export interface DemoLoopStatus {
   psi_state?: { last_total?: number; psi?: number | null; level?: string; sample_count?: number; per_shard?: { condition_value: string | null; psi: number; level: string }[] } | null;
   psi_enabled?: boolean;
   psi_threshold?: number;
+  /** 运行期误报实证（§3.3 第三层）：阈值法 vs 模型报警累计对比 */
+  alert_comparison?: { rows: number; threshold_alerts: number; model_alerts: number; threshold_alert_rate: number | null; model_alert_rate: number | null } | null;
   /** 部署 id（机群分片概览面板拉取 fleet-overview 用，三期 M10） */
   deployment_id?: string | null;
 }

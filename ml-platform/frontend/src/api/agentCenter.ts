@@ -52,7 +52,22 @@ export interface AgentRunDetail extends AgentRunItem {
       };
       s2?: { description?: string; generated_columns?: string[]; dropped_columns?: string[]; data_shape?: string; attempts?: number };
       s3?: { metrics?: Record<string, number>; importance?: { feature?: string; importance?: number }[]; target_excluded_from_features?: string; ensemble?: { adopted?: boolean; voting?: string; reason?: string; members?: { name?: string; weight?: number }[]; metrics?: Record<string, number> } };
-      s4?: { gates?: Record<string, number>; gate_passed?: boolean; gate_failures?: string[] };
+      s4?: {
+        gates?: Record<string, number>;
+        gate_passed?: boolean;
+        gate_failures?: string[];
+        // S4 证据数据（§3.3 第二层）：直方图/强度曲线随 digest 落档案
+        metrics?: {
+          synthetic_auc?: number;
+          normal_fpr?: number;
+          stability?: number;
+          perturbation_recall?: number;
+          score_histograms?: { holdout?: { bin_edges?: number[]; counts?: number[] }; synthetic?: { bin_edges?: number[]; counts?: number[] }; train?: { bin_edges?: number[]; counts?: number[] } };
+          strength_curve?: { sigma: number; label: string; detection_recall: number }[];
+          known_anomaly_detection_rate?: number;
+          known_anomaly_precision_at_k?: number;
+        };
+      };
       review?: { verdict?: string; surprises?: string[]; readiness?: string; hints?: string[] };
     }[];
     gate_warnings?: string[];
