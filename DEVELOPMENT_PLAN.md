@@ -927,3 +927,14 @@ M7 全块落地（技术方案 §6.3/§6.6E/F/G）。主块一（前批）：迁
 5. **S4 证据可视化**：s4 digest 带 `metrics`（score_histograms/strength_curve/precision@k），档案面板 sparkline 直方图（holdout｜合成双峰对比，块字符密度条）+ 强度-检出率文本曲线。
 
 **验证**：新增/增强用例 8 个全过；受影响面回归 469 passed（两轮合计）；泛化门禁扫描清零；前端 tsc 零错。**全量 CI：run 43341005334 @ 250823c6 六 job 全绿（一次通过）**——至此一期/二期/三期全部条款复现完成，剩余仅环境受限顺延项（M6 标签门槛、三期真实设备数据、torch 进部署镜像决策）。
+
+## 2026-11-13 AE 可选依赖双通道部署（e55c5ddb）：torch 不进主安装包的折中落地
+
+用户决策的折中形态落地：torch CPU 版**不进主安装包/主镜像**（主包零膨胀），现场按需启用——`WITH_TORCH` 构建开关（Dockerfile `ARG WITH_TORCH=0`，独立 RUN 层不影响主安装层缓存）：
+
+- **通道 A（现场有外网）**：`docker compose build --build-arg WITH_TORCH=1 backend migrate worker scheduler`——torch 从 PyTorch 官方 CPU 源在线拉取（PyPI linux torch 默认 CUDA 版带 GB 级 nvidia 链，**禁用默认源**）
+- **通道 B（完全离线）**：补件 wheel 拷入 wheelhouse 后按 A 构建（纯离线）。补件下载命令须**显式列出依赖**（filelock/sympy/jinja2/fsspec/typing-extensions/networkx）——platform 模式下只给 torch 会漏下依赖
+- 默认 0：AE 族自动缺席（AlgorithmUnavailable，fail-safe 不变）；启用后无需任何配置
+- 本地双路径实证：默认 build（缓存重用通过）+ 离线补件路径（补件 10 wheel 拷入 wheelhouse → WITH_TORCH=1 → torch 2.15.0+cpu import 成功，验证镜像已清理）
+- **坑**：离线分支显式列依赖名在 --no-index 下必挂（wheelhouse 无 filelock 等）——改为 pip 从 wheels 解析闭包，缺什么报什么
+- wheelhouse 现含补件（166 wheel）：主构建零影响（requirements 不含新包）；packaging/README-UBUNTU.md 新增「启用自编码器族」章
