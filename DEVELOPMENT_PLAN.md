@@ -1180,10 +1180,13 @@ AE 的 ONNX label 端口是**占位全 1**（`automl_anomaly_ae.py:98` `(mse*0)+
 - **[中] M6 新版本审批语义待拍板**——当前实现：源版本已 approved 且在服役 → 新版本沿用源审批结论 → 轮换 stable revision 替换 target（依据：同检测器主体、只差阈值、闭环换模本就自动 approve）。若要求「必须人工审批新版本」，改动点集中在 `_mount_recalibrated_version` 一处。
 - **[中] 误报形态报表 `dense_features` 用原始均值而非 z 值**（`anomaly_threshold_recalibration.py:181-183`，字段名却是 `mean_z`；`scaled` 只用于聚类、未用于统计）→「哪些参数区域误报密集」的结论会失真（本轮未修）。
 - **[中] 缺省权重等分丢失行数比例**——挂载 API 无行数输入，以既有权重作行数代理；真正按行数分配需扩挂载入参（§6.3「weight 按段行数比例分配」未完全落地）。
+- **[中] 写侧 API 无前端入口——§6.2 档 1 / M9 迁移在平台上「不可自助操作」**——M6 `POST /api/model-versions/{id}/recalibrate-labels`、M9 `POST /api/model-versions/{id}/recalibrate-device`、M9 `POST /api/inference-deployments/{id}/fleet-shards` 三个**写侧** API 均无任何前端调用（前端只有只读的 `fleet-overview` 面板 `FleetShardPanel`）→ 现场只能直接调 API，UI 路径缺失。
 - **[低] 空 `condition_value` 分片仍不可达**——`ConditionValueRouter` 要求请求值非空才匹配，通配 target 不吃空串。
+- **[低] 分片数上限的边界假设**——`_rebalance_fleet_weights` 假设分片数 ≤ 10000（否则无法同时满足「每片 ≥1 基点」与「权重和恒为 10000」两个约束，代码 docstring 已注明该假设，未做显式校验）。
 - **[低] `TorchAutoencoder` 未继承 `BaseEstimator`**（§6.6C 字面偏差，`clone()` 实测可用，语义等效）。
 - **[低] 已知异常验证无「≥10 条」下限；向导 S4 `normal_fpr` 硬编码 0.015（非常识 contamination×1.5）；判据① 验收实跑拟合 9,600 行 < 方案「≥1 万」；API 互斥返回 400 而方案文字为 422（口径不一）。**
 - **[低] `LabelRecalibrateRequest` 定义在 API 层**（`app/api/model_registry.py`）而非公共契约模块 `app/schemas/`。
+- **[低] 方案 §7.1 正文措辞待修订**——§7.1 原文仍是「全局共享检测器主体 + 设备级标定」的单一表述，而 A/B 实验结论为「按族混合」（§11）；§8 落地索引已按实测刷新，**正文原文未动**（改方案原文属口径修订，需用户确认）。
 - **未验证**：全量 CI 六 job 未跑（本机 `gh` 未安装）；前端**全量** vitest 未跑（仅本轮相关 2 个文件）；PostgreSQL 迁移实际 apply 与 CHECK 约束未实跑（仅 SQLite）；anomaly 配方重放未端到端跑训练（job 落库后停 pending/queued）；`fleet_mode="shared"`（按族混合的方案 B 形态）实现由并行会话在途，本轮未纳入。
 
 ### 11. 并发说明
