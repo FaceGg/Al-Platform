@@ -609,6 +609,12 @@ def _register_condition_shard_versions(
         reverse=True,
     )
     for bundle in sorted_bundles:
+        # unfit 工位段（§7.5 护栏）：fpr 超 1.5×contamination 的分片不挂载
+        # ——挂了会把设备个体偏差当异常（误报失控）；该工位的请求由通配
+        # 全局 bundle 兜底路由。fleet_global 通配 bundle（condition_value
+        # =None）保留挂载（B 主+A 兜底的 B 侧兜底）。
+        if bundle.get("unfit") and bundle.get("condition_value") is not None:
+            continue
         raw_value = bundle.get("condition_value")
         condition_value = str(raw_value).strip() if raw_value is not None else None
         if condition_value is not None and not condition_value:

@@ -566,6 +566,26 @@ class TestSwapConditionShardMount(unittest.TestCase):
         self.assertIsNone(targets[0].condition_value)
         self.assertEqual(targets[0].weight_bps, 10000)
 
+    def test_unfit_station_bundle_skipped_on_mount(self):
+        """§7.5「B 主+A 兜底」挂载语义：unfit 工位段（fpr 超门禁标记）不
+        挂载——该工位请求由通配全局 bundle 兜底路由；fit 工位段正常挂载。"""
+        self.job.metrics = dict(self.job.metrics)
+        self.job.metrics["condition_bundles"] = [
+            {"condition_value": "A", "model_artifact_id": str(uuid.uuid4()),
+             "stats_artifact_id": self.stats_ids["a"],
+             "synthetic_auc": 0.95, "rows": 600, "unfit": False},
+            {"condition_value": "B", "model_artifact_id": str(uuid.uuid4()),
+             "stats_artifact_id": self.stats_ids["b"],
+             "synthetic_auc": 0.90, "rows": 400, "unfit": True},
+        ]
+        self.db.commit()
+        self._swap()
+        stable = self._stable()
+        mounted = {item.condition_value for item in (stable.targets or [])}
+        # fit 工位 A 挂载；unfit 工位 B 跳过（其请求由通配/默认分片兜底）
+        self.assertIn("A", mounted)
+        self.assertNotIn("B", mounted)
+
 
 class TestRetentionPerShard(unittest.TestCase):
     """分片 retention：最差分片口径门禁。"""

@@ -50,6 +50,7 @@ from app.services.automl_anomaly import (
     ANOMALY_HOLDOUT_RATIO,
     ANOMALY_MIN_ROWS,
     ANOMALY_OCSVM_MAX_TRAIN_ROWS,
+    ANOMALY_ACCEPTANCE_FPR_TOLERANCE,
     ANOMALY_SEGMENT_MIN_ROWS,
     build_synthetic_benchmark,
     evaluate_anomaly_candidate,
@@ -2486,10 +2487,59 @@ def _execute_anomaly_job(
         total_trials.extend(payload["trials"])
         budget_exhausted = budget_exhausted or payload["budget_exhausted"]
 
+    # 全局共享段（技术方案 §7.1「全局共享检测器+设备级标定」，三期 M8/B 架构）：
+    # fleet_mode="shared" 时在段循环后追加「联合段」——合并全部工位数据训练
+    # 一个全局模型（condition_value=None 通配兜底），与各工位独立模型并存。
+    # 挂载语义（§7.5 原文「B 主+A 兜底」）：各工位 fpr 超 1.5×contamination
+    # 标 unfit（该工位 bundle 不挂载，其请求路由到全局通配兜底）；fit 工位
+    # 挂独立模型。训练成本：联合段=全数据一次训练（时间约 ×2，文档注明）。
+    fleet_shared = (
+        str(params.get("fleet_mode") or "") == "shared"
+        and bool(condition_column)
+        and bool(segments)
+    )
+    if fleet_shared:
+        merged_frame = pd.concat([seg_frame for _, seg_frame in segments], ignore_index=True)
+        if len(merged_frame) >= ANOMALY_MIN_ROWS:
+            global_payload = _execute_anomaly_segment_job(
+                job=job,
+                db=db,
+                artifact_service=artifact_service,
+                dataset=dataset,
+                segment_frame=merged_frame,
+                segment_label=f"{condition_column}=__FLEET_GLOBAL__",
+                feature_columns=feature_columns,
+                removed_columns=removed_columns,
+                params=params,
+                task=task,
+                contract=contract,
+                contamination=contamination,
+                search_strength=search_strength,
+                method=method,
+                requested_trials=max(1, requested_trials // 2),
+                families=families,
+                deadline=deadline,
+                check_control=check_control,
+                parent=parent,
+                tracking=tracking,
+                dependencies=dependencies,
+            )
+            global_payload["segment"] = f"{condition_column}=__FLEET_GLOBAL__"
+            global_payload["fleet_global"] = True
+            segment_payloads.append({"segment": f"{condition_column}=__FLEET_GLOBAL__", **global_payload})
+            total_trials.extend(global_payload["trials"])
+
     # 汇总冠军 = 最差段（synthetic_auc 最低——任一工况不可用即整体不可用，
-    # §6.3 分片口径；单段时即该段自身）。
+    # §6.3 分片口径；单段时即该段自身）。全局段（__FLEET_GLOBAL__）是通配
+    # 兜底，不参与冠军竞争。
+    fleet_global_payload = next(
+        (item for item in segment_payloads if item.get("fleet_global")), None,
+    )
+    champion_candidates = [
+        item for item in segment_payloads if not item.get("fleet_global")
+    ] or segment_payloads
     champion_payload = min(
-        segment_payloads,
+        champion_candidates,
         key=lambda item: float(item["evaluation"]["synthetic_auc"] or 0.0),
     )
 
@@ -2547,11 +2597,23 @@ def _execute_anomaly_job(
         # 换模时为每段注册版本并以 condition_value 标注 target
         "condition_bundles": [
             {
-                "condition_value": (item["segment"].split("=", 1)[1] if item["segment"] else None),
+                # 全局段（__FLEET_GLOBAL__ 后缀）→ condition_value=None（通配
+                # 兜底，路由未命中工位由它接管）；普通段 → 工况值
+                "condition_value": (
+                    None if item["segment"].endswith("__FLEET_GLOBAL__")
+                    else item["segment"].split("=", 1)[1]
+                ),
                 "model_artifact_id": str(item["model_artifact"].id),
                 "stats_artifact_id": str(item["stats_artifact"].id),
                 "synthetic_auc": item["evaluation"]["synthetic_auc"],
                 "rows": item["segment_rows"],
+                # 段级 unfit 标记（§7.5 护栏）：fpr 超 1.5×contamination 的
+                # 工位段挂载时跳过（由全局通配兜底），并留痕供独立建模决策
+                "unfit": bool(
+                    (item.get("evaluation") or {}).get("normal_fpr", 0.0)
+                    > contamination * ANOMALY_ACCEPTANCE_FPR_TOLERANCE
+                ),
+                "fleet_global": bool(item.get("fleet_global")),
             }
             for item in segment_payloads if item["segment"]
         ],
