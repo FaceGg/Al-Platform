@@ -1,0 +1,60 @@
+{
+  "date": "2026-11-13",
+  "criterion": "方案 B 各工位误报率 ≤ 方案 A ×1.2（§7.1）",
+  "families": {
+    "iforest": {
+      "family": "iforest",
+      "per_station": {
+        "DPQQ02_num": {
+          "plan_a_fpr": 0.005,
+          "plan_b_fpr": 0.005,
+          "within_tolerance": true
+        },
+        "DPQX111_num": {
+          "plan_a_fpr": 0.02,
+          "plan_b_fpr": 0.02,
+          "within_tolerance": true
+        },
+        "DPX07_num": {
+          "plan_a_fpr": 0.0175,
+          "plan_b_fpr": 0.01,
+          "within_tolerance": true
+        },
+        "ZZQX113_num": {
+          "plan_a_fpr": 0.0125,
+          "plan_b_fpr": 0.0125,
+          "within_tolerance": true
+        }
+      },
+      "b_pass": true
+    },
+    "ocsvm": {
+      "family": "ocsvm",
+      "per_station": {
+        "DPQQ02_num": {
+          "plan_a_fpr": 0.03,
+          "plan_b_fpr": 0.005,
+          "within_tolerance": true
+        },
+        "DPQX111_num": {
+          "plan_a_fpr": 0.01,
+          "plan_b_fpr": 0.0225,
+          "within_tolerance": false
+        },
+        "DPX07_num": {
+          "plan_a_fpr": 0.0175,
+          "plan_b_fpr": 0.0175,
+          "within_tolerance": true
+        },
+        "ZZQX113_num": {
+          "plan_a_fpr": 0.01,
+          "plan_b_fpr": 0.0125,
+          "within_tolerance": false
+        }
+      },
+      "b_pass": false
+    }
+  },
+  "verdict": "方案 B 未达标——分片独立模型（方案 A）为正式架构（修方案 §7.1 口径）",
+  "verdict_pass": false
+}
