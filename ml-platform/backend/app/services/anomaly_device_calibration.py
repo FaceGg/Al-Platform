@@ -662,4 +662,7 @@ def _as_uuid(value):
 
 
 def json_stats_tempdir() -> Path:
-    return Path("temp_test") / "device_recalibration"
+    # 容器内 app 用户无工作目录写权限——用系统临时目录（/tmp，可写）
+    import tempfile
+
+    return Path(tempfile.gettempdir()) / "device_recalibration"

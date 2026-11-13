@@ -17,6 +17,7 @@ KMeans 聚类画像（哪些参数区域误报密集），反哺用户调 contam
 from __future__ import annotations
 
 import json
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -368,7 +369,7 @@ def label_recalibrate_version(
             "source": "m6_label_recalibration",
         },
     }
-    addon_dir = Path("temp_test") / "m6_label_recalibration"
+    addon_dir = Path(tempfile.gettempdir()) / "m6_label_recalibration"
     addon_dir.mkdir(parents=True, exist_ok=True)
     stats_path = addon_dir / f"{uuid.uuid4().hex}-score_stats.json"
     stats_path.write_text(json.dumps(stats_payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -522,7 +523,7 @@ def export_labeled_reflow_dataset(
     export_frame = labeled.reindex(columns=feature_names + [positive_label]).dropna()
     if export_frame.empty:
         raise ThresholdRecalibrationError("LABELED_ROWS_MISSING_FEATURES")
-    addon_dir = Path("temp_test") / "supervised_derivation"
+    addon_dir = Path(tempfile.gettempdir()) / "supervised_derivation"
     addon_dir.mkdir(parents=True, exist_ok=True)
     out_path = addon_dir / f"{uuid.uuid4().hex}-labeled.csv"
     export_frame.to_csv(out_path, index=False)
