@@ -134,6 +134,16 @@ pip download torch==2.15.0 filelock sympy jinja2 fsspec typing-extensions networ
 
 启用后无需任何配置：无监督建模任务的算法目录自动出现「AutoEncoder 自编码器」，与 IsolationForest / OC-SVM 同台搜索。未启用时它保持缺席，不产生任何报错。
 
+## 工况分片与机群模式（无监督异常检测）
+
+无监督建模任务支持按「工况列」（如工位号/设备号）分片训练与路由（技术方案 §6.3/§7.1）：
+
+- **分片独立模式（默认）**：新建无监督任务时传 `condition_column`（工况列名）——引擎按工况值分片训练 N 个模型，部署挂 N targets，推理按记录的工况值路由到对应模型
+- **机群共享模式**：同上再传 `fleet_mode="shared"`——引擎**联合训练一个全局共享模型**（全工位数据合并）+ 每工位独立标定阈值；某工位误报超标（fpr > 1.5×contamination）时该工位标记 unfit **不挂载**，其请求由全局共享模型兜底路由（§7.5 护栏）
+- 特征集 diff 前置：多工位数据须特征列同构（`tools/fleet_feature_diff.py` 校验；数值特征列 ≥3 工位一致方可入同一基线）
+
+现场使用：无监督建模任务的 API payload 传 `condition_column` 与（可选）`fleet_mode`；前端向导的工况列字段与平台自动分片随后跟进。某工位误报超标时的处理见「 unfit 降级」——该工位数据单独建模（独立模型路径）。
+
 ## 运维操作
 
 ```bash
