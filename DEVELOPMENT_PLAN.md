@@ -915,3 +915,15 @@ M7 全块落地（技术方案 §6.3/§6.6E/F/G）。主块一（前批）：迁
 - 第 3 轮 run 43251905038（@0b6c4bfa）failure：`test_usage_stats_daily` 午夜窗口 flake（服务端固定 UTC+8 分桶，测试造数锚 UTC 日期+固定 hour，UTC 16:00-16:59 窗口跑必落业务昨天桶空）——与本批无关的既存 flake，治本修（造数锚业务时区）→ 17b8d048；
 - **第 4 轮 run 43260473490（@17b8d048）六 job 全绿**（双 OS Quality + 双 Production + Chromium acceptance + Security & release），76 分钟。
 **坑（新）**：①新文件必须跑泛化门禁扫描（禁词子串匹配含错误码字符串字面量）；②改 AutoMLPage 弹窗交互必须同批同步走弹窗的 e2e（第三起）；③`{action}` 通配路由之前注册精确路由（FastAPI 顺序匹配）；④CI 时间敏感测试按业务时区锚定造数（午夜窗口 flake）。
+
+## 2026-11-13 三期复核与遗漏补全（250823c6）：S4 证据可视化 + AE 专属归因 + precision@k + 运行期报警对比
+
+全量复核（对照方案 §3.3/§3.5 一期条款逐条）登记 5 处遗漏，全部补全：
+
+1. **注入强度-检出率曲线**（§3.3 第二层）：`_build_perturbations` 参数化 sigma 倍率，`evaluate_anomaly_candidate` 三档扫描（0.5σ/1.5σ/3σ）产出 `strength_curve`——扰动幅度衰减剖面（S4 面板曲线数据），最强档 ≥ 最温档的单调健康信号断言。
+2. **AE 专属归因**（§3.5 三算法专属实现）：AE 融合图加第三输出端口 `per_feature_error`（逐特征平方误差 [N,F]，runtime 仅单行透传——批量带宽保护）；enrich 按 `conversion_metadata.converter=="torch"` 分流——AE 走零额外推理的逐特征重构误差分解（`attribution=ae_reconstruction_decomposition`），IF/OC-SVM 仍走中心差分；第三端口与 scores=−mean(error) 逐位自洽断言。
+3. **precision@k**（§3.3 第二层）：已知异常 + S2 特征矩阵（`feature_df`，列与 feature_names 对齐——原始 frame 列名不匹配的坑）抽样正常对照混合打分，按分数降序取前 k（k=已知异常数=报警预算）中真异常占比；进 known_anomaly_validation 与 s4 digest（LLM 评审与证据同源）。
+4. **运行期报警对比**（§3.3 第三层判据④持续口径）：demo_loop `build_status` 聚合同一批回流行上「业务阈值法报警（predicted 命中 error_classes / ==-1）vs 模型报警（anomaly_score≥标定阈值）」+ 双侧报警率；闭环详情页 Alert 展示。
+5. **S4 证据可视化**：s4 digest 带 `metrics`（score_histograms/strength_curve/precision@k），档案面板 sparkline 直方图（holdout｜合成双峰对比，块字符密度条）+ 强度-检出率文本曲线。
+
+**验证**：新增/增强用例 8 个全过；受影响面回归 469 passed（两轮合计）；泛化门禁扫描清零；前端 tsc 零错。**全量 CI：run 43341005334 @ 250823c6 六 job 全绿（一次通过）**——至此一期/二期/三期全部条款复现完成，剩余仅环境受限顺延项（M6 标签门槛、三期真实设备数据、torch 进部署镜像决策）。
