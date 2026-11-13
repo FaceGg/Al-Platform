@@ -1083,11 +1083,6 @@ export default function LLMGatewayPage() {
                       {/* 自动获取的模型目录：未配置的模型显示为候选行，一键克隆添加 */}
                       {(catalogLoading || catalog.length) && selected.profiles.length ? (
                         <div style={{ marginTop: 2 }}>
-                          <div style={{ fontSize: 12, color: 'var(--v2-dim, #999)', marginBottom: 4 }}>
-                            {catalogLoading
-                              ? (zh ? '正在获取模型目录…' : 'Fetching model catalog…')
-                              : `${zh ? '目录中尚未配置的模型' : 'Models in catalog not yet configured'}：`}
-                          </div>
                           {catalog.filter((modelId) => !selected.profiles.some((p) => p.model_id === modelId)).map((modelId) => (
                             <div
                               key={modelId}
