@@ -127,6 +127,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_automl_anomaly_ae",
         # 三期 M8/M9/M10（2026-11-12）：机群设备级标定与迁移
         "test_fleet_device_calibration",
+        # M6 机制先行（2026-11-13）：半监督档 1 标签阈值重标定（confirmed≥50 解锁）
+        "test_anomaly_threshold_recalibration",
         "test_label_schema",
         "test_label_schema_api",
         "test_run_suite",
