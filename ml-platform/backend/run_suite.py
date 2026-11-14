@@ -24,7 +24,10 @@ from tests.week_manifest import (
 
 BACKEND_DIR = os.path.dirname(__file__)
 PROJECT_DIR = os.path.dirname(os.path.dirname(BACKEND_DIR))
-MODULE_TIMEOUT_SECONDS = int(os.environ.get("SUITE_MODULE_TIMEOUT_SECONDS", "300"))
+# 单模块超时上限：默认 600s（CI 的 Windows runner 比本地慢 3-6 倍，异常域
+# 重训练模块本地约 50s，300s 上限在 CI 上偶发触发——2026-11-14 CI 的
+# "Run backend suite" 失败且无模块级细节即此症状）。可用环境变量覆盖。
+MODULE_TIMEOUT_SECONDS = int(os.environ.get("SUITE_MODULE_TIMEOUT_SECONDS", "600"))
 TESTS_DIR = Path(BACKEND_DIR) / "tests"
 
 
@@ -158,14 +161,24 @@ def run_modules(test_modules: list[str]) -> int:
             framework = detect_test_framework(module)
             command = build_test_command(module, framework)
             print(f"  FRAMEWORK: {framework}")
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                cwd=BACKEND_DIR,
-                env=env,
-                timeout=MODULE_TIMEOUT_SECONDS,
-            )
+            try:
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    cwd=BACKEND_DIR,
+                    env=env,
+                    timeout=MODULE_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired:
+                # 单模块超时不应拖垮整轮：标记该模块失败并继续跑其余模块。
+                # 此前 TimeoutExpired 未捕获 → run_suite.py 自身抛错退出（exit 1），
+                # CI 上表现为「Run backend suite」失败且**没有任何模块级失败细节**
+                # （2026-11-14 CI 失败即此症状，Windows runner 更慢更易触发）。
+                failed += 1
+                errors.append(module)
+                print(f"  >>> {module}: FAILED (timeout after {MODULE_TIMEOUT_SECONDS}s)")
+                continue
 
             combined_output = f"{result.stdout}\n{result.stderr}"
             zero_tests = has_zero_tests(combined_output, framework)

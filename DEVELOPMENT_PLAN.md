@@ -1398,11 +1398,14 @@ AE 的 ONNX label 端口是**占位全 1**（`automl_anomaly_ae.py:98` `(mse*0)+
 
 ### 8. CI 报错定位与修复（本轮附带）
 
-**前端 Quality (ubuntu-22.04) 失败**——`src/weekAcceptance.test.ts.ts` 断言「每个前端测试文件恰属一个开发周」，本会话早前新增的 `./components/loop/FleetShardPanel.test.tsx` 未登记 → 93 个测试文件对 92 条登记。**修**：登记进 week17（与 `DemoLoopPage` / `DemoLoopDetailPage` 同组）。
+**前端 Quality (ubuntu-22.04) 失败**——`src/weekAcceptance.test.ts` 断言「每个前端测试文件恰属一个开发周」，本会话早前新增的 `./components/loop/FleetShardPanel.test.tsx` 未登记 → 93 个测试文件对 92 条登记。**修**：登记进 week17（与 `DemoLoopPage` / `DemoLoopDetailPage` 同组）。
 
-**后端 Quality (windows-latest) 失败**——用 `git worktree add --detach temp_test/wt-ci 2ff1c4a0`（已推送版本）逐周复现 `run_suite.py --week N`：week17（41 模块，含全部异常域）**全过**；week 1/2/3/4/5/6/7/9/10/11/13/14/15/16 全过（week1 两例失败经查为**本地并行复现的自造冲突**：同秒启动的 `run_suite.py` 共享 `temp_test/test-suite/<时间戳>/` 目录，一方结束 `rmtree` 删掉另一方 DB → `unable to open database file`，非代码缺陷）。最终以 **CI 自身为准**（CI 的 annotations API 已可读，见下）。
+**后端 Quality (windows-latest) 失败**——症状特殊：**只有 "Process completed with exit code 1"，没有任何模块级失败细节**（对比前端 job 的注解里带完整 pytest 差异）→ 指向 `run_suite.py` 自身抛异常而非某个模块断言失败。定位到 `subprocess.run(..., timeout=MODULE_TIMEOUT_SECONDS)` 的 `TimeoutExpired` **未被捕获** → 单模块超时会把 `run_suite.py` 整个打挂（exit 1、无模块细节），而 CI 上「异常域重训练模块」（本地最慢 `test_automl_anomaly` 49s）在**较慢的 Windows runner** 上会逼近默认 300s 上限 → 偶发触发。
+**修（两道）**：①`run_suite.py` 捕获 `TimeoutExpired` → 该模块标记 FAILED 并**继续跑其余模块**（实测 1s 超时下 12 个模块逐个报 "FAILED (timeout after 1s)"、整套不再崩溃）；②单模块超时上限默认 300s → **600s**（可用 `SUITE_MODULE_TIMEOUT_SECONDS` 覆盖）。
 
-**CI 反馈通道**：本机无 `gh`、无 token 变量，但 git 凭据在 Windows 凭据管理器 → 用 `git credential fill` 取既有凭据只读调用 GitHub REST API（凭据不打印、不落盘），可读 runs/jobs/check-runs/annotations。已用它定位到前端失败的**确切断言差异**（`- "./components/loop/FleetShardPanel.test.tsx"` 一行）。
+**本地逐周复现**：用 `git worktree add --detach temp_test/wt-ci 2ff1c4a0`（已推送版本）跑 `run_suite.py --week N`——week17（41 模块，含全部异常域）及 week 1-16 **全部通过**（week1 两例失败经查为**本地并行复现的自造冲突**：同秒启动的 `run_suite.py` 共享 `temp_test/test-suite/<时间戳>/` 目录，一方结束 `rmtree` 删掉另一方 DB → `unable to open database file`，非代码缺陷）。→ 后端失败只能由 CI 自身判定。
+
+**CI 反馈通道**：本机无 `gh`、无 token 变量，但 git 凭据在 Windows 凭据管理器 → 用 `git credential fill` 取既有凭据只读调用 GitHub REST API（凭据不打印、不落盘），可读 runs/jobs/check-runs/**annotations**。已用它定位到前端失败的**确切断言差异**（`- "./components/loop/FleetShardPanel.test.tsx"` 一行）与后端 job「无模块细节」的关键区别。
 
 ### 9. 本轮验证
 
