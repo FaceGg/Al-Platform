@@ -831,6 +831,45 @@ class TestLabelRecalibrateAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 201, response.text)
         self.assertNotIn("detail", response.json())
 
+    def test_26_derive_route_is_registered_before_wildcard_action_route(self):
+        """回归锁（2026-11-14 第八轮审计 P0）：派生导出端点曾注册在
+        `{action}` 通配路由**之后** → FastAPI 按顺序匹配，通配在前把请求体
+        当 LifecycleComment 解析 → 422 extra_forbidden → 端点 100% 不可用。
+        同时锁住权限键：project_access.PERMISSIONS 里没有 `model_version.*`
+        （那是审计 action 名），写错会被判 403 全角色被拒。"""
+        exact = "/api/model-versions/{version_id}/derive-supervised-dataset"
+        wildcard = "/api/model-versions/{version_id}/{action}"
+        registered = [route.path for route in self.router.routes]
+        self.assertIn(exact, registered)
+        self.assertEqual(registered.count(exact), 1, "派生端点不得重复注册")
+        self.assertLess(registered.index(exact), registered.index(wildcard))
+        openapi_paths = list(self.app.openapi()["paths"].keys())
+        self.assertLess(openapi_paths.index(exact), openapi_paths.index(wildcard))
+        # 权限键必须来自 project_access.PERMISSIONS（否则 audit 判 denied 403）
+        from app.services.project_access import PERMISSIONS
+
+        source = Path(__file__).resolve().parents[1] / "app" / "api" / "model_registry.py"
+        body = source.read_text(encoding="utf-8")
+        for key in ("model_version.approve", "model_version.register"):
+            self.assertNotIn(f'permission="{key}"', body, f"{key} 是审计 action 名，不是权限键")
+        self.assertIn('permission="model.register"', body)
+        self.assertIn("model.register", PERMISSIONS)
+
+    def test_27_derive_endpoint_is_not_swallowed_by_wildcard(self):
+        """实际调用：命中自身处理器并真的产出带标签数据集（修复前恒 422
+        extra_forbidden——端点 100% 不可用）。"""
+        version = self._make_source_version()
+        artifact = self._make_labeled_dataset()
+        response = self.client.post(
+            f"/api/model-versions/{version.id}/derive-supervised-dataset",
+            json={"labeled_artifact_id": str(artifact.id)},
+        )
+        self.assertEqual(response.status_code, 201, response.text)
+        body = response.json()
+        self.assertTrue(body["dataset_artifact_id"])
+        self.assertEqual(body["positives"], 60)
+        self.assertEqual(body["negatives"], 30)
+
     def test_14_happy_path_creates_version_with_new_threshold(self):
         version = self._make_source_version()
         artifact = self._make_labeled_dataset(confirmed=60, false_alarm=30, seed=5)
