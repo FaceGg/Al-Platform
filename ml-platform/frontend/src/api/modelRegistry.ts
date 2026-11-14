@@ -429,7 +429,7 @@ export async function labelRecalibrateVersion(
   versionId: string,
   payload: { labeled_artifact_id: string; feedback_marks?: Record<string, unknown>; positive_label?: string },
 ): Promise<LabelRecalibrateResult> {
-  const response = await apiClient.post(`/model-versions/${versionId}/label-recalibrate`, payload);
+  const response = await apiClient.post(`/model-versions/${versionId}/recalibrate-labels`, payload);
   return response.data;
 }
 
