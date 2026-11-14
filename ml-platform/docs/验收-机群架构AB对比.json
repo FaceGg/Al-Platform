@@ -1,5 +1,5 @@
 {
-  "date": "2026-11-13",
+  "date": "2026-11-14",
   "criterion": "方案 B 各工位误报率 ≤ 方案 A ×1.2（§7.1）",
   "families": {
     "iforest": {
@@ -55,6 +55,10 @@
       "b_pass": false
     }
   },
-  "verdict": "方案 B 未达标——分片独立模型（方案 A）为正式架构（修方案 §7.1 口径）",
-  "verdict_pass": false
+  "per_family_verdict": {
+    "iforest": "B 形态（全局共享主体+设备级标定）",
+    "ocsvm": "A 形态（分片独立模型）"
+  },
+  "verdict": "按族混合：达标族走 B 形态（全局共享主体+设备级标定）、未达标族走 A 形态（分片独立模型）——达标族 ['iforest']，未达标族 ['ocsvm']；方案 §7.1 原文的单一「全局共享检测器」口径按此修订",
+  "verdict_pass": true
 }

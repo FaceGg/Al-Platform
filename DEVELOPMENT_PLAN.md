@@ -1174,6 +1174,7 @@ AE 的 ONNX label 端口是**占位全 1**（`automl_anomaly_ae.py:98` `(mse*0)+
 ### 10. 本轮之后仍然遗留的问题（按严重度，如实登记）
 
 - **[高] 判据④ 真实标签口径不通过**（第五轮结论，本轮未动）——模型误报 ~1.0% vs 阈值基线 0.038%（降幅 −25%）。根因是该数据源合格判定本身按力矩限值执行 → 阈值规则定义性近零误报。**方案 §1.1「降误报」主张在「阈值规则已自洽」场景不成立**；达成条件 = 接入「现场报警误报率高」的产线数据后同口径复测。
+- **[高] §7.1「设备 ID 列必须从特征剔除」引擎路径未落地（登记丢失，本轮补回）**——方案 §7.1（line 367）要求剔除设备 ID 列。**agent 路径已剔**（`agent/anomaly_trainer.py:53` `drop(columns=[condition_column])`），**引擎路径未剔**：`automl_execution.py:2371` 取全数值列（仅剔全 NaN/常数列）→ `condition_column` 只作分组键（`:2435`）→ 段特征仍含该列（`:1882`）。影响：`fleet_shared` 联合段跨设备合并，device_id 成为全局模型的**可判别特征**，违反「检测器主体学习同型设备共有的正常联合分布」前提。**第四轮曾登记（§7.1 [高] 的子项），第五/六轮 §10 清单未带入 → 登记丢失，本轮补回**。注：分片独立路径下该列在段内为常数（StandardScaler 映射为 0），实际危害集中在联合段。
 - **[高] §6.2 真实门槛未解锁**——平台真实 confirmed_fault = 0，M6 档 1 只能机制验证；precision@k 证据的夹具前提「真故障分数整体高于误报样本」需真实标签检验。
 - **[中] 存量 revision 权重和可能仍 ≠ 10000**——修复只作用于新挂载产生的 revision，**存量数据需迁移**（本轮未做）。
 - **[中] M6/M9 重标定路由无审计事件**——与 M9 一致（该模块 `PROJECT_WRITE_ACTIONS` 集合全等断言约束），但「阈值重标定会改变生产判定」这类决策变更无审计留痕，是治理缺口。
@@ -1181,6 +1182,8 @@ AE 的 ONNX label 端口是**占位全 1**（`automl_anomaly_ae.py:98` `(mse*0)+
 - **[中] 误报形态报表 `dense_features` 用原始均值而非 z 值**（`anomaly_threshold_recalibration.py:181-183`，字段名却是 `mean_z`；`scaled` 只用于聚类、未用于统计）→「哪些参数区域误报密集」的结论会失真（本轮未修）。
 - **[中] 缺省权重等分丢失行数比例**——挂载 API 无行数输入，以既有权重作行数代理；真正按行数分配需扩挂载入参（§6.3「weight 按段行数比例分配」未完全落地）。
 - **[中] 写侧 API 无前端入口——§6.2 档 1 / M9 迁移在平台上「不可自助操作」**——M6 `POST /api/model-versions/{id}/recalibrate-labels`、M9 `POST /api/model-versions/{id}/recalibrate-device`、M9 `POST /api/inference-deployments/{id}/fleet-shards` 三个**写侧** API 均无任何前端调用（前端只有只读的 `fleet-overview` 面板 `FleetShardPanel`）→ 现场只能直接调 API，UI 路径缺失。
+- **[中] §2.3.3 派生监督数据集无 API 入口（登记丢失，本轮补回）**——服务层 `export_labeled_reflow_dataset` 已交付（带标签数据集导出，confirmed→1 其余→0，预填部署版本特征列），但**API 层无对应端点**（`anomaly_threshold_recalibration.py:464` 服务在，路由缺）→ §2.3.3「弱监督演进派生监督任务」在平台上不可自助发起。第四轮曾登记，第六轮 §10 清单未带入 → 登记丢失，本轮补回。
+- **[中] `fleet_shared` 在产品上不可发起**——后端合同已通（`api/training.py` 收 `condition_column` + `fleet_mode`，引擎 `fleet_shared` 联合段已落地），但**前端零入口**（已提交前端 grep `fleet_mode|condition_column` 零命中）→ 方案 §7.1/§7.5「B 主+A 兜底」在现场无法使用，只能裸调 API。缺口此前仅登记在同仓新方案 `技术方案-机群混合模式产品化.md` 的 G1，**未进本台账 §10 权威清单** → 本轮补回。
 - **[低] 空 `condition_value` 分片仍不可达**——`ConditionValueRouter` 要求请求值非空才匹配，通配 target 不吃空串。
 - **[低] 分片数上限的边界假设**——`_rebalance_fleet_weights` 假设分片数 ≤ 10000（否则无法同时满足「每片 ≥1 基点」与「权重和恒为 10000」两个约束，代码 docstring 已注明该假设，未做显式校验）。
 - **[低] `TorchAutoencoder` 未继承 `BaseEstimator`**（§6.6C 字面偏差，`clone()` 实测可用，语义等效）。
@@ -1256,4 +1259,17 @@ AE 的 ONNX label 端口是**占位全 1**（`automl_anomaly_ae.py:98` `(mse*0)+
 - 方案文档：新增 §9 偏差对照表（9 条）+ 运维前置；§8 未闭环项保持不变
 - 设计稿：3 处实质更正 + 现状盘点/缺口表/分期表同步（提交 6fe5cf88，已推送）
 - 逐条复验依据：代码 grep + 文件行号核对（§10 清单 14 条）、`git ls-files` 证据链检查、`alembic/versions` 迁移清单、`api/model_registry.py` 审计动作清单
-- **未验证**：全量 CI 六 job（本机 `gh` 未安装）、前端全量 vitest、PostgreSQL 迁移实际 apply、anomaly 配方重放端到端跑训练SL 条既有坑的又一次实证）。
+- **未验证**：全量 CI 六 job（本机 `gh` 未安装）、前端全量 vitest、PostgreSQL 迁移实际 apply、anomaly 配方重放端到端跑训练
+
+### 6. 独立复核（第三方路线，条款级比对方案 §1-§7 vs 代码 + 文档互查 + 证据链可达性）
+
+另派一路独立复核做条款级比对，其发现与本轮交叉验证后**新增 3 处实质问题**（前三轮未登记过）：
+
+1. **[已修] 台账结论 ↔ 已提交 A/B 产物 verdict 相反**——台账/方案称「按族混合」（iforest→B、ocsvm→A），而已提交 `ml-platform/docs/验收-机群架构AB对比.json` 的 `verdict` 竟是「方案 B 未达标——分片独立模型（方案 A）为正式架构」、`verdict_pass: false`。根因：`run_fleet_ab_experiment.py` 用**跨族合取** `all_pass` 生成单一 verdict，02ea56a9 改为按族混合后**产物未重生成**（逐工位数值与台账表完全一致，仅顶层结论字段相反）。**修**：脚本改为按族给结论（新增 `per_family_verdict` + 三态 verdict：全达标/按族混合/全不达标），并**复跑重生成**产物——复现数值与台账表逐项一致，verdict 现为「按族混合：达标族 iforest 走 B 形态、未达标族 ocsvm 走 A 形态」。
+2. **[已修] 证据链复跑即断裂**——`run_fleet_ab_experiment.py` 产物写向被 gitignore 的仓库根 `docs/`（`Path("../../docs/…")`）→ 复跑即断链（台账链接的是 `ml-platform/docs/` 的已跟踪副本）。**修**：产物输出路径改到 `ml-platform/docs/`（与第五轮 `run_criterion4_real.py`、第六轮 `run_m6_precision_at_k.py` 同款修正）。另 `run_anomaly_real_data.py` / `run_spot_weld_real_experiment.py` 的**用法示例**仍指向根 `docs/`，一并留待下一批统一。
+3. **[已修] M6 产物内过期 note**——`验收-M6-precision@k.json` 的 `platform_gate_defect.note` 仍陈述「平台既有实现缺陷，本次未修改该文件」，但该缺陷已于第六轮 §8 修复。**修**：复跑脚本重生成（`platform_gate_defect` 现为 `null`，关键数字不变：阈值 0.570280→0.621496、precision@k 0.566667→0.893617）。
+4. **[已登记并补回 §10] 两项登记丢失**——§7.1「设备 ID 列必须从特征剔除」（引擎路径未落地，第四轮登记过但未带入第六轮清单）与 §2.3.3 派生流无 API 入口（第四轮登记过、第六轮未带入）→ 本轮补回 §10 权威清单并加 [高]/[中] 级。
+5. **[已登记并补回 §10] `fleet_shared` 产品上不可发起**——后端合同已通但前端零入口；此前只登记在同仓新方案 G1，未进本台账 §10 权威清单 → 补回。
+6. **文档过宽/软陈述**（已在方案 §9 补行）——§8「`fleet_shared` 引擎分支**已产品化**」（实为引擎分支已落地、前端入口在途）；§3.3 门禁 `normal_fpr ≤ contamination×1.5`（实为 `max(×1.5, contamination+2σ·Binomial)`，小保留集更宽松）；§3.6「复用现有多模型路由机制」（实为**新建** `ConditionValueRouter`）；文档头部「M1-M10 已全部交付」vs §8 的 7 项未闭环（自相矛盾）→ 头部改为「机制全部交付 ≠ 验收判据全部闭环」。
+7. **代码内自相矛盾（新发现）**——`automl_anomaly_ae.py` 模块 docstring 写「继承 BaseEstimator」，但类定义未继承（手写 `get_params/set_params`，`clone()` 实测可用）。已登记为 [低]（语义等效，仅文档与代码不符）。
+8. **正面核对**——所有被引用产物均存在且**已被 git 跟踪**；8 个异常相关测试模块全部登记 `tests/week_manifest.py`（§4.4 三件套满足）；引用的数字（AE 三族表、判据四 -25.8/-25.0/-25.1%、3829/68/230、precision@k 0.566667→0.893617 等）逐条与 JSON 一致。SL 条既有坑的又一次实证）。

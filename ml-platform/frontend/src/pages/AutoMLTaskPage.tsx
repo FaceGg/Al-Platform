@@ -119,6 +119,9 @@ export default function AutoMLTaskPage() {
       ?? "classification",
   );
   const isRegression = taskType.includes("regression");
+  // 无监督（anomaly_detection）：指标行按合成基准口径渲染（用户反馈详情页
+  // 算法任务详情显示异常——监督列 AUC/F1 对无监督指标键不适用）
+  const isAnomalyTask = taskType === "anomaly_detection";
   const rows = useMemo<AutoMLResultRow[]>(() => {
     const source = resultSource(metrics);
     const mapped: AutoMLResultRow[] = source.map((row, index) => {
@@ -183,11 +186,22 @@ export default function AutoMLTaskPage() {
         { title: "状态", dataIndex: "status", key: "status", render: (value: unknown) => value ? <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, "zh")}</Tag> : "-" },
         resultActionColumn,
       ]
-    : [
+    : taskType === "anomaly_detection"
+      ? [
+          { title: "排名", key: "rank", render: (_value: unknown, _row: AutoMLResultRow, index: number) => index + 1 },
+          { title: "模型", key: "name", render: (row: AutoMLResultRow) => String(row.name || row.model || row.algorithm || "-") },
+          { title: "合成基准 AUC", key: "synthetic_auc", render: (row: AutoMLResultRow) => { const value = metric(row, ["synthetic_auc", "auc"]); return value == null ? "-" : <Text strong>{Number(value).toFixed(4)}</Text>; } },
+          { title: "误报率", key: "normal_fpr", render: (row: AutoMLResultRow) => { const value = metric(row, ["normal_fpr"]); return value == null ? "-" : Number(value).toFixed(4); } },
+          { title: "稳定性", key: "stability", render: (row: AutoMLResultRow) => { const value = metric(row, ["stability"]); return value == null ? "-" : Number(value).toFixed(4); } },
+          { title: "门禁", key: "gates", render: (row: AutoMLResultRow) => { const gates = row.gates_passed; return gates === true ? <Tag color="green">通过</Tag> : gates === false ? <Tag color="red">未过</Tag> : "-"; } },
+          { title: "状态", dataIndex: "status", key: "status", render: (value: unknown) => value ? <Tag color={taskStatusColor(value)}>{taskStatusLabel(value, "zh")}</Tag> : "-" },
+          resultActionColumn,
+        ]
+      : [
         { title: "排名", key: "rank", render: (_value: unknown, _row: AutoMLResultRow, index: number) => index + 1 },
         { title: "模型", key: "name", render: (row: AutoMLResultRow) => String(row.name || row.model || row.algorithm || "-") },
         { title: "AUC", dataIndex: "auc", key: "auc", sorter: (a: AutoMLResultRow, b: AutoMLResultRow) => (b.auc ?? -1) - (a.auc ?? -1), render: (value: number | null) => value == null ? "-" : <Text strong>{value.toFixed(4)}</Text> },
-        { title: "F1", dataIndex: "f1", key: "f1", render: (value: number | null) => value == null ? "-" : value.toFixed(4) },
+        { title: "F1", dataIndex: "f1", render: (value: number | null) => value == null ? "-" : value.toFixed(4) },
         // 少数类召回：与智能体轻量口径/配方验收门禁 PRIMARY_METRIC 同键（多类/回归为 -）
         ...(isRegression ? [] : [{ title: "少数类召回", dataIndex: "recall_minority", key: "recall_minority", sorter: (a: AutoMLResultRow, b: AutoMLResultRow) => (b.recall_minority ?? -1) - (a.recall_minority ?? -1), render: (value: number | null) => value == null ? "-" : value.toFixed(4) }]),
         { title: "Accuracy", key: "accuracy", render: (row: AutoMLResultRow) => formatMetric(metric(row, ["accuracy", "Accuracy", "best_score", "score"])) },

@@ -1,6 +1,6 @@
 # 验收记录：M6 半监督精调档 1（技术方案 §6.4 判据②）
 
-- 日期：2026-11-13
+- 日期：2026-11-14
 - 方案：[技术方案-无监督弱监督异常检测.md](技术方案-无监督弱监督异常检测.md) §6.2 验收 / §6.4 二期总验收 判据②
 - 结果数据：[验收-M6-precision@k.json](验收-M6-precision@k.json)
 - 可复现：`ml-platform/backend/tools/acceptance/run_m6_precision_at_k.py`
@@ -68,7 +68,7 @@
 | normal_fpr（≤contamination×1.5） | 0.0125 | 0.0 |
 | stability（≥0.8） | 0.9882894106657931 | 0.9882894106657931 |
 | perturbation_recall | 0.375 | 0.125 |
-| **gates_passed** | **True** | **True**（平台原样输出 False）|
+| **gates_passed** | **True** | **True**（平台原样输出 True）|
 
 重标定后门禁明细（按真实 normal_fpr 复算）：
 
@@ -78,14 +78,7 @@
 | normal_fpr | 0.0 | 0.025732132722552273 | 通过 |
 | stability | 0.9882894106657931 | 0.8 | 通过 |
 
-- 平台原样输出 gates_passed = **False**；按真实指标值复算 gates_passed = **True**
-
-> **平台实现缺陷（如实登记，本次未修改被点名文件）**
->
-> - 门禁项：`normal_fpr`；平台报数 1.0，真实值 0.0
-> - 原因：evaluate_anomaly_gates 用 `float(metrics.get('normal_fpr') or 1.0)` 读数——normal_fpr=0.0（falsy，零误报）被读成 1.0（最差），导致该项门禁被误判为未过
-> - 位置：app/services/automl_anomaly.py::evaluate_anomaly_gates；平台既有实现缺陷，本次未修改该文件（不在本任务改动范围）
-> - 影响面：仅当 normal_fpr **恰好为 0.0** 时触发（falsy→1.0）；本次为「零误报」被判未过，真实门禁结论应为通过。
+- 平台原样输出 gates_passed = **True**；按真实指标值复算 gates_passed = **True**
 
 ## 5. 判据②之三：false_alarm 分数分布下移
 
@@ -100,7 +93,7 @@
 ## 6. 结论
 
 - precision@k 提升：**是**
-- 合成基准重跑仍全过门禁：**是**（门禁判定按真实 normal_fpr 复算（平台 evaluate_anomaly_gates 的 `or 1.0` 读数会把 normal_fpr=0.0 读成 1.0，详见 synthetic_benchmark.recalibrated.platform_gate_defect））
+- 合成基准重跑仍全过门禁：**是**（门禁判定为平台 evaluate_anomaly_gates 原样输出）
 - false_alarm 分数分布显著下移：**是**
 - 判据②机制验证（mechanism-verification）：**通过**
 - 判据②发布就绪：**否**

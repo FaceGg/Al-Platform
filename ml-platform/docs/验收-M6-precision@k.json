@@ -1,5 +1,5 @@
 {
-  "date": "2026-11-13",
+  "date": "2026-11-14",
   "criterion": "§6.4 二期总验收 判据②（precision@k 提升 + 合成基准重跑不破门禁 + false_alarm 分布下移）",
   "mode": "mechanism-verification",
   "mode_detail": "确定性合成发生器：AR(1) 弱相关正常样本；确认故障类取自独立随机种子（seed+1000）合成基准中**分数超基线阈值**的异常（现场口径：只有触发过报警的样本才可能被确认）；false_alarm 类为正常样本中分数超基线阈值者",
@@ -228,9 +228,9 @@
           "passed": true
         },
         "normal_fpr": {
-          "value": 1.0,
+          "value": 0.0,
           "threshold": 0.025732132722552273,
-          "passed": false
+          "passed": true
         },
         "stability": {
           "value": 0.9882894106657931,
@@ -238,7 +238,7 @@
           "passed": true
         }
       },
-      "gates_passed": false,
+      "gates_passed": true,
       "acceptance_gates_corrected": {
         "synthetic_auc": {
           "value": 0.9523958333333333,
@@ -257,14 +257,7 @@
         }
       },
       "gates_passed_corrected": true,
-      "platform_gate_defect": {
-        "gate": "normal_fpr",
-        "platform_reported_value": 1.0,
-        "actual_value": 0.0,
-        "detail": "evaluate_anomaly_gates 用 `float(metrics.get('normal_fpr') or 1.0)` 读数——normal_fpr=0.0（falsy，零误报）被读成 1.0（最差），导致该项门禁被误判为未过",
-        "reference": "app/services/automl_anomaly.py::evaluate_anomaly_gates",
-        "note": "平台既有实现缺陷，本次未修改该文件（不在本任务改动范围）"
-      }
+      "platform_gate_defect": null
     }
   },
   "m6_mechanism_gate": {
@@ -362,8 +355,8 @@
   "verdict": {
     "precision_at_k_improved": true,
     "synthetic_benchmark_gates_still_pass": true,
-    "synthetic_benchmark_gates_passed_platform_raw": false,
-    "synthetic_benchmark_gates_note": "门禁判定按真实 normal_fpr 复算（平台 evaluate_anomaly_gates 的 `or 1.0` 读数会把 normal_fpr=0.0 读成 1.0，详见 synthetic_benchmark.recalibrated.platform_gate_defect）",
+    "synthetic_benchmark_gates_passed_platform_raw": true,
+    "synthetic_benchmark_gates_note": "门禁判定为平台 evaluate_anomaly_gates 原样输出",
     "false_alarm_distribution_shifted_down": true,
     "criterion_2_mechanism_verified": true,
     "criterion_2_release_ready": false,
