@@ -1476,6 +1476,7 @@ UnicodeEncodeError: 'charmap' codec can't encode characters in position 2-3
 - **harness 自身 stdout 断言**（`tests/test_run_suite.py::test_main_switches_own_stdout_to_utf8`）：以 `PYTHONIOENCODING=cp1252` 起子进程跑 `run_suite.main()`（桩掉 `run_modules`），断言其 stdout 编码已被切成 `utf-8` 且无 `UnicodeEncodeError`。**变异验证**：移除 `main()` 里的 `force_utf8_stdio()` → 断言如期失败（`ENCODING=cp1252`），恢复后 SHA256 前后一致（`6BBC58FC…5916`）。
 - 关联回归：`test_m6_precision_at_k` + `test_anomaly_ae_preflight` + `test_suite_manifest` = **19 passed / 2 subtests passed**；`test_module_imports`（含新增 `app/console_encoding`）**2 passed / 302 subtests passed**；`test_run_suite` **8 passed**；7 个工具 `--help` 冒烟全部可加载（`run_criterion4_real` 的 `--help` 报 `FileNotFoundError: '--help'` 是**既有行为**——该脚本本就以 `sys.argv[1]` 取 CSV 路径、不用 argparse，与本轮改动无关）。
 - **端到端**：`python run_suite.py --week 17`（42 模块，含全部异常域 + `test_run_suite` + `test_m6_precision_at_k`）经**加固后的 harness** 跑通：**42 passed / 0 failed**。
+- **端到端复现 CI 场景**（父进程 stdout=cp1252 + 管道输出，即 Windows runner 的真实形态）：`run_suite.py --week 1` → exit=0、**21 passed / 0 failed**、无 `UnicodeEncodeError`，且中文回显正常（「现场 500 的原始路径：模型库页删除注册模型（注册表删除端点）。」）；`run_suite.py --week 17`（含 M6 模块）→ exit=0、**42 passed / 0 failed**。这两条是本轮修复的**决定性验证**——它们在修复前必崩（见 #829 日志）。
 
 ### 4. 残余风险（Windows job 后半段）
 
