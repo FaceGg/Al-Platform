@@ -1273,3 +1273,7 @@ AE 的 ONNX label 端口是**占位全 1**（`automl_anomaly_ae.py:98` `(mse*0)+
 6. **文档过宽/软陈述**（已在方案 §9 补行）——§8「`fleet_shared` 引擎分支**已产品化**」（实为引擎分支已落地、前端入口在途）；§3.3 门禁 `normal_fpr ≤ contamination×1.5`（实为 `max(×1.5, contamination+2σ·Binomial)`，小保留集更宽松）；§3.6「复用现有多模型路由机制」（实为**新建** `ConditionValueRouter`）；文档头部「M1-M10 已全部交付」vs §8 的 7 项未闭环（自相矛盾）→ 头部改为「机制全部交付 ≠ 验收判据全部闭环」。
 7. **代码内自相矛盾（新发现）**——`automl_anomaly_ae.py` 模块 docstring 写「继承 BaseEstimator」，但类定义未继承（手写 `get_params/set_params`，`clone()` 实测可用）。已登记为 [低]（语义等效，仅文档与代码不符）。
 8. **正面核对**——所有被引用产物均存在且**已被 git 跟踪**；8 个异常相关测试模块全部登记 `tests/week_manifest.py`（§4.4 三件套满足）；引用的数字（AE 三族表、判据四 -25.8/-25.0/-25.1%、3829/68/230、precision@k 0.566667→0.893617 等）逐条与 JSON 一致。SL 条既有坑的又一次实证）。
+
+### fleet_shared 端到端复验（bbbfbc47 修复后，run3 c606d05e）
+
+重建 worker 后端到端复验通过：5 段 = 4 工位段（AUC 0.975-0.996，unfit=False）+ 联合段 __FLEET_GLOBAL__（condition_value=None 通配，AUC 0.9780，8,000 行）+ bundles 通配全局（fleet_global=True）。**condition_column 特征剔除生效**（段特征不再含工况列——第七轮 [高] 关闭）。
