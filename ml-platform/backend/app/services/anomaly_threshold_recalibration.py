@@ -147,7 +147,12 @@ def false_alarm_morphology_report(
 ) -> dict:
     """误报形态分析报表（§6.2 附加产出）：false_alarm 样本在特征空间的
     KMeans 聚类画像——各簇的特征均值画像（哪些参数区域误报密集），反哺
-    contamination/特征工程调整（人机协同闭环）。"""
+    contamination/特征工程调整（人机协同闭环）。
+
+    统计口径：**簇均值报 z 分数**（与聚类同口径的标准化空间，见 B5）——
+    ``mean_z`` 名实相符；原始量纲均值另存 ``mean_raw``（仅供量纲参照，
+    不参与「密集特征」排序——原始量纲大的特征恒显密集会误导结论）。
+    """
     matrix = np.asarray(false_alarm_features, dtype=float)
     if matrix.ndim != 2 or matrix.shape[0] < 4:
         return {"clusters": [], "sample_count": int(matrix.shape[0]) if matrix.ndim == 2 else 0}
@@ -172,16 +177,21 @@ def false_alarm_morphology_report(
     names = list(feature_names)
     clusters = []
     for cluster_index in range(best["k"]):
-        member = matrix[best["labels"] == cluster_index]
+        member_mask = best["labels"] == cluster_index
+        # 统计量与聚类同口径（标准化空间 scaled）：mean_z 必须是 z 分数——
+        # 用原始矩阵的均值会让「原始量纲大」的特征恒显误报密集（B5）。
+        mean_z = scaled[member_mask].mean(axis=0)
+        mean_raw = matrix[member_mask].mean(axis=0)
         clusters.append({
             "cluster": cluster_index,
             "sample_count": int(best["sizes"][cluster_index]),
-            # 误报密集特征：簇均值最高的特征（标准化后 z 值）——「哪些参数
-            # 区域误报密集」的直接画像
+            # 误报密集特征：簇 z 均值最高的特征——「哪些参数区域误报密集」的
+            # 直接画像（mean_raw 同簇原始均值，仅作量纲参照）
             "dense_features": [
                 {"feature": names[index] if index < len(names) else f"f{index}",
-                 "mean_z": round(float(member[:, index].mean()), 4)}
-                for index in np.argsort(-member.mean(axis=0))[:3]
+                 "mean_z": round(float(mean_z[index]), 4),
+                 "mean_raw": round(float(mean_raw[index]), 4)}
+                for index in np.argsort(-mean_z)[:3]
             ],
         })
     return {"clusters": clusters, "sample_count": int(matrix.shape[0])}

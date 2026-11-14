@@ -1849,6 +1849,76 @@ def _anomaly_training_matrix(matrix: np.ndarray, family_id: str, *, random_seed:
     return matrix
 
 
+def _trial_produced_result(status: object) -> bool:
+    """trial 是否真正产出结果（进度计数口径，§B3）。
+
+    运行期进度与终态 `progress.completed` 必须同一口径：只有真正跑出结果的
+    trial 才算「完成」；failed/unavailable 只推进 attempted 计数。否则进度条
+    会在终态从 100% 回退到「完成数」（trial 失败时 100% → ~50%）。
+    """
+    return str(status or "").strip().lower() in {"complete", "completed"}
+
+
+def _detect_group_identity_columns(
+    segments: Sequence[tuple[str | None, pd.DataFrame]],
+    candidate_columns: Sequence[str],
+    *,
+    joint_frame: pd.DataFrame | None = None,
+) -> list[str]:
+    """识别「分组身份列」——联合段不得携带设备/工位身份（技术方案 §7.1）。
+
+    判定只依赖分段结构（不看列名，确定、可复现）：
+
+    - **R1 等价分组键**：列在每个段内取值恒定、且跨段取值不同 → 它与分组键
+      一一对应（段内恒定 ⇒ 分不开段内样本；跨段不同 ⇒ 带身份信息）。工况列
+      本身已在特征清洗阶段剔除，这里命中的是「每段一个常数」的身份派生列。
+    - **R2 与工况轴交叉的身份轴**：列的每个取值都覆盖 ≥ANOMALY_SEGMENT_MIN_ROWS
+      行（是「组」不是「测量」——沿用平台分组护栏的组规模语义），且其取值分组
+      跨越 ≥2 个工况段、同时至少有一个段内取到多个取值 → 该列是独立于工况的
+      分组轴（典型：用户选了别的工况列，device_id 与工况不正交、设备跨工况
+      运行；此时联合段会学成「哪台设备」而非「共有正常形态」）。
+
+    普通高方差数值特征不会命中：段内取值不恒定（R1 不成立）、取值近乎唯一
+    （R2 的「每组足够大」不成立）。
+    """
+    if len(segments) < 2:
+        return []
+    identity: list[str] = []
+    for column in candidate_columns:
+        segment_values: list[set] = []
+        for _label, segment_frame in segments:
+            values = segment_frame[column].dropna()
+            segment_values.append(set(pd.unique(values.to_numpy()).tolist()))
+        sizes = [len(values) for values in segment_values]
+        if all(size <= 1 for size in sizes):
+            # R1：段内恒定 → 跨段取值不同即等价分组键
+            representatives = [
+                next(iter(values)) if values else None for values in segment_values
+            ]
+            if len({repr(value) for value in representatives}) > 1:
+                identity.append(column)
+            continue
+        # R2：身份轴与工况轴交叉（先判交叉再算组规模，避免对每个候选列全量聚合）
+        value_segments: dict[object, set[int]] = {}
+        for index, values in enumerate(segment_values):
+            for value in values:
+                value_segments.setdefault(value, set()).add(index)
+        if not any(len(indices) >= 2 for indices in value_segments.values()):
+            continue
+        counted_frame = joint_frame if joint_frame is not None else pd.concat(
+            [segment_frame for _label, segment_frame in segments], ignore_index=True,
+        )
+        counts: dict[object, int] = {}
+        for value, count in counted_frame[column].dropna().value_counts().items():
+            counts[value] = counts.get(value, 0) + int(count)
+        if len(counts) < 2:
+            continue
+        if min(counts.values()) < ANOMALY_SEGMENT_MIN_ROWS:
+            continue
+        identity.append(column)
+    return identity
+
+
 def _execute_anomaly_segment_job(
     *,
     job,
@@ -1949,9 +2019,11 @@ def _execute_anomaly_segment_job(
         if progress_state is not None:
             total = int(progress_state.get("total") or 0)
             completed = int(progress_state.get("completed") or 0)
+            attempted = int(progress_state.get("attempted") or 0)
             display_completed = min(completed, total) if total else completed
             snapshot["progress"] = {
                 "completed": display_completed,
+                "attempted": attempted,
                 "total": total,
                 "percent": round(min(100.0, (completed / total) * 100), 2) if total else 0.0,
                 "current_segment": progress_state.get("current_segment"),
@@ -1964,11 +2036,18 @@ def _execute_anomaly_segment_job(
         job.heartbeat_at = utcnow()
         db.commit()
 
-    def record_trial_progress(algorithm_id: object) -> None:
-        """每条 trial 行落账后递增共享计数（列表/详情页进度实时更新）。"""
+    def record_trial_progress(algorithm_id: object, *, produced_result: bool) -> None:
+        """每条 trial 行落账后递增共享计数（列表/详情页进度实时更新）。
+
+        口径（§B3）：`completed` 只数真正产出结果的 trial（status complete/
+        completed），`attempted` 数所有已尝试的 trial（含 failed/unavailable）。
+        运行期分子与终态 `progress.completed` 同口径 → 进度单调不回退。
+        """
         if progress_state is None:
             return
-        progress_state["completed"] = int(progress_state.get("completed") or 0) + 1
+        progress_state["attempted"] = int(progress_state.get("attempted") or 0) + 1
+        if produced_result:
+            progress_state["completed"] = int(progress_state.get("completed") or 0) + 1
         progress_state["current_algorithm"] = str(algorithm_id or "") or None
         progress_state["current_trial"] = len(trials)
 
@@ -1987,7 +2066,7 @@ def _execute_anomaly_segment_job(
                 "status": "unavailable",
                 "error_code": error.code,
             })
-            record_trial_progress(family.id)
+            record_trial_progress(family.id, produced_result=False)
     completed_candidates: list[dict[str, object]] = []
     budget_exhausted = False
     persist_metrics_snapshot()
@@ -2036,12 +2115,12 @@ def _execute_anomaly_segment_job(
                     "error_type": type(error).__name__,
                     "error_message": str(error)[:300],
                 })
-                record_trial_progress(family.id)
+                record_trial_progress(family.id, produced_result=False)
                 persist_metrics_snapshot()
                 continue
             trial_row = completed_trial_row(family, family_params, metrics, time.perf_counter() - trial_started)
             trials.append(trial_row)
-            record_trial_progress(family.id)
+            record_trial_progress(family.id, produced_result=True)
             completed_candidates.append({
                 "trial": trial_row,
                 "family": family,
@@ -2074,7 +2153,7 @@ def _execute_anomaly_segment_job(
                 }
                 trials.append(row)
                 persisted_trial_rows.append(row)
-                record_trial_progress(current_family.id)
+                record_trial_progress(current_family.id, produced_result=_trial_produced_result(summary.state))
                 persist_metrics_snapshot()
 
             try:
@@ -2111,7 +2190,7 @@ def _execute_anomaly_segment_job(
                     "error_type": type(error).__name__,
                     "error_message": str(error)[:300],
                 })
-                record_trial_progress(family.id)
+                record_trial_progress(family.id, produced_result=False)
                 continue
             budget_exhausted = budget_exhausted or family_result.budget_exhausted
             if family_result.status != "completed" or family_result.best_estimator is None:
@@ -2126,7 +2205,9 @@ def _execute_anomaly_segment_job(
                         "error_code": family_result.error_code,
                         "error_message": family_result.error_message,
                     })
-                    record_trial_progress(family.id)
+                    record_trial_progress(
+                        family.id, produced_result=_trial_produced_result(family_result.status),
+                    )
                 continue
             best_params = _apply_search_strength(
                 family, dict(family_result.best_params), search_strength, preserve_existing=True,
@@ -2136,7 +2217,7 @@ def _execute_anomaly_segment_job(
                 family, best_params, metrics, family_result.training_time_seconds,
             )
             trials.append(trial_row)
-            record_trial_progress(family.id)
+            record_trial_progress(family.id, produced_result=True)
             completed_candidates.append({
                 "trial": trial_row,
                 "family": family,
@@ -2436,6 +2517,13 @@ def _execute_anomaly_job(
     condition_column = str(params.get("condition_column") or "").strip() or None
     if condition_column and condition_column not in frame.columns:
         condition_column = None  # 分组列缺失时静默降级单段（与回流自愈同语义）
+    fleet_mode = str(params.get("fleet_mode") or "").strip()
+
+    # 机群共享模式必须带分组列（§B18 / §7.1）：没有 condition_column 时
+    # 「联合段」无从谈起，引擎若静默退化成普通单段训练，调用方拿到的是一台
+    # 「看起来成功」的机群基线——机群共享模型根本没建。故此处明确失败。
+    if fleet_mode == "shared" and not condition_column:
+        raise ValueError("AUTOML_ANOMALY_FLEET_SHARED_REQUIRES_CONDITION_COLUMN")
 
     # 工况分片列不进特征（§7.1「设备 ID 列必须从特征剔除」，第七轮 [高]）：
     # condition_column 只作分组键——fleet_shared 联合段跨设备合并时该列若
@@ -2496,6 +2584,11 @@ def _execute_anomaly_job(
     else:
         segments.append((None, features))
 
+    # 机群共享模式：分组列必须真的能切出段（否则联合段无从谈起）——与缺列
+    # 同样明确失败，不静默退化成普通单段训练（§B18）。
+    if fleet_mode == "shared" and not segments:
+        raise ValueError("AUTOML_ANOMALY_FLEET_SHARED_REQUIRES_CONDITION_COLUMN")
+
     # fleet 共享段意图提前判定（联合段预算进 progress.total 估算）。
     fleet_shared = (
         str(params.get("fleet_mode") or "") == "shared"
@@ -2518,7 +2611,10 @@ def _execute_anomaly_job(
     if fleet_shared:
         progress_total += _anomaly_planned_trials(max(1, requested_trials // 2))
     progress_state: dict = {
+        # completed = 已产出结果的 trial 数（与终态 progress.completed 同口径，
+        # §B3）；attempted = 已尝试的 trial 数（含 failed/unavailable）。
         "completed": 0,
+        "attempted": 0,
         "total": progress_total,
         "current_segment": None,
         "current_algorithm": None,
@@ -2528,11 +2624,13 @@ def _execute_anomaly_job(
     def _anomaly_progress_view() -> dict:
         total = int(progress_state["total"] or 0)
         completed = int(progress_state["completed"] or 0)
+        attempted = int(progress_state.get("attempted") or 0)
         # 显示口径 clamp：估算偏差时 optuna 实跑可超预算（如 55/45），
         # 进度条视角封顶 total；真实完成数保留在 search.completed_trials。
         display_completed = min(completed, total) if total else completed
         return {
             "completed": display_completed,
+            "attempted": attempted,
             "total": total,
             "percent": round(min(100.0, (completed / total) * 100), 2) if total else 0.0,
             "current_segment": progress_state["current_segment"],
@@ -2601,9 +2699,40 @@ def _execute_anomaly_job(
     # 挂载语义（§7.5 原文「B 主+A 兜底」）：各工位 fpr 超 1.5×contamination
     # 标 unfit（该工位 bundle 不挂载，其请求路由到全局通配兜底）；fit 工位
     # 挂独立模型。训练成本：联合段=全数据一次训练（时间约 ×2，文档注明）。
+    fleet_global_note: dict | None = None
     if fleet_shared:
-        merged_frame = pd.concat([seg_frame for _, seg_frame in segments], ignore_index=True)
-        if len(merged_frame) >= ANOMALY_MIN_ROWS:
+        # B20（§6.3 护栏语义）：联合段语料 = 该工况列下的**全量**数据。
+        # 段行数护栏（ANOMALY_SEGMENT_MIN_ROWS）的作用是「不训练很多个独立
+        # 模型」，不是把数据排除在共享模型之外——否则小段工位的正常数据在
+        # 全局兜底模型里直接消失（全局基线覆盖的设备少于现实）。
+        merged_frame = features.reset_index(drop=True)
+        # B2（§7.1「设备 ID 列必须从特征中剔除」）：全局模型学的是「同型设备
+        # 共有的正常联合分布」，不是「哪台设备」。condition_column 之外的设备/
+        # 工位身份列（用户选了别的工况列时它仍在 input_columns 里）必须从联合段
+        # 特征中剔除——只在联合段生效，各工位段保持原样（那里身份列恒定、无害）。
+        group_identity_columns = _detect_group_identity_columns(
+            segments, feature_columns, joint_frame=merged_frame,
+        )
+        global_feature_columns = [
+            column for column in feature_columns if column not in set(group_identity_columns)
+        ]
+        # 联合段用自己的 removed_columns 副本：避免污染各工位段已落盘的
+        # 预处理留痕（段级 feature set 保持与改动前逐字一致）。
+        global_removed_columns = {
+            **removed_columns,
+            **{str(column): "group_identity" for column in group_identity_columns},
+        }
+        if not global_feature_columns:
+            # 联合段特征被身份列清空 → 无可用数值特征：跳过联合段并留痕，
+            # 不让整个任务失败（各工位独立模型仍可用，仅失去通配兜底）。
+            fleet_global_note = {
+                "skipped": True,
+                "reason": "no_usable_numeric_feature_column",
+                "removed_columns": {
+                    str(column): "group_identity" for column in group_identity_columns
+                },
+            }
+        elif len(merged_frame) >= ANOMALY_MIN_ROWS:
             progress_state["current_segment"] = f"{condition_column}=__FLEET_GLOBAL__"
             progress_state["current_algorithm"] = None
             progress_state["current_trial"] = None
@@ -2615,8 +2744,8 @@ def _execute_anomaly_job(
                 dataset=dataset,
                 segment_frame=merged_frame,
                 segment_label=f"{condition_column}=__FLEET_GLOBAL__",
-                feature_columns=feature_columns,
-                removed_columns=removed_columns,
+                feature_columns=global_feature_columns,
+                removed_columns=global_removed_columns,
                 params=params,
                 task=task,
                 contract=contract,
@@ -2636,6 +2765,20 @@ def _execute_anomaly_job(
             global_payload["fleet_global"] = True
             segment_payloads.append({"segment": f"{condition_column}=__FLEET_GLOBAL__", **global_payload})
             total_trials.extend(global_payload["trials"])
+            fleet_global_note = {
+                "skipped": False,
+                "rows": int(len(merged_frame)),
+                "feature_columns": list(global_feature_columns),
+                "removed_columns": {
+                    str(column): "group_identity" for column in group_identity_columns
+                },
+            }
+        else:
+            fleet_global_note = {
+                "skipped": True,
+                "reason": "insufficient_rows",
+                "rows": int(len(merged_frame)),
+            }
 
     # 汇总冠军 = 最差段（synthetic_auc 最低——任一工况不可用即整体不可用，
     # §6.3 分片口径；单段时即该段自身）。全局段（__FLEET_GLOBAL__）是通配
@@ -2722,10 +2865,15 @@ def _execute_anomaly_job(
                     > contamination * ANOMALY_ACCEPTANCE_FPR_TOLERANCE
                 ),
                 "fleet_global": bool(item.get("fleet_global")),
+                # 段级特征/剔除留痕（§7.1 B2）：联合段剔除的分组身份列在这里
+                # 可见（removed_columns 理由 = group_identity），各工位段不受影响
+                "feature_columns": list((item.get("input_contract") or {}).get("input_columns") or []),
+                "removed_columns": dict((item.get("preprocessing") or {}).get("removed_columns") or {}),
             }
             for item in segment_payloads if item["segment"]
         ],
         **({"condition_merged_note": merged_note} if merged_note else {}),
+        **({"fleet_global_note": fleet_global_note} if fleet_global_note else {}),
         "search": {
             "method": method,
             "strength": search_strength,
@@ -2734,20 +2882,23 @@ def _execute_anomaly_job(
             "selected_algorithm": best["best_family"].id,
             "selected_params": best["best_params"],
             "max_trials": requested_trials,
-            "completed_trials": sum(item.get("status") in {"complete", "completed"} for item in trials),
+            "completed_trials": sum(_trial_produced_result(item.get("status")) for item in trials),
             "trials": trials,
             "budget_exhausted": budget_exhausted,
         },
         "prediction_source": "synthetic_benchmark",
         # 终态进度（与有监督同形状，镜像 1163 行）：total 为段级预算估算口径，
         # completed 显示口径封顶 total（真实数在 search.completed_trials）。
+        # 计数口径与运行期分子一致（§B3）：只数真正产出结果的 trial → 进度条
+        # 运行期→终态单调不回退，终态值 == 运行期分子。
         "progress": {
             "completed": min(
-                sum(item.get("status") in {"complete", "completed"} for item in trials),
+                sum(_trial_produced_result(item.get("status")) for item in trials),
                 int(progress_state["total"] or 0),
-            ) or sum(item.get("status") in {"complete", "completed"} for item in trials),
+            ) or sum(_trial_produced_result(item.get("status")) for item in trials),
+            "attempted": int(progress_state.get("attempted") or 0),
             "total": int(progress_state["total"] or 0) or sum(
-                item.get("status") in {"complete", "completed"} for item in trials
+                _trial_produced_result(item.get("status")) for item in trials
             ),
             "percent": 100.0,
             "current_segment": best["segment"],

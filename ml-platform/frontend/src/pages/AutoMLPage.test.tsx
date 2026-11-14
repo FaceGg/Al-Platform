@@ -23,6 +23,19 @@ const AUTOML_ALGORITHM_IDS = [
   "mlp",
 ];
 
+// 无监督工况列过滤样本（技术方案 §3.1 G1 / §6）：
+// feature / row_id 采样内去重 300（>200）→ 高基数数值列，必须被过滤；
+// device_no 去重 4（≤200）→ 低基数数值列，保留；
+// station_code 为非数值列 → 保留。
+const ANOMALY_COLUMNS = ["feature", "device_no", "row_id", "station_code"];
+const ANOMALY_DTYPES = { feature: "float64", device_no: "int64", row_id: "int64", station_code: "object" };
+const ANOMALY_PREVIEW_ROWS = Array.from({ length: 300 }, (_, index) => ({
+  feature: index,
+  device_no: index % 4,
+  row_id: index,
+  station_code: "ST-1",
+}));
+
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), delete: vi.fn() }));
 const datasets = vi.hoisted(() => ({ listDatasets: vi.fn(), getDatasetPreview: vi.fn() }));
 const quality = vi.hoisted(() => ({
@@ -207,7 +220,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
 
     // 范式卡片点「有监督建模」后默认任务子类型即 Classification，无需再选
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "目标列" }));
@@ -249,7 +262,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
     fireEvent.mouseDown(comboboxes[3]);
     fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
     fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
@@ -382,7 +395,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
     fireEvent.mouseDown(comboboxes[3]);
     fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "交叉验证折数" }));
@@ -407,7 +420,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
     fireEvent.mouseDown(comboboxes[3]);
     fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
     fireEvent.click(screen.getByRole("switch", { name: "启用交叉验证" }));
@@ -451,7 +464,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(await screen.findByRole("combobox", { name: "质量感知数据" }));
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
     fireEvent.click(screen.getByRole("button", { name: "运行质量感知" }));
 
     await waitFor(() => expect(quality.createQualityRun).toHaveBeenCalledWith("project-1", {
@@ -473,7 +486,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(await screen.findByRole("combobox", { name: "质量感知数据" }));
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
 
     const runButton = screen.getByRole("button", { name: "运行质量感知" });
     expect(runButton).toBeDisabled();
@@ -507,7 +520,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(await screen.findByRole("combobox", { name: "质量感知数据" }));
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
     await waitFor(() => expect(screen.getByRole("button", { name: "运行质量感知" })).not.toBeDisabled());
 
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "质量感知数据" }));
@@ -539,7 +552,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(await screen.findByRole("combobox", { name: "质量感知数据" }));
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "质量感知目标列" }));
     expect(screen.queryByText("wld1c", { selector: ".ant-select-item-option-content" })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
@@ -575,7 +588,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(await screen.findByRole("combobox", { name: "质量感知数据" }));
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "质量感知算法家族" }));
     fireEvent.click(await screen.findByText("Random Forest"));
     fireEvent.click(await screen.findByText("GBDT"));
@@ -610,7 +623,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
     fireEvent.mouseDown(comboboxes[3]);
     fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
     fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
@@ -630,7 +643,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
     fireEvent.mouseDown(comboboxes[3]);
     fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
 
@@ -696,7 +709,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "目标列" }));
     fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
 
@@ -736,7 +749,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "目标列" }));
     fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
     await waitFor(() => expect(screen.getByTitle("feature")).toBeInTheDocument());
@@ -785,7 +798,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "目标列" }));
     fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
     await waitFor(() => expect(screen.getByTitle("feature")).toBeInTheDocument());
@@ -826,7 +839,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "目标列" }));
     fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
     await waitFor(() => expect(screen.getByTitle("feature")).toBeInTheDocument());
@@ -864,7 +877,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
 
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "任务子类型" }));
     fireEvent.click(await screen.findByText("Multi-output Regression", { selector: ".ant-select-item-option-content" }));
@@ -906,7 +919,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
 
     // 范式互斥：目标列控件整体隐藏（非置灰），污染率参数出现
     await waitFor(() => expect(screen.queryByRole("combobox", { name: "目标列" })).toBeNull());
@@ -939,9 +952,10 @@ describe("AutoMLPage", () => {
       ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })
       : Promise.reject({ response: { data: { detail: "Error" } } }));
     datasets.getDatasetPreview.mockResolvedValue({
-      columns: ["feature", "force", "label_a"],
-      dtypes: { feature: "float64", force: "float64", label_a: "int64" },
-      preview: [],
+      columns: ANOMALY_COLUMNS,
+      dtypes: ANOMALY_DTYPES,
+      preview: ANOMALY_PREVIEW_ROWS,
+      total_rows: 1000,
     });
     render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
 
@@ -956,7 +970,7 @@ describe("AutoMLPage", () => {
     // 工况列选择（§7.1 机群混合入口 G1）+ 机群共享模式勾选
     const conditionSelect = screen.getByRole("combobox", { name: "工况列" });
     fireEvent.mouseDown(conditionSelect);
-    fireEvent.click(await screen.findByText("force", { selector: ".ant-select-item-option-content" }));
+    fireEvent.click(await screen.findByText("device_no", { selector: ".ant-select-item-option-content" }));
     const fleetSwitch = screen.getByRole("checkbox", { name: "机群共享模式" });
     fireEvent.click(fleetSwitch);
 
@@ -966,7 +980,7 @@ describe("AutoMLPage", () => {
       "/training/automl/run",
       expect.objectContaining({
         task: "anomaly_detection",
-        condition_column: "force",
+        condition_column: "device_no",
         fleet_mode: "shared",
       }),
       expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) }),
@@ -974,8 +988,128 @@ describe("AutoMLPage", () => {
     // mock.calls[0] 是 /experiments 自动创建调用——断言取 automl/run 那次
     const runCall = api.post.mock.calls.find(([url]) => url === "/training/automl/run");
     const payload = runCall![1];
-    expect(payload).toHaveProperty("condition_column", "force");
+    expect(payload).toHaveProperty("condition_column", "device_no");
     expect(payload).toHaveProperty("fleet_mode", "shared");
+  });
+
+  it("keeps high-cardinality numeric columns out of the condition column options", async () => {
+    datasets.getDatasetPreview.mockResolvedValue({
+      columns: ANOMALY_COLUMNS,
+      dtypes: ANOMALY_DTYPES,
+      preview: ANOMALY_PREVIEW_ROWS,
+      total_rows: 1000,
+    });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    fireEvent.click(await screen.findByRole("button", { name: "范式：无监督异常检测" }));
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "工况列" }));
+    // 低基数数值列（4 个取值）与非数值列保留
+    expect(await screen.findByText("device_no", { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
+    expect(await screen.findByText("station_code", { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
+    // 采样内去重 >200 的高基数数值列被过滤（否则分片会静默退化）
+    expect(screen.queryByText("row_id", { selector: ".ant-select-item-option-content" })).toBeNull();
+    expect(screen.queryByText("feature", { selector: ".ant-select-item-option-content" })).toBeNull();
+    // 规则说明小字
+    expect(screen.getByText(/基数 ≤200/)).toBeInTheDocument();
+  });
+
+  it("blocks the fleet shared mode until a condition column is chosen", async () => {
+    api.post.mockImplementation((url: string) => url === "/experiments"
+      ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })
+      : Promise.reject({ response: { data: { detail: "Error" } } }));
+    datasets.getDatasetPreview.mockResolvedValue({
+      columns: ANOMALY_COLUMNS,
+      dtypes: ANOMALY_DTYPES,
+      preview: ANOMALY_PREVIEW_ROWS,
+      total_rows: 1000,
+    });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    fireEvent.click(await screen.findByRole("button", { name: "范式：无监督异常检测" }));
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
+
+    // 未选工况列：机群共享模式开关禁用（真实浏览器里点不动）
+    const fleetSwitch = screen.getByRole("checkbox", { name: "机群共享模式" });
+    expect(fleetSwitch).toBeDisabled();
+
+    // jsdom 下点击禁用 checkbox 仍会触发 onChange（共享模式被置为开启），
+    // 借此覆盖提交前置守卫：没有工况列时必须拦下并提示，且不发任何 run 请求。
+    fireEvent.click(fleetSwitch);
+    fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
+
+    expect(await screen.findByText(/机群共享模式需要先选择工况列/)).toBeInTheDocument();
+    expect(api.post.mock.calls.find(([url]) => url === "/training/automl/run")).toBeUndefined();
+    expect(api.post).not.toHaveBeenCalled();
+
+    // 选定工况列后共享模式才可开启
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "工况列" }));
+    fireEvent.click(await screen.findByText("device_no", { selector: ".ant-select-item-option-content" }));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "机群共享模式" })).toBeEnabled());
+  });
+
+  it("clears a condition column that is no longer allowed after switching datasets", async () => {
+    datasets.listDatasets.mockResolvedValue([
+      { id: "dataset-1", name: "weld.csv", format: "csv" },
+      { id: "dataset-2", name: "other.csv", format: "csv" },
+    ]);
+    datasets.getDatasetPreview.mockImplementation((datasetId: string) => {
+      if (datasetId === "dataset-2") {
+        // device_no 在新数据集里变成高基数列 → 不再是合法工况列
+        return Promise.resolve({
+          columns: ANOMALY_COLUMNS,
+          dtypes: ANOMALY_DTYPES,
+          preview: ANOMALY_PREVIEW_ROWS.map((row) => ({ ...row, device_no: row.row_id })),
+          total_rows: 1000,
+        });
+      }
+      return Promise.resolve({
+        columns: ANOMALY_COLUMNS,
+        dtypes: ANOMALY_DTYPES,
+        preview: ANOMALY_PREVIEW_ROWS,
+        total_rows: 1000,
+      });
+    });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    fireEvent.click(await screen.findByRole("button", { name: "范式：无监督异常检测" }));
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "工况列" }));
+    fireEvent.click(await screen.findByText("device_no", { selector: ".ant-select-item-option-content" }));
+    const fleetSwitch = screen.getByRole("checkbox", { name: "机群共享模式" });
+    fireEvent.click(fleetSwitch);
+    expect(fleetSwitch).toBeChecked();
+
+    // 切换数据集：device_no 变为高基数列 → 工况列与机群共享模式一并清空
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("other.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-2", expect.objectContaining({ limit: expect.any(Number) })));
+
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "机群共享模式" })).not.toBeChecked());
+    expect(screen.getByRole("checkbox", { name: "机群共享模式" })).toBeDisabled();
+    // 工况列选择框里不再显示 device_no（下拉项仍可能留在 DOM，只看已选值）
+    const conditionSelect = screen.getByRole("combobox", { name: "工况列" });
+    expect(conditionSelect.closest(".ant-select")?.querySelector(".ant-select-selection-item")).toBeNull();
   });
 
   it.skip("submits the selected input columns with the target column", async () => {
@@ -989,7 +1123,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
     fireEvent.mouseDown(comboboxes[3]);
     fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
 
@@ -1015,7 +1149,7 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
     fireEvent.mouseDown(comboboxes[3]);
     fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
 

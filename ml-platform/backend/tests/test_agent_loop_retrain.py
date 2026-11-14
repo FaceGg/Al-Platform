@@ -943,9 +943,13 @@ class AgentLoopRetrain(unittest.TestCase):
         self.assertEqual(content["anomaly"]["contamination"], 0.02)
         self.assertIsNone(content["anomaly"]["condition_column"])
         # 默认门禁按范式切换（synthetic_auc 主键；无用户显式门禁时）
+        # normal_fpr 随污染率推导（§3.3：normal_fpr ≤ contamination×1.5）
+        # —— 此前 runner 与 recipe 两处都硬编码 0.015（= contamination 0.01 的
+        # 特例），用户改污染率后配方固化的门禁与实际训练判据脱节
+        # （2026-11-14 第八轮审计 B15 收尾）。
         self.assertEqual(
             content["acceptance_gates"],
-            {"synthetic_auc": 0.85, "normal_fpr": 0.015, "stability": 0.8},
+            {"synthetic_auc": 0.85, "normal_fpr": 0.03, "stability": 0.8},
         )
         # 无监督无目标语义
         self.assertIsNone(content["inputs"]["target_column"])

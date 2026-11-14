@@ -118,6 +118,10 @@ class GuidanceEnsemble(BaseModel):
 ANOMALY_TASK_TYPE = "anomaly"
 SUPERVISED_TASK_TYPE = "supervised"
 AGENT_TASK_TYPES = (SUPERVISED_TASK_TYPE, ANOMALY_TASK_TYPE)
+# 已知异常样本弱监督验证的行数边界（技术方案 §3.3 第二层：用户提供少量真实
+# 异常「≥10 条」；上限 50 行沿用一期合同）。
+MIN_KNOWN_ANOMALY_ROWS = 10
+MAX_KNOWN_ANOMALY_ROWS = 50
 
 
 class GuidanceModeling(BaseModel):
@@ -139,15 +143,24 @@ class GuidanceEvaluation(BaseModel):
     metric_gates: dict = Field(default_factory=dict)
     review_focus: list[str] = Field(default_factory=list)
     # 已知异常样本弱监督验证（技术方案 §3.4 S4，无监督专用）：少量已确认
-    # 异常样本（≤50 行特征值），S4 门禁通过后用冠军模型打分验证检出率，
+    # 异常样本（10~50 行特征值），S4 门禁通过后用冠军模型打分验证检出率，
     # 进验收证据（观察项，不设一票否决——样本少统计弱）。
+    # 下限 10 条（§3.3 第二层「用户提供少量真实异常 ≥10 条」）：空列表合法
+    # （字段可选），非空但不足 10 条则拒绝——样本量不足时检出率统计无意义。
     known_anomaly_rows: list[dict] = Field(default_factory=list)
 
     @field_validator("known_anomaly_rows")
     @classmethod
     def _validate_known_anomaly_rows(cls, value: list[dict]) -> list[dict]:
-        if len(value) > 50:
+        if len(value) > MAX_KNOWN_ANOMALY_ROWS:
             raise ValueError("known_anomaly_rows supports at most 50 rows")
+        if value and len(value) < MIN_KNOWN_ANOMALY_ROWS:
+            raise ValueError(
+                "known_anomaly_rows requires at least 10 rows "
+                "（已知异常样本需 ≥10 条，技术方案 §3.3 第二层；当前 {} 条）".format(
+                    len(value)
+                )
+            )
         for row in value:
             if not isinstance(row, dict):
                 raise ValueError("known_anomaly_rows entries must be objects")

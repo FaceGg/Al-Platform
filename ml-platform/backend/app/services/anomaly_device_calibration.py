@@ -422,6 +422,8 @@ def add_fleet_shard_to_deployment(
     actor_id,
     weight_bps: int | None = None,
     condition_column: str | None = None,
+    rows: int | None = None,
+    total_rows: int | None = None,
 ) -> dict:
     """迁移版本挂载为部署分片 target（§7.1.4：机群基线在部署面就是「工况
     分片」的 device 维特例）。
@@ -506,6 +508,18 @@ def add_fleet_shard_to_deployment(
     existing_weights = [
         int(getattr(target, "weight_bps", 0) or 0) for target in existing_targets
     ]
+    # §6.3「weight 按段行数比例分配」：调用方给出新分片行数与总分片行数时，
+    # 按行数比例分配权重（此前只能等分，丢失行数比例——2026-11-14 审计 B9）。
+    # 显式 weight_bps 优先；两者都缺省才等分回退。
+    if weight_bps is None and rows is not None and total_rows is not None:
+        rows = max(0, int(rows))
+        total_rows = max(0, int(total_rows))
+        if rows > 0 and total_rows > rows:
+            proportional = int(round(
+                FLEET_TARGET_TOTAL_WEIGHT_BPS * rows / float(total_rows)
+            ))
+            ceiling = FLEET_TARGET_TOTAL_WEIGHT_BPS - len(existing_weights)
+            weight_bps = max(1, min(proportional, ceiling))
     weights = _rebalance_fleet_weights(existing_weights, weight_bps)
     actor_uuid = _as_uuid(actor_id)
     if stable is not None:

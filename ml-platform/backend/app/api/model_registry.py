@@ -59,6 +59,9 @@ PROJECT_WRITE_ACTIONS = {
     "POST /api/model-versions/{version_id}/approve": "model_version.approve",
     "POST /api/model-versions/{version_id}/reject": "model_version.reject",
     "POST /api/model-versions/{version_id}/archive": "model_version.archive",
+    # 无监督重标定（会改变生产判定）必须有审计留痕——2026-11-14 第八轮审计 B8
+    "POST /api/model-versions/{version_id}/recalibrate-labels": "model_version.recalibrate_labels",
+    "POST /api/model-versions/{version_id}/recalibrate-device": "model_version.recalibrate_device",
     "POST /api/projects/{project_id}/inference-deployments": "inference_deployment.create",
     "POST /api/inference-deployments/{deployment_id}/start": "inference_deployment.start",
     "DELETE /api/registered-models/{model_id}": "registered_model.delete",
@@ -95,23 +98,10 @@ LABEL_RECALIBRATION_ERROR_STATUS = {
 }
 
 
-class LabelRecalibrateRequest(BaseModel):
-    """M6 半监督档 1（技术方案 §6.2）标签阈值重标定请求。
-
-    - labeled_artifact_id：带 feedback 列的回流标签数据集 artifact id（必填）
-    - feedback_marks：行号 → 标记（confirmed_fault / false_alarm / none），
-      可选；与数据集自带 feedback 列合并（请求优先，none 清除该行标签）
-    - mount：是否把重标定后的新阈值版本替换进源版本所在部署（默认 false）
-
-    本地定义于 API 层：公共 schema 契约模块由其他改动方维护，字段语义与
-    `DeviceRecalibrateRequest`（三期 M9）保持同一风格（extra=forbid）。
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    labeled_artifact_id: UUID
-    feedback_marks: dict[str, Literal["confirmed_fault", "false_alarm", "none"]] | None = None
-    mount: StrictBool = False
+# M6 档 1 标签阈值重标定请求契约统一在 `app/schemas/model_registry.py`
+# （`LabelRecalibrateRequest`）——2026-11-14 第八轮审计 B4/B19 修：此前此处
+# 另有一份同名本地定义，遮蔽了 schemas 版并造成契约分叉（前端 TS 仍按
+# positive_label 声明 → 按契约调用会被 extra=forbid 判 422）。此处只导入。
 
 
 def _error(error):
@@ -824,21 +814,34 @@ def build_model_registry_router(
         标定层并注册迁移版本；响应带机群形态判定（unfit 不硬迁）与合成基准
         回测。注册在 `{action}` 通配路由之前——FastAPI 按顺序匹配，通配在
         前会把本路由吞成 LifecycleComment body（422 extra_forbidden）。"""
-        version, _access = _version_access(db, version_id, current_user.id)
+        version, access = _version_access(db, version_id, current_user.id)
         from app.services.anomaly_device_calibration import (
             DeviceCalibrationError,
             recalibrate_device_version,
         )
 
         try:
-            result = recalibrate_device_version(
-                db,
-                source_version_id=version.id,
-                calibration_artifact_id=data.calibration_artifact_id,
-                condition_value=data.condition_value,
-                actor_id=current_user.id,
-                contamination=data.contamination,
-            )
+            with audit_service(db).project_action(
+                db, request=request, actor=current_user, access=access,
+                permission="model.register",
+                intent=AuditIntent(
+                    project_id=version.registered_model.project_id,
+                    action="model_version.recalibrate_device",
+                    resource_type="model_version",
+                    resource_id=str(version.id),
+                    changes={"calibration_artifact_id": str(data.calibration_artifact_id),
+                             "condition_value": data.condition_value},
+                ),
+                allowed_changes={"calibration_artifact_id", "condition_value"},
+            ):
+                result = recalibrate_device_version(
+                    db,
+                    source_version_id=version.id,
+                    calibration_artifact_id=data.calibration_artifact_id,
+                    condition_value=data.condition_value,
+                    actor_id=current_user.id,
+                    contamination=data.contamination,
+                )
         except DeviceCalibrationError as error:
             _error(error)
         return result
@@ -865,7 +868,7 @@ def build_model_registry_router(
         源版本已 approved 且正在服役时才沿用其审批结论并完成替换；否则不审批
         不挂载，响应给出「需审批 + 需挂载」的明确下一步。
         """
-        version, _access = _version_access(db, version_id, current_user.id)
+        version, access = _version_access(db, version_id, current_user.id)
         project_id = version.registered_model.project_id
         require_project_access(db, project_id, current_user.id, "model.register")
         if data.mount:
@@ -896,13 +899,26 @@ def build_model_registry_router(
             })
 
         try:
-            result = label_recalibrate_version(
-                db,
-                source_version_id=version.id,
-                labeled_artifact_id=labeled_artifact.id,
-                actor_id=current_user.id,
-                feedback_marks=feedback_marks,
-            )
+            with audit_service(db).project_action(
+                db, request=request, actor=current_user, access=access,
+                permission="model.register",
+                intent=AuditIntent(
+                    project_id=project_id,
+                    action="model_version.recalibrate_labels",
+                    resource_type="model_version",
+                    resource_id=str(version.id),
+                    changes={"labeled_artifact_id": str(data.labeled_artifact_id),
+                             "mount": bool(data.mount)},
+                ),
+                allowed_changes={"labeled_artifact_id", "mount"},
+            ):
+                result = label_recalibrate_version(
+                    db,
+                    source_version_id=version.id,
+                    labeled_artifact_id=labeled_artifact.id,
+                    actor_id=current_user.id,
+                    feedback_marks=feedback_marks,
+                )
         except ThresholdRecalibrationError as error:
             _recalibration_error(error)
 
@@ -1118,6 +1134,8 @@ def build_model_registry_router(
                     actor_id=current_user.id,
                     weight_bps=data.weight_bps,
                     condition_column=data.condition_column,
+                    rows=data.rows,
+                    total_rows=data.total_rows,
                 )
         except DeviceCalibrationError as error:
             _error(error)

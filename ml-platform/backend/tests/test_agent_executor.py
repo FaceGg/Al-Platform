@@ -616,10 +616,12 @@ class TestAnomalyTrainer(unittest.TestCase):
         from app.services.agent.anomaly_trainer import anomaly_trainer
 
         rng = np.random.default_rng(42)
-        matrix = rng.normal(size=(300, 3))
+        # 每工况 300 行（≥ ANOMALY_SEGMENT_MIN_ROWS=200 的工况段护栏，
+        # §6.6E：引擎与向导路径护栏统一为 200）→ 两个工况各自独立建模
+        matrix = rng.normal(size=(600, 3))
         frame = pd.DataFrame(matrix, columns=["s1", "s2", "s3"])
         # 工况列：两个工况值（shift A / shift B），错开行序验证分组
-        frame["shift"] = ["A" if i % 2 == 0 else "B" for i in range(300)]
+        frame["shift"] = ["A" if i % 2 == 0 else "B" for i in range(600)]
         result = anomaly_trainer(
             frame.drop(columns=["shift"]).assign(shift=frame["shift"]),
             None,

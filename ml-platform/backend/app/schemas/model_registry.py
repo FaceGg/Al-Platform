@@ -96,15 +96,31 @@ class FleetShardCreate(StrictSchema):
     # FLEET_SHARD_CONDITION_COLUMN_MISMATCH。留空=沿用部署现有工况列；部署
     # 无工况列时服务端落此值（缺省 device_id）。
     condition_column: StrictStr | None = Field(default=None, min_length=1, max_length=128)
+    # §6.3「weight 按段行数比例分配」：给出新分片行数与总分片行数时，挂载
+    # 按行数比例分配权重（此前只能等分，丢失行数比例——2026-11-14 审计 B9）。
+    # 两者都缺省时回退等分；显式 weight_bps 优先。
+    rows: StrictInt | None = Field(default=None, ge=0)
+    total_rows: StrictInt | None = Field(default=None, ge=0)
 
 
 class LabelRecalibrateRequest(StrictSchema):
-    """M6 半监督档 1 标签阈值重标定（技术方案 §6.2）：不动检测器主体，
-    用 confirmed/false_alarm 标签分布的加权损失最优阈值注册新版本。"""
+    """M6 半监督档 1 标签阈值重标定（技术方案 §6.2）：不动特征表示与检测器
+    主体，只用 confirmed_fault / false_alarm 标签的加权损失最优阈值注册新版本。
+
+    - labeled_artifact_id：带 feedback 列的回流标签数据集 artifact id（必填）
+    - feedback_marks：行号 → 标记（confirmed_fault / false_alarm / none），
+      可选；与数据集自带 feedback 列合并（请求优先，none 清除该行标签）
+    - mount：是否把重标定后的新阈值版本替换进源版本所在部署（默认 false）
+
+    **唯一契约位置**（2026-11-14 第八轮审计 B4/B19 修）：此前 API 层另有一份
+    同名本地定义，遮蔽了本类并造成契约分叉（schemas 版含 positive_label、
+    缺 mount；前端 TS 仍按 positive_label 声明 → 按契约调用会被 extra=forbid
+    判 422）——现统一到此处，API 层只导入不再重定义。
+    """
 
     labeled_artifact_id: UUID
-    feedback_marks: dict | None = None
-    positive_label: StrictStr = Field(default="fault", min_length=1, max_length=64)
+    feedback_marks: dict[str, Literal["confirmed_fault", "false_alarm", "none"]] | None = None
+    mount: StrictBool = False
 
 
 class DerivedSupervisedDatasetRequest(StrictSchema):

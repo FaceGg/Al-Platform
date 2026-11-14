@@ -474,6 +474,8 @@ class TestProjectWriteAuditCompleteness(unittest.TestCase):
             "model_artifact.upload",
             "model_version.register", "model_version.approve",
             "model_version.reject", "model_version.archive",
+            # 无监督重标定（改变生产判定）须有审计留痕——2026-11-14 第八轮审计 B8
+            "model_version.recalibrate_labels", "model_version.recalibrate_device",
             "inference_deployment.create", "inference_deployment.start",
             "inference_deployment.stop", "inference_deployment.delete",
             "inference_rollout.create", "inference_rollout.pause",

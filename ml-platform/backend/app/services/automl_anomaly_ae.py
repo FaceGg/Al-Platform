@@ -9,10 +9,10 @@ sklearn 兼容包装的去噪自编码器，接口对齐一期评估链（合成
   异常））与 ``predict``；**不实现** ``score_samples``（§6.6B：防
   pipeline_anomaly_scores 的分派先命中 score_samples 分支再取负、方向语义
   取决于该定义——M3 坑①「不猜方向」同款教训，M5-0 已实测固定口径）。
-- **clone 协议**（§6.6C）：构造参数全部显式保存并实现 ``get_params``/``set_params``
-  （stability_check 依赖 ``clone(fitted_estimator)``；**未继承** ``BaseEstimator``
-  ——手写等价实现，``clone()`` 实测可用，语义等效；方案 §6.6C 的「继承
-  BaseEstimator」字面表述未落地，登记为 [低] 偏差）。
+- **clone 协议**（§6.6C）：**继承** ``sklearn.base.BaseEstimator``——构造参数
+  全部显式保存且不在 ``fit`` 中改写，``get_params``/``set_params`` 直接走
+  基类实现（与构造签名严格一致，不手写重复实现）；stability_check 依赖
+  ``clone(fitted_estimator)``，基类协议保证 clone 语义正确。
 - **ONNX 独立路径**（torch.onnx.export，不受 skl2onnx ai.onnx.ml opset 封顶
   3 限制）：融合前端（median 填充 + StandardScaler）+ AE 网络 + Neg(MSE)
   单图导出，输出双端口 ``label``（占位全 1）+ ``scores``（=−MSE，正=正常）
@@ -27,6 +27,7 @@ unavailable，族自动缺席；IF/OC-SVM 的 ONNX 路径不受影响——方�
 from __future__ import annotations
 
 import numpy as np
+from sklearn.base import BaseEstimator
 
 # torch 可用性探测（导入成本高，模块级缓存一次）
 try:  # pragma: no cover - 环境相关
@@ -101,8 +102,12 @@ if TORCH_AVAILABLE:
             return label, scores, squared_error
 
 
-class TorchAutoencoder:
+class TorchAutoencoder(BaseEstimator):
     """sklearn 兼容去噪 AE（BaseEstimator clone 协议 + decision_function/predict）。
+
+    继承 ``sklearn.base.BaseEstimator``（§6.6C）：``get_params``/``set_params``
+    由基类按 ``__init__`` 签名派生——构造参数全部显式保存、``fit`` 不改写它们，
+    故 ``clone(fitted)`` 语义正确（stability_check 依赖）。
 
     torch 缺失时 __init__ 正常返回（目录 builder 捕获 TORCH_UNAVAILABLE 转
     AlgorithmUnavailable；本类不在 torch 缺失环境实例化网络）。
@@ -127,28 +132,8 @@ class TorchAutoencoder:
         self.validation_fraction = validation_fraction
 
     # -- sklearn 接口 ------------------------------------------------------
-
-    def get_params(self, deep=True):
-        return {
-            "hidden_units": self.hidden_units,
-            "hidden_layers": self.hidden_layers,
-            "bottleneck_ratio": self.bottleneck_ratio,
-            "epochs": self.epochs,
-            "learning_rate": self.learning_rate,
-            "noise_sigma": self.noise_sigma,
-            "batch_size": self.batch_size,
-            "seed": self.seed,
-            "early_stopping": self.early_stopping,
-            "patience": self.patience,
-            "validation_fraction": self.validation_fraction,
-        }
-
-    def set_params(self, **params):
-        for key, value in params.items():
-            if not hasattr(self, key):
-                raise ValueError(f"Invalid parameter {key!r} for TorchAutoencoder")
-            setattr(self, key, value)
-        return self
+    # get_params/set_params 走 BaseEstimator 基类实现（按 __init__ 签名派生，
+    # §6.6C）——不手写重复实现，避免与构造签名漂移。
 
     def fit(self, X, y=None):
         _require_torch()

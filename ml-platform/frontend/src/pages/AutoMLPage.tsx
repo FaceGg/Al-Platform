@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { App as AntApp, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch } from "antd";
 import { AimOutlined, AlertOutlined, CheckCircleFilled, ThunderboltOutlined, TrophyOutlined, BarChartOutlined, DownloadOutlined, EyeOutlined, PlusOutlined, ReloadOutlined, StopOutlined } from "@ant-design/icons";
@@ -146,6 +146,32 @@ function errorMessage(value: unknown): string | undefined {
   return typeof message === "string" && message.trim() ? message : undefined;
 }
 
+// 工况列候选规则（技术方案-机群混合模式产品化 §3.1 G1 / §6 风险表）：
+// 选项 = 当前数据集的「非数值列 ∪ 低基数值列」，基数上限 200（设备号/工位号/程序号形态）。
+// 高基数列被选中会让引擎按该列分组后每段都不足 200 行，全部并入默认段，
+// 分片静默退化（UI 仍承诺「按该列分片训练 N 个模型」）。
+const CONDITION_COLUMN_MAX_CARDINALITY = 200;
+// 预览采样行数：后端 preview 硬上限 500 行，用采样去重数近似列基数。
+const CONDITION_COLUMN_PREVIEW_LIMIT = 500;
+
+// 采样行的逐列去重计数（非空值口径，对齐后端 dropna().nunique()）。
+// 采样去重数是真实基数的下界：采样内已见 >200 个不同取值 ⇒ 真实基数必然 >200，
+// 因此该判定只会漏放「真实基数略大于 200」的列，不会误杀低基数列。
+function countDistinctColumnValues(rows: unknown): Record<string, number> {
+  if (!Array.isArray(rows)) return {};
+  const counters = new Map<string, Set<string>>();
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    for (const [column, value] of Object.entries(row as Record<string, unknown>)) {
+      if (value === null || value === undefined) continue;
+      const seen = counters.get(column) ?? new Set<string>();
+      seen.add(String(value));
+      counters.set(column, seen);
+    }
+  }
+  return Object.fromEntries([...counters].map(([column, values]) => [column, values.size]));
+}
+
 export default function AutoMLPage() {
   const navigate = useNavigate();
   const { t, lang } = useI18n();
@@ -158,6 +184,8 @@ export default function AutoMLPage() {
   const [selectedDataset, setSelectedDataset] = useState<string | null>(null);
   const [datasetColumns, setDatasetColumns] = useState<string[]>([]);
   const [numericInputColumns, setNumericInputColumns] = useState<string[]>([]);
+  // 各列采样基数（去重值个数）：工况列候选过滤用（技术方案 §3.1 G1 / §6）
+  const [datasetColumnCardinality, setDatasetColumnCardinality] = useState<Record<string, number>>({});
   const [inputColumns, setInputColumns] = useState<string[]>([]);
   const [targetColumns, setTargetColumns] = useState<string[]>([]);
   const [taskType, setTaskType] = useState<AutoMLTaskType>("classification");
@@ -307,6 +335,7 @@ export default function AutoMLPage() {
     if (!selectedDataset) {
       setDatasetColumns([]);
       setNumericInputColumns([]);
+      setDatasetColumnCardinality({});
       setInputColumns([]);
       setTargetColumns([]);
       setQualityInputColumns([]);
@@ -316,11 +345,13 @@ export default function AutoMLPage() {
     // Do not let a previous dataset schema authorize a run while the new preview is loading.
     setDatasetColumns([]);
     setNumericInputColumns([]);
+    setDatasetColumnCardinality({});
     setInputColumns([]);
     setTargetColumns([]);
     setQualityInputColumns([]);
     setQualityTargetColumn("");
-    getDatasetPreview(selectedDataset)
+    // limit 放大到后端上限：工况列基数要用采样去重近似（默认 10 行不足以判高基数）
+    getDatasetPreview(selectedDataset, { limit: CONDITION_COLUMN_PREVIEW_LIMIT })
       .then((data) => {
         if (requestGeneration !== datasetPreviewRequestRef.current) return;
         const columns: string[] = Array.isArray(data.columns)
@@ -329,6 +360,7 @@ export default function AutoMLPage() {
         const dtypes = data.dtypes && typeof data.dtypes === "object" ? data.dtypes : {};
         setDatasetColumns(columns);
         setNumericInputColumns(columns.filter((column) => /^(?:u?int|float|complex)/i.test(String(dtypes[column] || ""))));
+        setDatasetColumnCardinality(countDistinctColumnValues(data.preview));
         setTargetColumns((current) => {
           const retained = current.filter((column) => columns.includes(column));
           if (retained.length) return retained;
@@ -340,7 +372,7 @@ export default function AutoMLPage() {
       })
       .catch(() => {
         if (requestGeneration !== datasetPreviewRequestRef.current) return;
-        setDatasetColumns([]); setNumericInputColumns([]); setInputColumns([]); message.error(t.common.error);
+        setDatasetColumns([]); setNumericInputColumns([]); setDatasetColumnCardinality({}); setInputColumns([]); message.error(t.common.error);
       });
   }, [selectedDataset, t.common.error, message]);
 
@@ -357,6 +389,24 @@ export default function AutoMLPage() {
       return normalizeQualityInputColumns(current);
     });
   }, [datasetColumns, qualityTargetColumn]);
+
+  // 工况列候选（技术方案 §3.1 G1 / §6 风险表）：非数值列 ∪ 基数 ≤200 的数值列。
+  // numericInputColumns 即「数值列」集合（按 pandas dtype 判定）。
+  const conditionColumnOptions = useMemo(() => datasetColumns.filter((column) => {
+    if (!numericInputColumns.includes(column)) return true;
+    const cardinality = datasetColumnCardinality[column];
+    if (cardinality === undefined) return true; // 无采样数据（如空预览）时不做限制
+    return cardinality <= CONDITION_COLUMN_MAX_CARDINALITY;
+  }), [datasetColumns, numericInputColumns, datasetColumnCardinality]);
+
+  // 工况列被过滤掉（切换数据集/基数超限）时清空选择并关闭机群共享模式，
+  // 避免提交引擎无法分片的工况列。
+  useEffect(() => {
+    if (conditionColumn && !conditionColumnOptions.includes(conditionColumn)) {
+      setConditionColumn(null);
+      setFleetShared(false);
+    }
+  }, [conditionColumn, conditionColumnOptions]);
 
   const allResults = results?.models || results?.all_results || [];
   const bestModel = results?.best_model || allResults[0];
@@ -863,9 +913,12 @@ export default function AutoMLPage() {
               value={conditionColumn ?? undefined}
               onChange={(value: string | undefined) => { setConditionColumn(value ?? null); if (!value) setFleetShared(false); }}
               disabled={!selectedDataset}
-              options={datasetColumns.map((column) => ({ value: column, label: column }))}
+              options={conditionColumnOptions.map((column) => ({ value: column, label: column }))}
             />
             <small style={{ display: "block", color: "rgba(0,0,0,0.45)" }}>选指定后按工况值分片训练 N 个模型；工况列不参与建模特征</small>
+            <small style={{ display: "block", color: "rgba(0,0,0,0.45)" }}>
+              建议选择设备号/工位号/程序号等低基数列；高基数列会导致分片退化（仅列出非数值列与基数 ≤200 的数值列）
+            </small>
             <div style={{ marginTop: 8 }}>
               <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6, cursor: conditionColumn ? "pointer" : "not-allowed", color: conditionColumn ? "inherit" : "rgba(0,0,0,0.35)" }}>
                 <input

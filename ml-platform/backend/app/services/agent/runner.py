@@ -31,6 +31,7 @@ from app.services.agent.sandbox import (
     run_sandbox,
 )
 from app.services.agent.wizard import merge_gates, pause_plan
+from app.services.automl_anomaly import ANOMALY_ACCEPTANCE_FPR_TOLERANCE
 from app.services.llm_gateway import GatewayLLMConfig
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,27 @@ ANOMALY_TOPK_MAX_VARIANCE = 0.05
 S2_SAMPLE_ROWS = 5000
 
 Trainer = Callable[[object, object, dict], dict]
+
+
+def anomaly_default_gates(contamination: float | None = None) -> dict:
+    """无监督 S4 默认门禁（技术方案 §3.3 第二层）：``normal_fpr ≤ contamination×1.5``。
+
+    contamination 取任务实际使用的污染率（训练器回传值优先，向导 hints 兜底）；
+    未知时回退既有默认值 0.015（= 引擎默认 contamination 0.01 × 1.5，与
+    DEFAULT_GATES_ANOMALY 一致）。容差系数复用引擎常量
+    ``ANOMALY_ACCEPTANCE_FPR_TOLERANCE``——不再硬编码 1.5。
+    """
+    gates = dict(DEFAULT_GATES_ANOMALY)
+    value = None
+    try:
+        if contamination is not None:
+            value = float(contamination)
+    except (TypeError, ValueError):
+        value = None
+    if value is None or value <= 0:
+        return gates
+    gates["normal_fpr"] = round(value * ANOMALY_ACCEPTANCE_FPR_TOLERANCE, 6)
+    return gates
 
 
 class AgentRunner:
@@ -939,9 +961,16 @@ class AgentRunner:
             self.db.commit()
             # 默认门禁按范式选择（技术方案 §3.4：S4 验收门禁键与引擎 M1 同源；
             # normal_fpr 为反向键，hard_gates/merge_gates 双处按方向处理）。
-            default_gates = (
-                dict(DEFAULT_GATES_ANOMALY) if self.task_type == "anomaly" else dict(DEFAULT_GATES)
-            )
+            # 无监督 default 的 normal_fpr 随任务污染率推导（§3.3：
+            # normal_fpr ≤ contamination×1.5）——污染率取训练器回传的实际值
+            # （向导 hints 兜底），未知时回退 0.015（= 0.01×1.5）。
+            default_gates = dict(DEFAULT_GATES)
+            if self.task_type == "anomaly":
+                contamination = trainer_result.get("contamination")
+                if contamination is None:
+                    guidance_modeling = (self.guidance or {}).get("modeling") or {}
+                    contamination = guidance_modeling.get("contamination")
+                default_gates = anomaly_default_gates(contamination)
             primary_metric = ANOMALY_PRIMARY_METRIC if self.task_type == "anomaly" else PRIMARY_METRIC
             user_gates = None
             if isinstance(self.guidance, dict):

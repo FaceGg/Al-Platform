@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Alert, Button, Card, Col, message, Progress, Row, Space, Statistic, Tag, Timeline, Typography, Upload,
+  Alert, Button, Card, Col, Input, InputNumber, message, Progress, Row, Select, Space, Statistic,
+  Table, Tag, Timeline, Typography, Upload,
 } from "antd";
 import {
   ArrowLeftOutlined, CaretRightOutlined, DeploymentUnitOutlined, EditOutlined,
@@ -12,7 +13,12 @@ import PageHeading from "../components/PageHeading";
 import LoopConfigModal, { type FieldDescTask, type LoopEditorState } from "../components/loop/LoopConfigModal";
 import FleetShardPanel from "../components/loop/FleetShardPanel";
 import { formatApiError } from "../api/client";
-import { labelRecalibrateVersion, deriveSupervisedDataset, type LabelRecalibrateResult, type DerivedSupervisedDatasetResult } from "../api/modelRegistry";
+import {
+  addFleetShard, deriveSupervisedDataset, fetchFleetOverview, labelRecalibrateVersion,
+  recalibrateDeviceVersion,
+  type DerivedSupervisedDatasetResult, type DeviceRecalibrateResult, type FleetShardCreatePayload,
+  type FleetShardResult, type LabelRecalibrateResult,
+} from "../api/modelRegistry";
 import { listAnnotationTasks } from "../api/annotationTasks";
 import {
   type DemoLoopConfig, type DemoLoopPredictResult, type DemoLoopStatus, type ReflowRow,
@@ -165,6 +171,200 @@ const EVENT_LABELS: Record<string, string> = {
   // engine 轮只换模型。事件流文案在渲染处按 isAgentMode 动态取。
   model_swapped: "模型与特征工程已更新", swap_failed: "模型替换失败", loop_reset: "闭环重置",
 };
+
+/** M9 新设备重标定 + 迁移版本挂载（技术方案 §7.2 / §7.1.4，三期 M9）。
+ *
+ * 现场流程：新设备采一批**纯正常**数据 → 选标定数据集 + 填工况值（设备号/
+ * 工位号）→ `recalibrate-device` 只重跑标定层（不动检测器主体）→ fleet_fit
+ * 判定：compatible → 可挂载；unfit → §7.2「不硬迁」——版本仍产出但标记 unfit，
+ * 界面明确拒挂并提示独立建模。
+ *
+ * 挂载走 `fleet-shards`：新 stable revision = 既有分片全量复制 + 新分片；工况列
+ * 必须与部署一致（服务端 fail-closed），故按部署 fleet-overview 读出后透传。
+ */
+function DeviceRecalibratePanel({
+  deploymentId, sourceVersionId, calibrationArtifact, datasets,
+}: {
+  deploymentId: string | null;
+  sourceVersionId: string | null;
+  calibrationArtifact: { id: string; name: string } | null;
+  datasets: Array<{ id: string; name: string }>;
+}) {
+  const [artifactId, setArtifactId] = useState<string | null>(null);
+  const [conditionValue, setConditionValue] = useState("");
+  const [conditionColumn, setConditionColumn] = useState<string | null>(null);
+  const [rows, setRows] = useState<number | null>(null);
+  const [totalRows, setTotalRows] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<DeviceRecalibrateResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [mounted, setMounted] = useState<FleetShardResult | null>(null);
+  const [mountError, setMountError] = useState<string | null>(null);
+
+  // 标定数据集默认取闭环回流的报错数据集（与 M6 面板同一数据源）
+  const selectedArtifactId = artifactId ?? calibrationArtifact?.id ?? null;
+  const artifactOptions = [
+    ...(calibrationArtifact
+      ? [{ value: calibrationArtifact.id, label: `${calibrationArtifact.name}（回流报错集）` }]
+      : []),
+    ...datasets
+      .filter((item) => item.id !== calibrationArtifact?.id)
+      .map((item) => ({ value: item.id, label: item.name })),
+  ];
+
+  // 部署工况列（挂载 fail-closed 校验用）：读不到则不传（服务端按缺省处理）
+  useEffect(() => {
+    if (!deploymentId) {
+      setConditionColumn(null);
+      return;
+    }
+    let cancelled = false;
+    fetchFleetOverview(deploymentId)
+      .then((data) => { if (!cancelled) setConditionColumn(data?.condition_column ?? null); })
+      .catch(() => { if (!cancelled) setConditionColumn(null); });
+    return () => { cancelled = true; };
+  }, [deploymentId]);
+
+  const runRecalibrate = async () => {
+    if (!sourceVersionId || busy) return;
+    const artifact = selectedArtifactId;
+    const condition = conditionValue.trim();
+    if (!artifact || !condition) {
+      setError(!artifact ? "请选择标定数据集" : "请填写工况值（设备号/工位号）");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setMounted(null);
+    setMountError(null);
+    try {
+      setResult(await recalibrateDeviceVersion(sourceVersionId, {
+        calibration_artifact_id: artifact,
+        condition_value: condition,
+      }));
+      message.success("M9 设备重标定完成");
+    } catch (err) {
+      setError(formatApiError(err, "M9 设备重标定失败"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runMount = async () => {
+    if (!deploymentId || !result || busy) return;
+    if (result.unfit_for_fleet || !result.fleet_fit?.compatible) {
+      // §7.2「不硬迁」：unfit 版本不得挂载为机群分片——界面层拒绝，不调 API
+      const reason = "该迁移版本被判定为机群不适配（unfit），按 §7.2「不硬迁」不可挂载：请为该设备独立建模或补充标定数据后重试";
+      setMountError(reason);
+      message.error(reason);
+      return;
+    }
+    setBusy(true);
+    setMountError(null);
+    try {
+      const payload: FleetShardCreatePayload = {
+        model_version_id: result.version_id,
+        condition_value: conditionValue.trim(),
+        ...(conditionColumn ? { condition_column: conditionColumn } : {}),
+        ...(rows != null && totalRows != null ? { rows, total_rows: totalRows } : {}),
+      };
+      setMounted(await addFleetShard(deploymentId, payload));
+      message.success("迁移版本已挂载为部署分片");
+    } catch (err) {
+      setMountError(formatApiError(err, "挂载分片失败"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!sourceVersionId) return null;
+  const unfit = result ? (result.unfit_for_fleet || !result.fleet_fit?.compatible) : false;
+  const fleetFpr = result?.fleet_fit?.fleet_fpr ?? null;
+
+  return (
+    <div style={{ border: "1px solid var(--v2-line, #eee)", borderRadius: 8, padding: "8px 12px", marginBottom: 12 }}>
+      <Space direction="vertical" style={{ width: "100%" }} size="small">
+        <Space style={{ width: "100%", justifyContent: "space-between" }}>
+          <Text strong style={{ fontSize: 13 }}>M9 新设备重标定（纯正常数据 → fleet_fit 判定 → 迁移版本）</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>源版本 {sourceVersionId}</Text>
+        </Space>
+        <Space wrap size={8}>
+          <Select
+            style={{ width: 220 }}
+            size="small"
+            placeholder="标定数据集"
+            value={selectedArtifactId ?? undefined}
+            options={artifactOptions}
+            onChange={(value) => setArtifactId(String(value))}
+          />
+          <Input
+            style={{ width: 200 }}
+            size="small"
+            maxLength={128}
+            placeholder="工况值（设备号/工位号）"
+            value={conditionValue}
+            onChange={(event) => setConditionValue(event.target.value)}
+          />
+          <Text type="secondary" style={{ fontSize: 12 }}>工况列：{conditionColumn ?? "device_id（缺省）"}</Text>
+          <Button size="small" type="primary" loading={busy} onClick={() => void runRecalibrate()}>
+            执行 M9 设备重标定
+          </Button>
+        </Space>
+        {error && <Alert type="warning" showIcon message={error} />}
+        {result && (
+          <Alert
+            type={unfit ? "warning" : "success"}
+            showIcon
+            message={(
+              <span>
+                M9 设备重标定完成（工况值 {conditionValue.trim()}）：
+                {unfit ? <Text strong>机群不适配（unfit）</Text> : <Text strong>机群兼容</Text>}
+                （fleet_fpr {fleetFpr == null ? "—" : fleetFpr} / 容差 {result.fleet_fit?.tolerance ?? "—"}），
+                迁移版本 <Text strong>{result.registered_model_name}</Text>（{result.version_id}），
+                标定阈值 {result.threshold_score}，标定样本 {result.calibration_rows} 行
+              </span>
+            )}
+            description={unfit
+              ? "按 §7.2「不硬迁」：版本仍产出但标记 unfit_for_fleet，禁止挂载为机群分片；建议该设备独立建模或补充标定数据后重试。"
+              : `迁移版本状态 pending，需先在模型库审批（approve）后再挂载；回测 AUC ${result.backtest?.synthetic_auc ?? "—"}、留出 ${result.backtest?.holdout_rows ?? "—"} 行`}
+          />
+        )}
+        {result && (
+          <Space wrap size={8}>
+            <InputNumber
+              size="small" min={0} style={{ width: 130 }}
+              placeholder="新分片行数" value={rows}
+              onChange={(value) => setRows(typeof value === "number" ? value : null)}
+            />
+            <InputNumber
+              size="small" min={0} style={{ width: 130 }}
+              placeholder="总分片行数" value={totalRows}
+              onChange={(value) => setTotalRows(typeof value === "number" ? value : null)}
+            />
+            <Button
+              size="small"
+              danger={unfit}
+              loading={busy}
+              disabled={!deploymentId}
+              onClick={() => void runMount()}
+            >
+              {unfit ? "挂载为部署分片（unfit 将被拒绝）" : "挂载为部署分片"}
+            </Button>
+            <Text type="secondary" style={{ fontSize: 12 }}>填行数按比例分配权重（§6.3）</Text>
+          </Space>
+        )}
+        {mountError && <Alert type="error" showIcon message={mountError} />}
+        {mounted && (
+          <Alert
+            type="success"
+            showIcon
+            message={`已挂载为部署分片：revision r${mounted.revision_number}（共 ${mounted.targets.length} 个分片）`}
+          />
+        )}
+      </Space>
+    </div>
+  );
+}
 
 export default function DemoLoopDetailPage() {
   const { loopId = "" } = useParams();
@@ -592,6 +792,51 @@ export default function DemoLoopDetailPage() {
                       新版本 {m6Result.registered_model_name}（待审批后挂载）
                     </span>
                   )}
+                  description={(
+                    <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                      {/* 误报形态报表（技术方案 §3.2 G3 结果展示项）：按形态簇给出
+                          样本数与密集特征（feature + mean_z），供误标质量诊断 */}
+                      <Text strong style={{ fontSize: 12 }}>
+                        误报形态报表（样本 {m6Result.false_alarm_report?.sample_count ?? 0}）
+                      </Text>
+                      <Table
+                        size="small"
+                        pagination={false}
+                        rowKey={(row) => String(row.cluster)}
+                        dataSource={m6Result.false_alarm_report?.clusters ?? []}
+                        locale={{ emptyText: "无误报形态簇" }}
+                        columns={[
+                          { title: "形态簇", dataIndex: "cluster", width: 72 },
+                          { title: "样本数", dataIndex: "sample_count", width: 72 },
+                          {
+                            title: "密集特征（mean_z）",
+                            key: "dense_features",
+                            render: (_value, row) => (
+                              <Space size={4} wrap>
+                                {(row.dense_features ?? []).length === 0
+                                  ? <Text type="secondary">—</Text>
+                                  : row.dense_features.map((item) => (
+                                    <Tag key={item.feature} style={{ fontSize: 11 }}>
+                                      {item.feature} {item.mean_z}
+                                    </Tag>
+                                  ))}
+                              </Space>
+                            ),
+                          },
+                        ]}
+                      />
+                      <Text style={{ fontSize: 12 }}>
+                        派生版本：
+                        {derivedInfo ? (
+                          <a href={`/data?projectId=${projectId}`}>
+                            {derivedInfo.dataset_name}（artifact {derivedInfo.dataset_artifact_id}）
+                          </a>
+                        ) : (
+                          <Text type="secondary">尚未派生（点「派生监督数据集」导出弱监督演进数据集）</Text>
+                        )}
+                      </Text>
+                    </Space>
+                  )}
                   style={{ marginBottom: 12 }}
                 />
               )}
@@ -608,9 +853,22 @@ export default function DemoLoopDetailPage() {
                       可在数据管理中查看并创建监督分类任务（弱监督演进）
                     </span>
                   )}
+                  description={(
+                    <a href={`/data?projectId=${projectId}`}>
+                      {derivedInfo.dataset_name}（artifact {derivedInfo.dataset_artifact_id}，{derivedInfo.rows} 行，标签列 {derivedInfo.label_column}）
+                    </a>
+                  )}
                   style={{ marginBottom: 12 }}
                 />
               )}
+              {/* M9 新设备重标定 + 迁移版本挂载（技术方案 §7.2 / §7.1.4，三期 M9）：
+                  新设备纯正常数据 → fleet_fit 判定 → 迁移版本挂载为部署分片 */}
+              <DeviceRecalibratePanel
+                deploymentId={status?.deployment_id ?? loop?.deployment_id ?? null}
+                sourceVersionId={status?.swapped_model_version_id ?? null}
+                calibrationArtifact={status?.error_artifact ?? null}
+                datasets={datasets}
+              />
               {/* 运行期误报实证（技术方案 §3.3 第三层）：同一批回流行上阈值法
                   vs 模型报警累计对比（判据④的运行期持续口径） */}
               {status?.alert_comparison && (

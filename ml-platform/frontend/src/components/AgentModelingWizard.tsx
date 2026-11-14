@@ -855,7 +855,7 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
           {taskType === "anomaly" && (
           <div className="v2-panel">
             <h4><span className="bar" />{zh ? "已知异常样本验证（可选 · 弱监督）" : "Known anomaly validation (optional)"}
-              <span className="more">{zh ? "上传少量已确认异常样本（≤50 行，特征列与训练数据一致），S4 门禁通过后用冠军模型打分验证检出率——观察项，不一票否决" : "score known anomalies with the champion model"}</span></h4>
+              <span className="more">{zh ? "上传少量已确认异常样本（10–50 行，特征列与训练数据一致），S4 门禁通过后用冠军模型打分验证检出率——观察项，不一票否决" : "score known anomalies with the champion model"}</span></h4>
             <input type="file" accept=".csv" aria-label={zh ? "上传已知异常样本" : "known anomaly csv"}
               style={{ fontSize: 12 }} onChange={(e) => {
                 const file = e.target.files?.[0];
@@ -877,6 +877,11 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
             {knownAnomalyRows.length > 0 && (
               <div style={{ fontSize: 12, marginTop: 6, color: "var(--v2-sub)" }}>
                 已载入 {knownAnomalyRows.length} 行已知异常样本（S4 验收时用冠军模型验证检出率）
+                {knownAnomalyRows.length < 10 && (
+                  <span style={{ color: "var(--v2-danger, #e66f75)", marginLeft: 8 }}>
+                    {zh ? "少于 10 行——后端契约要求 10–50 行，提交会被拒" : "fewer than 10 rows — backend requires 10–50"}
+                  </span>
+                )}
                 <button type="button" style={{ marginLeft: 8, cursor: "pointer" }}
                   onClick={() => setKnownAnomalyRows([])}>{zh ? "清除" : "clear"}</button>
               </div>

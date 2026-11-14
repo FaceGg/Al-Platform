@@ -68,10 +68,34 @@ class ConditionValueRouter:
     weight 最高的 target（训练量最大的分片，weight 按段行数比例分配）。
     runtime session 由既有 start/reconcile 机制加载
     （key=`{revision_id}:{model_version_id}`，与灰度共用）。
+
+    回退顺序：**精确匹配 → 通配（condition_value=None）→ weight 最高**
+    （§6.3）。请求工况值为空/缺失（缺列、None、NaN、空白）时归一为空值——
+    空值**永不**精确命中具体分片（含 condition_value="" 的分片），而是按
+    回退顺序落到通配分片（部署的兜底分片即通配 target 时由其承接）；无
+    通配分片才落到 weight 最高的分片。
     """
 
     def __init__(self, condition_column: str):
         self.condition_column = str(condition_column or "").strip()
+
+    @staticmethod
+    def _request_value(record: dict, column: str) -> str:
+        """请求工况值归一：缺列/None/NaN/空白 → ""（空值语义）。
+
+        空值不得与任何具体分片串台（原实现对 None 取 ``str(None)`` 得到
+        字面量 "None"，既非空值语义也可能误命中同名分片）。
+        """
+        raw = record.get(column)
+        if raw is None:
+            return ""
+        try:
+            if raw != raw:  # NaN：自反不等即缺失
+                return ""
+        except Exception:  # noqa: BLE001 - 非标量按普通值处理
+            pass
+        text = str(raw)
+        return text if text.strip() else ""
 
     def select_for_record(self, deployment, record: dict, *, targets=None) -> RoutedTarget:
         """按 record 工况值匹配 target。targets 为 DeploymentTarget 列表
@@ -79,7 +103,7 @@ class ConditionValueRouter:
         candidates = list(targets or [])
         if not candidates:
             raise InferenceRolloutError("ROLLOUT_TARGETS_EMPTY")
-        request_value = str(record.get(self.condition_column, ""))
+        request_value = self._request_value(record, self.condition_column)
         matched = None
         wildcard = None
         default = None
@@ -99,6 +123,7 @@ class ConditionValueRouter:
         if matched is not None:
             chosen, is_matched = matched, True
         elif wildcard is not None:
+            # 未精确命中（含请求工况值为空/缺失）→ 通配分片（默认分片）承接
             chosen, is_matched = wildcard, False
         else:
             chosen, is_matched = default, False

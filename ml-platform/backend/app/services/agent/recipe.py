@@ -303,7 +303,13 @@ def build_fixation_content(run, memory: dict, smoke_row: dict | None = None,
     if gates:
         acceptance_gates = gates
     elif is_anomaly:
-        acceptance_gates = {"synthetic_auc": 0.85, "normal_fpr": 0.015, "stability": 0.8}
+        # 无监督默认门禁随污染率推导（技术方案 §3.3：normal_fpr ≤ contamination×1.5）
+        # ——与 runner.DEFAULT_GATES_ANOMALY 同源，此前两处都硬编码 0.015
+        # （= contamination 0.01 的特例），用户改污染率后配方固化的门禁与
+        # 实际训练判据脱节（2026-11-14 第八轮审计 B15 收尾）。
+        from app.services.agent.runner import anomaly_default_gates
+
+        acceptance_gates = anomaly_default_gates(modeling.get("contamination"))
     else:
         acceptance_gates = {"recall_minority": 0.90}
     # 算法白名单随配方固化：服务化后闭环重训按白名单缩小引擎搜索族

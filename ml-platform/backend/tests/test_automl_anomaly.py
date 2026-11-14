@@ -556,6 +556,98 @@ class TestAnomalyExecution(unittest.TestCase):
             assert progress["completed"] == metrics["search"]["completed_trials"]
             assert progress["current_segment"] in {"shift=A", "shift=B"}
 
+    def _write_device_dataset(self, rows: int = 2400, devices: int = 4):
+        """机群形态数据：s1/s2/s3 连续量 + device_id（0..devices-1 数值列）。"""
+        rng = np.random.default_rng(42)
+        matrix = rng.normal(size=(rows, 3))
+        header = "s1,s2,s3,device_id"
+        body = [
+            ",".join([f"{matrix[row, column]:.6f}" for column in range(3)] + [str(row % devices)])
+            for row in range(rows)
+        ]
+        self.dataset_path.write_text("\n".join([header, *body]), encoding="utf-8")
+
+    def test_execution_condition_column_is_excluded_from_model_features(self):
+        """工况/设备列只作分组键，不进模型特征（技术方案 §7.1）。
+
+        回归锁定：condition_column 同时列在 input_columns 里时，引擎必须把
+        它从特征集剔除并留痕 removed_columns[...]=condition_column。既有分
+        片用例的 condition_column（shift）不在 input_columns 中 → 剔除分支
+        从不执行，该分支曾被并发改写静默删除且无任何测试告警。
+        """
+        self._write_device_dataset()
+        job_id = self.create_job(self._base_params(
+            input_columns=["s1", "s2", "s3", "device_id"],
+            condition_column="device_id",
+            algorithm_ids=["iforest"],
+            search_strength="light",
+        ))
+        result = self.run_job(job_id)
+        assert result.status == "completed"
+        with self.Session() as db:
+            job = db.query(TrainingJob).filter(TrainingJob.id == job_id).one()
+            metrics = job.metrics
+            preprocessing = metrics["preprocessing"]
+            # 1) 剔除留痕：原因码必须是 condition_column。
+            assert preprocessing["removed_columns"].get("device_id") == "condition_column"
+            # 2) 模型特征集不含工况列（特征集 / 输入合同 / 落盘 schema 三处一致）。
+            assert "device_id" not in preprocessing["feature_columns"]
+            assert "device_id" not in metrics["input_contract"]["input_columns"]
+            schema_names = {item["name"] for item in job.feature_schema}
+            assert "device_id" not in schema_names
+            assert schema_names == {"s1", "s2", "s3"}
+            # 3) 分组键仍按工况值切分：4 个设备各成一段（剔除特征不破坏分组）。
+            segments = metrics["condition_segments"]
+            assert len(segments) == 4
+            assert {item["segment"] for item in segments} == {
+                "device_id=0", "device_id=1", "device_id=2", "device_id=3",
+            }
+        # 4) 落盘模型工件的输入合同同样不含工况列（训练所用特征留痕）。
+        model_artifacts = [item for item in self.artifacts.created if item[1] == "model"]
+        assert len(model_artifacts) == 4
+        for _name, _artifact_type, metadata, _artifact in model_artifacts:
+            assert "device_id" not in metadata["input_contract"]["input_columns"]
+
+    def test_execution_fleet_shared_bundle_excludes_condition_column(self):
+        """fleet_shared 全局共享段也不得带工况列（技术方案 §7.1 机群基线）。
+
+        全局段合并全部设备数据训练一个共享模型——device_id 若留在特征里，
+        全局模型学到的是「哪台设备」而非「同型设备共有的正常形态」。
+        """
+        self._write_device_dataset()
+        job_id = self.create_job(self._base_params(
+            input_columns=["s1", "s2", "s3", "device_id"],
+            condition_column="device_id",
+            fleet_mode="shared",
+            algorithm_ids=["iforest"],
+            search_strength="light",
+        ))
+        result = self.run_job(job_id)
+        assert result.status == "completed"
+        with self.Session() as db:
+            job = db.query(TrainingJob).filter(TrainingJob.id == job_id).one()
+            metrics = job.metrics
+            assert metrics["preprocessing"]["removed_columns"].get("device_id") == "condition_column"
+            # 4 个设备段 + 1 个全局共享段。
+            bundles = metrics["condition_bundles"]
+            assert len(bundles) == 5
+            assert sum(1 for item in bundles if item["fleet_global"]) == 1
+            global_bundle = next(item for item in bundles if item["fleet_global"])
+            assert global_bundle["condition_value"] is None
+            # 全局共享 bundle 的输入合同不含工况列。
+            metadata_by_artifact = {
+                str(artifact.id): metadata for _name, _type, metadata, artifact in self.artifacts.created
+            }
+            global_columns = metadata_by_artifact[global_bundle["model_artifact_id"]]["input_contract"]["input_columns"]
+            assert "device_id" not in global_columns
+            assert set(global_columns) == {"s1", "s2", "s3"}
+            # 工位独立段同样不含工况列。
+            for bundle in bundles:
+                if bundle["fleet_global"]:
+                    continue
+                columns = metadata_by_artifact[bundle["model_artifact_id"]]["input_contract"]["input_columns"]
+                assert "device_id" not in columns
+
 
 def test_normalize_evaluation_config_disabled_for_anomaly():
     assert normalize_evaluation_config(False, None) == {

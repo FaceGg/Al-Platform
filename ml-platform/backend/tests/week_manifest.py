@@ -120,6 +120,7 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_weighted_clustering_umap",
         "test_automl_multioutput",
         "test_automl_anomaly",
+        "test_automl_anomaly_fleet_shared",  # 机群共享段（B2/B18/B20/B3，2026-11-14）
         "test_anomaly_drift",
         # 二期 M7/M5（2026-11-12）：工况分片路由挂载 + AE 第三族
         "test_condition_shard_routing",

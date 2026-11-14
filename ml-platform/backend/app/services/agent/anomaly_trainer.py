@@ -13,6 +13,8 @@ import numpy as np
 
 from app.services.automl_anomaly import (
     ANOMALY_DEFAULT_CONTAMINATION,
+    ANOMALY_MIN_ROWS,
+    ANOMALY_SEGMENT_MIN_ROWS,
     build_synthetic_benchmark,
     evaluate_anomaly_candidate,
     normalize_anomaly_contamination,
@@ -35,6 +37,8 @@ def anomaly_trainer(feature_frame, _y, hints: dict) -> dict:
     contamination（guidance.modeling.contamination）、condition_column
     （分工况建模 §3.6：指定后按工况值切分数据分别建模，冠军取各工况
     最差检出能力——保证每个工况都可用；路由部署拓扑二期）。
+    工况段护栏与引擎统一（§6.6E 共享常量 ANOMALY_SEGMENT_MIN_ROWS=200）：
+    不足段的工况并入默认段，不独立建模。
     """
     import pandas as pd
 
@@ -48,13 +52,43 @@ def anomaly_trainer(feature_frame, _y, hints: dict) -> dict:
     if condition_column:
         # 分工况切分（§3.6）：每工况独立走完整训练评估，冠军取「最差工况」
         # ——任何一个工况不达标即整体不达标（保守）。
-        segments = []
+        # 段护栏与引擎统一（§6.6E，共享常量 ANOMALY_SEGMENT_MIN_ROWS=200）：
+        # 独立工况段需 ≥200 行；不足段并入默认段（引擎同口径），小样本分片
+        # 的 fpr 门禁不再随机挂。**不得**训练违反护栏的段——全部段都低于
+        # 护栏时合并为单一默认段（全量）；合并后仍不足建模下限时 fail-loud。
+        segments: list[tuple[str, pd.DataFrame]] = []
+        small_frames: list[pd.DataFrame] = []
         for value, segment in frame.groupby(condition_column, sort=True):
             feature_only = segment.drop(columns=[condition_column])
-            if len(feature_only) >= 60:
+            if len(feature_only) >= ANOMALY_SEGMENT_MIN_ROWS:
                 segments.append((f"{condition_column}={value}", feature_only))
-        if not segments:
-            raise ValueError("condition column produced no usable segments (each needs ≥60 rows)")
+            else:
+                small_frames.append(feature_only)
+        merge_note: dict | None = None
+        if small_frames:
+            default_frame = pd.concat(small_frames, ignore_index=True)
+            if len(default_frame) >= ANOMALY_MIN_ROWS:
+                segments.append((f"{condition_column}=__DEFAULT__", default_frame))
+                merge_note = {
+                    "merged_small_segments": len(small_frames),
+                    "rows": int(len(default_frame)),
+                }
+            elif segments:
+                # 小段合并后仍不足建模下限、且已有达标独立段：丢弃小段并留痕
+                # （引擎同口径）。
+                merge_note = {
+                    "merged_small_segments": len(small_frames),
+                    "rows": int(len(default_frame)),
+                    "dropped": True,
+                }
+            else:
+                # 全部工况段都低于护栏：合并后即全量默认段；仍不足建模下限时
+                # 直接失败（不静默训练违规段）。
+                raise ValueError(
+                    "condition column produced no usable segments "
+                    f"(each needs ≥{ANOMALY_SEGMENT_MIN_ROWS} rows; merged rows "
+                    f"{len(default_frame)} < {ANOMALY_MIN_ROWS} for the default segment)"
+                )
         segment_results = []
         for label, segment_frame in segments:
             result = _train_single(segment_frame, hints, contamination, full_data)
@@ -76,6 +110,12 @@ def anomaly_trainer(feature_frame, _y, hints: dict) -> dict:
                 "total_rows": int(len(frame)),
                 "condition_column": condition_column,
                 "segments": [item["segment"] for item in segment_results],
+                # 段护栏留痕（§6.6E）：低于 ANOMALY_SEGMENT_MIN_ROWS 的工况段
+                # 并入默认段（dropped=True 表示合并后仍不足下限被丢弃）。
+                "segment_guard": {
+                    "min_rows": ANOMALY_SEGMENT_MIN_ROWS,
+                    "merge": merge_note,
+                },
             },
             "contamination": contamination,
             "evaluation": {
@@ -129,8 +169,12 @@ def _train_single(frame, hints: dict, contamination: float, full_data: bool) -> 
         matrix = matrix[rows]
         fidelity["sampled_rows"] = int(len(matrix))
         fidelity["note"] = "non-full-data sampled training (20000 cap)"
-    if len(matrix) < 40:
-        raise ValueError("AutoML anomaly trainer requires at least 40 rows")
+    # 单段建模行数下限与引擎统一（ANOMALY_MIN_ROWS）：小样本分片的 fpr 门禁
+    # 会随机挂（§6.6E），低于下限直接失败而非静默训练。
+    if len(matrix) < ANOMALY_MIN_ROWS:
+        raise ValueError(
+            f"AutoML anomaly trainer requires at least {ANOMALY_MIN_ROWS} rows"
+        )
 
     families = resolve_algorithm_families(
         [str(x) for x in hints.get("algorithm_whitelist") or []] or None,

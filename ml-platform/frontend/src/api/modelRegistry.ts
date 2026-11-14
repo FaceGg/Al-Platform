@@ -420,14 +420,21 @@ export interface LabelRecalibrateResult {
   fnr: number;
   fpr: number;
   gate: { unlocked: boolean; confirmed_count: number; min_confirmed_required: number; morphology_cluster_count: number | null };
-  false_alarm_report: { clusters: { cluster: number; sample_count: number; dense_features: { feature: string; mean_z: number }[] }[]; sample_count: number };
+  false_alarm_report: { clusters: { cluster: number; sample_count: number; dense_features: { feature: string; mean_z: number; mean_raw?: number }[] }[]; sample_count: number };
   confirmed_count: number;
   false_alarm_count: number;
 }
 
 export async function labelRecalibrateVersion(
   versionId: string,
-  payload: { labeled_artifact_id: string; feedback_marks?: Record<string, unknown>; positive_label?: string },
+  // 契约与后端 `LabelRecalibrateRequest`（app/schemas/model_registry.py）严格一致：
+  // extra=forbid —— 多传/少传字段都会 422（2026-11-14 第八轮审计 B4 修；
+  // 此前这里声明的 positive_label 后端并不接受）。
+  payload: {
+    labeled_artifact_id: string;
+    feedback_marks?: Record<string, "confirmed_fault" | "false_alarm" | "none">;
+    mount?: boolean;
+  },
 ): Promise<LabelRecalibrateResult> {
   const response = await apiClient.post(`/model-versions/${versionId}/recalibrate-labels`, payload);
   return response.data;
@@ -449,6 +456,77 @@ export async function deriveSupervisedDataset(
   payload: { labeled_artifact_id: string; positive_label?: string },
 ): Promise<DerivedSupervisedDatasetResult> {
   const response = await apiClient.post(`/model-versions/${versionId}/derive-supervised-dataset`, payload);
+  return response.data;
+}
+
+// M9 新设备重标定（技术方案 §7.2，三期 M9）：新设备纯正常数据 → 只重跑标定层
+// （不动检测器主体）→ fleet_fit 判定（compatible 可挂载 / unfit 不硬迁）→ 注册
+// 迁移版本。契约与后端 `DeviceRecalibrateRequest`（app/schemas/model_registry.py）
+// 一致（extra=forbid）；contamination 后端为 StrictFloat，界面不传、走基线默认。
+export interface DeviceFleetFit {
+  compatible: boolean;
+  fleet_fpr: number | null;
+  tolerance: number;
+  baseline_threshold: number | null;
+}
+
+export interface DeviceRecalibrateBacktest {
+  synthetic_auc: number;
+  per_class_recall: Record<string, number>;
+  holdout_rows: number;
+}
+
+export interface DeviceRecalibrateResult {
+  version_id: string;
+  registered_model_id: string;
+  registered_model_name: string;
+  stats_artifact_id: string;
+  threshold_score: number;
+  unfit_for_fleet: boolean;
+  fleet_fit: DeviceFleetFit;
+  backtest: DeviceRecalibrateBacktest;
+  calibration_rows: number;
+}
+
+export async function recalibrateDeviceVersion(
+  versionId: string,
+  payload: { calibration_artifact_id: string; condition_value: string; contamination?: number },
+): Promise<DeviceRecalibrateResult> {
+  const response = await apiClient.post(`/model-versions/${versionId}/recalibrate-device`, payload);
+  return response.data;
+}
+
+// M9 迁移版本挂载为部署分片 target（§7.1.4）：新 stable revision = 既有分片全量
+// 复制 + 新分片。契约与后端 `FleetShardCreate` 一致（extra=forbid）：
+// - condition_column 必须与部署已有工况列一致（不一致 → 409
+//   FLEET_SHARD_CONDITION_COLUMN_MISMATCH），缺省=沿用部署现有工况列
+// - rows/total_rows 同时给出 → 按行数比例分配权重（§6.3）
+export interface FleetShardCreatePayload {
+  model_version_id: string;
+  condition_value: string;
+  weight_bps?: number;
+  condition_column?: string;
+  rows?: number;
+  total_rows?: number;
+}
+
+export interface FleetShardTarget {
+  model_version_id: string;
+  condition_value: string | null;
+  weight_bps: number;
+}
+
+export interface FleetShardResult {
+  revision_id: string;
+  revision_number: number;
+  targets: FleetShardTarget[];
+}
+
+export async function addFleetShard(
+  deploymentId: string,
+  payload: FleetShardCreatePayload,
+): Promise<FleetShardResult> {
+  const response = await apiClient.post(`/inference-deployments/${deploymentId}/fleet-shards`, payload);
   return response.data;
 }
 
