@@ -18,6 +18,15 @@ on:
           - light
           - full
 
+# Windows runner 的 stdout 被重定向到管道时用 locale 代码页（cp1252）且
+# errors=strict——任何中文输出都会抛 UnicodeEncodeError 直接崩掉整个步骤
+# （2026-11-14 CI Quality (windows-latest) 即此症状：run_suite 回显含中文的
+# 子进程输出时崩在 harness 自身，表现为「Run backend suite 失败且无模块级
+# 细节」）。统一让所有 python 进程用 UTF-8；代码侧另有 app/console_encoding.py
+# 兜底，本机直接跑 run_suite.py 同样受益。
+env:
+  PYTHONIOENCODING: utf-8
+
 permissions:
   contents: read
 

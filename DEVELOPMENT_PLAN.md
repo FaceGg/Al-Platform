@@ -1426,27 +1426,44 @@ AE 的 ONNX label 端口是**占位全 1**（`automl_anomaly_ae.py:98` `(mse*0)+
 
 CI run **#828**（`da235de8`）结论：**Ubuntu job 全绿**（后端套件 / 前端测试 / 构建 / 服务冒烟全 ok），**Windows job 失败**于 `Run backend suite`。本轮定位并修复该失败，同时**更正第九轮 §8 的根因判断**（保留原记录，按台账规约「只增不改」）。
 
-### 1. 根因更正（重要）
+### 1. 根因更正（两次更正，逐步收敛到完整链条）
 
-第九轮 §8 把该失败归因为「`run_suite.py` 未捕获 `TimeoutExpired` → 自身抛异常退出，故只有 exit code 1、无模块级细节」。**该判断有误**：当时只看了 GitHub 的**step 级注解**（`Process completed with exit code 1`），未取 job 日志。本次下载 job 日志后确认——`run_suite.py` **正常跑完了整轮并打印了汇总**（`RESULTS: 209 passed, 1 failed out of 210 modules`），失败模块已明确定位为 `test_m6_precision_at_k`，异常为：
+**更正一（第九轮 §8 的判断有误）**：第九轮把 CI 失败归因为「`run_suite.py` 未捕获 `TimeoutExpired` → 自身抛异常退出，故只有 exit code 1、无模块级细节」。当时只看了 GitHub 的 **step 级注解**（`Process completed with exit code 1`），未取 job 日志。下载 #828 的 job 日志后确认：`run_suite.py` **跑完了整轮并打印了汇总**（`RESULTS: 209 passed, 1 failed out of 210 modules`），失败模块明确定位为 `test_m6_precision_at_k`。
+
+**更正二（#828 的定位对但不完整）**：#828/#826 的失败模块异常为
 
 ```
 File "tools/acceptance/run_m6_precision_at_k.py", line 1065, in main
     print(json.dumps(result, ensure_ascii=False, indent=2))
 File "...\encodings\cp1252.py", line 19, in encode
-    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
 UnicodeEncodeError: 'charmap' codec can't encode characters in position 49-53
 ```
 
-**真实根因**：Windows 上 `sys.stdout` 在「输出被重定向到管道」时使用 `locale.getpreferredencoding(False)`（CI 的 `windows-latest` runner 为 **cp1252**），**无法编码中文**；`run_m6_precision_at_k.py` 用 `ensure_ascii=False` 打印中文结论 → `UnicodeEncodeError` → 该模块 FAILED。Ubuntu 同提交默认 UTF-8 → 全绿（`RESULTS: 209 passed, 0 failed`）。回溯 run **#826** 的 Windows job 日志：**同一个 `UnicodeEncodeError`、同一个模块**（`208 passed, 1 failed out of 209`）——即该缺陷自 `e112119f`（2026-11-13 第四轮审计引入 M6 验收模块）起就存在，只是此前未被读到日志。
+这解释了**哪个模块失败**，但没解释**为什么没有模块级细节**。#829（提交 `f92f9203`，只修了子进程侧）暴露了完整链条——崩溃点**上移了一层**：
 
-**对 `da235de8` 的处置**：该提交的「捕获 `TimeoutExpired` + 上限 300s→600s」**保留不回退**——它本身是正确的健壮性改进（单模块超时不再拖垮整轮、超时模块有明确的 `FAILED (timeout after Ns)` 痕迹），实测也验证过（1s 超时下 12 个模块逐个上报、流程走完）。但它**不是**本次 CI 失败的原因，本节登记此更正。
+```
+File "run_suite.py", line 199, in run_modules
+    print(f"  {line}")                      ← run_suite 回显子进程输出（含中文）
+File "...\encodings\cp1252.py", line 19, in encode
+UnicodeEncodeError: 'charmap' codec can't encode characters in position 2-3
+```
 
-### 2. 修法（三道，覆盖整类问题而非单点）
+**完整根因（两层，同一个机制）**：Windows 上 `sys.stdout` 被重定向到管道时用 `locale.getpreferredencoding(False)`（CI 的 `windows-latest` runner = **cp1252**），且 `stdout` 的错误处理默认是 **strict**（而 `stderr` 默认是 **backslashreplace**）。于是：
+
+- **子进程层**：M6 验收 CLI 用 `print(json.dumps(..., ensure_ascii=False))` 把中文写到 **stdout** → 子进程自身 `UnicodeEncodeError` → 该模块 FAILED（#826/#828 的现象）。
+- **harness 层**：`run_suite.py` 用 `print(f"  {line}")` **回显**子进程输出 → **run_suite 自身** stdout 崩溃 → 整轮无汇总、无模块级细节（这才是「无模块级细节」的来源）。
+
+**关键机制细节**（解释了旧代码为何没在 harness 层崩）：unittest 的中文测试名写在 **stderr**，而 stderr 是 `backslashreplace` → 一直以 `\uXXXX` 转义落盘，不会崩；**只有 stdout 上的中文会崩**。旧代码下子进程 stdout 是 cp1252（中文根本写不出去，子进程先崩），harness 回显的全是 ASCII → 不崩；`f92f9203` 把子进程 stdout 改成 UTF-8 后，中文真的写进了 stdout → harness 自己崩了。Ubuntu 默认 UTF-8 → 始终全绿（#828 Ubuntu：`209 passed, 0 failed`）。
+
+**对 `da235de8` 的处置**：该提交的「捕获 `TimeoutExpired` + 上限 300s→600s」**保留不回退**——它是正确的健壮性改进（单模块超时不再拖垮整轮、超时模块有明确的 `FAILED (timeout after Ns)` 痕迹），实测也验证过（1s 超时下 12 个模块逐个上报、流程走完）。但它**不是** CI 失败的原因，本节登记此更正。
+
+### 2. 修法（五道，覆盖整类问题而非单点）
 
 1. **新增 `app/console_encoding.py`**——`force_utf8_stdio()`：把 `sys.stdout`/`sys.stderr` 重配为 UTF-8 且 `errors="replace"`（无法映射的字符退化而非抛异常）；对已关闭/非 `TextIOWrapper` 的流静默跳过；幂等。
 2. **7 个验收工具在 `main()` 首行调用 `force_utf8_stdio()`**：`run_m6_precision_at_k` / `run_criterion4_real` / `run_spot_weld_real_experiment` / `run_anomaly_real_data` / `run_anomaly_ae_preflight` / `run_anomaly_criteria_check` / `fleet_feature_diff`（这 7 个都存在 `print(..., ensure_ascii=False)` 的中文输出，直接在 Windows 控制台/管道运行同样会崩）。
-3. **`run_suite.py` 两侧加固**（harness 层）：①注入 `env["PYTHONIOENCODING"]="utf-8"`，子进程统一写 UTF-8；②把 `text=True` 换成 `encoding="utf-8", errors="replace"`——原先按 locale 代码页解码，子进程写出的 UTF-8 中文字节里含 cp1252 **未定义字节**（`0x81/0x8D/0x8F/0x90/0x9D`）→ 父进程 `UnicodeDecodeError` 同样会崩掉整轮且无模块级细节。
+3. **`run_suite.py` 子进程侧**：①注入 `env["PYTHONIOENCODING"]="utf-8"`，子进程统一写 UTF-8；②把 `text=True` 换成 `encoding="utf-8", errors="replace"`——原先按 locale 代码页解码，子进程写出的 UTF-8 中文字节里含 cp1252 **未定义字节**（`0x81/0x8D/0x8F/0x90/0x9D`）→ 父进程 `UnicodeDecodeError` 同样会崩掉整轮且无模块级细节。
+4. **`run_suite.py` 自身**：`main()` 首行调用 `force_utf8_stdio()`——harness 回显含中文的子进程输出时不再崩（**这是「无模块级细节」的真正堵点**）。
+5. **CI workflow 层兜底**：`.github/workflows/ci.yml` 顶层加 `env: PYTHONIOENCODING: utf-8` → 该 workflow 下**所有** python 进程（含 `alembic`、浏览器验收里的 `tools.playwright_evidence`）统一 UTF-8，不依赖各脚本自觉调用守卫。
 
 ### 3. 回归覆盖与变异验证
 
@@ -1456,6 +1473,7 @@ UnicodeEncodeError: 'charmap' codec can't encode characters in position 49-53
   - 流不可重配时必须静默跳过、不得抛异常。
 - **变异验证**：临时移除 `run_m6_precision_at_k.py` 里的 `force_utf8_stdio()` 调用 → 该子进程测试**如期失败**，报出的异常与 CI 日志**逐字一致**（同一 `cp1252.py` 编码路径、同一 `position 49-53`）；恢复后源文件 SHA256 前后一致（`1FFF1616…4C95F`）。
 - **harness 侧契约断言**（`tests/test_run_suite.py::test_child_output_is_decoded_as_utf8_with_replace`）：断言 `run_modules` 传给 `subprocess.run` 的是 `encoding="utf-8"` + `errors="replace"`（且**不含** `text=True`——两者同给会 `ValueError`）、子进程 env 含 `PYTHONIOENCODING=utf-8`。**变异验证**：把 `run_suite.py` 改回 `text=True` 并移除该 env 项 → 断言如期失败（`None != 'utf-8'`），恢复后 SHA256 前后一致（`57CC00AB…C255`）。
+- **harness 自身 stdout 断言**（`tests/test_run_suite.py::test_main_switches_own_stdout_to_utf8`）：以 `PYTHONIOENCODING=cp1252` 起子进程跑 `run_suite.main()`（桩掉 `run_modules`），断言其 stdout 编码已被切成 `utf-8` 且无 `UnicodeEncodeError`。**变异验证**：移除 `main()` 里的 `force_utf8_stdio()` → 断言如期失败（`ENCODING=cp1252`），恢复后 SHA256 前后一致（`6BBC58FC…5916`）。
 - 关联回归：`test_m6_precision_at_k` + `test_anomaly_ae_preflight` + `test_suite_manifest` = **19 passed / 2 subtests passed**；`test_module_imports`（含新增 `app/console_encoding`）**2 passed / 302 subtests passed**；`test_run_suite` **8 passed**；7 个工具 `--help` 冒烟全部可加载（`run_criterion4_real` 的 `--help` 报 `FileNotFoundError: '--help'` 是**既有行为**——该脚本本就以 `sys.argv[1]` 取 CSV 路径、不用 argparse，与本轮改动无关）。
 - **端到端**：`python run_suite.py --week 17`（42 模块，含全部异常域 + `test_run_suite` + `test_m6_precision_at_k`）经**加固后的 harness** 跑通：**42 passed / 0 failed**。
 

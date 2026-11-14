@@ -21,6 +21,8 @@ from tests.week_manifest import (
     WEEK_TEST_MODULES,
 )
 
+from app.console_encoding import force_utf8_stdio
+
 
 BACKEND_DIR = os.path.dirname(__file__)
 PROJECT_DIR = os.path.dirname(os.path.dirname(BACKEND_DIR))
@@ -228,6 +230,11 @@ def run_modules(test_modules: list[str]) -> int:
 
 
 def main() -> int:
+    # run_suite 自己会把子进程输出原样回显（含中文测试名）。Windows 上 stdout
+    # 被重定向到管道时用 locale 代码页（CI runner = cp1252）且 errors=strict →
+    # print(中文) 直接 UnicodeEncodeError 崩掉**整个 harness**（无模块级汇总）。
+    # 这正是 2026-11-14 CI「Run backend suite」失败且无模块级细节的真实根因。
+    force_utf8_stdio()
     args = parse_args()
     if args.phase:
         modules = list(PHASE_TEST_MODULES[args.phase])

@@ -1,5 +1,8 @@
 import contextlib
 import io
+import os
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -98,6 +101,40 @@ class TestRunSuite(unittest.TestCase):
         self.assertNotIn("text", kwargs)
         env = kwargs.get("env") or {}
         self.assertEqual(env.get("PYTHONIOENCODING"), "utf-8")
+
+    def test_main_switches_own_stdout_to_utf8(self):
+        """run_suite 必须把**自己**的 stdout 切到 UTF-8。
+
+        run_suite 会把子进程输出原样回显（含中文测试名）。Windows 上 stdout
+        被重定向到管道时用 locale 代码页（CI runner = cp1252）且 errors=strict
+        → print(中文) 直接 UnicodeEncodeError，崩掉**整个 harness**——表现为
+        「Run backend suite」失败且**无模块级汇总**（2026-11-14 CI
+        Quality (windows-latest) 的真实根因）。
+
+        本用例把「stdout 是 cp1252」显式化（``PYTHONIOENCODING=cp1252``），
+        使回归在任何宿主 locale 下都可复现。
+        """
+        script = (
+            "import run_suite, sys\n"
+            "run_suite.run_modules = lambda modules: ("
+            "print('ENCODING=' + (sys.stdout.encoding or '?')), 0)[1]\n"
+            "sys.argv = ['run_suite.py', '--week', '1']\n"
+            "raise SystemExit(run_suite.main())\n"
+        )
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "cp1252"
+        env["PYTHONPATH"] = str(run_suite.BACKEND_DIR)
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            cwd=str(run_suite.BACKEND_DIR),
+            env=env,
+            timeout=300,
+        )
+        stdout = completed.stdout.decode("utf-8", "replace")
+        stderr = completed.stderr.decode("utf-8", "replace")
+        self.assertNotIn("UnicodeEncodeError", stdout + stderr)
+        self.assertIn("ENCODING=utf-8", stdout, stderr[-2000:])
 
     def test_pytest_is_an_explicit_backend_test_dependency(self):
         requirements = (run_suite.Path(run_suite.BACKEND_DIR) / "requirements.txt").read_text(
