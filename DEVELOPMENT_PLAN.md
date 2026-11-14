@@ -1478,11 +1478,22 @@ UnicodeEncodeError: 'charmap' codec can't encode characters in position 2-3
 - **端到端**：`python run_suite.py --week 17`（42 模块，含全部异常域 + `test_run_suite` + `test_m6_precision_at_k`）经**加固后的 harness** 跑通：**42 passed / 0 failed**。
 - **端到端复现 CI 场景**（父进程 stdout=cp1252 + 管道输出，即 Windows runner 的真实形态）：`run_suite.py --week 1` → exit=0、**21 passed / 0 failed**、无 `UnicodeEncodeError`，且中文回显正常（「现场 500 的原始路径：模型库页删除注册模型（注册表删除端点）。」）；`run_suite.py --week 17`（含 M6 模块）→ exit=0、**42 passed / 0 failed**。这两条是本轮修复的**决定性验证**——它们在修复前必崩（见 #829 日志）。
 
-### 4. 残余风险（Windows job 后半段）
+### 4. CI 结论（run #831）与残余风险
 
-Windows job 自 #816（2026-11-13）起一直停在「Run backend suite」，其后步骤（前端测试 / 构建 / **Windows 服务冒烟**）在 Windows 上久未验证。查历史：Windows job **最近一次全绿是 #772（2026-11-11）**，说明「后端套件 → 前端 → 构建 → Windows 冒烟」整条链路当时是通的；之后的失败全部落在后端套件这一步（含 #765/#764/#742/#740/#739 的前端测试失败，前端侧已单独修复并在 Ubuntu 侧复验）。因此本次修好后 Windows job 将首次走到后半段：**前端测试/构建与 Ubuntu 同命令且 #828 已绿**；**Windows 服务冒烟**（`scripts/start.ps1` + `health-check.ps1` + 登录）最后一次验证在 2026-11-11，本轮改动不涉及服务启动与鉴权路径，但该步仍属**未在本次改动后单独复验**的环节，以 CI 结论为准。
+**CI run #831（`e4bf8d38`）结论：success** —— 两个 job 全绿：
+
+- **Quality (ubuntu-22.04)**：后端套件 ✅ / 前端测试 ✅ / 构建 ✅ / Ubuntu 服务冒烟 ✅（job success）
+- **Quality (windows-latest)**：后端套件 ✅（**`RESULTS: 210 passed, 0 failed out of 210 modules`**）/ 前端测试 ✅ / 构建 ✅ / **Windows 服务冒烟 ✅**（job success）
+
+即 Windows job 在 #816（2026-11-13）中断掉的后端套件之后，**首次走完「前端测试 → 构建 → Windows 服务冒烟」全链路并全绿**（此前最后一次全绿是 #772 / 2026-11-11）。第 3 节 §4 提到的「Windows job 后半段未验证」这一残余风险**已由本次 CI 结论消除**。
+
+**本地全量复核**（最终树，`run_suite.py --week 1..17` 串行）：
+- week 1–11、13–16 **全绿**（逐周 `exit=0`）；
+- **week 12 有 2 个模块在本机超时**：`test_week12_security_gates`、`test_evidence_manifest`（`FAILED (timeout after 600s)`）——两者都对**整仓树逐文件哈希**，本机 Windows 磁盘 + `node_modules`/`.venv` 体量下跑不完 600s；**同一模块在 CI 上（Ubuntu 与 Windows 两边）均 PASSED**，属**本机性能差异**，非代码缺陷。
+- 附带验证：`da235de8` 的超时加固在此场景下**按设计生效**——超时的模块被标记为 `FAILED (timeout after 600s)` 并**继续跑完其余模块**（此前同样情形会让 `run_suite.py` 整个崩掉、零模块级细节）。
 
 ### 5. 本轮之后仍开放
 
 - 第九轮 §10 的全部条目（A 组 6 项、B12/B16/B17、C2 残留、C3 入口归位）**状态不变**——本轮只处理 CI 编码缺陷，未触碰业务口径。
-- **全量 CI 仍待 CI 自身判定**：本轮 push 后的新 run 结论由 CI 给出（`#828` 的 Ubuntu 侧已证明代码面可过；Windows 侧待新 run 复核）。
+- **本机环境差异（非代码缺陷，已登记）**：`test_week12_security_gates` / `test_evidence_manifest` 在本机 600s 内跑不完（整仓树哈希 + `node_modules`/`.venv` 体量），CI 上通过；若后续要在本机做全量周跑，需为这两个模块单独提高 `SUITE_MODULE_TIMEOUT_SECONDS` 或排除大目录。
+- **未验证**：浏览器 E2E（Chromium acceptance，push 事件下不跑）；PostgreSQL 迁移实际 apply；worker/scheduler 镜像内代码；M6 真实门槛（平台真实标签数为 0）；生产集成 job（push 事件下 skip）。
