@@ -9,8 +9,10 @@ sklearn 兼容包装的去噪自编码器，接口对齐一期评估链（合成
   异常））与 ``predict``；**不实现** ``score_samples``（§6.6B：防
   pipeline_anomaly_scores 的分派先命中 score_samples 分支再取负、方向语义
   取决于该定义——M3 坑①「不猜方向」同款教训，M5-0 已实测固定口径）。
-- **clone 协议**（§6.6C）：继承 ``BaseEstimator``，构造参数全部显式保存
-  （stability_check 依赖 ``clone(fitted_estimator)``）。
+- **clone 协议**（§6.6C）：构造参数全部显式保存并实现 ``get_params``/``set_params``
+  （stability_check 依赖 ``clone(fitted_estimator)``；**未继承** ``BaseEstimator``
+  ——手写等价实现，``clone()`` 实测可用，语义等效；方案 §6.6C 的「继承
+  BaseEstimator」字面表述未落地，登记为 [低] 偏差）。
 - **ONNX 独立路径**（torch.onnx.export，不受 skl2onnx ai.onnx.ml opset 封顶
   3 限制）：融合前端（median 填充 + StandardScaler）+ AE 网络 + Neg(MSE)
   单图导出，输出双端口 ``label``（占位全 1）+ ``scores``（=−MSE，正=正常）

@@ -128,10 +128,12 @@ def main() -> int:
         "families": {},
     }
     all_pass = True
+    any_pass = False
     for family_id, params in FAMILIES.items():
         outcome = run_family(family_id, params, station_data)
         report["families"][family_id] = outcome
         all_pass = all_pass and outcome["b_pass"]
+        any_pass = any_pass or outcome["b_pass"]
         print(f"{family_id}: B_pass={outcome['b_pass']}", flush=True)
         for station, row in outcome["per_station"].items():
             print(
@@ -139,13 +141,36 @@ def main() -> int:
                 f"within={row['within_tolerance']}",
                 flush=True,
             )
-    report["verdict"] = (
-        "方案 B（全局共享检测器+设备级标定）达标——建议 B 为正式架构（A 保留为 unfit 降级路径）"
-        if all_pass
-        else "方案 B 未达标——分片独立模型（方案 A）为正式架构（修方案 §7.1 口径）"
-    )
-    report["verdict_pass"] = bool(all_pass)
-    out = Path("../../docs/验收-机群架构AB对比.json")
+    # 结论按**族**给出（§7.1 收口口径：按族混合，而非跨族合取的单一二选一）——
+    # 跨族合取会把「iforest 达标 / ocsvvm 不达标」压成「B 未达标」的单一结论，
+    # 与台账/方案「按族混合」的收口结论相反（2026-11-14 文档审核发现）。
+    passing = [fid for fid, out in report["families"].items() if out["b_pass"]]
+    failing = [fid for fid, out in report["families"].items() if not out["b_pass"]]
+    report["per_family_verdict"] = {
+        fid: ("B 形态（全局共享主体+设备级标定）" if out["b_pass"] else "A 形态（分片独立模型）")
+        for fid, out in report["families"].items()
+    }
+    if all_pass:
+        report["verdict"] = (
+            "全部族方案 B（全局共享检测器+设备级标定）达标——建议 B 为正式架构"
+            "（A 保留为 unfit 降级路径）"
+        )
+        report["verdict_pass"] = True
+    elif any_pass:
+        report["verdict"] = (
+            "按族混合：达标族走 B 形态（全局共享主体+设备级标定）、未达标族走 A 形态"
+            f"（分片独立模型）——达标族 {passing}，未达标族 {failing}；"
+            "方案 §7.1 原文的单一「全局共享检测器」口径按此修订"
+        )
+        report["verdict_pass"] = True
+    else:
+        report["verdict"] = (
+            "全部族方案 B 未达标——分片独立模型（方案 A）为正式架构（修方案 §7.1 口径）"
+        )
+        report["verdict_pass"] = False
+    # 产物落**可跟踪**目录（仓库根 docs/ 被 .gitignore 的 /docs/ 排除——产物落
+    # 那里等于不入库，已提交文档链接失效，2026-11-14 文档审核同款缺陷）。
+    out = BACKEND_ROOT.parent / "docs" / "验收-机群架构AB对比.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print("saved:", out)

@@ -98,6 +98,22 @@ class FleetShardCreate(StrictSchema):
     condition_column: StrictStr | None = Field(default=None, min_length=1, max_length=128)
 
 
+class LabelRecalibrateRequest(StrictSchema):
+    """M6 半监督档 1 标签阈值重标定（技术方案 §6.2）：不动检测器主体，
+    用 confirmed/false_alarm 标签分布的加权损失最优阈值注册新版本。"""
+
+    labeled_artifact_id: UUID
+    feedback_marks: dict | None = None
+    positive_label: StrictStr = Field(default="fault", min_length=1, max_length=64)
+
+
+class DerivedSupervisedDatasetRequest(StrictSchema):
+    """弱监督演进派生导出（技术方案 §2.3.3）：回流行带标签导出为监督数据集。"""
+
+    labeled_artifact_id: UUID
+    positive_label: StrictStr = Field(default="fault", min_length=1, max_length=64)
+
+
 class ApiKeyCreate(StrictSchema):
     scopes: list[Literal["inference.predict"]] = Field(min_length=1, max_length=1)
     expires_at: datetime | None = None

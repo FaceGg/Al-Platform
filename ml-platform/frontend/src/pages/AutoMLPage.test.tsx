@@ -929,6 +929,53 @@ describe("AutoMLPage", () => {
     const payload = api.post.mock.calls[0][1];
     expect(payload).not.toHaveProperty("target_column");
     expect(payload).not.toHaveProperty("target_columns");
+    // 未选工况列：payload 不带分片/机群字段（缺省全量单模型）
+    expect(payload).not.toHaveProperty("condition_column");
+    expect(payload).not.toHaveProperty("fleet_mode");
+  });
+
+  it("submits condition column and fleet shared mode for unsupervised tasks", async () => {
+    api.post.mockImplementation((url: string) => url === "/experiments"
+      ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })
+      : Promise.reject({ response: { data: { detail: "Error" } } }));
+    datasets.getDatasetPreview.mockResolvedValue({
+      columns: ["feature", "force", "label_a"],
+      dtypes: { feature: "float64", force: "float64", label_a: "int64" },
+      preview: [],
+    });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    fireEvent.click(await screen.findByRole("button", { name: "范式：无监督异常检测" }));
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+
+    // 工况列选择（§7.1 机群混合入口 G1）+ 机群共享模式勾选
+    const conditionSelect = screen.getByRole("combobox", { name: "工况列" });
+    fireEvent.mouseDown(conditionSelect);
+    fireEvent.click(await screen.findByText("force", { selector: ".ant-select-item-option-content" }));
+    const fleetSwitch = screen.getByRole("checkbox", { name: "机群共享模式" });
+    fireEvent.click(fleetSwitch);
+
+    fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/training/automl/run",
+      expect.objectContaining({
+        task: "anomaly_detection",
+        condition_column: "force",
+        fleet_mode: "shared",
+      }),
+      expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) }),
+    ));
+    // mock.calls[0] 是 /experiments 自动创建调用——断言取 automl/run 那次
+    const runCall = api.post.mock.calls.find(([url]) => url === "/training/automl/run");
+    const payload = runCall![1];
+    expect(payload).toHaveProperty("condition_column", "force");
+    expect(payload).toHaveProperty("fleet_mode", "shared");
   });
 
   it.skip("submits the selected input columns with the target column", async () => {

@@ -23,7 +23,9 @@ from app.models.user import User
 from app.schemas.model_registry import (
     DeploymentCreate,
     ApiKeyCreate,
+    DerivedSupervisedDatasetRequest,
     DeviceRecalibrateRequest,
+    LabelRecalibrateRequest,
     FleetShardCreate,
     LifecycleComment,
     MetricQuery,
@@ -1098,6 +1100,34 @@ def build_model_registry_router(
         try:
             return fleet_overview_service(db, deployment_id=deployment.id)
         except DeviceCalibrationError as error:
+            _error(error)
+
+    @router.post("/api/model-versions/{version_id}/derive-supervised-dataset", status_code=201)
+    def derive_supervised_dataset(version_id: UUID, data: DerivedSupervisedDatasetRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+        """弱监督演进派生导出（技术方案 §2.3.3）：回流行带标签导出为监督
+        数据集（confirmed→1 其余→0，预填部署版本特征列），现场可直接创建
+        监督分类任务（并存对比、达标切换）。"""
+        version, access = _version_access(db, version_id, current_user.id)
+        from app.services.anomaly_threshold_recalibration import (
+            ThresholdRecalibrationError,
+            export_labeled_reflow_dataset,
+        )
+
+        try:
+            with audit_service(db).project_action(
+                db, request=request, actor=current_user, access=access,
+                permission="model_version.approve",
+                intent=AuditIntent(project_id=version.registered_model.project_id, action="model_version.derive_supervised_dataset", resource_type="model_version", resource_id=str(version.id), changes={"labeled_artifact_id": str(data.labeled_artifact_id)}),
+                allowed_changes={"labeled_artifact_id"},
+            ):
+                return export_labeled_reflow_dataset(
+                    db,
+                    source_version_id=version.id,
+                    labeled_artifact_id=data.labeled_artifact_id,
+                    actor_id=current_user.id,
+                    positive_label=data.positive_label,
+                )
+        except ThresholdRecalibrationError as error:
             _error(error)
 
     @router.delete("/api/inference-deployments/{deployment_id}")

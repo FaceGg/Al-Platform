@@ -48,6 +48,10 @@ export type AutoMLRunPayload =
       target_columns?: never;
       /** 预期异常比例先验（宁低勿高），缺省 0.01，合法域 (0, 0.5] */
       contamination?: number;
+      /** 工况分片列（技术方案 §6.3/§7.1）：引擎按工况值分片训练 N 个模型 */
+      condition_column?: string;
+      /** 机群共享模式（§7.1 混合架构）：联合段全局模型通配兜底+unfit 工位不挂载 */
+      fleet_mode?: "shared";
     });
 
 export interface TrainingJobCreate {

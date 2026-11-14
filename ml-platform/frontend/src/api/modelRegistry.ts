@@ -407,6 +407,51 @@ export async function listRollouts(deploymentId: string): Promise<ListResponse<D
   return normalizePagedList<DeploymentRollout>(response.data);
 }
 
+// M6 半监督档 1（技术方案 §6.2）：标签阈值重标定（confirmed/false_alarm 加权
+// 损失最优阈值，不动检测器主体）——门槛 fail-closed（confirmed≥50+形态≥2）
+export interface LabelRecalibrateResult {
+  version_id: string;
+  registered_model_id: string;
+  registered_model_name: string;
+  stats_artifact_id: string;
+  old_threshold: number | null;
+  new_threshold: number;
+  loss: number;
+  fnr: number;
+  fpr: number;
+  gate: { unlocked: boolean; confirmed_count: number; min_confirmed_required: number; morphology_cluster_count: number | null };
+  false_alarm_report: { clusters: { cluster: number; sample_count: number; dense_features: { feature: string; mean_z: number }[] }[]; sample_count: number };
+  confirmed_count: number;
+  false_alarm_count: number;
+}
+
+export async function labelRecalibrateVersion(
+  versionId: string,
+  payload: { labeled_artifact_id: string; feedback_marks?: Record<string, unknown>; positive_label?: string },
+): Promise<LabelRecalibrateResult> {
+  const response = await apiClient.post(`/model-versions/${versionId}/label-recalibrate`, payload);
+  return response.data;
+}
+
+// 弱监督演进派生导出（技术方案 §2.3.3）：回流行带标签导出为监督数据集
+export interface DerivedSupervisedDatasetResult {
+  dataset_artifact_id: string;
+  dataset_name: string;
+  rows: number;
+  positives: number;
+  negatives: number;
+  feature_columns: string[];
+  label_column: string;
+}
+
+export async function deriveSupervisedDataset(
+  versionId: string,
+  payload: { labeled_artifact_id: string; positive_label?: string },
+): Promise<DerivedSupervisedDatasetResult> {
+  const response = await apiClient.post(`/model-versions/${versionId}/derive-supervised-dataset`, payload);
+  return response.data;
+}
+
 // 机群监控聚合（技术方案 §7 三-3，三期 M10）：部署面 per-device 分片概览
 export interface FleetShardRunning {
   rows: number;

@@ -163,6 +163,10 @@ export default function AutoMLPage() {
   const [taskType, setTaskType] = useState<AutoMLTaskType>("classification");
   // 无监督（异常检测）：预期异常比例先验，宁低勿高（缺省 1%，合法域 (0, 0.5]）
   const [contamination, setContamination] = useState<number>(0.01);
+  // 工况分片列（技术方案 §6.3/§7.1，M7/M8）：选指定后引擎按工况值分片训练
+  // N 个模型；机群共享模式追加联合段（全局模型通配兜底+unfit 工位不挂载）
+  const [conditionColumn, setConditionColumn] = useState<string | null>(null);
+  const [fleetShared, setFleetShared] = useState(false);
   const isAnomaly = taskType === "anomaly_detection";
   const [algorithmIds, setAlgorithmIds] = useState<string[]>(() => [...AUTOML_ALGORITHM_IDS]);
   const [mlpParams, setMlpParams] = useState<{ solver: "adam" | "lbfgs" | "sgd"; learning_rate_init: number; alpha: number; hidden_layers: string }>({ ...MLP_DEFAULT_PARAMS });
@@ -465,6 +469,10 @@ export default function AutoMLPage() {
       message.warning("污染率（预期异常比例）必须在 (0, 0.5] 区间内，建议宁低勿高");
       return;
     }
+    if (isAnomaly && fleetShared && !conditionColumn) {
+      message.warning("机群共享模式需要先选择工况列（按工况值分片训练/路由）");
+      return;
+    }
     setRunning(true);
     setResults(null);
     setAnalysisReport(null);
@@ -509,6 +517,9 @@ export default function AutoMLPage() {
             cross_validation_enabled: false,
             cross_validation_folds: null,
             ...(contamination > 0 && contamination <= 0.5 ? { contamination } : {}),
+            // 工况分片列（§6.3/§7.1）与机群共享模式（§7.1 混合架构）
+            ...(conditionColumn ? { condition_column: conditionColumn } : {}),
+            ...(conditionColumn && fleetShared ? { fleet_mode: "shared" as const } : {}),
           }
         : isMultiOutput
         ? {
@@ -841,6 +852,35 @@ export default function AutoMLPage() {
               min={0.001} max={0.5} step={0.005} value={contamination}
               onChange={(value) => setContamination(Number(value) || 0.01)} />
             <small style={{ display: "block", color: "rgba(0,0,0,0.45)" }}>宁低勿高，缺省 1%</small>
+            {/* 工况分片列+机群共享模式（技术方案 §6.3/§7.1，按族混合架构） */}
+            <Text strong style={{ display: "block", marginTop: 10 }}>工况列（可选）</Text>
+            <Select
+              aria-label="工况列"
+              showSearch
+              allowClear
+              style={{ width: "100%", marginTop: 4 }}
+              placeholder="按该列分片训练/路由"
+              value={conditionColumn ?? undefined}
+              onChange={(value: string | undefined) => { setConditionColumn(value ?? null); if (!value) setFleetShared(false); }}
+              disabled={!selectedDataset}
+              options={datasetColumns.map((column) => ({ value: column, label: column }))}
+            />
+            <small style={{ display: "block", color: "rgba(0,0,0,0.45)" }}>选指定后按工况值分片训练 N 个模型；工况列不参与建模特征</small>
+            <div style={{ marginTop: 8 }}>
+              <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6, cursor: conditionColumn ? "pointer" : "not-allowed", color: conditionColumn ? "inherit" : "rgba(0,0,0,0.35)" }}>
+                <input
+                  type="checkbox"
+                  aria-label="机群共享模式"
+                  checked={fleetShared}
+                  disabled={!conditionColumn}
+                  onChange={(event) => setFleetShared(event.target.checked)}
+                />
+                机群共享模式
+              </label>
+              <small style={{ display: "block", color: "rgba(0,0,0,0.45)" }}>
+                开启后全工位共享一个检测器模型，每工位独立标定阈值；新工位无需建模即可通过标定接入（推荐同型设备群）
+              </small>
+            </div>
           </>) : (<>
             <Text strong>{t.automl?.target || "Target"}</Text>
             <Select

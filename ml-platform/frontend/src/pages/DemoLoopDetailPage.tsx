@@ -12,6 +12,7 @@ import PageHeading from "../components/PageHeading";
 import LoopConfigModal, { type FieldDescTask, type LoopEditorState } from "../components/loop/LoopConfigModal";
 import FleetShardPanel from "../components/loop/FleetShardPanel";
 import { formatApiError } from "../api/client";
+import { labelRecalibrateVersion, deriveSupervisedDataset, type LabelRecalibrateResult, type DerivedSupervisedDatasetResult } from "../api/modelRegistry";
 import { listAnnotationTasks } from "../api/annotationTasks";
 import {
   type DemoLoopConfig, type DemoLoopPredictResult, type DemoLoopStatus, type ReflowRow,
@@ -186,6 +187,44 @@ export default function DemoLoopDetailPage() {
   const [fileName, setFileName] = useState("");
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
+  // M6 半监督档 1（技术方案 §6.2）：标签阈值重标定 + 弱监督派生导出入口状态
+  const [m6Busy, setM6Busy] = useState(false);
+  const [m6Result, setM6Result] = useState<LabelRecalibrateResult | null>(null);
+  const [m6Error, setM6Error] = useState<string | null>(null);
+  const [derivedInfo, setDerivedInfo] = useState<DerivedSupervisedDatasetResult | null>(null);
+
+  const runLabelRecalibrate = async () => {
+    if (!status?.swapped_model_version_id || !status?.error_artifact?.id || m6Busy) return;
+    setM6Busy(true);
+    setM6Error(null);
+    try {
+      setM6Result(await labelRecalibrateVersion(status.swapped_model_version_id, {
+        labeled_artifact_id: status.error_artifact.id,
+      }));
+      message.success("M6 档 1 阈值重标定完成，新版本待审批后挂载");
+      void loadLoop();
+    } catch (error) {
+      setM6Error(formatApiError(error, "M6 操作失败"));
+    } finally {
+      setM6Busy(false);
+    }
+  };
+
+  const runDeriveSupervised = async () => {
+    if (!status?.swapped_model_version_id || !status?.error_artifact?.id || m6Busy) return;
+    setM6Busy(true);
+    setM6Error(null);
+    try {
+      setDerivedInfo(await deriveSupervisedDataset(status.swapped_model_version_id, {
+        labeled_artifact_id: status.error_artifact.id,
+      }));
+      message.success("派生监督数据集已生成（数据管理可见）");
+    } catch (error) {
+      setM6Error(formatApiError(error, "M6 操作失败"));
+    } finally {
+      setM6Busy(false);
+    }
+  };
   const [results, setResults] = useState<Array<{ index: number; prediction: string; confidence: number | null; error: boolean; appended: boolean; failed?: boolean }>>([]);
   const pauseRef = useRef(false);
   const swapSeenRef = useRef<string | null>(null);
@@ -521,6 +560,57 @@ export default function DemoLoopDetailPage() {
               {/* 机群分片概览（技术方案 §7 三-3，三期 M10）：分片部署时展示
                   per-device 阈值/兼容性/回测 + PSI 分片明细；普通部署不渲染 */}
               <FleetShardPanel deploymentId={status?.deployment_id ?? null} />
+              {/* M6 半监督档 1（技术方案 §6.2）：确认标注回流上做标签阈值
+                  重标定（confirmed≥50 门槛 fail-closed）与弱监督派生导出
+                  （§2.3.3）——机制就绪，confirmed 积累到位即可用 */}
+              {status?.swapped_model_version_id && status?.error_artifact && (
+                <Space style={{ marginBottom: 12 }}>
+                  <Button
+                    size="small"
+                    disabled={m6Busy}
+                    onClick={() => void runLabelRecalibrate()}
+                  >
+                    M6 档 1 阈值重标定（confirmed≥50）
+                  </Button>
+                  <Button
+                    size="small"
+                    disabled={m6Busy}
+                    onClick={() => void runDeriveSupervised()}
+                  >
+                    派生监督数据集
+                  </Button>
+                </Space>
+              )}
+              {m6Result && (
+                <Alert
+                  type="success"
+                  showIcon
+                  message={(
+                    <span>
+                      M6 重标定完成：阈值 {m6Result.old_threshold ?? "—"} → <Text strong>{m6Result.new_threshold}</Text>
+                      （loss {m6Result.loss}，confirmed {m6Result.confirmed_count} / 误报 {m6Result.false_alarm_count}），
+                      新版本 {m6Result.registered_model_name}（待审批后挂载）
+                    </span>
+                  )}
+                  style={{ marginBottom: 12 }}
+                />
+              )}
+              {m6Error && (
+                <Alert type="warning" showIcon message={m6Error} style={{ marginBottom: 12 }} />
+              )}
+              {derivedInfo && (
+                <Alert
+                  type="info"
+                  showIcon
+                  message={(
+                    <span>
+                      派生监督数据集已生成（{derivedInfo.positives} 正 / {derivedInfo.negatives} 负），
+                      可在数据管理中查看并创建监督分类任务（弱监督演进）
+                    </span>
+                  )}
+                  style={{ marginBottom: 12 }}
+                />
+              )}
               {/* 运行期误报实证（技术方案 §3.3 第三层）：同一批回流行上阈值法
                   vs 模型报警累计对比（判据④的运行期持续口径） */}
               {status?.alert_comparison && (
