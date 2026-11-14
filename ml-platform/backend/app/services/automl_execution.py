@@ -2405,6 +2405,14 @@ def _execute_anomaly_job(
     if condition_column and condition_column not in frame.columns:
         condition_column = None  # 分组列缺失时静默降级单段（与回流自愈同语义）
 
+    # 工况分片列不进特征（§7.1「设备 ID 列必须从特征剔除」，第七轮 [高]）：
+    # condition_column 只作分组键——fleet_shared 联合段跨设备合并时该列若
+    # 留在特征里会成为全局模型的可判别特征（检测器学「哪台设备」而非
+    # 「共有正常形态」），违反方案 §7.1 前提。
+    if condition_column and condition_column in feature_columns:
+        feature_columns.remove(condition_column)
+        removed_columns[str(condition_column)] = "condition_column"
+
     # AE 出场策略（§6.6D，M5-0 实测）：单 trial 成本比 IF/OC-SVM 高一个量级
     # （万行×20 特征 100 epochs ≈ 12s），只在 high/ultra 强度出场——light/
     # medium 搜索预算留给快速双族。
