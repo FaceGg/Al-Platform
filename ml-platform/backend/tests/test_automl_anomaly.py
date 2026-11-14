@@ -456,6 +456,12 @@ class TestAnomalyExecution(unittest.TestCase):
             assert metrics["evaluation"]["score_histograms"]["holdout"]["counts"]
             assert metrics["search"]["completed_trials"] >= 2
             assert metrics["score_artifact_id"]
+            # 进度上报（列表/详情页实时进度数据源）：终态与 search 口径一致。
+            progress = metrics["progress"]
+            assert progress["completed"] == metrics["search"]["completed_trials"]
+            assert progress["total"] >= 1
+            assert progress["percent"] == 100.0
+            assert progress["current_algorithm"]
             candidate_ids = {row["algorithm_id"] for row in metrics["algorithm_results"]}
             assert any(candidate_id.startswith("ocsvm") for candidate_id in candidate_ids)
         names_types = [(name, artifact_type) for name, artifact_type, _meta, _a in self.artifacts.created]
@@ -543,6 +549,12 @@ class TestAnomalyExecution(unittest.TestCase):
             assert all(item["synthetic_auc"] >= 0.85 for item in segments)
             assert metrics["condition_column"] == "shift"
             assert metrics["best_candidate"] in {"iforest", "ocsvm"}
+            # 分片进度：total=两段预算合计，终态冠军段落在真实工况段内。
+            progress = metrics["progress"]
+            assert progress["total"] >= 2
+            assert progress["percent"] == 100.0
+            assert progress["completed"] == metrics["search"]["completed_trials"]
+            assert progress["current_segment"] in {"shift=A", "shift=B"}
 
 
 def test_normalize_evaluation_config_disabled_for_anomaly():

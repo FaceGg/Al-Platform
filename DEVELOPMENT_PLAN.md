@@ -1277,3 +1277,12 @@ AE 的 ONNX label 端口是**占位全 1**（`automl_anomaly_ae.py:98` `(mse*0)+
 ### fleet_shared 端到端复验（bbbfbc47 修复后，run3 c606d05e）
 
 重建 worker 后端到端复验通过：5 段 = 4 工位段（AUC 0.975-0.996，unfit=False）+ 联合段 __FLEET_GLOBAL__（condition_value=None 通配，AUC 0.9780，8,000 行）+ bundles 通配全局（fleet_global=True）。**condition_column 特征剔除生效**（段特征不再含工况列——第七轮 [高] 关闭）。
+
+### 无监督任务列表进度显示修复（2026-11-14）
+
+用户报告：①无监督任务列表进度不能正常显示 ②详情页不能正确显示各算法任务详情。
+
+- **② 详情页**（01db4ee5，已提交）：详情页结果表按范式条件渲染——anomaly 任务显示合成基准列（synthetic_auc/normal_fpr/stability/门禁 Tag），监督任务保持 AUC/F1/召回列。
+- **① 列表进度（本轮根修）**：根因 = anomaly 执行路径完全没有 `metrics.progress` 上报——上一轮该编辑被并行会话提交覆盖丢失（`condition_bundles` 幸存而 progress 键丢失，与 bbbfbc47 记录的 LF 重写丢块同型）；前端两页（列表 `AutoMLPage` L246 / 详情 `AutoMLTaskPage` L108）都读 `metrics.progress`，监督路径有而 anomaly 路径无 → 进度恒空。本轮补齐：外层 `_execute_anomaly_job` 构建 `progress_state`（total = 段级 trial 预算估算：strength/grid 按 spec 展开数、optuna 按合同预算；fleet 联合段按减半预算计入）+ 每段更新 `current_segment` 并落初始快照；段级 `_execute_anomaly_segment_job` 每条 trial 行落账递增（7 处：unavailable/成功/失败/optuna on_trial/族失败/族空结果/冠军补测）；终态 progress 镜像有监督形状（completed/total/percent=100/current_segment=冠军段/search_method/budget_exhausted）。
+- **附带口径修正**：实测 `search.completed_trials=55 > max_trials=10`（多段累加 vs 单段预算参数回显）会让进度算成 550%——progress.total 按段数放大后 `completed/total` 显示自洽；`search.max_trials` 保留「单段预算参数回显」语义不动。
+- **验证**：test_automl_anomaly 34 passed（新增终态 progress 断言：单段 completed==search.completed_trials、percent==100、分片 total≥2 且 current_segment 落在真实工况段）+ demo_loop/tracking/rollout 131 passed + ensemble/multioutput 27 passed，合计 192 passed。backend+worker+frontend 镜像已重建 force-recreate（栈 healthy）。

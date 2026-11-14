@@ -1872,12 +1872,14 @@ def _execute_anomaly_segment_job(
     parent,
     tracking,
     dependencies: AutoMLDependencies,
+    progress_state: dict | None = None,
 ) -> dict:
     """单段（全量或单工况）无监督训练评估（技术方案 §3.1-§3.3）。
 
     分片编排由外层 `_execute_anomaly_job` 负责（§6.3 工况分片）；本函数
     承接一段 frame 的完整流程：80/20 保留集 → 三类合成基准 → 双族搜索 →
-    门禁冠军 → 段产物 payload（artifact 落盘由外层统一执行）。
+    门禁冠军 → 段产物 payload（artifact 落盘由外层统一执行）。progress_state
+    为外层共享进度计数（每 trial 落账递增，快照随 persist 持久化）。
     """
     features = segment_frame.loc[:, feature_columns]
 
@@ -1934,7 +1936,7 @@ def _execute_anomaly_segment_job(
         return metrics
 
     def persist_metrics_snapshot():
-        job.metrics = {
+        snapshot: dict[str, object] = {
             "search": {
                 "method": method,
                 "strength": search_strength,
@@ -1944,8 +1946,30 @@ def _execute_anomaly_segment_job(
                 "budget_exhausted": False,
             },
         }
+        if progress_state is not None:
+            total = int(progress_state.get("total") or 0)
+            completed = int(progress_state.get("completed") or 0)
+            snapshot["progress"] = {
+                "completed": completed,
+                "total": total,
+                "percent": round(min(100.0, (completed / total) * 100), 2) if total else 0.0,
+                "current_segment": progress_state.get("current_segment"),
+                "current_algorithm": progress_state.get("current_algorithm"),
+                "current_trial": progress_state.get("current_trial"),
+                "search_method": method,
+                "budget_exhausted": False,
+            }
+        job.metrics = snapshot
         job.heartbeat_at = utcnow()
         db.commit()
+
+    def record_trial_progress(algorithm_id: object) -> None:
+        """每条 trial 行落账后递增共享计数（列表/详情页进度实时更新）。"""
+        if progress_state is None:
+            return
+        progress_state["completed"] = int(progress_state.get("completed") or 0) + 1
+        progress_state["current_algorithm"] = str(algorithm_id or "") or None
+        progress_state["current_trial"] = len(trials)
 
     trials: list[dict[str, object]] = []
     runnable_specs: list[tuple[object, dict]] = []
@@ -1962,6 +1986,7 @@ def _execute_anomaly_segment_job(
                 "status": "unavailable",
                 "error_code": error.code,
             })
+            record_trial_progress(family.id)
     completed_candidates: list[dict[str, object]] = []
     budget_exhausted = False
     persist_metrics_snapshot()
@@ -2010,10 +2035,12 @@ def _execute_anomaly_segment_job(
                     "error_type": type(error).__name__,
                     "error_message": str(error)[:300],
                 })
+                record_trial_progress(family.id)
                 persist_metrics_snapshot()
                 continue
             trial_row = completed_trial_row(family, family_params, metrics, time.perf_counter() - trial_started)
             trials.append(trial_row)
+            record_trial_progress(family.id)
             completed_candidates.append({
                 "trial": trial_row,
                 "family": family,
@@ -2046,6 +2073,7 @@ def _execute_anomaly_segment_job(
                 }
                 trials.append(row)
                 persisted_trial_rows.append(row)
+                record_trial_progress(current_family.id)
                 persist_metrics_snapshot()
 
             try:
@@ -2082,6 +2110,7 @@ def _execute_anomaly_segment_job(
                     "error_type": type(error).__name__,
                     "error_message": str(error)[:300],
                 })
+                record_trial_progress(family.id)
                 continue
             budget_exhausted = budget_exhausted or family_result.budget_exhausted
             if family_result.status != "completed" or family_result.best_estimator is None:
@@ -2096,6 +2125,7 @@ def _execute_anomaly_segment_job(
                         "error_code": family_result.error_code,
                         "error_message": family_result.error_message,
                     })
+                    record_trial_progress(family.id)
                 continue
             best_params = _apply_search_strength(
                 family, dict(family_result.best_params), search_strength, preserve_existing=True,
@@ -2105,6 +2135,7 @@ def _execute_anomaly_segment_job(
                 family, best_params, metrics, family_result.training_time_seconds,
             )
             trials.append(trial_row)
+            record_trial_progress(family.id)
             completed_candidates.append({
                 "trial": trial_row,
                 "family": family,
@@ -2464,10 +2495,74 @@ def _execute_anomaly_job(
     else:
         segments.append((None, features))
 
+    # fleet 共享段意图提前判定（联合段预算进 progress.total 估算）。
+    fleet_shared = (
+        str(params.get("fleet_mode") or "") == "shared"
+        and bool(condition_column)
+        and bool(segments)
+    )
+
+    def _anomaly_planned_trials(max_trials_value: int) -> int:
+        """段级 trial 总数估算（progress.total 口径）：strength/grid 按 spec
+        展开数（unavailable 族也会落 trial 行），optuna 系按合同预算。"""
+        if method in {"strength", "grid"}:
+            specs = _build_trial_specs(
+                families, method=method, max_trials=max_trials_value,
+                search_strength=search_strength,
+            )
+            return len(specs)
+        return max_trials_value
+
+    progress_total = _anomaly_planned_trials(requested_trials) * len(segments)
+    if fleet_shared:
+        progress_total += _anomaly_planned_trials(max(1, requested_trials // 2))
+    progress_state: dict = {
+        "completed": 0,
+        "total": progress_total,
+        "current_segment": None,
+        "current_algorithm": None,
+        "current_trial": None,
+    }
+
+    def _anomaly_progress_view() -> dict:
+        total = int(progress_state["total"] or 0)
+        completed = int(progress_state["completed"] or 0)
+        return {
+            "completed": completed,
+            "total": total,
+            "percent": round(min(100.0, (completed / total) * 100), 2) if total else 0.0,
+            "current_segment": progress_state["current_segment"],
+            "current_algorithm": progress_state["current_algorithm"],
+            "current_trial": progress_state["current_trial"],
+            "search_method": method,
+            "budget_exhausted": False,
+        }
+
+    def _persist_anomaly_progress_snapshot() -> None:
+        job.metrics = {
+            "task_type": task,
+            "paradigm": "unsupervised",
+            "search": {
+                "method": method,
+                "strength": search_strength,
+                "max_trials": requested_trials,
+                "completed_trials": 0,
+                "trials": [],
+                "budget_exhausted": False,
+            },
+            "progress": _anomaly_progress_view(),
+        }
+        job.heartbeat_at = utcnow()
+        db.commit()
+
     segment_payloads: list[dict] = []
     budget_exhausted = False
     total_trials: list[dict] = []
     for segment_label, segment_frame in segments:
+        progress_state["current_segment"] = segment_label
+        progress_state["current_algorithm"] = None
+        progress_state["current_trial"] = None
+        _persist_anomaly_progress_snapshot()
         payload = _execute_anomaly_segment_job(
             job=job,
             db=db,
@@ -2490,6 +2585,7 @@ def _execute_anomaly_job(
             parent=parent,
             tracking=tracking,
             dependencies=dependencies,
+            progress_state=progress_state,
         )
         segment_payloads.append({"segment": segment_label, **payload})
         total_trials.extend(payload["trials"])
@@ -2501,14 +2597,13 @@ def _execute_anomaly_job(
     # 挂载语义（§7.5 原文「B 主+A 兜底」）：各工位 fpr 超 1.5×contamination
     # 标 unfit（该工位 bundle 不挂载，其请求路由到全局通配兜底）；fit 工位
     # 挂独立模型。训练成本：联合段=全数据一次训练（时间约 ×2，文档注明）。
-    fleet_shared = (
-        str(params.get("fleet_mode") or "") == "shared"
-        and bool(condition_column)
-        and bool(segments)
-    )
     if fleet_shared:
         merged_frame = pd.concat([seg_frame for _, seg_frame in segments], ignore_index=True)
         if len(merged_frame) >= ANOMALY_MIN_ROWS:
+            progress_state["current_segment"] = f"{condition_column}=__FLEET_GLOBAL__"
+            progress_state["current_algorithm"] = None
+            progress_state["current_trial"] = None
+            _persist_anomaly_progress_snapshot()
             global_payload = _execute_anomaly_segment_job(
                 job=job,
                 db=db,
@@ -2531,6 +2626,7 @@ def _execute_anomaly_job(
                 parent=parent,
                 tracking=tracking,
                 dependencies=dependencies,
+                progress_state=progress_state,
             )
             global_payload["segment"] = f"{condition_column}=__FLEET_GLOBAL__"
             global_payload["fleet_global"] = True
@@ -2639,6 +2735,20 @@ def _execute_anomaly_job(
             "budget_exhausted": budget_exhausted,
         },
         "prediction_source": "synthetic_benchmark",
+        # 终态进度（与有监督同形状，镜像 1163 行）：total 为段级预算估算口径，
+        # completed 为实际完成 trial 数（估算偏差时 percent 封顶 100）。
+        "progress": {
+            "completed": sum(item.get("status") in {"complete", "completed"} for item in trials),
+            "total": int(progress_state["total"] or 0) or sum(
+                item.get("status") in {"complete", "completed"} for item in trials
+            ),
+            "percent": 100.0,
+            "current_segment": best["segment"],
+            "current_algorithm": algorithm_id,
+            "current_trial": None,
+            "search_method": method,
+            "budget_exhausted": budget_exhausted,
+        },
     }
     job.feature_schema = feature_schema
     job.target_schema = []
