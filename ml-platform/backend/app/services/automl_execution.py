@@ -1949,8 +1949,9 @@ def _execute_anomaly_segment_job(
         if progress_state is not None:
             total = int(progress_state.get("total") or 0)
             completed = int(progress_state.get("completed") or 0)
+            display_completed = min(completed, total) if total else completed
             snapshot["progress"] = {
-                "completed": completed,
+                "completed": display_completed,
                 "total": total,
                 "percent": round(min(100.0, (completed / total) * 100), 2) if total else 0.0,
                 "current_segment": progress_state.get("current_segment"),
@@ -2527,8 +2528,11 @@ def _execute_anomaly_job(
     def _anomaly_progress_view() -> dict:
         total = int(progress_state["total"] or 0)
         completed = int(progress_state["completed"] or 0)
+        # 显示口径 clamp：估算偏差时 optuna 实跑可超预算（如 55/45），
+        # 进度条视角封顶 total；真实完成数保留在 search.completed_trials。
+        display_completed = min(completed, total) if total else completed
         return {
-            "completed": completed,
+            "completed": display_completed,
             "total": total,
             "percent": round(min(100.0, (completed / total) * 100), 2) if total else 0.0,
             "current_segment": progress_state["current_segment"],
@@ -2736,9 +2740,12 @@ def _execute_anomaly_job(
         },
         "prediction_source": "synthetic_benchmark",
         # 终态进度（与有监督同形状，镜像 1163 行）：total 为段级预算估算口径，
-        # completed 为实际完成 trial 数（估算偏差时 percent 封顶 100）。
+        # completed 显示口径封顶 total（真实数在 search.completed_trials）。
         "progress": {
-            "completed": sum(item.get("status") in {"complete", "completed"} for item in trials),
+            "completed": min(
+                sum(item.get("status") in {"complete", "completed"} for item in trials),
+                int(progress_state["total"] or 0),
+            ) or sum(item.get("status") in {"complete", "completed"} for item in trials),
             "total": int(progress_state["total"] or 0) or sum(
                 item.get("status") in {"complete", "completed"} for item in trials
             ),
