@@ -1421,3 +1421,49 @@ AE 的 ONNX label 端口是**占位全 1**（`automl_anomaly_ae.py:98` `(mse*0)+
 - **B12 / B16 / B17**（低）：分片数 ≤10000 无显式校验、剔除与全 NaN 过滤顺序（既有非回归）、CONSTANT 列 reason 归一
 - **C2 残留**：工况列基数过滤用 preview 采样近似 —— **非数值高基数列（时间戳字符串/唯一 id）仍可选**（设计原文「非数值列 ∪ 低基数」的直接后果），是否也给非数值列加 ≤200 上限需方案 owner 确认
 - **C3 入口位置归位**未做（仍在闭环详情页；设计要求模型库详情页）——登记为偏差
+
+## 2026-11-15 第十轮：CI Windows job 失败的真实根因（控制台代码页）与编码加固
+
+CI run **#828**（`da235de8`）结论：**Ubuntu job 全绿**（后端套件 / 前端测试 / 构建 / 服务冒烟全 ok），**Windows job 失败**于 `Run backend suite`。本轮定位并修复该失败，同时**更正第九轮 §8 的根因判断**（保留原记录，按台账规约「只增不改」）。
+
+### 1. 根因更正（重要）
+
+第九轮 §8 把该失败归因为「`run_suite.py` 未捕获 `TimeoutExpired` → 自身抛异常退出，故只有 exit code 1、无模块级细节」。**该判断有误**：当时只看了 GitHub 的**step 级注解**（`Process completed with exit code 1`），未取 job 日志。本次下载 job 日志后确认——`run_suite.py` **正常跑完了整轮并打印了汇总**（`RESULTS: 209 passed, 1 failed out of 210 modules`），失败模块已明确定位为 `test_m6_precision_at_k`，异常为：
+
+```
+File "tools/acceptance/run_m6_precision_at_k.py", line 1065, in main
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+File "...\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+UnicodeEncodeError: 'charmap' codec can't encode characters in position 49-53
+```
+
+**真实根因**：Windows 上 `sys.stdout` 在「输出被重定向到管道」时使用 `locale.getpreferredencoding(False)`（CI 的 `windows-latest` runner 为 **cp1252**），**无法编码中文**；`run_m6_precision_at_k.py` 用 `ensure_ascii=False` 打印中文结论 → `UnicodeEncodeError` → 该模块 FAILED。Ubuntu 同提交默认 UTF-8 → 全绿（`RESULTS: 209 passed, 0 failed`）。回溯 run **#826** 的 Windows job 日志：**同一个 `UnicodeEncodeError`、同一个模块**（`208 passed, 1 failed out of 209`）——即该缺陷自 `e112119f`（2026-11-13 第四轮审计引入 M6 验收模块）起就存在，只是此前未被读到日志。
+
+**对 `da235de8` 的处置**：该提交的「捕获 `TimeoutExpired` + 上限 300s→600s」**保留不回退**——它本身是正确的健壮性改进（单模块超时不再拖垮整轮、超时模块有明确的 `FAILED (timeout after Ns)` 痕迹），实测也验证过（1s 超时下 12 个模块逐个上报、流程走完）。但它**不是**本次 CI 失败的原因，本节登记此更正。
+
+### 2. 修法（三道，覆盖整类问题而非单点）
+
+1. **新增 `app/console_encoding.py`**——`force_utf8_stdio()`：把 `sys.stdout`/`sys.stderr` 重配为 UTF-8 且 `errors="replace"`（无法映射的字符退化而非抛异常）；对已关闭/非 `TextIOWrapper` 的流静默跳过；幂等。
+2. **7 个验收工具在 `main()` 首行调用 `force_utf8_stdio()`**：`run_m6_precision_at_k` / `run_criterion4_real` / `run_spot_weld_real_experiment` / `run_anomaly_real_data` / `run_anomaly_ae_preflight` / `run_anomaly_criteria_check` / `fleet_feature_diff`（这 7 个都存在 `print(..., ensure_ascii=False)` 的中文输出，直接在 Windows 控制台/管道运行同样会崩）。
+3. **`run_suite.py` 两侧加固**（harness 层）：①注入 `env["PYTHONIOENCODING"]="utf-8"`，子进程统一写 UTF-8；②把 `text=True` 换成 `encoding="utf-8", errors="replace"`——原先按 locale 代码页解码，子进程写出的 UTF-8 中文字节里含 cp1252 **未定义字节**（`0x81/0x8D/0x8F/0x90/0x9D`）→ 父进程 `UnicodeDecodeError` 同样会崩掉整轮且无模块级细节。
+
+### 3. 回归覆盖与变异验证
+
+- 新增 `tests/test_m6_precision_at_k.py::TestConsoleEncodingGuard`（3 例）：
+  - **子进程 `PYTHONIOENCODING=cp1252` 下 CLI 必须正常退出**（把「非 UTF-8 stdout」显式化，回归在任何宿主 locale 下都可复现，不再依赖 CI 的 Windows runner）；
+  - 守卫必须把流切到 UTF-8 且 `errors="replace"`；
+  - 流不可重配时必须静默跳过、不得抛异常。
+- **变异验证**：临时移除 `run_m6_precision_at_k.py` 里的 `force_utf8_stdio()` 调用 → 该子进程测试**如期失败**，报出的异常与 CI 日志**逐字一致**（同一 `cp1252.py` 编码路径、同一 `position 49-53`）；恢复后源文件 SHA256 前后一致（`1FFF1616…4C95F`）。
+- **harness 侧契约断言**（`tests/test_run_suite.py::test_child_output_is_decoded_as_utf8_with_replace`）：断言 `run_modules` 传给 `subprocess.run` 的是 `encoding="utf-8"` + `errors="replace"`（且**不含** `text=True`——两者同给会 `ValueError`）、子进程 env 含 `PYTHONIOENCODING=utf-8`。**变异验证**：把 `run_suite.py` 改回 `text=True` 并移除该 env 项 → 断言如期失败（`None != 'utf-8'`），恢复后 SHA256 前后一致（`57CC00AB…C255`）。
+- 关联回归：`test_m6_precision_at_k` + `test_anomaly_ae_preflight` + `test_suite_manifest` = **19 passed / 2 subtests passed**；`test_module_imports`（含新增 `app/console_encoding`）**2 passed / 302 subtests passed**；`test_run_suite` **8 passed**；7 个工具 `--help` 冒烟全部可加载（`run_criterion4_real` 的 `--help` 报 `FileNotFoundError: '--help'` 是**既有行为**——该脚本本就以 `sys.argv[1]` 取 CSV 路径、不用 argparse，与本轮改动无关）。
+- **端到端**：`python run_suite.py --week 17`（42 模块，含全部异常域 + `test_run_suite` + `test_m6_precision_at_k`）经**加固后的 harness** 跑通：**42 passed / 0 failed**。
+
+### 4. 残余风险（Windows job 后半段）
+
+Windows job 自 #816（2026-11-13）起一直停在「Run backend suite」，其后步骤（前端测试 / 构建 / **Windows 服务冒烟**）在 Windows 上久未验证。查历史：Windows job **最近一次全绿是 #772（2026-11-11）**，说明「后端套件 → 前端 → 构建 → Windows 冒烟」整条链路当时是通的；之后的失败全部落在后端套件这一步（含 #765/#764/#742/#740/#739 的前端测试失败，前端侧已单独修复并在 Ubuntu 侧复验）。因此本次修好后 Windows job 将首次走到后半段：**前端测试/构建与 Ubuntu 同命令且 #828 已绿**；**Windows 服务冒烟**（`scripts/start.ps1` + `health-check.ps1` + 登录）最后一次验证在 2026-11-11，本轮改动不涉及服务启动与鉴权路径，但该步仍属**未在本次改动后单独复验**的环节，以 CI 结论为准。
+
+### 5. 本轮之后仍开放
+
+- 第九轮 §10 的全部条目（A 组 6 项、B12/B16/B17、C2 残留、C3 入口归位）**状态不变**——本轮只处理 CI 编码缺陷，未触碰业务口径。
+- **全量 CI 仍待 CI 自身判定**：本轮 push 后的新 run 结论由 CI 给出（`#828` 的 Ubuntu 侧已证明代码面可过；Windows 侧待新 run 复核）。

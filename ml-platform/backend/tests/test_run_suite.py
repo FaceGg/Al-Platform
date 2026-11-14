@@ -72,6 +72,33 @@ class TestRunSuite(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(run_suite.run_modules(["test_fake"]), 0)
 
+    def test_child_output_is_decoded_as_utf8_with_replace(self):
+        """父进程必须按 UTF-8 容错解码子进程输出，且子进程 stdout 固定 UTF-8。
+
+        ``text=True`` 会用 locale 代码页解码子进程输出（CI 的 Windows runner
+        为 cp1252）——子进程写出的 UTF-8 中文字节里含 cp1252 **未定义字节**
+        （0x81/0x8D/0x8F/0x90/0x9D）→ 父进程 UnicodeDecodeError 直接崩掉整轮，
+        且没有任何模块级细节（2026-11-14 CI Quality (windows-latest) 的同款风险）。
+        """
+        completed = run_suite.subprocess.CompletedProcess(
+            args=["fake"],
+            returncode=0,
+            stdout="Ran 1 test in 0.010s\n\nOK\n",
+            stderr="",
+        )
+        with patch.object(run_suite, "detect_test_framework", return_value="unittest"), patch.object(
+            run_suite.subprocess, "run", return_value=completed
+        ) as run:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(run_suite.run_modules(["test_fake"]), 0)
+        kwargs = run.call_args.kwargs
+        self.assertEqual(kwargs.get("encoding"), "utf-8")
+        self.assertEqual(kwargs.get("errors"), "replace")
+        # text=True 与 encoding 不能同时给（subprocess 会 ValueError）
+        self.assertNotIn("text", kwargs)
+        env = kwargs.get("env") or {}
+        self.assertEqual(env.get("PYTHONIOENCODING"), "utf-8")
+
     def test_pytest_is_an_explicit_backend_test_dependency(self):
         requirements = (run_suite.Path(run_suite.BACKEND_DIR) / "requirements.txt").read_text(
             encoding="utf-8",

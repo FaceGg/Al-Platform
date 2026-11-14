@@ -50,9 +50,13 @@ from app.services.automl_anomaly import (  # noqa: E402
 )
 from app.services.automl_anomaly_ae import TorchAutoencoder  # noqa: E402
 from app.services.automl_catalog import get_algorithm_family  # noqa: E402
+from app.console_encoding import force_utf8_stdio  # noqa: E402
 
 
 def main() -> int:
+    # Windows 管道 stdout 默认用 locale 代码页（cp1252），中文 print 会抛
+    # UnicodeEncodeError —— 统一切 UTF-8（见 app/console_encoding.py）。
+    force_utf8_stdio()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", required=True)
     parser.add_argument("--label-column", default="fault")

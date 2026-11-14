@@ -19,6 +19,13 @@ import argparse
 import glob
 import json
 import sys
+from pathlib import Path
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+from app.console_encoding import force_utf8_stdio  # noqa: E402
 
 
 def diff_feature_sets(paths: list[str], names: list[str] | None = None) -> dict:
@@ -65,6 +72,9 @@ def diff_feature_sets(paths: list[str], names: list[str] | None = None) -> dict:
 
 
 def main() -> int:
+    # Windows 管道 stdout 默认用 locale 代码页（cp1252），中文 print 会抛
+    # UnicodeEncodeError —— 统一切 UTF-8（见 app/console_encoding.py）。
+    force_utf8_stdio()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", nargs="+", required=True, help="各设备 CSV 路径（支持 glob）")
     parser.add_argument("--names", help="逗号分隔的设备名（缺省 device-N）")

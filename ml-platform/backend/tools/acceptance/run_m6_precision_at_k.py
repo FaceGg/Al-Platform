@@ -61,6 +61,7 @@ from app.services.automl_anomaly import (  # noqa: E402
     pipeline_anomaly_scores,
 )
 from app.services.automl_catalog import get_algorithm_family  # noqa: E402
+from app.console_encoding import force_utf8_stdio  # noqa: E402
 
 # 产物落**可跟踪**目录：仓库根 docs/ 被 .gitignore 排除（/docs/），证据不入库
 # 会让已提交的验收文档链接失效——2026-11-13 审计同款问题。
@@ -1002,6 +1003,9 @@ def render_markdown(result: dict) -> str:
 
 
 def main() -> int:
+    # Windows 管道 stdout 默认用 locale 代码页（cp1252），中文 print 会抛
+    # UnicodeEncodeError —— 统一切 UTF-8（见 app/console_encoding.py）。
+    force_utf8_stdio()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--data",

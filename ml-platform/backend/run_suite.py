@@ -152,6 +152,11 @@ def run_modules(test_modules: list[str]) -> int:
             # Match PostgreSQL referential integrity so missing detach/cleanup
             # steps before deletes fail here instead of only in production.
             env["ML_PLATFORM_SQLITE_FOREIGN_KEYS"] = "1"
+            # 子进程 stdout 固定 UTF-8：Windows runner 的管道 stdout 默认用
+            # locale 代码页（cp1252），中文 print 会抛 UnicodeEncodeError
+            # （2026-11-14 CI Quality (windows-latest) 的 test_m6_precision_at_k
+            # 即此症状，Ubuntu 同提交全绿）。见 app/console_encoding.py。
+            env["PYTHONIOENCODING"] = "utf-8"
 
             print(f"\n{'=' * 60}")
             print(f"  RUNNING: {module}")
@@ -165,7 +170,12 @@ def run_modules(test_modules: list[str]) -> int:
                 result = subprocess.run(
                     command,
                     capture_output=True,
-                    text=True,
+                    # 固定按 UTF-8 容错解码：text=True 会用 locale 代码页解码
+                    # （Windows runner 为 cp1252），子进程写出的 UTF-8 中文字节
+                    # 里含 cp1252 未定义字节（0x81/0x8D/0x8F/0x90/0x9D）→
+                    # 父进程 UnicodeDecodeError 崩掉整轮且无模块级细节。
+                    encoding="utf-8",
+                    errors="replace",
                     cwd=BACKEND_DIR,
                     env=env,
                     timeout=MODULE_TIMEOUT_SECONDS,

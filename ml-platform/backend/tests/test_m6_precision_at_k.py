@@ -17,6 +17,7 @@ normal_fpr 的复算值（平台实现把 normal_fpr=0.0 读成 1.0，属既有�
 
 import importlib.util
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -24,6 +25,8 @@ from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = BACKEND_ROOT / "tools" / "acceptance" / "run_m6_precision_at_k.py"
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 
 class _LokySingleCore:
@@ -193,6 +196,100 @@ class TestM6PrecisionAtKAcceptance(unittest.TestCase):
                 str(payload["thresholds"]["recalibrated_score"]),
                 md_path.read_text(encoding="utf-8"),
             )
+
+
+class TestConsoleEncodingGuard(unittest.TestCase):
+    """Windows 控制台代码页回归（2026-11-14 CI Quality (windows-latest) 失败根因）。
+
+    症状：``run_m6_precision_at_k.py`` 用 ``print(json.dumps(..., ensure_ascii=False))``
+    输出中文结论；Windows 的管道 stdout 默认用 locale 代码页（CI runner 为
+    ``cp1252``）→ ``UnicodeEncodeError: 'charmap' codec can't encode characters``
+    → 整个模块 FAILED（同提交 Ubuntu 全绿）。修复见 ``app/console_encoding.py``。
+
+    本类把「非 UTF-8 stdout」显式化（``PYTHONIOENCODING=cp1252``），使回归在
+    任何宿主 locale 下都可复现，不再依赖 CI 的 Windows runner。
+    """
+
+    def test_cli_survives_non_utf8_stdout_encoding(self):
+        """stdout 为 cp1252 时 CLI 必须正常退出（不得抛 UnicodeEncodeError）。"""
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "cp1252"
+        env["PYTHONPATH"] = str(BACKEND_ROOT)
+        env["LOKY_MAX_CPU_COUNT"] = "1"
+        with tempfile.TemporaryDirectory(prefix="m6-cp1252-") as directory:
+            json_path = Path(directory) / "artifact.json"
+            md_path = Path(directory) / "artifact.md"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_PATH),
+                    "--output",
+                    str(json_path),
+                    "--markdown",
+                    str(md_path),
+                    "--train-rows",
+                    "300",
+                    "--confirmed",
+                    "50",
+                    "--false-alarm",
+                    "15",
+                    "--normal",
+                    "60",
+                    "--skip-stability",
+                ],
+                capture_output=True,
+                cwd=str(BACKEND_ROOT),
+                env=env,
+                timeout=900,
+            )
+            combined = completed.stdout.decode("utf-8", "replace") + completed.stderr.decode(
+                "utf-8", "replace"
+            )
+            self.assertNotIn("UnicodeEncodeError", combined)
+            self.assertEqual(completed.returncode, 0, combined[-2000:])
+            self.assertTrue(json_path.is_file())
+            self.assertTrue(md_path.is_file())
+
+    def test_force_utf8_stdio_reconfigures_to_utf8(self):
+        """守卫必须把流切到 UTF-8 且对不可编码字符退化为 replace。"""
+        from app.console_encoding import force_utf8_stdio
+
+        recorded: list[dict] = []
+
+        class _Fake:
+            def reconfigure(self, **kwargs):
+                recorded.append(kwargs)
+
+        original_out, original_err = sys.stdout, sys.stderr
+        try:
+            sys.stdout = _Fake()
+            sys.stderr = _Fake()
+            force_utf8_stdio()
+        finally:
+            sys.stdout, sys.stderr = original_out, original_err
+        self.assertTrue(recorded)
+        for kwargs in recorded:
+            self.assertEqual(kwargs.get("encoding"), "utf-8")
+            self.assertEqual(kwargs.get("errors"), "replace")
+
+    def test_force_utf8_stdio_never_raises_on_unreconfigurable_stream(self):
+        """流已关闭/被替换成非 TextIOWrapper 时守卫必须静默跳过，不得抛异常。"""
+        from app.console_encoding import force_utf8_stdio
+
+        class _Boom:
+            def reconfigure(self, **kwargs):
+                raise ValueError("I/O operation on closed file")
+
+        class _NoReconfigure:
+            pass
+
+        original_out, original_err = sys.stdout, sys.stderr
+        try:
+            sys.stdout = _Boom()
+            sys.stderr = _NoReconfigure()
+            force_utf8_stdio()
+        finally:
+            sys.stdout, sys.stderr = original_out, original_err
 
 
 if __name__ == "__main__":

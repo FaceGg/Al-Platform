@@ -47,6 +47,11 @@ def main() -> int:
     args = parser.parse_args()
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from app.console_encoding import force_utf8_stdio
+
+    # Windows 管道 stdout 默认用 locale 代码页（cp1252），中文 print 会抛
+    # UnicodeEncodeError —— 统一切 UTF-8（见 app/console_encoding.py）。
+    force_utf8_stdio()
     from app.services.automl_anomaly import (
         ANOMALY_HOLDOUT_RATIO,
         AnomalyScoreCalibrator,

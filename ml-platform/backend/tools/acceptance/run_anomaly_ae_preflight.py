@@ -41,6 +41,7 @@ import torch  # noqa: E402
 from sklearn.metrics import roc_auc_score  # noqa: E402
 
 from app.services.automl_anomaly import pipeline_anomaly_scores  # noqa: E402
+from app.console_encoding import force_utf8_stdio  # noqa: E402
 from app.services.automl_anomaly_ae import (  # noqa: E402
     TorchAutoencoder,
     export_pipeline_autoencoder_onnx,
@@ -134,6 +135,9 @@ def run_preflight(rows: int, epochs: int) -> dict:
 
 
 def main() -> int:
+    # Windows 管道 stdout 默认用 locale 代码页（cp1252），中文 print 会抛
+    # UnicodeEncodeError —— 统一切 UTF-8（见 app/console_encoding.py）。
+    force_utf8_stdio()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rows", type=int, default=10000)
     parser.add_argument("--epochs", type=int, default=100)
