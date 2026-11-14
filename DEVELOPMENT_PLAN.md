@@ -1174,16 +1174,23 @@ AE 的 ONNX label 端口是**占位全 1**（`automl_anomaly_ae.py:98` `(mse*0)+
 ### 10. 本轮之后仍然遗留的问题（按严重度，如实登记）
 
 - **[高] 判据④ 真实标签口径不通过**（第五轮结论，本轮未动）——模型误报 ~1.0% vs 阈值基线 0.038%（降幅 −25%）。根因是该数据源合格判定本身按力矩限值执行 → 阈值规则定义性近零误报。**方案 §1.1「降误报」主张在「阈值规则已自洽」场景不成立**；达成条件 = 接入「现场报警误报率高」的产线数据后同口径复测。
-- **[高] §7.1「设备 ID 列必须从特征剔除」引擎路径未落地（登记丢失，本轮补回）**——方案 §7.1（line 367）要求剔除设备 ID 列。**agent 路径已剔**（`agent/anomaly_trainer.py:53` `drop(columns=[condition_column])`），**引擎路径未剔**：`automl_execution.py:2371` 取全数值列（仅剔全 NaN/常数列）→ `condition_column` 只作分组键（`:2435`）→ 段特征仍含该列（`:1882`）。影响：`fleet_shared` 联合段跨设备合并，device_id 成为全局模型的**可判别特征**，违反「检测器主体学习同型设备共有的正常联合分布」前提。**第四轮曾登记（§7.1 [高] 的子项），第五/六轮 §10 清单未带入 → 登记丢失，本轮补回**。注：分片独立路径下该列在段内为常数（StandardScaler 映射为 0），实际危害集中在联合段。
+- **[已闭环 2026-11-14 `bbbfbc47`] §7.1「设备 ID 列必须从特征剔除」**——第七轮登记为 [高]（引擎路径未落地）；**现已落地**：`automl_execution.py:2444-2446` 在分组键确定后从 `feature_columns` 移除 `condition_column`（记入 `removed_columns`），训练经 `segment_frame.loc[:, feature_columns]` 排除，分组键仍取自 `frame` 不受影响。**但剔除修复零回归测试**（`test_automl_anomaly.py` 的 condition_column 用例把工况列排除在 `input_columns` 外 → 走不到剔除分支，`removed_columns` 含 `condition_column` 全库无断言）——该块已被并行会话 LF 重写丢失过一次，无测试=可再次静默丢失 → 另见下方 [高] 条目。
 - **[高] §6.2 真实门槛未解锁**——平台真实 confirmed_fault = 0，M6 档 1 只能机制验证；precision@k 证据的夹具前提「真故障分数整体高于误报样本」需真实标签检验。
 - **[中] 存量 revision 权重和可能仍 ≠ 10000**——修复只作用于新挂载产生的 revision，**存量数据需迁移**（本轮未做）。
 - **[中] M6/M9 重标定路由无审计事件**——与 M9 一致（该模块 `PROJECT_WRITE_ACTIONS` 集合全等断言约束），但「阈值重标定会改变生产判定」这类决策变更无审计留痕，是治理缺口。
 - **[中] M6 新版本审批语义待拍板**——当前实现：源版本已 approved 且在服役 → 新版本沿用源审批结论 → 轮换 stable revision 替换 target（依据：同检测器主体、只差阈值、闭环换模本就自动 approve）。若要求「必须人工审批新版本」，改动点集中在 `_mount_recalibrated_version` 一处。
 - **[中] 误报形态报表 `dense_features` 用原始均值而非 z 值**（`anomaly_threshold_recalibration.py:181-183`，字段名却是 `mean_z`；`scaled` 只用于聚类、未用于统计）→「哪些参数区域误报密集」的结论会失真（本轮未修）。
 - **[中] 缺省权重等分丢失行数比例**——挂载 API 无行数输入，以既有权重作行数代理；真正按行数分配需扩挂载入参（§6.3「weight 按段行数比例分配」未完全落地）。
-- **[中] 写侧 API 无前端入口——§6.2 档 1 / M9 迁移在平台上「不可自助操作」**——M6 `POST /api/model-versions/{id}/recalibrate-labels`、M9 `POST /api/model-versions/{id}/recalibrate-device`、M9 `POST /api/inference-deployments/{id}/fleet-shards` 三个**写侧** API 均无任何前端调用（前端只有只读的 `fleet-overview` 面板 `FleetShardPanel`）→ 现场只能直接调 API，UI 路径缺失。
-- **[中] §2.3.3 派生监督数据集无 API 入口（登记丢失，本轮补回）**——服务层 `export_labeled_reflow_dataset` 已交付（带标签数据集导出，confirmed→1 其余→0，预填部署版本特征列），但**API 层无对应端点**（`anomaly_threshold_recalibration.py:464` 服务在，路由缺）→ §2.3.3「弱监督演进派生监督任务」在平台上不可自助发起。第四轮曾登记，第六轮 §10 清单未带入 → 登记丢失，本轮补回。
-- **[中] `fleet_shared` 在产品上不可发起**——后端合同已通（`api/training.py` 收 `condition_column` + `fleet_mode`，引擎 `fleet_shared` 联合段已落地），但**前端零入口**（已提交前端 grep `fleet_mode|condition_column` 零命中）→ 方案 §7.1/§7.5「B 主+A 兜底」在现场无法使用，只能裸调 API。缺口此前仅登记在同仓新方案 `技术方案-机群混合模式产品化.md` 的 G1，**未进本台账 §10 权威清单** → 本轮补回。
+- **[中] 写侧 API 无前端入口——§6.2 档 1 / M9 迁移在平台上「不可自助操作」**——M6 `POST /api/model-versions/{id}/recalibrate-labels`、M9 `POST /api/model-versions/{id}/recalibrate-device`、M9 `POST /api/inference-deployments/{id}/fleet-shards` 三个**写侧** API。**2026-11-14 P1-P3 后状态 = 1/3 仍缺**：M6 重标定与 §2.3.3 派生导出**已有前端入口**（`DemoLoopDetailPage.tsx`）；**M9 `recalibrate-device` 与 `fleet-shards` 仍全库零前端命中** → 方案 §4 场景第 3 步（新设备 200 行标定接入）无任何 UI 路径，只能裸调 API。
+- **[已闭环 2026-11-14 P3] §2.3.3 派生监督数据集无 API 入口**——服务层 `export_labeled_reflow_dataset` + API `POST /api/model-versions/{id}/derive-supervised-dataset` + 前端「派生监督数据集」按钮均已落地（`DemoLoopDetailPage.tsx`）。**遗留**：该端点**零后端测试**（068b2918 未新增任何后端测试文件），不满足方案 §4.4「新测试三件套同批」。
+- **[已闭环 2026-11-14 P1] `fleet_shared` 在产品上不可发起**——AutoMLPage 新建弹窗已加「工况列（可选）」Select + 「机群共享模式」开关（含「共享模式需先选工况列」提交前拦截），payload 透传 `condition_column` / `fleet_mode: "shared"`。**遗留**：工况列选项**未按设计做基数过滤**（设计 §3.1 要求「非数值列 ∪ 低基数值列（基数 ≤ 200）」，实现为全部 `datasetColumns`）→ 可选中时间戳等高基数列 → 每段 < 200 行被并入默认段 → 静默不分片，与 UI 文案「按该列分片训练 N 个模型」不符。
+- **[高] 工况列剔除修复零回归测试（可能被再次静默丢失）**——`bbbfbc47` 只改引擎 8 行；现有 condition_column 用例把工况列排除在 `input_columns` 外 → **走不到剔除分支**；`removed_columns` 含 `condition_column` 全库无断言。该代码块已被并行会话的 LF 重写丢失过一次（提交信息自证）→ 需补断言测试锁死「工况列不进模型特征」。
+- **[中] `LabelRecalibrateRequest` 双定义 + API 层遮蔽 schema 层**——`app/api/model_registry.py:98`（`BaseModel`，字段 `labeled_artifact_id/feedback_marks/mount`，`extra=forbid`）与 `app/schemas/model_registry.py:101`（`StrictSchema`，字段 `…/positive_label`）同名；api 层导入被同模块重定义**遮蔽** → 生效的是 api 版，schemas 版成死代码且契约分叉（缺 `mount`）。前端 TS 类型 `modelRegistry.ts:430` 仍声明 `positive_label?` → 按 TS 契约调用会被后端 `extra=forbid` 判 **422**（当前 UI 只传 `labeled_artifact_id` 故未触发）。第六轮 [低]「该类应在 schemas」仅表面修复。
+- **[中] §6.6E 分组护栏两条路径不一致（未登记，本轮补回）**——引擎统一 ≥200（`ANOMALY_SEGMENT_MIN_ROWS=200`），**向导路径仍 ≥60**（`agent/anomaly_trainer.py:54`，单段下限 40）→ 60 行工况段 → 保留集 12 行 → fpr 门禁被 2σ·Binomial 放宽到 ≈0.067 → **fpr 项近乎恒过、synthetic_auc 不可信**，正是 §6.6E 要消除的风险。
+- **[中] §2.3.2「编排混用：无监督检测器第一道筛 + 下游监督模型定级」无产品面（未登记，本轮补回）**——算子清单无「调用已部署无监督检测器」算子（`load_model_artifact` 只加载工件为 Model 端口不推理；`apply_model` 吃画布训练产物、无异常打分语义；`anomaly_eval` 只消费已有 `outlier` 列）→ 方案列为「合法并存场景」但**既未列入里程碑范围、也从未登记为缺口**，口径待定。
+- **[中] P2/P3 新增后端 API 与前端入口零测试**——不满足方案 §4.4「新测试三件套同批」；`week_manifest` 门禁只管「模块登记」，新写侧端点无测试时不触发任何门禁。
+- **[低] `fleet_shared` 全局段语料不含被护栏丢弃的小工位行**——全局段由 `segments` 拼接（`automl_execution.py:2605`），被 200 行护栏丢弃的小工位行不在语料内 → **全局兜底覆盖面小于全量设备**（未登记）。
+- **[低] 068b2918（P1-P3）未同批更新任何文档**——设计稿最后修改早于实现，台账无 P1-P3 章节 → 违反 AGENTS.md「每次变更同批更新对应文档」规约（本轮已补台账第八轮 + 设计稿现状回填）。
 - **[低] 空 `condition_value` 分片仍不可达**——`ConditionValueRouter` 要求请求值非空才匹配，通配 target 不吃空串。
 - **[低] 分片数上限的边界假设**——`_rebalance_fleet_weights` 假设分片数 ≤ 10000（否则无法同时满足「每片 ≥1 基点」与「权重和恒为 10000」两个约束，代码 docstring 已注明该假设，未做显式校验）。
 - **[低] `TorchAutoencoder` 未继承 `BaseEstimator`**（§6.6C 字面偏差，`clone()` 实测可用，语义等效）。
@@ -1288,3 +1295,44 @@ AE 的 ONNX label 端口是**占位全 1**（`automl_anomaly_ae.py:98` `(mse*0)+
 - **验证**：test_automl_anomaly 34 passed（新增终态 progress 断言：单段 completed==search.completed_trials、percent==100、分片 total≥2 且 current_segment 落在真实工况段）+ demo_loop/tracking/rollout 131 passed + ensemble/multioutput 27 passed，合计 192 passed。backend+worker+frontend 镜像已重建 force-recreate（栈 healthy）。
 
 **进度显示口径补充（同日）**：bayesian 下 optuna 实跑数超合同预算（实测 55/45）——progress 显示口径封顶 `min(completed, total)`（真实完成数保留在 `search.completed_trials`），clamp 后端到端复验：运行期快照序列 `0/45 0% → 13/45 28.89% → 24/45 53.33% → 37/45 82.22% → 联合段 100% → completed 45/45 100%（current_segment 回填冠军段 DPQX111）`，任务列表/详情页两处数据源（`metrics.progress`）全部实时更新。测试 34 passed。
+
+## 2026-11-14 第八轮：交付后**全量重新审核**（方案 + 台账 + 代码三方对齐）
+
+用户指示「重新审核一下，是否按照技术方案复现，还有什么遗漏问题和不足」。背景：第七轮文档审核后，同日并行会话又落 7 个提交——`068b2918`（机群混合模式产品化 P1-P3：前端三入口 + M6/派生 API + 面板列）、`bbbfbc47`（重新应用工况分片列特征剔除）、`d70c1255`（fleet_shared 端到端复验记录）、`dafb7fcf`（M6 前端路径对齐 `recalibrate-labels`）、`225a17ee`/`612ebb73`（无监督进度上报与 clamp）、`01db4ee5`（详情页合成基准口径渲染）。
+
+**审核方法**：三路独立复核（一期+二期条款级比对 / 三期+G1-G5 产品化 / 新代码正确性对抗性复核）+ 主会话抽查（三路结论逐条独立复验）。**总体结论：机制层复现度高（一期/二期约 90% 条款有代码证据、三期与 G1-G5 功能基本可复现），验收层仍有关键判据不闭环；本轮新发现 8 项此前未登记的问题。**
+
+### 1. 本轮新发现（此前八轮均未登记）
+
+| # | 问题 | 严重度 | 依据 |
+|---|---|---|---|
+| 1 | **工况列剔除修复零回归测试**——`bbbfbc47` 只改引擎 8 行；`test_automl_anomaly.py` 的 condition_column 用例把工况列排除在 `input_columns` 外 → **走不到剔除分支**；`removed_columns` 含 `condition_column` 全库无断言。该块已被并行会话 LF 重写丢失过一次（提交信息自证）→ 无测试 = 可再次静默丢失 | [高] | `automl_execution.py:2444-2446`；`test_automl_anomaly.py` condition_column 用例 |
+| 2 | **`LabelRecalibrateRequest` 双定义 + API 层遮蔽 schema 层**——`api/model_registry.py:98`（`BaseModel`：`labeled_artifact_id/feedback_marks/mount`，`extra=forbid`）与 `schemas/model_registry.py:101`（`StrictSchema`：`…/positive_label`）同名，api 版遮蔽 schemas 版 → schemas 版成死代码且契约分叉；前端 TS 类型仍声明 `positive_label?` → 按 TS 契约调用会被 `extra=forbid` 判 422 | [中] | `api/model_registry.py:98-114`；`schemas/model_registry.py:101-107`；`frontend/src/api/modelRegistry.ts:430` |
+| 3 | **§6.6E 分组护栏两条路径不一致**——引擎统一 ≥200，向导路径仍 ≥60（单段下限 40）→ 60 行工况段 fpr 门禁被 2σ·Binomial 放宽到 ≈0.067 → **fpr 项近乎恒过、synthetic_auc 不可信**，正是 §6.6E 要消除的风险 | [中] | `automl_anomaly.py:29`；`agent/anomaly_trainer.py:54` |
+| 4 | **§2.3.2「编排混用」无产品面**——算子清单无「调用已部署无监督检测器」算子（`load_model_artifact` 只加载工件不推理；`apply_model` 无异常打分语义；`anomaly_eval` 只消费已有 `outlier` 列）→ 该场景既未列入里程碑范围、也从未登记为缺口，**口径待定** | [中] | `app/operators/serving_operators.py` 算子清单；`ml_operators.py:388` |
+| 5 | **P2/P3 新增后端 API 与前端入口零测试**——不满足方案 §4.4「新测试三件套同批」；`week_manifest` 门禁只管模块登记，新写侧端点无测试时不触发任何门禁 | [中] | `068b2918` 未新增后端测试文件 |
+| 6 | **G1 工况列选项未按基数过滤**——设计 §3.1 要求「非数值列 ∪ 低基数值列（≤200）」+ §6 风险预案同款，实现为全部 `datasetColumns` → 可选高基数列 → 每段 <200 行并入默认段 → **静默不分片**，与 UI 文案「按该列分片训练 N 个模型」不符 | [低] | `frontend/src/pages/AutoMLPage.tsx:866` |
+| 7 | **G3 结果展示缺两项**——设计要求展示「误报形态报表 + 派生版本链接」，实现只展示新旧阈值/loss/confirmed 计数（后端返回字段 `modelRegistry.ts:423` 已含 `false_alarm_report` 未渲染） | [低] | `frontend/src/pages/DemoLoopDetailPage.tsx:584-597` |
+| 8 | **`fleet_shared` 全局段语料不含被护栏丢弃的小工位行**——全局段由 `segments` 拼接，被 200 行护栏丢弃的小工位行不在语料内 → **全局兜底覆盖面小于全量设备** | [低] | `automl_execution.py:2605` |
+
+### 2. 已闭环（本轮回填第六轮 §10 权威清单）
+
+- **[高] §7.1 设备 ID 列剔除** → `bbbfbc47` 已落地（引擎 `automl_execution.py:2444-2446` 剔除 + 分组键取自 `frame` 不受影响；4 工位实测 `REMOVED={'dev':'condition_column'}`、5 段含联合段、bundles 通配 `condition_value=None`）。**遗留**：零回归测试（见 §1-1）
+- **[中] §2.3.3 派生监督数据集 API 入口** → P3 已落地（API + 前端按钮 + 提示）。**遗留**：零测试
+- **[中] `fleet_shared` 产品上不可发起** → P1 已落地（AutoMLPage 工况列 + 机群共享模式开关 + 提交前拦截）。**遗留**：基数过滤未做
+- **[中] 写侧 API 无前端入口** → **部分闭环 1/3 仍缺**：M6 重标定 + §2.3.3 派生已有前端入口；**M9 `recalibrate-device` / `fleet-shards` 仍零前端命中** → 方案 §4 场景第 3 步（新设备 200 行标定接入）无 UI 路径
+- **[中] G2/G3 入口位置偏差**——设计稿要求「模型库详情页版本操作区（approved + output_schema.task=anomaly 时显示）」，实现放在**闭环详情页**（条件为 `swapped_model_version_id && error_artifact`）。功能可用、位置不同 → 登记为偏差
+
+### 3. 文档回填动作（本轮同步）
+
+- **方案 §9 偏差对照表**：补 4 行（§6.6E 护栏不一致 / §6.1 AE 注册偏离 / §2.3.2 编排混用无产品面 / §4.2 判据③ 真实口径未复测 / §3.7 加列迁移口径），并把「设备 ID 剔除未落地」「前端零入口」两行改为已落地
+- **台账第六轮 §10 权威清单**：回填 4 项闭环状态 + 新登记 8 项（见 §1）
+- **产品化设计稿**「剩余实际工作 = G1/G3/G4」→ 按现状回填（G1/G3/G4 已落地；剩余 = M9 前端入口、工况列基数过滤、G3 展示补两项、入口位置归位）
+- **`验收-三期机群真实实验.md`**「§7.1 分母侧待补充」→ 已被 A/B 实验产物补齐，标注更正
+
+### 4. 本轮验证
+
+- **主会话实跑**：异常域 17 模块 **327 passed / 11 subtests passed**（含条件分片、推理、生产端点、闭环、agent、注册表、anomaly 核心、AE、漂移、阈值重标定、M6 精度、机群、泛化门禁、manifest）
+- **独立复核实跑**：异常核心 57 passed；监督路径 + ONNX 68 passed / 1 skipped（**监督链路零回归成立**）；注册表/分片/M6/推理 107 passed；前端 3 文件 20 passed / 19 skipped
+- **剔除逻辑实跑**（4 工位 × 600 行数值工况列）：`REMOVED={'dev':'condition_column'}`、`USED=['s1','s2','s3']`、5 段（4 工位 + `dev=__FLEET_GLOBAL__`）、feature_schema 无工况列；路由侧 `inference_rollout.py:82` 从请求记录取工况值，**不受模型特征列剔除影响**
+- **未验证**：全量 CI 六 job（本机 `gh` 未安装）、前端全量 vitest、浏览器 E2E（G1 表单与 M6/派生入口真实点击路径）、PostgreSQL 迁移实跑、worker/scheduler 镜像内代码（§9 运维前置要求同批重建）、M6 真实门槛（confirmed_fault=0）
