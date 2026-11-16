@@ -1543,6 +1543,8 @@ UnicodeEncodeError: 'charmap' codec can't encode characters in position 2-3
 - **后端受影响面**：`test_automl_anomaly.py` + `test_automl_anomaly_fleet_shared.py` + `test_fleet_device_calibration.py` = **70 passed**；两处变异验证均如期转红且源文件 SHA256 恢复一致。
 - **前端**：`AutoMLPage.test.tsx` 新增 1 例（高基数非数值列 → 具体基数告警 + 护栏后果）；新增 `components/model/AnomalyRecalibrationPanels.test.tsx` 5 例（M6 重标定 / M6 派生 / M6 409 门槛提示 / M9 重标定 / M9 unfit 不挂载）+ `ModelLibraryPage.test.tsx` 新增 3 例（入口可见性 / 只读用户不可见 / 打开 M6 面板并调用 API）；新测试文件已登记进 `weekAcceptance.test.ts` 的 **week 17**（与 `FleetShardPanel.test.tsx` 同组，避免再次触发「测试文件未登记 → CI 前端失败」）。
 - `npx tsc --noEmit` 零错误；前端全量 **94 文件 / 568 passed / 19 skipped**（既有 skip）。
+- **端到端**：`python run_suite.py --week 17`（42 模块）经加固后的 harness 跑通：**42 passed / 0 failed**。
+- **CI run #834（`ef26f59c`）结论：success** —— Ubuntu 与 Windows 两个 job 全绿（Windows 自 #816 起第二次走完后端套件→前端→构建→Windows 冒烟全链路）。
 
 ### 6. 本轮之后仍开放
 
