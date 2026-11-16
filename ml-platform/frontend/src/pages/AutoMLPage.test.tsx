@@ -680,7 +680,8 @@ describe("AutoMLPage", () => {
 
     fireEvent.keyDown(screen.getByRole("combobox", { name: "任务子类型" }), { key: "Escape" });
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "搜索强度" }));
-    for (const label of ["轻度（10 次）", "中（30 次）", "高（80 次）", "Ultra（200 次）"]) {
+    // 监督口径：总量分摊（无监督为「每算法 N 次」，见无监督用例）
+    for (const label of ["轻度（共 10 次·各算法分摊）", "中（30 次）", "高（80 次）", "Ultra（200 次）"]) {
       expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
     }
     fireEvent.keyDown(screen.getByRole("combobox", { name: "搜索强度" }), { key: "Escape" });
@@ -947,7 +948,7 @@ describe("AutoMLPage", () => {
     expect(payload).not.toHaveProperty("fleet_mode");
   });
 
-  it("submits condition column and fleet shared mode for unsupervised tasks", async () => {
+  it("submits condition column for unsupervised tasks (fleet shared toggle removed 2026-11-16)", async () => {
     api.post.mockImplementation((url: string) => url === "/experiments"
       ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })
       : Promise.reject({ response: { data: { detail: "Error" } } }));
@@ -967,12 +968,12 @@ describe("AutoMLPage", () => {
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("weld.csv"));
 
-    // 工况列选择（§7.1 机群混合入口 G1）+ 机群共享模式勾选
+    // 工况列选择（§6.3 分片入口）：机群共享模式开关已从新建表单移除——
+    // 表单不再存在该控件，payload 永不下发 fleet_mode（后端合同保留给闭环链路）
+    expect(screen.queryByRole("checkbox", { name: "机群共享模式" })).toBeNull();
     const conditionSelect = screen.getByRole("combobox", { name: "工况列" });
     fireEvent.mouseDown(conditionSelect);
     fireEvent.click(await screen.findByText("device_no", { selector: ".ant-select-item-option-content" }));
-    const fleetSwitch = screen.getByRole("checkbox", { name: "机群共享模式" });
-    fireEvent.click(fleetSwitch);
 
     fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
 
@@ -981,7 +982,6 @@ describe("AutoMLPage", () => {
       expect.objectContaining({
         task: "anomaly_detection",
         condition_column: "device_no",
-        fleet_mode: "shared",
       }),
       expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) }),
     ));
@@ -989,7 +989,7 @@ describe("AutoMLPage", () => {
     const runCall = api.post.mock.calls.find(([url]) => url === "/training/automl/run");
     const payload = runCall![1];
     expect(payload).toHaveProperty("condition_column", "device_no");
-    expect(payload).toHaveProperty("fleet_mode", "shared");
+    expect(payload).not.toHaveProperty("fleet_mode");
   });
 
   it("keeps high-cardinality numeric columns out of the condition column options", async () => {
@@ -1052,10 +1052,7 @@ describe("AutoMLPage", () => {
     expect(screen.getByText(/多数分段会低于 200 行护栏而被并入默认段/)).toBeInTheDocument();
   });
 
-  it("blocks the fleet shared mode until a condition column is chosen", async () => {
-    api.post.mockImplementation((url: string) => url === "/experiments"
-      ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })
-      : Promise.reject({ response: { data: { detail: "Error" } } }));
+  it("shows per-algorithm strength labels for unsupervised tasks", async () => {
     datasets.getDatasetPreview.mockResolvedValue({
       columns: ANOMALY_COLUMNS,
       dtypes: ANOMALY_DTYPES,
@@ -1071,25 +1068,15 @@ describe("AutoMLPage", () => {
     fireEvent.click(await screen.findByText("Weld line"));
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("weld.csv"));
-    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
 
-    // 未选工况列：机群共享模式开关禁用（真实浏览器里点不动）
-    const fleetSwitch = screen.getByRole("checkbox", { name: "机群共享模式" });
-    expect(fleetSwitch).toBeDisabled();
-
-    // jsdom 下点击禁用 checkbox 仍会触发 onChange（共享模式被置为开启），
-    // 借此覆盖提交前置守卫：没有工况列时必须拦下并提示，且不发任何 run 请求。
-    fireEvent.click(fleetSwitch);
-    fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
-
-    expect(await screen.findByText(/机群共享模式需要先选择工况列/)).toBeInTheDocument();
-    expect(api.post.mock.calls.find(([url]) => url === "/training/automl/run")).toBeUndefined();
-    expect(api.post).not.toHaveBeenCalled();
-
-    // 选定工况列后共享模式才可开启
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "工况列" }));
-    fireEvent.click(await screen.findByText("device_no", { selector: ".ant-select-item-option-content" }));
-    await waitFor(() => expect(screen.getByRole("checkbox", { name: "机群共享模式" })).toBeEnabled());
+    // 强度计费口径按范式区分（2026-11-16 用户反馈：选 3 个算法 + 轻度应搜
+    // 30 次）：无监督=每算法 N 次；机群共享模式开关已移除（后端合同保留）
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "搜索强度" }));
+    for (const label of ["轻度（每算法 10 次）", "中（每算法 30 次）", "高（每算法 80 次）", "Ultra（每算法 200 次）"]) {
+      expect(await screen.findByText(label, { selector: ".ant-select-item-option-content" })).toBeInTheDocument();
+    }
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "搜索强度" }), { key: "Escape" });
+    expect(screen.queryByRole("checkbox", { name: "机群共享模式" })).toBeNull();
   });
 
   it("clears a condition column that is no longer allowed after switching datasets", async () => {
@@ -1127,20 +1114,15 @@ describe("AutoMLPage", () => {
 
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "工况列" }));
     fireEvent.click(await screen.findByText("device_no", { selector: ".ant-select-item-option-content" }));
-    const fleetSwitch = screen.getByRole("checkbox", { name: "机群共享模式" });
-    fireEvent.click(fleetSwitch);
-    expect(fleetSwitch).toBeChecked();
 
-    // 切换数据集：device_no 变为高基数列 → 工况列与机群共享模式一并清空
+    // 切换数据集：device_no 变为高基数列 → 工况列清空（机群共享模式开关已移除）
     fireEvent.mouseDown(comboboxes[1]);
     fireEvent.click(await screen.findByText("other.csv"));
     await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-2", expect.objectContaining({ limit: expect.any(Number) })));
 
-    await waitFor(() => expect(screen.getByRole("checkbox", { name: "机群共享模式" })).not.toBeChecked());
-    expect(screen.getByRole("checkbox", { name: "机群共享模式" })).toBeDisabled();
     // 工况列选择框里不再显示 device_no（下拉项仍可能留在 DOM，只看已选值）
     const conditionSelect = screen.getByRole("combobox", { name: "工况列" });
-    expect(conditionSelect.closest(".ant-select")?.querySelector(".ant-select-selection-item")).toBeNull();
+    await waitFor(() => expect(conditionSelect.closest(".ant-select")?.querySelector(".ant-select-selection-item")).toBeNull());
   });
 
   it.skip("submits the selected input columns with the target column", async () => {

@@ -154,9 +154,20 @@ export default function AutoMLTaskPage() {
   const ensembleMetric = (value: unknown) =>
     value != null && Number.isFinite(Number(value)) ? Number(value).toFixed(4) : "-";
   const bestModelName = (metrics.best_model as Record<string, unknown> | undefined)?.name;
-  const selectedTrials = selectedModel && Array.isArray(selectedModel.trials)
-    ? selectedModel.trials as Record<string, unknown>[]
-    : [];
+  // 详情弹窗 trial 数据源：行内 trials（新任务，后端按族合并后随行下发）优先；
+  // 旧任务行无 trials 时回退到 search.trials 按算法族过滤（兼容存量任务，
+  // 2026-11-16 用户反馈「超参数搜索记录」全空的兜底）。
+  const searchTrialsPool = (() => {
+    const search = metrics.search && typeof metrics.search === "object" ? metrics.search as Record<string, unknown> : null;
+    return Array.isArray(search?.trials) ? search.trials as Record<string, unknown>[] : [];
+  })();
+  const familyIdOf = (algorithmId: unknown) => String(algorithmId || "").split("#")[0];
+  const selectedTrials = (() => {
+    if (!selectedModel) return [];
+    if (Array.isArray(selectedModel.trials)) return selectedModel.trials as Record<string, unknown>[];
+    const familyId = familyIdOf(selectedModel.algorithm_id);
+    return familyId ? searchTrialsPool.filter((trial) => familyIdOf(trial.algorithm_id) === familyId) : [];
+  })();
 
   const resultActionColumn = {
     title: "操作",
@@ -387,9 +398,17 @@ export default function AutoMLTaskPage() {
         >
           {selectedModel && <Space direction="vertical" size={14} style={{ width: "100%" }}>
             <Row gutter={[12, 12]}>
-              <Col xs={24} sm={6}><Card size="small"><Statistic title="AUC" value={formatMetric(metric(selectedModel, ["auc", "AUC", "roc_auc", "rocAuc", "roc_auc_score"]))} /></Card></Col>
-              <Col xs={24} sm={6}><Card size="small"><Statistic title="F1" value={formatMetric(metric(selectedModel, ["f1", "F1", "f1_score", "f1_weighted"]))} /></Card></Col>
-              <Col xs={24} sm={6}><Card size="small"><Statistic title="Accuracy" value={Number.isFinite(Number(selectedModel.best_score ?? selectedModel.accuracy ?? selectedModel.score)) ? Number(selectedModel.best_score ?? selectedModel.accuracy ?? selectedModel.score).toFixed(4) : "-"} /></Card></Col>
+              {/* 无监督指标口径（2026-11-16 用户反馈：详情弹窗显示混乱——监督
+                  列 AUC/F1/Accuracy 对无监督合成基准指标键不适用） */}
+              {isAnomalyTask ? <>
+                <Col xs={24} sm={6}><Card size="small"><Statistic title="合成基准 AUC" value={formatMetric(metric(selectedModel, ["synthetic_auc"]))} /></Card></Col>
+                <Col xs={24} sm={6}><Card size="small"><Statistic title="误报率" value={formatMetric(metric(selectedModel, ["normal_fpr"]))} /></Card></Col>
+                <Col xs={24} sm={6}><Card size="small"><Statistic title="稳定性" value={formatMetric(metric(selectedModel, ["stability"]))} /></Card></Col>
+              </> : <>
+                <Col xs={24} sm={6}><Card size="small"><Statistic title="AUC" value={formatMetric(metric(selectedModel, ["auc", "AUC", "roc_auc", "rocAuc", "roc_auc_score"]))} /></Card></Col>
+                <Col xs={24} sm={6}><Card size="small"><Statistic title="F1" value={formatMetric(metric(selectedModel, ["f1", "F1", "f1_score", "f1_weighted"]))} /></Card></Col>
+                <Col xs={24} sm={6}><Card size="small"><Statistic title="Accuracy" value={Number.isFinite(Number(selectedModel.best_score ?? selectedModel.accuracy ?? selectedModel.score)) ? Number(selectedModel.best_score ?? selectedModel.accuracy ?? selectedModel.score).toFixed(4) : "-"} /></Card></Col>
+              </>}
               <Col xs={24} sm={6}><Card size="small"><Statistic title="试验次数" value={selectedTrials.length || Number(selectedModel.completed_trials) || 0} /></Card></Col>
             </Row>
             <Card size="small" title="最佳参数" styles={{ body: { padding: 12 } }}>
@@ -405,7 +424,17 @@ export default function AutoMLTaskPage() {
               dataSource={selectedTrials}
               scroll={{ x: 760, y: 360 }}
               locale={{ emptyText: "暂无超参数搜索记录" }}
-              columns={[
+              columns={isAnomalyTask ? [
+                // 无监督 trial 口径：新任务行内 trials（state/synthetic_auc/duration_seconds）+
+                // 旧任务 search.trials 回退（status/metrics 嵌套/training_time_seconds）双兼容
+                { title: "试验", dataIndex: "number", key: "number", width: 70 },
+                { title: "状态", key: "state", width: 100, render: (_value: unknown, trial: Record<string, unknown>) => { const state = String(trial.state ?? trial.status ?? ""); return <Tag color={state === "complete" || state === "completed" ? "green" : state === "pruned" ? "orange" : state === "fail" || state === "failed" ? "red" : "default"}>{state || "-"}</Tag>; } },
+                { title: "合成基准 AUC", key: "synthetic_auc", width: 120, render: (_value: unknown, trial: Record<string, unknown>) => { const nested = trial.metrics && typeof trial.metrics === "object" ? (trial.metrics as Record<string, unknown>).synthetic_auc : undefined; const value = trial.synthetic_auc ?? nested; return Number.isFinite(Number(value)) ? Number(value).toFixed(4) : "-"; } },
+                { title: "扰动召回", key: "perturbation_recall", width: 110, render: (_value: unknown, trial: Record<string, unknown>) => { const nested = trial.metrics && typeof trial.metrics === "object" ? (trial.metrics as Record<string, unknown>).perturbation_recall : undefined; const value = trial.perturbation_recall ?? nested; return Number.isFinite(Number(value)) ? Number(value).toFixed(4) : "-"; } },
+                { title: "误报率", key: "normal_fpr", width: 100, render: (_value: unknown, trial: Record<string, unknown>) => { const nested = trial.metrics && typeof trial.metrics === "object" ? (trial.metrics as Record<string, unknown>).normal_fpr : undefined; const value = trial.normal_fpr ?? nested; return Number.isFinite(Number(value)) ? Number(value).toFixed(4) : "-"; } },
+                { title: "超参数", dataIndex: "params", key: "params", render: (value: unknown) => <Text code style={{ whiteSpace: "normal", wordBreak: "break-word" }}>{JSON.stringify(value || {})}</Text> },
+                { title: "耗时", key: "duration", width: 90, render: (_value: unknown, trial: Record<string, unknown>) => { const value = trial.duration_seconds ?? trial.training_time_seconds; return Number.isFinite(Number(value)) ? `${Number(value).toFixed(2)}s` : "-"; } },
+              ] : [
                 { title: "试验", dataIndex: "number", key: "number", width: 70 },
                 { title: "状态", dataIndex: "state", key: "state", width: 100, render: (value: unknown) => <Tag color={value === "complete" ? "green" : value === "pruned" ? "orange" : value === "fail" ? "red" : "default"}>{String(value || "-")}</Tag> },
                 { title: "AUC", dataIndex: "auc", key: "auc", width: 100, render: (value: unknown) => Number.isFinite(Number(value)) ? Number(value).toFixed(4) : "-" },

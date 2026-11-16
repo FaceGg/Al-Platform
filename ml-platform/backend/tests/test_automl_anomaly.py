@@ -471,6 +471,46 @@ class TestAnomalyExecution(unittest.TestCase):
             for name, artifact_type in names_types
         )
 
+    def test_execution_per_family_budget_ae_enters_light_and_rows_merged_by_family(self):
+        """2026-11-16 用户反馈三修回归：
+        ① 强度预算 = 每算法口径——3 算法 × light(2 次/算法) = 段内 6 trial
+           （旧口径 divmod(2, 3) 只跑 2 个 trial）；
+        ② AE 不再按强度出场过滤（用户显式选 3 算法 = 3 算法全部出场，
+           AE trial 失败不影响「出场」本身，行状态如实记 failed）；
+        ③ algorithm_results 按族合并——无 `族#trial-N` 拆行，每行带该族
+           全量 trials（详情弹窗「超参数搜索记录」数据源）。"""
+        job_id = self.create_job(self._base_params(
+            algorithm_ids=["iforest", "ocsvm", "autoencoder"],
+            search_method="random",
+            max_trials=2,
+        ))
+        result = self.run_job(job_id)
+        assert result.status == "completed"
+        with self.Session() as db:
+            job = db.query(TrainingJob).filter(TrainingJob.id == job_id).one()
+            metrics = job.metrics
+            search = metrics["search"]
+            # 每算法口径：预算展示 = 每算法次数 × 出场族数
+            assert search["per_family_trials"] == 2
+            assert search["max_trials"] == 6
+            assert search["completed_trials"] >= 4  # iforest/ocsvm 至少全过；AE 可能环境性失败
+            # 结果行按族合并：恰好 3 行（含 AE），无 #trial- 拆行
+            rows = metrics["algorithm_results"]
+            ids = {row["algorithm_id"] for row in rows}
+            assert ids == {"iforest", "ocsvm", "autoencoder"}
+            assert all("#trial-" not in row["algorithm_id"] for row in rows)
+            for row in rows:
+                assert row["trials"], f"{row['algorithm_id']} 应有 trial 留痕"
+                assert row["status"] in {"completed", "failed"}
+            # 冠军族行 completed 且行内计数与 trials 留痕一致
+            champion = next(row for row in rows if row["algorithm_id"] == metrics["best_algorithm"])
+            assert champion["status"] == "completed"
+            assert champion["completed_trials"] == sum(
+                1 for trial in champion["trials"] if trial["state"] in {"completed", "complete"}
+            )
+            assert champion["trials"][0]["params"]
+            assert champion["best_params"]
+
     def test_execution_removes_constant_and_all_nan_columns(self):
         rng = np.random.default_rng(42)
         matrix = rng.normal(size=(600, 4))

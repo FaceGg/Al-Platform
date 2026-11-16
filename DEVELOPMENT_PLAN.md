@@ -1553,3 +1553,42 @@ UnicodeEncodeError: 'charmap' codec can't encode characters in position 2-3
 - **C3 取舍已拍板（2026-11-16）：保留闭环详情页快捷入口**（默认用本闭环回流报错集），同时设计指定位置（模型库详情页版本操作区）已补齐；两处共用 `frontend/src/components/model/AnomalyRecalibrationPanels.tsx`，无逻辑重复。
 - **B16 的既有面**：剔除与全 NaN/常数列过滤的顺序问题在**本轮之前**即为既有问题，本轮修的是「工况列 vs 清洗」的相对顺序；其余清洗顺序语义不变（既有非回归）。
 - **未验证**：浏览器 E2E；PostgreSQL 迁移实际 apply；M6 真实门槛；生产集成 job；本机 week 12 两个模块的整仓树哈希超时（环境差异，见第十轮 §4）。
+
+## 2026-11-16 第十二轮：用户实测反馈四连修（机群开关移除 / 表单重排 / 每算法预算 / 结果行合并）
+
+用户在「算法平台 → 自动建模 → 新建 无监督异常检测」实测提出的 4 个问题，逐项根修。
+
+### 1. 移除「机群共享模式」开关（用户决定，产品面收缩）
+
+新建表单的机群共享模式勾选框、`fleetShared` 状态、「共享模式需先选工况列」提交拦截、payload `fleet_mode` 下发全部移除——新建表单唯一入口语义 = 选工况列 → 按工况值分片训练 N 个**独立**模型（A 形态）。**后端 `fleet_mode` 合同与联合段（B 形态）引擎能力保留**（闭环/编排链路不受影响，`AutoMLRunPayload` 类型字段保留）。产品面若需 B 形态入口，待后续决策——已在《技术方案-机群混合模式产品化》§3.1/§4/G1 表三处登记注记（含「现场需要全局兜底时的替代路径」说明）。
+
+### 2. 新建无监督表单布局重排（用户反馈：拥挤混乱）
+
+原布局把「污染率 + 工况列 + 机群共享开关」三个控件挤在一个 1/6 宽列里垂直堆叠。重排为：①「数据与特征」「② 算法与搜索」两个分区标题（Divider）；污染率/目标列（sm=4）、输入列（sm=8）、工况列（sm=8 独立列，含高基数护栏告警，文案去掉已失效的「机群共享模式退化」表述）各自独立列宽。
+
+### 3. 搜索强度改为「每算法 N 次」口径 + AE 全强度出场（用户反馈：3 算法×轻度 10 次应搜 30 次，实际 20 次）
+
+两个根因：①引擎在 light/medium 强度**静默剔除 AE 族**（M5-0 出场策略）→ 3 算法变 2 族；②optuna 分支把强度预算按 `divmod(requested, 族数)` **总量分摊**（10 次被 2 族摊成 5+5）。
+
+**修（引擎，仅无监督分支）**：①删除 AE 强度出场过滤——用户显式选择的算法必须在所选强度下全部执行（成本由 `time_budget` 截止线兜底）；②每算法预算：每个出场族各自跑满 `requested_trials`，段内总 trial = 强度次数 × 出场族数（strength/grid 分支的 `_build_trial_specs` 预算同步 ×族数；strength 方法每族 1 组强度预设、实际仍 1 trial/族）；③`search.max_trials` 展示口径 = 每算法次数 × 出场族数，新增 `per_family_trials` 字段；④`progress.total` 估算同步（`_anomaly_planned_trials`）。**监督分支保持总量分摊口径不变**；界面强度文案按范式区分（无监督=「每算法 10 次」，监督=「共 10 次·各算法分摊」）。
+
+**回归**：`test_automl_anomaly.py` 新增 `test_execution_per_family_budget_ae_enters_light_and_rows_merged_by_family`——3 算法×light(2 次/算法)=6 trial、AE 轻度出场（族行存在）、预算展示 `max_trials=6/per_family_trials=2`、无 `#trial-` 拆行。
+
+### 4. 模型结果表按算法族合并 + 详情弹窗搜索记录修复（用户反馈：同算法不合并、超参数搜索记录全空）
+
+两个根因：①无监督分支 `candidate_result_rows` 把每个 trial 拆成 `族#trial-N` 独立行（监督分支本就按族合并，仅无监督漏了）；②行数据不带 `trials` 字段，详情弹窗读 `selectedModel.trials` 恒空（全量 trials 在 `metrics.search.trials`，前端无回退）。
+
+**修**：①引擎：`candidate_result_rows` 对齐监督 `_family_summary` 口径——每族一行（族最佳 trial 的指标/参数 + `synthetic_auc/normal_fpr/stability/gates_passed` 顶层字段 + `completed/pruned/failed_trials` 计数），行内 `trials[]` 保留该族全量 trial 留痕（含 failed/pruned，统一视图字段 `state/synthetic_auc/perturbation_recall/normal_fpr/duration_seconds`）；②任务页：`selectedTrials` 回退链 = 行内 trials → `search.trials` 按族过滤（兼容**存量任务**，旧行无 trials）；详情弹窗统计卡与 trial 表列按 `isAnomalyTask` 适配无监督口径（合成基准 AUC/误报率/稳定性/扰动召回，替代监督的 AUC/F1/Accuracy），状态徽标兼容 `completed/complete/failed/fail` 两套词表，字段读取兼容新行内视图与旧 `search.trials`（`status/metrics 嵌套/training_time_seconds`）。
+
+### 5. 本轮验证
+
+- **后端**：`test_automl_anomaly.py` + `test_automl_anomaly_ae.py` + `test_condition_shard_routing.py` + `test_anomaly_threshold_recalibration.py` + `test_fleet_device_calibration.py` = **112 passed**；`test_automl_anomaly_fleet_shared.py` **7 passed**；`test_agent_loop_retrain.py` + `test_demo_loop.py` **79 passed**（闭环/重训链路不受预算口径影响）。
+- **前端**：`AutoMLPage.test.tsx` + `AutoMLTaskPage.test.tsx` **34 passed**（机群开关断言改为「控件不存在 + payload 无 fleet_mode」；新增无监督强度文案用例）；**全量 94 文件 / 568 passed / 19 skipped**（既有 skip，与第十一轮基线一致）；`npx tsc --noEmit` 零错误。
+- **文档同步**：《技术方案-无监督弱监督异常检测》§6.6D 增 2026-11-16 决策注记（AE 全强度出场 + 每算法预算 + 按族合并）；《技术方案-机群混合模式产品化》§3.1/§4/G1 表三处登记开关移除注记。
+- **未验证**：浏览器 E2E（本地构建后浏览器验收待做）；`recalibrate-labels`/fleet 链路不受本轮影响（未改动）。
+
+### 6. 本轮之后仍开放
+
+- A 组 5 项不变（判据④/§6.2 门槛/§2.3.2 编排/§7.1 措辞/判据①口径——需现场数据或产品决策）。
+- **新增待决策**：机群共享模式（B 形态联合段）的产品面入口——表单开关已移除，现场需要全局兜底基线时走闭环配方或恢复入口。
+- 重建部署提示：本轮改引擎+前端，按 compose 每服务独立镜像标签惯例，backend/worker/scheduler/frontend 四标签需重建（下次栈验证时执行）。

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { App as AntApp, Alert, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch } from "antd";
+import { App as AntApp, Alert, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch, Divider } from "antd";
 import { AimOutlined, AlertOutlined, CheckCircleFilled, ThunderboltOutlined, TrophyOutlined, BarChartOutlined, DownloadOutlined, EyeOutlined, PlusOutlined, ReloadOutlined, StopOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient, { formatApiError } from "../api/client";
@@ -73,8 +73,16 @@ const AUTOML_TASK_OPTIONS = [
   { value: "anomaly_detection", label: "异常检测（无监督）" },
 ];
 
+// 搜索强度文案按任务范式区分计费口径（2026-11-16 用户反馈：选 3 个算法 +
+// 轻度应搜 30 次——无监督引擎按「每算法 N 次」执行；监督保持总量分摊口径）
+const AUTOML_STRENGTH_OPTIONS_ANOMALY: Array<{ value: AutoMLSearchStrength; label: string }> = [
+  { value: "light", label: "轻度（每算法 10 次）" },
+  { value: "medium", label: "中（每算法 30 次）" },
+  { value: "high", label: "高（每算法 80 次）" },
+  { value: "ultra", label: "Ultra（每算法 200 次）" },
+];
 const AUTOML_STRENGTH_OPTIONS: Array<{ value: AutoMLSearchStrength; label: string }> = [
-  { value: "light", label: "轻度（10 次）" },
+  { value: "light", label: "轻度（共 10 次·各算法分摊）" },
   { value: "medium", label: "中（30 次）" },
   { value: "high", label: "高（80 次）" },
   { value: "ultra", label: "Ultra（200 次）" },
@@ -191,10 +199,10 @@ export default function AutoMLPage() {
   const [taskType, setTaskType] = useState<AutoMLTaskType>("classification");
   // 无监督（异常检测）：预期异常比例先验，宁低勿高（缺省 1%，合法域 (0, 0.5]）
   const [contamination, setContamination] = useState<number>(0.01);
-  // 工况分片列（技术方案 §6.3/§7.1，M7/M8）：选指定后引擎按工况值分片训练
-  // N 个模型；机群共享模式追加联合段（全局模型通配兜底+unfit 工位不挂载）
+  // 工况分片列（技术方案 §6.3，M7/M8）：选指定后引擎按工况值分片训练 N 个
+  // 独立模型；机群共享模式（联合段）已按 2026-11-16 用户决定从新建表单移除
+  // （后端 fleet_mode 合同保留，闭环/编排链路不受影响）
   const [conditionColumn, setConditionColumn] = useState<string | null>(null);
-  const [fleetShared, setFleetShared] = useState(false);
   const isAnomaly = taskType === "anomaly_detection";
   const [algorithmIds, setAlgorithmIds] = useState<string[]>(() => [...AUTOML_ALGORITHM_IDS]);
   const [mlpParams, setMlpParams] = useState<{ solver: "adam" | "lbfgs" | "sgd"; learning_rate_init: number; alpha: number; hidden_layers: string }>({ ...MLP_DEFAULT_PARAMS });
@@ -399,12 +407,11 @@ export default function AutoMLPage() {
     return cardinality <= CONDITION_COLUMN_MAX_CARDINALITY;
   }), [datasetColumns, numericInputColumns, datasetColumnCardinality]);
 
-  // 工况列被过滤掉（切换数据集/基数超限）时清空选择并关闭机群共享模式，
-  // 避免提交引擎无法分片的工况列。
+  // 工况列被过滤掉（切换数据集/基数超限）时清空选择，避免提交引擎无法
+  // 分片的工况列。
   useEffect(() => {
     if (conditionColumn && !conditionColumnOptions.includes(conditionColumn)) {
       setConditionColumn(null);
-      setFleetShared(false);
     }
   }, [conditionColumn, conditionColumnOptions]);
 
@@ -519,10 +526,6 @@ export default function AutoMLPage() {
       message.warning("污染率（预期异常比例）必须在 (0, 0.5] 区间内，建议宁低勿高");
       return;
     }
-    if (isAnomaly && fleetShared && !conditionColumn) {
-      message.warning("机群共享模式需要先选择工况列（按工况值分片训练/路由）");
-      return;
-    }
     setRunning(true);
     setResults(null);
     setAnalysisReport(null);
@@ -567,9 +570,9 @@ export default function AutoMLPage() {
             cross_validation_enabled: false,
             cross_validation_folds: null,
             ...(contamination > 0 && contamination <= 0.5 ? { contamination } : {}),
-            // 工况分片列（§6.3/§7.1）与机群共享模式（§7.1 混合架构）
+            // 工况分片列（§6.3）：按工况值分片训练 N 个独立模型。fleet_mode
+            // 不再由新建表单下发（2026-11-16 用户决定移除「机群共享模式」开关）
             ...(conditionColumn ? { condition_column: conditionColumn } : {}),
-            ...(conditionColumn && fleetShared ? { fleet_mode: "shared" as const } : {}),
           }
         : isMultiOutput
         ? {
@@ -888,6 +891,10 @@ export default function AutoMLPage() {
       </div>
       {paradigmChosen && <>
         <Row gutter={[16, 16]} align="middle" style={{ marginBottom: 4 }}>
+          {/* 布局分区（2026-11-16 用户反馈：新建无监督页面拥挤混乱）——
+              ① 数据与特征 / ② 算法与搜索 两个分区，污染率/工况列各自独立
+              列宽（此前三个控件挤在一个 1/6 宽列里垂直堆叠） */}
+          <Col span={24}><Divider style={{ margin: "4px 0 14px" }} orientation="left" plain>① 数据与特征</Divider></Col>
           <Col xs={24} sm={6}><Text strong>{t.automl?.select_project || "Project"}</Text>
             <Select style={{ width: "100%", marginTop: 4 }} placeholder={t.automl?.select_project} value={selectedProject} onChange={setSelectedProject}
               options={projects.map((p: any) => ({ value: p.id, label: p.name }))} /></Col>
@@ -902,8 +909,38 @@ export default function AutoMLPage() {
               min={0.001} max={0.5} step={0.005} value={contamination}
               onChange={(value) => setContamination(Number(value) || 0.01)} />
             <small style={{ display: "block", color: "rgba(0,0,0,0.45)" }}>宁低勿高，缺省 1%</small>
-            {/* 工况分片列+机群共享模式（技术方案 §6.3/§7.1，按族混合架构） */}
-            <Text strong style={{ display: "block", marginTop: 10 }}>工况列（可选）</Text>
+          </>) : (<>
+            <Text strong>{t.automl?.target || "Target"}</Text>
+            <Select
+              aria-label="目标列"
+              mode={taskType.startsWith("multioutput") ? "multiple" : undefined}
+              maxTagCount="responsive"
+              style={{ width: "100%", marginTop: 4 }}
+              placeholder={t.automl?.target}
+              value={taskType.startsWith("multioutput") ? targetColumns : targetColumns[0] || undefined}
+              onChange={(columns: string[] | string) => setTargetColumns(Array.isArray(columns) ? columns : columns ? [columns] : [])}
+              disabled={!selectedDataset}
+              options={datasetColumns.map((column) => ({ value: column, label: column }))}
+            /></>)}</Col>
+          <Col xs={24} sm={8}><Text strong>输入列</Text>
+            <Select
+              aria-label="输入列"
+              mode="multiple"
+              allowClear
+              maxTagCount="responsive"
+              style={{ width: "100%", marginTop: 4 }}
+              placeholder="选择数值输入列"
+              value={inputColumns}
+              onChange={(columns: string[]) => setInputColumns(columns.filter((column) => !targetColumns.includes(column)))}
+              disabled={!selectedDataset}
+              options={numericInputColumns.filter((column) => !targetColumns.includes(column)).map((column) => ({ value: column, label: column }))}
+            /></Col>
+          {isAnomaly ? (
+          <Col xs={24} sm={8}>
+            {/* 工况分片列（技术方案 §6.3，M7/M8）：独立列宽+高基数护栏提示。
+                机群共享模式开关已移除（2026-11-16 用户决定）——按工况值分片
+                训练 N 个独立模型是新建表单唯一入口语义。 */}
+            <Text strong>工况列（可选）</Text>
             <Select
               aria-label="工况列"
               showSearch
@@ -911,7 +948,7 @@ export default function AutoMLPage() {
               style={{ width: "100%", marginTop: 4 }}
               placeholder="按该列分片训练/路由"
               value={conditionColumn ?? undefined}
-              onChange={(value: string | undefined) => { setConditionColumn(value ?? null); if (!value) setFleetShared(false); }}
+              onChange={(value: string | undefined) => setConditionColumn(value ?? null)}
               disabled={!selectedDataset}
               options={conditionColumnOptions.map((column) => ({ value: column, label: column }))}
             />
@@ -934,56 +971,17 @@ export default function AutoMLPage() {
                   showIcon
                   style={{ marginTop: 6 }}
                   message={`工况列「${conditionColumn}」采样内有 ${cardinality} 个不同取值（>${CONDITION_COLUMN_MAX_CARDINALITY}）`}
-                  description="取值过多时，多数分段会低于 200 行护栏而被并入默认段 → 机群共享模式退化为单一全局模型（非数值列不受数值列的 ≤200 候选过滤保护）。建议改选设备号/工位号等低基数列。"
+                  description="取值过多时，多数分段会低于 200 行护栏而被并入默认段、不再单独建模（非数值列不受数值列的 ≤200 候选过滤保护）。建议改选设备号/工位号等低基数列。"
                 />
               );
             })()}
-            <div style={{ marginTop: 8 }}>
-              <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6, cursor: conditionColumn ? "pointer" : "not-allowed", color: conditionColumn ? "inherit" : "rgba(0,0,0,0.35)" }}>
-                <input
-                  type="checkbox"
-                  aria-label="机群共享模式"
-                  checked={fleetShared}
-                  disabled={!conditionColumn}
-                  onChange={(event) => setFleetShared(event.target.checked)}
-                />
-                机群共享模式
-              </label>
-              <small style={{ display: "block", color: "rgba(0,0,0,0.45)" }}>
-                开启后全工位共享一个检测器模型，每工位独立标定阈值；新工位无需建模即可通过标定接入（推荐同型设备群）
-              </small>
-            </div>
-          </>) : (<>
-            <Text strong>{t.automl?.target || "Target"}</Text>
-            <Select
-              aria-label="目标列"
-              mode={taskType.startsWith("multioutput") ? "multiple" : undefined}
-              maxTagCount="responsive"
-              style={{ width: "100%", marginTop: 4 }}
-              placeholder={t.automl?.target}
-              value={taskType.startsWith("multioutput") ? targetColumns : targetColumns[0] || undefined}
-              onChange={(columns: string[] | string) => setTargetColumns(Array.isArray(columns) ? columns : columns ? [columns] : [])}
-              disabled={!selectedDataset}
-              options={datasetColumns.map((column) => ({ value: column, label: column }))}
-            /></>)}</Col>
-          <Col xs={24} sm={6}><Text strong>输入列</Text>
-            <Select
-              aria-label="输入列"
-              mode="multiple"
-              allowClear
-              maxTagCount="responsive"
-              style={{ width: "100%", marginTop: 4 }}
-              placeholder="选择数值输入列"
-              value={inputColumns}
-              onChange={(columns: string[]) => setInputColumns(columns.filter((column) => !targetColumns.includes(column)))}
-              disabled={!selectedDataset}
-              options={numericInputColumns.filter((column) => !targetColumns.includes(column)).map((column) => ({ value: column, label: column }))}
-            /></Col>
-          {isAnomaly ? null : (
+          </Col>
+          ) : (
           <Col xs={24} sm={4}><Text strong>任务子类型</Text>
             <Select aria-label="任务子类型" style={{ width: "100%", marginTop: 4 }} value={taskType} onChange={handleTaskTypeChange}
               options={AUTOML_TASK_OPTIONS.filter((option) => option.value !== "anomaly_detection")} /></Col>
           )}
+          <Col span={24}><Divider style={{ margin: "4px 0 14px" }} orientation="left" plain>② 算法与搜索</Divider></Col>
           <Col xs={24} sm={6}><Text strong>算法家族</Text>
             <Select
               aria-label="算法家族"
@@ -1035,7 +1033,7 @@ export default function AutoMLPage() {
                 : option)} /></Col>
           <Col xs={12} sm={3}><Text strong>搜索强度</Text>
             <Select aria-label="搜索强度" style={{ width: "100%", marginTop: 4 }} value={searchStrength} onChange={handleSearchStrengthChange}
-              options={AUTOML_STRENGTH_OPTIONS} /></Col>
+              options={isAnomaly ? AUTOML_STRENGTH_OPTIONS_ANOMALY : AUTOML_STRENGTH_OPTIONS} /></Col>
           <Col xs={12} sm={3}><Text strong>总时间上限</Text>
             <Select aria-label="总时间上限" style={{ width: "100%", marginTop: 4 }} value={timeBudget} onChange={setTimeBudget}
               options={AUTOML_TIME_BUDGET_OPTIONS} /></Col>

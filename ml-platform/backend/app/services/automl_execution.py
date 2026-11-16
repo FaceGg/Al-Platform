@@ -1954,8 +1954,15 @@ def _execute_anomaly_segment_job(
     features = segment_frame.loc[:, feature_columns]
 
     strength_estimators = {"light": 40, "medium": 80, "high": 160, "ultra": 320}
+    # strength/grid 同样按「每算法」口径展开（2026-11-16 用户反馈）：grid 每
+    # 族最多 requested_trials 个组合；strength 方法每族只有 1 组强度默认参数，
+    # 展开后仍为每组 1 trial（强度档位本身即参数预设，无搜索空间可变）。
     trial_specs = (
-        _build_trial_specs(families, method=method, max_trials=requested_trials, search_strength=search_strength)
+        _build_trial_specs(
+            families, method=method,
+            max_trials=requested_trials * len(families),
+            search_strength=search_strength,
+        )
         if method in {"strength", "grid"}
         else []
     )
@@ -2010,7 +2017,9 @@ def _execute_anomaly_segment_job(
             "search": {
                 "method": method,
                 "strength": search_strength,
-                "max_trials": requested_trials,
+                # 展示口径 = 每算法预算 × 出场族数（每算法口径，2026-11-16）
+                "max_trials": requested_trials * len(families),
+                "per_family_trials": requested_trials,
                 "completed_trials": sum(item.get("status") == "completed" for item in trials),
                 "trials": trials,
                 "budget_exhausted": False,
@@ -2131,9 +2140,11 @@ def _execute_anomaly_segment_job(
     else:
         # random/bayesian/evolutionary：Optuna 按族搜索，trial 级不做稳定性校验，
         # 族冠军补测（与技术方案 §3.3 稳定性校验定位一致：冠军资格判定用）。
-        base_trials, extra_trials = divmod(requested_trials, len(families))
+        # 强度预算 = 每算法口径（2026-11-16 用户反馈：选 3 个算法 + 轻度
+        # 10 次应搜 30 次）：每个出场族各自跑满 requested_trials，段内总
+        # trial = 强度次数 × 出场族数（监督分支保持「总量分摊」口径不变）。
         for family_index, family in enumerate(families):
-            family_trial_count = base_trials + (1 if family_index < extra_trials else 0)
+            family_trial_count = requested_trials
             if family_trial_count < 1:
                 continue
             remaining_seconds = max(0.001, deadline - dependencies.monotonic())
@@ -2309,34 +2320,66 @@ def _execute_anomaly_segment_job(
         "feature_columns": feature_columns,
         "random_seed": contract.random_seed,
     }
-    candidate_result_rows = [
-        {
-            "algorithm_id": (
-                candidate["family"].id if candidate is best_candidate else f"{candidate['family'].id}#trial-{candidate['trial']['number']}"
-            ),
-            "name": candidate["family"].display_name,
-            "status": "completed",
-            "params": candidate["params"],
-            "score": candidate["trial"]["score"],
-            "metrics": candidate["trial"].get("metrics"),
-            "gates_passed": bool(candidate["metrics"].get("gates_passed")),
-            "training_time_seconds": candidate["trial"].get("training_time_seconds"),
-        }
-        for candidate in ranked_candidates
-    ]
+    # 结果行按算法族合并（2026-11-16 用户反馈：模型结果表同算法多 trial 拆成
+    # `族#trial-N` 独立行导致显示混乱、详情弹窗「超参数搜索记录」全空）——
+    # 对齐监督分支 _family_summary 口径：每族一行（族最佳 trial 的指标/参数，
+    # ranked_candidates 已按 anomaly_sort_key 优→劣排序），行内 trials 保留
+    # 该族全部 trial 留痕（含 failed/pruned），供详情弹窗渲染搜索记录。
+    candidates_by_family: dict[str, list[dict]] = {}
+    for candidate in ranked_candidates:
+        candidates_by_family.setdefault(str(candidate["family"].id), []).append(candidate)
+    trials_by_family: dict[str, list[dict]] = {}
     for trial in trials:
-        if trial.get("status") == "completed":
+        trials_by_family.setdefault(str(trial.get("algorithm_id") or ""), []).append(trial)
+
+    def anomaly_trial_view(trial_row: dict) -> dict:
+        trial_metrics = trial_row.get("metrics") if isinstance(trial_row.get("metrics"), dict) else {}
+        return {
+            "number": trial_row.get("number"),
+            "state": trial_row.get("status"),
+            "score": trial_row.get("score"),
+            "synthetic_auc": trial_metrics.get("synthetic_auc"),
+            "perturbation_recall": trial_metrics.get("perturbation_recall"),
+            "normal_fpr": trial_metrics.get("normal_fpr"),
+            "stability": trial_metrics.get("stability"),
+            "gates_passed": trial_metrics.get("gates_passed"),
+            "params": trial_row.get("params"),
+            "duration_seconds": trial_row.get("training_time_seconds"),
+            "error_code": trial_row.get("error_code"),
+        }
+
+    candidate_result_rows = []
+    for family in families:
+        family_candidates = candidates_by_family.get(family.id) or []
+        family_trials = trials_by_family.get(family.id) or []
+        if not family_candidates and not family_trials:
+            # 族不可用（AlgorithmUnavailable）或无 trial 记录：不出行
             continue
+        best = family_candidates[0] if family_candidates else None
+        best_trial_metrics = (best["trial"].get("metrics") or {}) if best else {}
         candidate_result_rows.append({
-            "algorithm_id": str(trial.get("algorithm_id") or f"trial-{trial.get('number')}"),
-            "name": str(trial.get("algorithm_id") or f"trial-{trial.get('number')}"),
-            "status": trial.get("status", "failed"),
-            "params": trial.get("params", {}),
-            "score": trial.get("score"),
-            "training_time_seconds": trial.get("training_time_seconds", 0.0),
-            "error_code": trial.get("error_code"),
-            "error_type": trial.get("error_type"),
-            "error_message": trial.get("error_message"),
+            "algorithm_id": family.id,
+            "name": family.display_name,
+            "status": "completed" if best else "failed",
+            "params": dict(best["params"]) if best else dict(family_trials[0].get("params") or {}),
+            "best_params": dict(best["params"]) if best else None,
+            "score": best["trial"].get("score") if best else None,
+            "best_score": best["trial"].get("score") if best else None,
+            "metrics": dict(best_trial_metrics) if best else None,
+            "synthetic_auc": best_trial_metrics.get("synthetic_auc"),
+            "perturbation_recall": best_trial_metrics.get("perturbation_recall"),
+            "normal_fpr": best_trial_metrics.get("normal_fpr"),
+            "stability": best_trial_metrics.get("stability"),
+            "gates_passed": bool(best_trial_metrics.get("gates_passed")) if best else None,
+            "completed_trials": sum(_trial_produced_result(item.get("status")) for item in family_trials),
+            "pruned_trials": sum(item.get("status") == "pruned" for item in family_trials),
+            "failed_trials": sum(item.get("status") == "failed" for item in family_trials),
+            "training_time_seconds": round(
+                sum(float(item.get("training_time_seconds") or 0.0) for item in family_trials), 6,
+            ),
+            "error_code": None if best else (family_trials[0].get("error_code") if family_trials else "AUTOML_CANDIDATE_FAILED"),
+            "error_message": None if best else (family_trials[0].get("error_message") if family_trials else None),
+            "trials": [anomaly_trial_view(item) for item in family_trials],
         })
 
     model_artifact = None
@@ -2421,7 +2464,8 @@ def _execute_anomaly_segment_job(
             "n_estimators": strength_estimators[search_strength],
             "selected_algorithm": best_family.id,
             "selected_params": best_params,
-            "max_trials": requested_trials,
+            "max_trials": requested_trials * len(families),
+            "per_family_trials": requested_trials,
             "completed_trials": sum(item.get("status") in {"complete", "completed"} for item in trials),
             "trials": trials,
             "budget_exhausted": budget_exhausted,
@@ -2541,11 +2585,11 @@ def _execute_anomaly_job(
     requested_trials = int(params.get("max_trials") or SEARCH_STRENGTH_TRIALS[search_strength])
     families = resolve_algorithm_families(list(params.get("algorithm_ids") or []), task=task)
 
-    # AE 出场策略（§6.6D，M5-0 实测）：单 trial 成本比 IF/OC-SVM 高一个量级
-    # （万行×20 特征 100 epochs ≈ 12s），只在 high/ultra 强度出场——light/
-    # medium 搜索预算留给快速双族。
-    if search_strength in {"light", "medium"}:
-        families = tuple(family for family in families if family.id != "autoencoder")
+    # AE 出场策略（2026-11-16 用户产品决策）：用户显式选择的算法必须在所选
+    # 强度下全部出场（界面「轻度（每算法 10 次）」按选择的算法数计费，选 3 个
+    # 算法就该搜 3×N 次）——不再按强度静默剔除 AE；AE 单 trial 成本高（万行
+    # ×20 特征 ≈ 12s）的风险由 time_budget 截止线兜底。
+    # 交互提示（同决策）：界面在轻度/中度强度下对 AE 给出耗时提示（AutoMLPage）。
 
     def check_control():
         if dependencies.cancellation_requested:
@@ -2605,15 +2649,17 @@ def _execute_anomaly_job(
     )
 
     def _anomaly_planned_trials(max_trials_value: int) -> int:
-        """段级 trial 总数估算（progress.total 口径）：strength/grid 按 spec
-        展开数（unavailable 族也会落 trial 行），optuna 系按合同预算。"""
+        """段级 trial 总数估算（progress.total 口径）：每算法预算口径——
+        strength/grid 按 spec 展开数（unavailable 族也会落 trial 行），
+        optuna 系 = 强度次数 × 出场族数。"""
         if method in {"strength", "grid"}:
             specs = _build_trial_specs(
-                families, method=method, max_trials=max_trials_value,
+                families, method=method,
+                max_trials=max_trials_value * len(families),
                 search_strength=search_strength,
             )
             return len(specs)
-        return max_trials_value
+        return max_trials_value * len(families)
 
     progress_total = _anomaly_planned_trials(requested_trials) * len(segments)
     if fleet_shared:
@@ -2655,7 +2701,9 @@ def _execute_anomaly_job(
             "search": {
                 "method": method,
                 "strength": search_strength,
-                "max_trials": requested_trials,
+                # 展示口径 = 每算法预算 × 出场族数（每算法口径，2026-11-16）
+                "max_trials": requested_trials * len(families),
+                "per_family_trials": requested_trials,
                 "completed_trials": 0,
                 "trials": [],
                 "budget_exhausted": False,
@@ -2889,7 +2937,8 @@ def _execute_anomaly_job(
             "n_estimators": strength_estimators[search_strength],
             "selected_algorithm": best["best_family"].id,
             "selected_params": best["best_params"],
-            "max_trials": requested_trials,
+            "max_trials": requested_trials * len(families),
+            "per_family_trials": requested_trials,
             "completed_trials": sum(_trial_produced_result(item.get("status")) for item in trials),
             "trials": trials,
             "budget_exhausted": budget_exhausted,
