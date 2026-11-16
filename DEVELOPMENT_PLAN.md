@@ -1653,3 +1653,36 @@ UnicodeEncodeError: 'charmap' codec can't encode characters in position 2-3
 - 行尾按各文件仓库既有风格归一：DEVELOPMENT_PLAN.md=LF、archive/USAGE 与 archive/user_guide=CRLF，并修复 PowerShell 重写引入的双 BOM（user_guide.md 恢复单 BOM）；LF 类文件（台账/指南/机群方案/E2E 手册/索引）`diff --check` 干净。
 - `git diff --check` 剩余标记均为 README.md、api_reference.md、平台说明文档.md、archive/USAGE.md、archive/user_guide.md 这五个 **CRLF 存储**文件的历史行尾约定（新增行以 CRLF 结尾被计为 CR 尾随，属仓库既有噪音，非本次引入的空格/制表符错误，已逐条目检确认行尾无多余空格）。
 - 纯文档变更，未触及服务代码与镜像。
+
+## 2026-11-16 第十四轮：工况列三问落地（`6e0e0408`，含端到端真实验证）
+
+用户基于任务 `bbf3effc`（点焊 2180 行，工况列误选 `fault` 结果列）追问三件事，逐项澄清并落地两处修复。
+
+### 1. 工况列语义澄清（回复性结论）
+
+- **单选**：工况列是一个 Select（非多选）——一个任务只按一列分片；跨列组合分片（如设备×班次）当前不支持，如需可在数据集预处理合成复合列。
+- **监督任务没有工况列**：工况列控件只存在于无监督（异常检测）新建表单（isAnomaly 分支），监督表单无此概念——用户看到的工况列是无监督表单的。
+- **`fault` 是结果列不是工况列**：该任务按 fault 分了 fault=0（1896 行）/fault=1（284 行）两段，fault=1 段学的是「缺陷样本内部的正常模式」，部署语义不成立——工况列应选设备号/工位号/程序号等标识列。
+
+### 2. 修复一：输入列排除工况列（用户问「输入列中并没有排除工况列，是否正常」）
+
+引擎侧自 §6.3 起就会把工况列从特征剔除（原因码 `condition_column`），但 UI 输入列候选没有排除——「选了却无效」造成困惑。修：无监督表单选中工况列后，输入列下拉候选排除该列，且已选中的工况列自动移出输入列（双保险提示语义对齐）。
+
+### 3. 修复二：多段任务结果按「算法 × 工况段」展开（用户问「应该显示 6 行而不是 3 行」——判断正确）
+
+原实现 `algorithm_results` 只取冠军段（synthetic_auc 最低段）的族对比（3 行），每工况每算法的独立模型只在 `condition_bundles`（挂载清单）里。修：
+
+- **后端**：`_execute_anomaly_job` 多段任务按段展开——每段每族一行（带 `segment`/`condition_value`/`fleet_global`/`segment_champion`），2 段×3 族=6 行；单段任务保持每族一行不带 segment（存量兼容）。冠军判定（最差段口径 §6.3）与注册挂载链路（condition_bundles）不变，纯展示层语义。
+- **前端任务页**：结果表新增「工况段」列（全局兜底段紫色「全局兜底（通配）」标注），展开任务按段分组排序、段内按合成基准 AUC；详情弹窗标题带段名。
+- **前端运行页**：算法结果表 rowKey 唯一化（`族|段`），图表与算法列显示名带段后缀去歧义。
+
+**验证**：后端 97 passed（新增断言：单算法×2 段→2 行、段集合正确、segment_champion 恰 1）；全量前端 94 文件 568 passed；tsc 零错误；backend/migrate/worker/scheduler/frontend 五镜像重建上线；**栈上端到端真实验证**（复用 bbf3effc 数据集，fault 工况列×3 算法×light）：结果恰 **6 行**（fault=0：ocsvm 0.9687/iforest 0.9374；fault=1：ocsvm 0.9965/iforest 0.9590；AE 两段如实 failed=AUTOML_ALGORITHM_UNAVAILABLE——torch 按既定决策不进部署镜像，本地上有 torch 的回归已证 AE 完整跑通），每行 trials=11、冠军标记正确；浏览器实测任务页 6 行+工况段 Tag 渲染正确。任务 `6975475d-7690-42ca-a516-d3fee953f0a3`。
+
+### 4. AE 上栈的决策项（登记）
+
+AE 在栈上不可用是既定决策（torch ~200MB 不进部署镜像，fail-safe 显式失败）。若现场需要 AE 参与栈上训练，需把 torch 放进 backend/worker 镜像——待用户决策。
+
+### 5. 流程指示登记
+
+- **推送不必等 CI**（2026-11-16 用户指示）：推送成功即完成批次并汇报，CI 后台监视、结论下批顺带登记。本批 `6e0e0408` 已推送，CI 结论下批登记。
+- 本轮完成后**关闭计算机**（用户指示）。
