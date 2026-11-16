@@ -803,7 +803,7 @@ M3 同日续作（方案 §3.6/§3.7）。迁移 20261112_98（demo_loop_configs
 用户要求结合方案一期工作重新审查平台复现情况，审计出 5 项差距后用户指示「都补上」。
 
 **审计确认的差距（5 项）与补齐**：
-1. **判据④代测未做** → 补 `tools/acceptance/run_anomaly_criteria_check.py`：阈值法（Tukey 1.5×IQR 围栏，任一特征出围栏即报警）vs 模型同数据对照。**真实拧紧数据实证：阈值法误报率 6.79% vs 模型 1.00%，下降 85.3%（≥30% 达标）**；报告落档 docs/验收-无监督异常检测-判据三四.{md,json}，可复现脚本参数化数据路径。
+1. **判据④代测未做** → 补 `tools/acceptance/run_anomaly_criteria_check.py`：阈值法（Tukey 1.5×IQR 围栏，任一特征出围栏即报警）vs 模型同数据对照。**真实拧紧数据实证：阈值法误报率 6.79% vs 模型 1.00%，下降 85.3%（≥30% 达标）**；报告落档 ml-platform/docs/验收-无监督异常检测-判据三四.{md,json}，可复现脚本参数化数据路径。
 2. **判据③案例化未做** → 同脚本：2,000 个分位错配组合异常中阈值法漏检 1,638、模型检出 1,307（79.8%），逐样本列举 5 个具体案例（特征值+模型分数+双方判定结论），≥3 达标。
 3. **判据⑤「误报率回落」未量化** → 补三阶段量化测试（test_anomaly_drift）：漂移→误报率飙升（>5×contamination）→仅正常重拟合→回落（≤3×contamination 且 <漂移时/3）。
 4. **§3.4 S4「上传已知异常样本弱监督验证」未实现（M2 范围遗漏）** → 补全功能：`GuidanceEvaluation.known_anomaly_rows`（≤50 行，合同校验）→ S4 门禁通过后冠军模型打分 → 检出率进 metrics（LLM 评审同源）与 s4 digest 证据（观察项不一票否决——样本少统计弱）；向导第四步 anomaly 显示 CSV 上传入口（≤50 行解析）。
@@ -858,7 +858,7 @@ M7 全块落地（技术方案 §6.3/§6.6E/F/G）。主块一（前批）：迁
    - 成本实测（§6.6D）：单 fit 11.2s（万行×20 特征@100 epochs）、stability 5×80% 重训 37.5s、单 trial ≈13.5s → **AE 只在 high/ultra 搜索强度出场**（引擎侧过滤，light/medium 留给快速双族）
    - 融合导出必须用 **pipeline 真前端参数**（Imputer.statistics_/Scaler.mean_/scale_）：pipeline 内 detector.fit 收到的是标准化后输入，detector 内部统计是 scaled 空间的，直接用会双重标准化
 2. **M5 落地**：`automl_anomaly_ae.py`（TorchAutoencoder：BaseEstimator clone 协议/只实现 decision_function+predict 不实现 score_samples（§6.6B）/去噪训练 σ=0.05/融合单图导出含 NaN→median→scale 前端）+ 目录注册第三族 `autoencoder`（supported_tasks=anomaly_detection、resource_parameter=epochs int Hyperband 兼容、torch 缺失时 builder 抛 AlgorithmUnavailable 族自动缺席——§6.5 降级预案结构化形态，IF/OCSVM ONNX 路径不受影响）+ onnx_worker `autoencoder` 分支（`_model_family` 分派 + `export_pipeline_autoencoder_onnx`，输出 label（全 1 占位，判定走 threshold_score）+ scores（−MSE），ORT 载入逐位一致 1.8e-7）+ 引擎出场过滤。
-3. **立项门槛判定（真实拧紧数据三族同台，`docs/验收-无监督异常检测-AE对照.json`）**：
+3. **立项门槛判定（真实拧紧数据三族同台，`ml-platform/docs/验收-无监督异常检测-AE对照.json`）**：
 
 | 指标 | iforest | ocsvm（一期冠军） | **autoencoder** |
 |---|---|---|---|
@@ -1601,3 +1601,42 @@ UnicodeEncodeError: 'charmap' codec can't encode characters in position 2-3
 
 **开关恢复（079e5fea 推送后用户二次决定）**：第十二轮 §1 的「移除」即日改定——「机群共享模式」开关**恢复**进新建表单，形态升级为 antd Switch（原为原生 checkbox），随新布局落在工况列控件下方（仅工况列已选时可用；清空工况列自动关闸）；`fleet_mode` payload 下发与「共享模式需先选工况列」提交拦截一并恢复，§7.5 B 主 A 兜底的产品面路径重新可用。**验证**：`AutoMLPage.test.tsx` 双态 payload 用例（关=带 condition_column 不带 fleet_mode / 开=追加 `fleet_mode:"shared"`）+ Switch 禁用态 + 数据集切换清空联动，34 passed；全量前端 **94 文件 / 568 passed / 19 skipped**（与基线一致）；tsc 零错误。《技术方案-机群混合模式产品化》§3.1 追加二次注记、§4 场景第 1 步注记改为「恢复」、G1 表状态改「已落地（开关恢复）」。
 - **CI 结论**：四连修提交 `079e5fea` 的 push CI（run 43809704661）被后续推送取消（concurrency 正常行为，其变更已包含在后续 run 覆盖范围）；**开关恢复提交 `86310f9f` 的 push CI run 43812773664 = success**（双 job 全绿）。
+
+## 2026-11-16 第十三轮：平台文档整理（用户要求重整 README、平台说明文档等现有文档）
+
+### 1. 归档过时文档（git mv，保留历史）
+
+新建 `ml-platform/docs/archive/`，移入 6 份：`user_guide.md`（v1 行业化用户手册）、`architecture.md`（2026-06 行业化架构稿）、`智能体任务一键部署操作指南.md`（被 11-10 全链实测版手册取代，且其「第 1 步勾选丢弃泄漏列」旧口径与现行做法矛盾——现行：第 1 步列清单默认全不勾、泄漏列在特征工程步设为「建议剔除」45 列）、`ml-platform/USAGE.md`（v0.2.0，引用失效的 docs/delivery/*）、`平台说明文档.docx`（9-23 旧 Word 副本）、`demo-showcase-original-layout-backup.html`（大屏改版前布局备份）；4 份 md 顶部加归档横幅 + 替代文档指引。
+
+### 2. 平台说明文档.md 对齐现状
+
+- 头部加更新日期；「五模块 + 推理部署为二阶段未实现」声明改为已上线（推理部署/应用编排/API 市场/知识中心/知识图谱/AI 对话 10-11 月均已落地）。
+- 2.3 模型库、2.14 节重写为「服务与知识能力（已上线）」能力清单——推理部署能力面与前端实现核实一致（rollout 立即/灰度/滚动 + 暂停/恢复/回滚 + API 密钥 + 吞吐/延迟/错误率遥测 + 模型卡）。
+- 2.6.2 新建弹窗对齐范式卡片 UI（有监督/无监督入口级互斥、实验自动创建）。
+- 2.15 更新为闭环自动化现状：智能体重训模式（配方重放 → S4 验收 → 引擎铸造 → 换模）、护栏（部署级单飞 / 冷却 30 分钟 / 24h 熔断 3 次）、分数 PSI 漂移治理与报警确认反馈、监控大屏双数据源、换模跟随零重发布。
+- 新增 2.16 无监督/弱监督异常检测（范式卡片入口、合成基准评估门禁、智能体向导无监督分支、anomaly_score + top_contributors 推理合同、闭环仅正常数据重拟合）。
+
+### 3. 指针与导航修正
+
+- README：文档导航表补 平台说明文档 / 无监督异常检测技术方案 / 机群混合模式技术方案 / 遗留问题清单 / ml-platform 文档索引 5 条；一键部署《操作指南》条目换为《操作手册》；architecture/USAGE 改指 archive/；发布状态行更新为 r18（`20261111-r18`，2026-11-11 重新打包，纳入 r17 后智能体全链与治理安全批次）；目录说明补 archive/。
+- `智能体任务全链E2E操作手册.md` 开头：《操作指南》引用改《操作手册》并注明归档。
+- `技术方案-机群混合模式产品化.md`：A/B 对比证据引用改为同目录相对链接（验收-机群架构AB对比.json）。
+- 本台账 806/861 行：证据路径 `docs/…` 修正为 `ml-platform/docs/…`（仅指针修正，不改历史叙述内容）。
+
+### 4. 新增导航件
+
+- 新建 `ml-platform/docs/README.md` 文档索引（现行操作手册 / 技术方案 / 验收证据 / 接口与历史规划参考 / 历史归档分类地图）。
+- `api_reference.md` 头部加注「人工维护的核心路由参考，权威以运行中 OpenAPI（/docs）为准」。
+
+### 5. 不动项与遗留提醒
+
+- 根 `docs/`（gitignore）内 5 个验收 JSON 为已迁移后的本地残留副本（未跟踪），按「不删用户数据」原则保留。
+- 代码侧遗留（2026-11-13 批次登记）：`run_anomaly_real_data.py` / `run_spot_weld_real_experiment.py` 用法示例仍指向根 `docs/`，属代码改动，待下一批统一。
+
+### 6. 本轮验证
+
+- `git status --short` 确认改动仅限预期文档文件（含 git mv 六处 rename；会话期间用户新增的未跟踪文件不动）。
+- 修改文档内 53 个相对链接逐一存在性核对通过（0 缺失）。
+- 行尾按各文件仓库既有风格归一：DEVELOPMENT_PLAN.md=LF、archive/USAGE 与 archive/user_guide=CRLF，并修复 PowerShell 重写引入的双 BOM（user_guide.md 恢复单 BOM）；LF 类文件（台账/指南/机群方案/E2E 手册/索引）`diff --check` 干净。
+- `git diff --check` 剩余标记均为 README.md、api_reference.md、平台说明文档.md、archive/USAGE.md、archive/user_guide.md 这五个 **CRLF 存储**文件的历史行尾约定（新增行以 CRLF 结尾被计为 CR 尾随，属仓库既有噪音，非本次引入的空格/制表符错误，已逐条目检确认行尾无多余空格）。
+- 纯文档变更，未触及服务代码与镜像。

@@ -1,5 +1,6 @@
 ﻿# API 接口文档 — ML算法平台
 
+> 本文件为人工维护的**核心路由参考**（覆盖常用主干接口），非完整接口清单；权威接口定义以运行中的 OpenAPI 为准：`http://localhost:8000/docs`。
 > Base URL: `http://localhost:8000`
 > Swagger UI: `http://localhost:8000/docs`
 
