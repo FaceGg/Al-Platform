@@ -1590,5 +1590,13 @@ UnicodeEncodeError: 'charmap' codec can't encode characters in position 2-3
 ### 6. 本轮之后仍开放
 
 - A 组 5 项不变（判据④/§6.2 门槛/§2.3.2 编排/§7.1 措辞/判据①口径——需现场数据或产品决策）。
-- **新增待决策**：机群共享模式（B 形态联合段）的产品面入口——表单开关已移除，现场需要全局兜底基线时走闭环配方或恢复入口。
-- 重建部署提示：本轮改引擎+前端，按 compose 每服务独立镜像标签惯例，backend/worker/scheduler/frontend 四标签需重建（下次栈验证时执行）。
+- ~~**新增待决策**：机群共享模式（B 形态联合段）的产品面入口~~ → **已关闭（同日 §7）**：开关经用户二次决定恢复，B 形态产品面入口回归。
+- 重建部署提示：本轮改引擎+前端，按 compose 每服务独立镜像标签惯例，backend/worker/scheduler/frontend 四标签需重建（**已于当日执行**：五标签 Built + migrate `Running upgrade …101` + force-recreate，端到端真实验证通过，详见 §7）。
+
+### 7. 同日回改：镜像重建 + 端到端真实验证 + 机群共享开关恢复（用户二次决定）
+
+**镜像与栈**：backend/migrate/worker/scheduler/frontend 五标签重建；migrate 顺带补 apply 了并行会话的 `_101` 权重归一化迁移（Running upgrade 正常）；force-recreate 后全 healthy。前端 bundle 双向验证：「机群共享模式」文案消失、「每算法」文案进 chunk；worker 镜像内引擎新代码确认（「每算法口径」×3、旧 AE 过滤行 0）。
+
+**端到端真实验证**（栈上真实任务，点焊项目 + 625 行合成 CSV × 3 算法 × light）：`max_trials=30 / per_family_trials=10`、`algorithm_results` 恰 3 族行且无 `#trial-` 拆行、行内 trials 齐全（iforest/ocsvm 各 11 条=10 搜索+冠军补测）；浏览器实测（token 注入）：新建表单两分区布局/强度四选项「每算法 N 次」/任务页结果表 3 行合并/「详细」弹窗统计卡=合成基准 AUC·误报率·稳定性·试验次数 + **搜索记录 11 条**（不再为空）。AE 族行如实 `failed`（`AUTOML_ALGORITHM_UNAVAILABLE`——torch 按既定决策不进部署镜像，fail-safe 路径，本地 venv 回归已证 AE 完整跑通）。任务进度展示 22/30。证据：任务 `94ad5422-65bc-4dd2-84ce-07d384173252`。
+
+**开关恢复（079e5fea 推送后用户二次决定）**：第十二轮 §1 的「移除」即日改定——「机群共享模式」开关**恢复**进新建表单，形态升级为 antd Switch（原为原生 checkbox），随新布局落在工况列控件下方（仅工况列已选时可用；清空工况列自动关闸）；`fleet_mode` payload 下发与「共享模式需先选工况列」提交拦截一并恢复，§7.5 B 主 A 兜底的产品面路径重新可用。**验证**：`AutoMLPage.test.tsx` 双态 payload 用例（关=带 condition_column 不带 fleet_mode / 开=追加 `fleet_mode:"shared"`）+ Switch 禁用态 + 数据集切换清空联动，34 passed；全量前端 **94 文件 / 568 passed / 19 skipped**（与基线一致）；tsc 零错误。《技术方案-机群混合模式产品化》§3.1 追加二次注记、§4 场景第 1 步注记改为「恢复」、G1 表状态改「已落地（开关恢复）」。

@@ -200,9 +200,11 @@ export default function AutoMLPage() {
   // 无监督（异常检测）：预期异常比例先验，宁低勿高（缺省 1%，合法域 (0, 0.5]）
   const [contamination, setContamination] = useState<number>(0.01);
   // 工况分片列（技术方案 §6.3，M7/M8）：选指定后引擎按工况值分片训练 N 个
-  // 独立模型；机群共享模式（联合段）已按 2026-11-16 用户决定从新建表单移除
-  // （后端 fleet_mode 合同保留，闭环/编排链路不受影响）
+  // 独立模型；机群共享模式（§7.5 B 主 A 兜底）：追加联合段全局模型通配兜底
+  // +unfit 工位不挂载。2026-11-16 曾移除、同日经用户决定恢复（Switch 形态，
+  // 随分区布局落在工况列下方；仅工况列已选时可用）。
   const [conditionColumn, setConditionColumn] = useState<string | null>(null);
+  const [fleetShared, setFleetShared] = useState(false);
   const isAnomaly = taskType === "anomaly_detection";
   const [algorithmIds, setAlgorithmIds] = useState<string[]>(() => [...AUTOML_ALGORITHM_IDS]);
   const [mlpParams, setMlpParams] = useState<{ solver: "adam" | "lbfgs" | "sgd"; learning_rate_init: number; alpha: number; hidden_layers: string }>({ ...MLP_DEFAULT_PARAMS });
@@ -407,11 +409,12 @@ export default function AutoMLPage() {
     return cardinality <= CONDITION_COLUMN_MAX_CARDINALITY;
   }), [datasetColumns, numericInputColumns, datasetColumnCardinality]);
 
-  // 工况列被过滤掉（切换数据集/基数超限）时清空选择，避免提交引擎无法
-  // 分片的工况列。
+  // 工况列被过滤掉（切换数据集/基数超限）时清空选择并关闭机群共享模式，
+  // 避免提交引擎无法分片的工况列。
   useEffect(() => {
     if (conditionColumn && !conditionColumnOptions.includes(conditionColumn)) {
       setConditionColumn(null);
+      setFleetShared(false);
     }
   }, [conditionColumn, conditionColumnOptions]);
 
@@ -526,6 +529,10 @@ export default function AutoMLPage() {
       message.warning("污染率（预期异常比例）必须在 (0, 0.5] 区间内，建议宁低勿高");
       return;
     }
+    if (isAnomaly && fleetShared && !conditionColumn) {
+      message.warning("机群共享模式需要先选择工况列（按工况值分片训练/路由）");
+      return;
+    }
     setRunning(true);
     setResults(null);
     setAnalysisReport(null);
@@ -570,9 +577,10 @@ export default function AutoMLPage() {
             cross_validation_enabled: false,
             cross_validation_folds: null,
             ...(contamination > 0 && contamination <= 0.5 ? { contamination } : {}),
-            // 工况分片列（§6.3）：按工况值分片训练 N 个独立模型。fleet_mode
-            // 不再由新建表单下发（2026-11-16 用户决定移除「机群共享模式」开关）
+            // 工况分片列（§6.3）+ 机群共享模式（§7.1/§7.5 联合段，2026-11-16
+            // 当日恢复）：开关开启且已选工况列才下发 fleet_mode
             ...(conditionColumn ? { condition_column: conditionColumn } : {}),
+            ...(conditionColumn && fleetShared ? { fleet_mode: "shared" as const } : {}),
           }
         : isMultiOutput
         ? {
@@ -937,9 +945,9 @@ export default function AutoMLPage() {
             /></Col>
           {isAnomaly ? (
           <Col xs={24} sm={8}>
-            {/* 工况分片列（技术方案 §6.3，M7/M8）：独立列宽+高基数护栏提示。
-                机群共享模式开关已移除（2026-11-16 用户决定）——按工况值分片
-                训练 N 个独立模型是新建表单唯一入口语义。 */}
+            {/* 工况分片列（技术方案 §6.3，M7/M8）+ 机群共享模式（§7.1/§7.5）：
+                独立列宽+高基数护栏提示；共享开关为 Switch 形态（2026-11-16
+                移除后同日恢复），仅工况列已选时可用。 */}
             <Text strong>工况列（可选）</Text>
             <Select
               aria-label="工况列"
@@ -948,7 +956,7 @@ export default function AutoMLPage() {
               style={{ width: "100%", marginTop: 4 }}
               placeholder="按该列分片训练/路由"
               value={conditionColumn ?? undefined}
-              onChange={(value: string | undefined) => setConditionColumn(value ?? null)}
+              onChange={(value: string | undefined) => { setConditionColumn(value ?? null); if (!value) setFleetShared(false); }}
               disabled={!selectedDataset}
               options={conditionColumnOptions.map((column) => ({ value: column, label: column }))}
             />
@@ -956,6 +964,20 @@ export default function AutoMLPage() {
             <small style={{ display: "block", color: "rgba(0,0,0,0.45)" }}>
               建议选择设备号/工位号/程序号等低基数列；高基数列会导致分片退化（仅列出非数值列与基数 ≤200 的数值列）
             </small>
+            <div style={{ marginTop: 8 }}>
+              <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 8, cursor: conditionColumn ? "pointer" : "not-allowed", color: conditionColumn ? "inherit" : "rgba(0,0,0,0.35)", width: "fit-content" }}>
+                <Switch
+                  aria-label="机群共享模式"
+                  checked={fleetShared}
+                  disabled={!conditionColumn}
+                  onChange={setFleetShared}
+                />
+                机群共享模式
+              </label>
+              <small style={{ display: "block", color: "rgba(0,0,0,0.45)" }}>
+                开启后全工位额外共享一个检测器模型（联合段通配兜底，时间约 ×2），每工位独立标定阈值；unfit 工位不挂载、由全局模型接管（推荐同型设备群）
+              </small>
+            </div>
             {/* C2 残留（2026-11-15 第十一轮）：非数值列不受「基数 ≤200」候选过滤保护，
                 选中高基数非数值列时必须把后果说具体——否则 UI 承诺「按该列分片训练 N 个
                 模型」与实际「多数分段低于 200 行护栏被并入默认段」不符，且用户看不到
