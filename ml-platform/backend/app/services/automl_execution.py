@@ -2872,6 +2872,28 @@ def _execute_anomaly_job(
         for item in segment_payloads
     ]
 
+    # 算法结果按「算法 × 工况段」展开（2026-11-16 用户反馈：分片任务里每个
+    # 算法在每个工况各有一个最优模型，应逐段呈现——如 2 段 × 3 族 = 6 行，
+    # 而不是只显示冠军段的 3 行族对比）。单段任务（无工况列）保持每族一行、
+    # 不带 segment 字段，与既有展示/测试兼容。注册挂载链路不变：段级冠军
+    # 仍走 condition_bundles（每工况一条），本展开只是展示层语义。
+    if len(segment_payloads) > 1:
+        expanded_result_rows: list[dict] = []
+        for item in segment_payloads:
+            for row in item["candidate_result_rows"]:
+                expanded_result_rows.append({
+                    **row,
+                    "segment": item["segment"],
+                    "condition_value": (
+                        None if item["segment"].endswith("__FLEET_GLOBAL__")
+                        else item["segment"].split("=", 1)[1]
+                    ),
+                    "fleet_global": bool(item.get("fleet_global")),
+                    "segment_champion": item is champion_payload,
+                })
+    else:
+        expanded_result_rows = candidate_result_rows
+
     job.metrics = {
         "task_type": task,
         "paradigm": "unsupervised",
@@ -2887,8 +2909,8 @@ def _execute_anomaly_job(
             },
         },
         "score_artifact_id": str(stats_artifact.id),
-        "algorithm_results": candidate_result_rows,
-        "all_results": candidate_result_rows,
+        "algorithm_results": expanded_result_rows,
+        "all_results": expanded_result_rows,
         "aggregate": {
             "synthetic_auc": evaluation["synthetic_auc"],
             "normal_fpr": evaluation["normal_fpr"],

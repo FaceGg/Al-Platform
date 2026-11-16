@@ -595,6 +595,14 @@ class TestAnomalyExecution(unittest.TestCase):
             assert progress["percent"] == 100.0
             assert progress["completed"] == metrics["search"]["completed_trials"]
             assert progress["current_segment"] in {"shift=A", "shift=B"}
+            # 算法结果按「算法 × 工况段」展开（2026-11-16 用户反馈）：单算法
+            # × 2 段 = 2 行，每行带 segment/condition_value，冠军段被标记。
+            rows = metrics["algorithm_results"]
+            assert len(rows) == 2
+            assert {row["segment"] for row in rows} == {"shift=A", "shift=B"}
+            assert all(row["condition_value"] in {"A", "B"} for row in rows)
+            assert sum(1 for row in rows if row["segment_champion"]) == 1
+            assert metrics["all_results"] == rows
 
     def _write_device_dataset(self, rows: int = 2400, devices: int = 4):
         """机群形态数据：s1/s2/s3 连续量 + device_id（0..devices-1 数值列）。"""

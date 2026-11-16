@@ -127,7 +127,19 @@ export default function AutoMLTaskPage() {
     const mapped: AutoMLResultRow[] = source.map((row, index) => {
       return { ...row, key: String(row.id || row.name || row.model || index), auc: metric(row, ["auc", "AUC", "roc_auc", "rocAuc", "roc_auc_score"]), f1: metric(row, ["f1", "F1", "f1_score", "f1_weighted"]), recall_minority: metric(row, ["recall_minority", "minority_recall", "recall"]) };
     });
+    // 分片任务（算法×工况展开）按段分组优先、段内按主指标排序；全局兜底段
+    // 排在最后。其余任务维持单一指标排序。
+    const segmentKey = (row: AutoMLResultRow) => {
+      if (row.fleet_global) return "\uFFFF全局兜底";
+      return String(row.segment || "");
+    };
+    const hasSegments = mapped.some((row) => row.segment);
     return mapped.sort((left, right) => {
+      if (hasSegments) {
+        return segmentKey(left).localeCompare(segmentKey(right))
+          || compareMetric(metric(left, ["synthetic_auc"]), metric(right, ["synthetic_auc"]), "desc")
+          || compareMetric(left.auc, right.auc, "desc");
+      }
       if (isRegression) {
         return compareMetric(metric(left, ["r2", "R2", "r2_score"]), metric(right, ["r2", "R2", "r2_score"]), "desc")
           || compareMetric(metric(left, ["rmse", "RMSE", "root_mean_squared_error"]), metric(right, ["rmse", "RMSE", "root_mean_squared_error"]), "asc")
@@ -201,6 +213,15 @@ export default function AutoMLTaskPage() {
       ? [
           { title: "排名", key: "rank", render: (_value: unknown, _row: AutoMLResultRow, index: number) => index + 1 },
           { title: "模型", key: "name", render: (row: AutoMLResultRow) => String(row.name || row.model || row.algorithm || "-") },
+          // 分片任务（算法×工况展开）：每算法每工况一行——全局兜底段单独标注
+          ...(rows.some((row) => row.segment) ? [{
+            title: "工况段",
+            key: "segment",
+            width: 130,
+            render: (row: AutoMLResultRow) => row.fleet_global
+              ? <Tag color="purple">全局兜底（通配）</Tag>
+              : <Tag color="blue">{String(row.segment || "-")}</Tag>,
+          }] : []),
           { title: "合成基准 AUC", key: "synthetic_auc", render: (row: AutoMLResultRow) => { const value = metric(row, ["synthetic_auc", "auc"]); return value == null ? "-" : <Text strong>{Number(value).toFixed(4)}</Text>; } },
           { title: "误报率", key: "normal_fpr", render: (row: AutoMLResultRow) => { const value = metric(row, ["normal_fpr"]); return value == null ? "-" : Number(value).toFixed(4); } },
           { title: "稳定性", key: "stability", render: (row: AutoMLResultRow) => { const value = metric(row, ["stability"]); return value == null ? "-" : Number(value).toFixed(4); } },
@@ -390,7 +411,7 @@ export default function AutoMLTaskPage() {
           ]} />
         </Card>}
         <Modal
-          title={`${String(selectedModel?.name || selectedModel?.model || selectedModel?.algorithm || "模型")} 详细结果`}
+          title={`${String(selectedModel?.name || selectedModel?.model || selectedModel?.algorithm || "模型")}${selectedModel?.segment ? ` · ${String(selectedModel.segment)}` : ""} 详细结果`}
           open={Boolean(selectedModel)}
           onCancel={() => setSelectedModel(null)}
           footer={null}

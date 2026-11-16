@@ -441,6 +441,11 @@ export default function AutoMLPage() {
   }, [isAnomaly, algorithmIds, searchStrength, searchMethod, fleetShared, conditionColumn]);
 
   const allResults = results?.models || results?.all_results || [];
+  // 结果显示名：分片任务按「算法×工况」展开后同族多行，展示名带段后缀去歧义
+  const resultDisplayName = (row: any) => {
+    const base = String(row?.name || row?.model || row?.algorithm_id || "Unknown");
+    return row?.segment ? `${base} · ${row.segment}` : base;
+  };
   const bestModel = results?.best_model || allResults[0];
   const features = results?.feature_importance || results?.features || {};
   const handleTaskTypeChange = (task: AutoMLTaskType) => {
@@ -487,7 +492,7 @@ export default function AutoMLPage() {
     // Bar chart
     if (barRef.current) {
       const chart = echarts.init(barRef.current);
-      const names = allResults.map((r: any) => r.name || r.model || "Unknown");
+      const names = allResults.map((r: any) => resultDisplayName(r));
       const scores = allResults.map((r: any) => r.score != null ? Number(r.score) : 0);
       chart.setOption({
         title: { text: t.automl?.all_results || "Model Comparison", left: "center", textStyle: { fontSize: 14 } },
@@ -513,7 +518,7 @@ export default function AutoMLPage() {
     if (!results || allResults.length < 2) return;
     if (radarRef.current) {
       const chart = echarts.init(radarRef.current);
-      const modelNames = allResults.map((r: any) => r.name || r.model || "Unknown");
+      const modelNames = allResults.map((r: any) => resultDisplayName(r));
       const maxScore = Math.max(...allResults.map((r: any) => r.score || 0));
       chart.setOption({
         title: { text: "Model Radar", left: "center", textStyle: { fontSize: 14 } },
@@ -806,7 +811,7 @@ export default function AutoMLPage() {
     ? Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${key}=${String(item)}`).join(", ")
     : "-";
   const algorithmResultColumns = [
-    { title: "算法", dataIndex: "name", key: "name", render: (value: string, row: any) => value || row.algorithm_id },
+    { title: "算法", dataIndex: "name", key: "name", render: (value: string, row: any) => resultDisplayName(row) },
     { title: "状态", dataIndex: "status", key: "status", render: (value: string) => <Tag color={value === "completed" ? "green" : value === "unavailable" ? "orange" : "red"}>{value}</Tag> },
     { title: "最佳分数", dataIndex: "best_score", key: "score", render: (value: number | null) => value == null ? "-" : Number(value).toFixed(4) },
     { title: "最佳参数", dataIndex: "best_params", key: "params", render: (value: unknown) => <Text title={formatParams(value)}>{formatParams(value)}</Text> },
@@ -962,7 +967,9 @@ export default function AutoMLPage() {
               value={inputColumns}
               onChange={(columns: string[]) => setInputColumns(columns.filter((column) => !targetColumns.includes(column)))}
               disabled={!selectedDataset}
-              options={numericInputColumns.filter((column) => !targetColumns.includes(column)).map((column) => ({ value: column, label: column }))}
+              /* 工况列是分组键不是建模变量（引擎侧本就会剔除，§6.3）——候选里
+                 直接不出现，避免「选了却无效」的困惑（2026-11-16 用户反馈） */
+              options={numericInputColumns.filter((column) => !targetColumns.includes(column) && column !== conditionColumn).map((column) => ({ value: column, label: column }))}
             />
           </Col>
           {isAnomaly ? (<>
@@ -976,7 +983,12 @@ export default function AutoMLPage() {
                 style={{ width: "100%", marginTop: 4 }}
                 placeholder="按该列分片训练/路由"
                 value={conditionColumn ?? undefined}
-                onChange={(value: string | undefined) => { setConditionColumn(value ?? null); if (!value) setFleetShared(false); }}
+                onChange={(value: string | undefined) => {
+                  setConditionColumn(value ?? null);
+                  if (!value) setFleetShared(false);
+                  // 选为工况列的列同步移出输入列（双保险：引擎侧本就剔除工况列）
+                  if (value) setInputColumns((columns) => columns.filter((column) => column !== value));
+                }}
                 disabled={!selectedDataset}
                 options={conditionColumnOptions.map((column) => ({ value: column, label: column }))}
               />
@@ -1182,7 +1194,7 @@ export default function AutoMLPage() {
             {results.search.budget_exhausted && <Tag color="orange">预算已耗尽</Tag>}
           </Space>
           {bestModel?.params && <div style={{ marginBottom: 10 }}><Text strong>最佳参数：</Text><Text>{formatParams(bestModel.params)}</Text></div>}
-          <Table rowKey={(row: any) => row.algorithm_id} dataSource={algorithmResults} columns={algorithmResultColumns} size="small" pagination={false} scroll={{ x: 760 }} />
+          <Table rowKey={(row: any) => `${row.algorithm_id}|${row.segment || ""}`} dataSource={algorithmResults} columns={algorithmResultColumns} size="small" pagination={false} scroll={{ x: 760 }} />
         </section>}
         <Tabs activeKey={activeTab} onChange={setActiveTab} items={[
           { key: "results", label: "Results",
