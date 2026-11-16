@@ -93,6 +93,10 @@ const AUTOML_TIME_BUDGET_OPTIONS: Array<{ value: AutoMLTimeBudget; label: string
   { value: 7200, label: "120 分钟" },
   { value: 14400, label: "240 分钟" },
 ];
+// 与后端 SEARCH_STRENGTH_TRIALS 同源（automl_search.py）：强度→每算法/总试验数
+const AUTOML_STRENGTH_TRIALS: Record<AutoMLSearchStrength, number> = { light: 10, medium: 30, high: 80, ultra: 200 };
+// 表单小字提示统一样式（布局重设计 2026-11-16：全字段同构垂直结构）
+const FORM_HINT_STYLE = { display: "block", color: "var(--text-secondary, rgba(0,0,0,0.45))", marginTop: 4, fontSize: 12, lineHeight: 1.6 } as const;
 
 function createRequestIdentifier(): string {
   return createUuid();
@@ -417,6 +421,24 @@ export default function AutoMLPage() {
       setFleetShared(false);
     }
   }, [conditionColumn, conditionColumnOptions]);
+
+  // 运行行动态预计文案（与引擎预算口径同构：无监督=每算法 N 次 × 出场算法
+  // 数；strength 方法每族 1 组预设；grid 按网格展开；联合段每算法 ⌊N/2⌋。
+  // 监督=总量分摊。详见 automl_execution.py 2026-11-16 每算法口径注释）。
+  const estimatedTrialsText = useMemo(() => {
+    const trials = AUTOML_STRENGTH_TRIALS[searchStrength];
+    if (isAnomaly) {
+      const familyCount = algorithmIds.length || AUTOML_ANOMALY_ALGORITHM_OPTIONS.length;
+      if (searchMethod === "grid") {
+        return `预计搜索：按参数网格展开，每算法最多 ${trials} 组`;
+      }
+      const base = `预计搜索：每算法 ${trials} 次 × ${familyCount} 算法 = ${trials * familyCount} 次试验`;
+      const fleet = fleetShared ? `，另含联合段（每算法 ${Math.max(1, Math.floor(trials / 2))} 次）` : "";
+      const segments = conditionColumn ? `；选择工况列后按分段数叠加` : "";
+      return `${base}${fleet}${segments}`;
+    }
+    return `预计搜索：共 ${trials} 次试验，各算法分摊（时间上限内完成即止）`;
+  }, [isAnomaly, algorithmIds, searchStrength, searchMethod, fleetShared, conditionColumn]);
 
   const allResults = results?.models || results?.all_results || [];
   const bestModel = results?.best_model || allResults[0];
@@ -898,11 +920,12 @@ export default function AutoMLPage() {
       </div>
       </div>
       {paradigmChosen && <>
-        <Row gutter={[16, 16]} align="middle" style={{ marginBottom: 4 }}>
-          {/* 布局分区（2026-11-16 用户反馈：新建无监督页面拥挤混乱）——
-              ① 数据与特征 / ② 算法与搜索 两个分区，污染率/工况列各自独立
-              列宽（此前三个控件挤在一个 1/6 宽列里垂直堆叠） */}
-          <Col span={24}><Divider style={{ margin: "4px 0 14px" }} orientation="left" plain>① 数据与特征</Divider></Col>
+        {/* 布局重设计（2026-11-16 用户反馈：均匀/协调/美观）——统一 4 列节奏
+            （主控件 sm=6，半宽字段 sm=12），每个字段同构垂直结构（label→控件
+            →小字）；开关字段与选择字段同构；MLP 组条件出现时收进淡色卡片；
+            运行行独立成行（左=动态预计试验数，右=大号运行按钮） */}
+        <Row gutter={[16, 20]}>
+          <Col span={24}><Divider style={{ margin: "6px 0 16px" }} orientation="left" plain>① 数据与特征</Divider></Col>
           <Col xs={24} sm={6}><Text strong>{t.automl?.select_project || "Project"}</Text>
             <Select style={{ width: "100%", marginTop: 4 }} placeholder={t.automl?.select_project} value={selectedProject} onChange={setSelectedProject}
               options={projects.map((p: any) => ({ value: p.id, label: p.name }))} /></Col>
@@ -911,26 +934,24 @@ export default function AutoMLPage() {
               options={datasets.map((d: any) => ({ value: d.id, label: d.name || d.filename }))} /></Col>
           {/* 实验自动创建（用户建议 1）：一实验一任务的后端约束下，下拉选择
               注定撞 409——提交时自动创建专属实验，不再展示实验选择 */}
-          <Col xs={24} sm={4}>{taskType === "anomaly_detection" ? (<>
-            <Text strong>污染率（预期异常比例）</Text>
-            <InputNumber aria-label="污染率" style={{ width: "100%", marginTop: 4 }}
-              min={0.001} max={0.5} step={0.005} value={contamination}
-              onChange={(value) => setContamination(Number(value) || 0.01)} />
-            <small style={{ display: "block", color: "rgba(0,0,0,0.45)" }}>宁低勿高，缺省 1%</small>
-          </>) : (<>
-            <Text strong>{t.automl?.target || "Target"}</Text>
-            <Select
-              aria-label="目标列"
-              mode={taskType.startsWith("multioutput") ? "multiple" : undefined}
-              maxTagCount="responsive"
-              style={{ width: "100%", marginTop: 4 }}
-              placeholder={t.automl?.target}
-              value={taskType.startsWith("multioutput") ? targetColumns : targetColumns[0] || undefined}
-              onChange={(columns: string[] | string) => setTargetColumns(Array.isArray(columns) ? columns : columns ? [columns] : [])}
-              disabled={!selectedDataset}
-              options={datasetColumns.map((column) => ({ value: column, label: column }))}
-            /></>)}</Col>
-          <Col xs={24} sm={8}><Text strong>输入列</Text>
+          {isAnomaly ? (
+            <Col xs={24} sm={6}>
+              <Text strong>污染率（预期异常比例）</Text>
+              <InputNumber aria-label="污染率" style={{ width: "100%", marginTop: 4 }}
+                min={0.001} max={0.5} step={0.005} value={contamination}
+                onChange={(value) => setContamination(Number(value) || 0.01)} />
+              <small style={FORM_HINT_STYLE}>宁低勿高，缺省 1%</small>
+            </Col>
+          ) : (
+            <Col xs={24} sm={6}>
+              <Text strong>任务子类型</Text>
+              <Select aria-label="任务子类型" style={{ width: "100%", marginTop: 4 }} value={taskType} onChange={handleTaskTypeChange}
+                options={AUTOML_TASK_OPTIONS.filter((option) => option.value !== "anomaly_detection")} />
+              <small style={FORM_HINT_STYLE}>决定标签学习方式与可用算法族</small>
+            </Col>
+          )}
+          <Col xs={24} sm={6}>
+            <Text strong>输入列</Text>
             <Select
               aria-label="输入列"
               mode="multiple"
@@ -942,42 +963,41 @@ export default function AutoMLPage() {
               onChange={(columns: string[]) => setInputColumns(columns.filter((column) => !targetColumns.includes(column)))}
               disabled={!selectedDataset}
               options={numericInputColumns.filter((column) => !targetColumns.includes(column)).map((column) => ({ value: column, label: column }))}
-            /></Col>
-          {isAnomaly ? (
-          <Col xs={24} sm={8}>
-            {/* 工况分片列（技术方案 §6.3，M7/M8）+ 机群共享模式（§7.1/§7.5）：
-                独立列宽+高基数护栏提示；共享开关为 Switch 形态（2026-11-16
-                移除后同日恢复），仅工况列已选时可用。 */}
-            <Text strong>工况列（可选）</Text>
-            <Select
-              aria-label="工况列"
-              showSearch
-              allowClear
-              style={{ width: "100%", marginTop: 4 }}
-              placeholder="按该列分片训练/路由"
-              value={conditionColumn ?? undefined}
-              onChange={(value: string | undefined) => { setConditionColumn(value ?? null); if (!value) setFleetShared(false); }}
-              disabled={!selectedDataset}
-              options={conditionColumnOptions.map((column) => ({ value: column, label: column }))}
             />
-            <small style={{ display: "block", color: "rgba(0,0,0,0.45)" }}>选指定后按工况值分片训练 N 个模型；工况列不参与建模特征</small>
-            <small style={{ display: "block", color: "rgba(0,0,0,0.45)" }}>
-              建议选择设备号/工位号/程序号等低基数列；高基数列会导致分片退化（仅列出非数值列与基数 ≤200 的数值列）
-            </small>
-            <div style={{ marginTop: 8 }}>
-              <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 8, cursor: conditionColumn ? "pointer" : "not-allowed", color: conditionColumn ? "inherit" : "rgba(0,0,0,0.35)", width: "fit-content" }}>
+          </Col>
+          {isAnomaly ? (<>
+            <Col xs={24} sm={6}>
+              {/* 工况分片列（技术方案 §6.3，M7/M8）：仅列非数值列与低基数数值列 */}
+              <Text strong>工况列（可选）</Text>
+              <Select
+                aria-label="工况列"
+                showSearch
+                allowClear
+                style={{ width: "100%", marginTop: 4 }}
+                placeholder="按该列分片训练/路由"
+                value={conditionColumn ?? undefined}
+                onChange={(value: string | undefined) => { setConditionColumn(value ?? null); if (!value) setFleetShared(false); }}
+                disabled={!selectedDataset}
+                options={conditionColumnOptions.map((column) => ({ value: column, label: column }))}
+              />
+              <small style={FORM_HINT_STYLE}>按取值分片训练 N 个模型，不参与特征；建议低基数列（设备号/工位号，仅列非数值列与基数 ≤200 数值列）</small>
+            </Col>
+            <Col xs={24} sm={6}>
+              {/* 机群共享模式（§7.1/§7.5 B 主 A 兜底）：Switch 形态（2026-11-16
+                  移除后同日恢复），仅工况列已选时可用 */}
+              <Text strong>机群共享模式</Text>
+              <div style={{ marginTop: 4 }}>
                 <Switch
                   aria-label="机群共享模式"
                   checked={fleetShared}
                   disabled={!conditionColumn}
                   onChange={setFleetShared}
                 />
-                机群共享模式
-              </label>
-              <small style={{ display: "block", color: "rgba(0,0,0,0.45)" }}>
-                开启后全工位额外共享一个检测器模型（联合段通配兜底，时间约 ×2），每工位独立标定阈值；unfit 工位不挂载、由全局模型接管（推荐同型设备群）
+              </div>
+              <small style={FORM_HINT_STYLE}>
+                开启后额外训练一个全工位共享检测器（联合段兜底，时间约 ×2）；unfit 工位由全局模型接管，新工位可标定接入
               </small>
-            </div>
+            </Col>
             {/* C2 残留（2026-11-15 第十一轮）：非数值列不受「基数 ≤200」候选过滤保护，
                 选中高基数非数值列时必须把后果说具体——否则 UI 承诺「按该列分片训练 N 个
                 模型」与实际「多数分段低于 200 行护栏被并入默认段」不符，且用户看不到
@@ -988,23 +1008,35 @@ export default function AutoMLPage() {
                 return null;
               }
               return (
-                <Alert
-                  type="warning"
-                  showIcon
-                  style={{ marginTop: 6 }}
-                  message={`工况列「${conditionColumn}」采样内有 ${cardinality} 个不同取值（>${CONDITION_COLUMN_MAX_CARDINALITY}）`}
-                  description="取值过多时，多数分段会低于 200 行护栏而被并入默认段、不再单独建模（非数值列不受数值列的 ≤200 候选过滤保护）。建议改选设备号/工位号等低基数列。"
-                />
+                <Col span={24}>
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message={`工况列「${conditionColumn}」采样内有 ${cardinality} 个不同取值（>${CONDITION_COLUMN_MAX_CARDINALITY}）`}
+                    description="取值过多时，多数分段会低于 200 行护栏而被并入默认段、不再单独建模（非数值列不受数值列的 ≤200 候选过滤保护）。建议改选设备号/工位号等低基数列。"
+                  />
+                </Col>
               );
             })()}
-          </Col>
-          ) : (
-          <Col xs={24} sm={4}><Text strong>任务子类型</Text>
-            <Select aria-label="任务子类型" style={{ width: "100%", marginTop: 4 }} value={taskType} onChange={handleTaskTypeChange}
-              options={AUTOML_TASK_OPTIONS.filter((option) => option.value !== "anomaly_detection")} /></Col>
+          </>) : (
+            <Col xs={24} sm={12}>
+              <Text strong>目标列{taskType.startsWith("multioutput") ? "（可多选）" : ""}</Text>
+              <Select
+                aria-label="目标列"
+                mode={taskType.startsWith("multioutput") ? "multiple" : undefined}
+                maxTagCount="responsive"
+                style={{ width: "100%", marginTop: 4 }}
+                placeholder={t.automl?.target}
+                value={taskType.startsWith("multioutput") ? targetColumns : targetColumns[0] || undefined}
+                onChange={(columns: string[] | string) => setTargetColumns(Array.isArray(columns) ? columns : columns ? [columns] : [])}
+                disabled={!selectedDataset}
+                options={datasetColumns.map((column) => ({ value: column, label: column }))}
+              />
+            </Col>
           )}
-          <Col span={24}><Divider style={{ margin: "4px 0 14px" }} orientation="left" plain>② 算法与搜索</Divider></Col>
-          <Col xs={24} sm={6}><Text strong>算法家族</Text>
+          <Col span={24}><Divider style={{ margin: "6px 0 16px" }} orientation="left" plain>② 算法与搜索</Divider></Col>
+          <Col xs={24} sm={6}>
+            <Text strong>算法家族</Text>
             <Select
               aria-label="算法家族"
               mode="multiple"
@@ -1015,88 +1047,126 @@ export default function AutoMLPage() {
               value={algorithmIds}
               onChange={setAlgorithmIds}
               options={taskType === "anomaly_detection" ? AUTOML_ANOMALY_ALGORITHM_OPTIONS : AUTOML_ALGORITHM_OPTIONS}
-            /></Col>
-          {algorithmIds.includes("mlp") && <>
-            <Col xs={12} sm={4}><Text strong>自定义 MLP 超参</Text>
-              <div style={{ marginTop: 7 }}><Switch
-                aria-label="自定义 MLP 超参"
-                checked={mlpCustomizeEnabled}
-                onChange={setMlpCustomizeEnabled}
-              /></div>
-              <small style={{ display: "block", color: "rgba(0,0,0,0.45)" }}>
-                {mlpCustomizeEnabled ? "按下方固定值训练" : "关闭=随搜索强度自动调参"}
-              </small>
-            </Col>
-            <Col xs={12} sm={4}><Text strong>MLP 优化器</Text>
-              <Select aria-label="MLP 优化器" style={{ width: "100%", marginTop: 4 }} value={mlpParams.solver} disabled={!mlpCustomizeEnabled}
-                onChange={(solver: "adam" | "lbfgs" | "sgd") => setMlpParams((current) => ({ ...current, solver }))}
-                options={[
-                  { value: "adam", label: "Adam（推荐）" },
-                  { value: "lbfgs", label: "L-BFGS（小数据集）" },
-                  { value: "sgd", label: "SGD" },
-                ]} /></Col>
-            <Col xs={12} sm={4}><Text strong>MLP 学习率</Text>
-              <InputNumber aria-label="MLP 学习率" style={{ width: "100%", marginTop: 4 }} min={0.0001} max={0.1} step={0.0005}
-                value={mlpParams.learning_rate_init} disabled={!mlpCustomizeEnabled}
-                onChange={(value) => setMlpParams((current) => ({ ...current, learning_rate_init: Number(value) || MLP_DEFAULT_PARAMS.learning_rate_init }))} /></Col>
-            <Col xs={12} sm={4}><Text strong>MLP 正则化 (L2 α)</Text>
-              <InputNumber aria-label="MLP 正则化" style={{ width: "100%", marginTop: 4 }} min={0.000001} max={0.1} step={0.0001}
-                value={mlpParams.alpha} disabled={!mlpCustomizeEnabled}
-                onChange={(value) => setMlpParams((current) => ({ ...current, alpha: Number(value) || MLP_DEFAULT_PARAMS.alpha }))} /></Col>
-            <Col xs={12} sm={6}><Text strong>MLP 隐藏层</Text>
-              <Select aria-label="MLP 隐藏层" style={{ width: "100%", marginTop: 4 }} value={mlpParams.hidden_layers} disabled={!mlpCustomizeEnabled}
-                onChange={(hidden_layers: string) => setMlpParams((current) => ({ ...current, hidden_layers }))}
-                options={MLP_HIDDEN_LAYER_OPTIONS.map((layers) => ({ value: layers, label: layers }))} /></Col>
-          </>}
-          <Col xs={24} sm={4}><Text strong>搜索方法</Text>
+            />
+            <small style={FORM_HINT_STYLE}>留空 = 全部算法参与</small>
+          </Col>
+          <Col xs={24} sm={6}>
+            <Text strong>搜索方法</Text>
             <Select aria-label="搜索方法" style={{ width: "100%", marginTop: 4 }} value={searchMethod} onChange={setSearchMethod}
               options={AUTOML_SEARCH_OPTIONS.map((option) => option.value === "multi_fidelity" && taskType === "anomaly_detection"
                 ? { ...option, label: "多保真搜索（无监督不可用）", disabled: true }
-                : option)} /></Col>
-          <Col xs={12} sm={3}><Text strong>搜索强度</Text>
+                : option)} />
+          </Col>
+          <Col xs={24} sm={6}>
+            <Text strong>搜索强度</Text>
             <Select aria-label="搜索强度" style={{ width: "100%", marginTop: 4 }} value={searchStrength} onChange={handleSearchStrengthChange}
-              options={isAnomaly ? AUTOML_STRENGTH_OPTIONS_ANOMALY : AUTOML_STRENGTH_OPTIONS} /></Col>
-          <Col xs={12} sm={3}><Text strong>总时间上限</Text>
+              options={isAnomaly ? AUTOML_STRENGTH_OPTIONS_ANOMALY : AUTOML_STRENGTH_OPTIONS} />
+          </Col>
+          <Col xs={24} sm={6}>
+            <Text strong>总时间上限</Text>
             <Select aria-label="总时间上限" style={{ width: "100%", marginTop: 4 }} value={timeBudget} onChange={setTimeBudget}
-              options={AUTOML_TIME_BUDGET_OPTIONS} /></Col>
+              options={AUTOML_TIME_BUDGET_OPTIONS} />
+            <small style={FORM_HINT_STYLE}>超时即止：已完成的有效结果照常产出</small>
+          </Col>
+          {/* MLP 超参组：仅算法家族勾选 MLP 时出现的附属面板（淡色卡片收纳，
+              不打乱主网格节奏） */}
+          {algorithmIds.includes("mlp") && (
+            <Col span={24}>
+              <div style={{ background: "var(--v2-panel-weak, rgba(0,0,0,0.03))", borderRadius: 8, padding: "12px 16px 2px" }}>
+                <Row gutter={[16, 12]}>
+                  <Col xs={24} sm={6}>
+                    <Text strong>自定义 MLP 超参</Text>
+                    <div style={{ marginTop: 4 }}><Switch
+                      aria-label="自定义 MLP 超参"
+                      checked={mlpCustomizeEnabled}
+                      onChange={setMlpCustomizeEnabled}
+                    /></div>
+                    <small style={FORM_HINT_STYLE}>
+                      {mlpCustomizeEnabled ? "按左侧固定值训练" : "关闭=随搜索强度自动调参"}
+                    </small>
+                  </Col>
+                  <Col xs={24} sm={6}>
+                    <Text strong>MLP 优化器</Text>
+                    <Select aria-label="MLP 优化器" style={{ width: "100%", marginTop: 4 }} value={mlpParams.solver} disabled={!mlpCustomizeEnabled}
+                      onChange={(solver: "adam" | "lbfgs" | "sgd") => setMlpParams((current) => ({ ...current, solver }))}
+                      options={[
+                        { value: "adam", label: "Adam（推荐）" },
+                        { value: "lbfgs", label: "L-BFGS（小数据集）" },
+                        { value: "sgd", label: "SGD" },
+                      ]} />
+                  </Col>
+                  <Col xs={24} sm={6}>
+                    <Text strong>MLP 学习率</Text>
+                    <InputNumber aria-label="MLP 学习率" style={{ width: "100%", marginTop: 4 }} min={0.0001} max={0.1} step={0.0005}
+                      value={mlpParams.learning_rate_init} disabled={!mlpCustomizeEnabled}
+                      onChange={(value) => setMlpParams((current) => ({ ...current, learning_rate_init: Number(value) || MLP_DEFAULT_PARAMS.learning_rate_init }))} />
+                  </Col>
+                  <Col xs={24} sm={6}>
+                    <Text strong>MLP 正则化 (L2 α)</Text>
+                    <InputNumber aria-label="MLP 正则化" style={{ width: "100%", marginTop: 4 }} min={0.000001} max={0.1} step={0.0001}
+                      value={mlpParams.alpha} disabled={!mlpCustomizeEnabled}
+                      onChange={(value) => setMlpParams((current) => ({ ...current, alpha: Number(value) || MLP_DEFAULT_PARAMS.alpha }))} />
+                  </Col>
+                  <Col xs={24} sm={6}>
+                    <Text strong>MLP 隐藏层</Text>
+                    <Select aria-label="MLP 隐藏层" style={{ width: "100%", marginTop: 4 }} value={mlpParams.hidden_layers} disabled={!mlpCustomizeEnabled}
+                      onChange={(hidden_layers: string) => setMlpParams((current) => ({ ...current, hidden_layers }))}
+                      options={MLP_HIDDEN_LAYER_OPTIONS.map((layers) => ({ value: layers, label: layers }))} />
+                  </Col>
+                </Row>
+              </div>
+            </Col>
+          )}
           {/* 范式分组（用户建议 2）：类别权重/交叉验证/集成学习是监督专属——
               无监督只保留搜索控制与污染率，payload 层本就忽略这些值 */}
-          {!isAnomaly && (
-          <Col xs={12} sm={3}><Text strong>类别权重</Text>
-            <div style={{ marginTop: 7 }}><Switch aria-label="类别权重" checked={classWeight} disabled={!taskType.includes("classification")} onChange={setClassWeight} /></div></Col>
-          )}
-          {!isAnomaly && (
-          <Col xs={12} sm={3}><Text strong>交叉验证</Text>
-            <div style={{ marginTop: 7 }}><Switch aria-label="启用交叉验证" checked={crossValidationEnabled} onChange={setCrossValidationEnabled} /></div></Col>
-          )}
-          {!isAnomaly && (
-          <Col xs={12} sm={3}><Text strong>折数</Text>
-            <Select
-              aria-label="交叉验证折数"
-              style={{ width: "100%", marginTop: 4 }}
-              value={crossValidationFolds}
-              disabled={!crossValidationEnabled}
-              onChange={(folds: 2 | 3 | 4 | 5) => setCrossValidationFolds(folds)}
-              options={[2, 3, 4, 5].map((folds) => ({ value: folds, label: `${folds} 折` }))}
-            /></Col>
-          )}
-          {!isAnomaly && (
-          <Col xs={12} sm={3}><Text strong>集成学习</Text>
-            <div style={{ marginTop: 7 }}><Switch aria-label="启用集成学习" checked={ensembleEnabled}
-              disabled={taskType !== "classification"} onChange={setEnsembleEnabled} /></div></Col>
-          )}
-          {!isAnomaly && (
-          <Col xs={12} sm={3}><Text strong>集成成员</Text>
-            <Select
-              aria-label="集成成员数"
-              style={{ width: "100%", marginTop: 4 }}
-              value={ensembleTopK}
-              disabled={!ensembleEnabled || taskType !== "classification"}
-              onChange={(k: 2 | 3 | 4 | 5) => setEnsembleTopK(k)}
-              options={[2, 3, 4, 5].map((k) => ({ value: k, label: `前 ${k} 名` }))}
-            /></Col>
-          )}
-          <Col xs={24} sm={2}><Button type="primary" icon={<ThunderboltOutlined />} onClick={handleRun} loading={running} block style={{ marginTop: 22 }}>{t.automl?.run || "Run"}</Button></Col>
+          {!isAnomaly && (<>
+            <Col xs={24} sm={6}>
+              <Text strong>类别权重</Text>
+              <div style={{ marginTop: 4 }}><Switch aria-label="类别权重" checked={classWeight} disabled={!taskType.includes("classification")} onChange={setClassWeight} /></div>
+              <small style={FORM_HINT_STYLE}>少数类样本加权，适合类别不平衡</small>
+            </Col>
+            <Col xs={24} sm={6}>
+              <Text strong>交叉验证</Text>
+              <div style={{ marginTop: 4 }}><Switch aria-label="启用交叉验证" checked={crossValidationEnabled} onChange={setCrossValidationEnabled} /></div>
+              <small style={FORM_HINT_STYLE}>关闭可显著加速搜索（指标波动更大）</small>
+            </Col>
+            <Col xs={24} sm={6}>
+              <Text strong>折数</Text>
+              <Select
+                aria-label="交叉验证折数"
+                style={{ width: "100%", marginTop: 4 }}
+                value={crossValidationFolds}
+                disabled={!crossValidationEnabled}
+                onChange={(folds: 2 | 3 | 4 | 5) => setCrossValidationFolds(folds)}
+                options={[2, 3, 4, 5].map((folds) => ({ value: folds, label: `${folds} 折` }))}
+              />
+            </Col>
+            <Col xs={24} sm={6}>
+              <Text strong>集成学习</Text>
+              <div style={{ marginTop: 4 }}><Switch aria-label="启用集成学习" checked={ensembleEnabled}
+                disabled={taskType !== "classification"} onChange={setEnsembleEnabled} /></div>
+              <small style={FORM_HINT_STYLE}>仅分类任务：Top-K 模型加权投票</small>
+            </Col>
+            <Col xs={24} sm={6}>
+              <Text strong>集成成员</Text>
+              <Select
+                aria-label="集成成员数"
+                style={{ width: "100%", marginTop: 4 }}
+                value={ensembleTopK}
+                disabled={!ensembleEnabled || taskType !== "classification"}
+                onChange={(k: 2 | 3 | 4 | 5) => setEnsembleTopK(k)}
+                options={[2, 3, 4, 5].map((k) => ({ value: k, label: `前 ${k} 名` }))}
+              />
+            </Col>
+          </>)}
+          {/* 运行行：独立成行——左侧动态预计试验数（与引擎预算口径同构），
+              右侧大号运行按钮 */}
+          <Col span={24}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginTop: 2 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>{estimatedTrialsText}</Text>
+              <Button type="primary" size="large" icon={<ThunderboltOutlined />} onClick={handleRun} loading={running} style={{ minWidth: 168 }}>{t.automl?.run || "Run"}</Button>
+            </div>
+          </Col>
         </Row>
       </>}
 
