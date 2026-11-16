@@ -99,6 +99,7 @@ const weekTestFiles: Record<number | string, string[]> = {
     "./api/models.test.ts",
     "./api/modelExports.test.ts",
     "./components/loop/FleetShardPanel.test.tsx",
+    "./components/model/AnomalyRecalibrationPanels.test.tsx",
     "./pages/DemoLoopPage.test.tsx",
     "./pages/DemoLoopDetailPage.test.tsx",
     "./pages/AIChatPage.test.tsx",

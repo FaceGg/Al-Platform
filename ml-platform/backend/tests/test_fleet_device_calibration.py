@@ -450,6 +450,53 @@ class TestFleetShardMountAndOverview(unittest.TestCase):
         # 兜底默认分片（原权重最高者）严格最高——并列会让兜底依赖行序
         self.assertEqual(max(weights), 3334)
 
+    def test_shard_count_beyond_weight_budget_rejected_explicitly(self):
+        """B12：分片数超过权重预算必须明确失败，不得漏到下游才报错。
+
+        权重预算恒为 10000 且每片至少 1 基点 → 分片数上限 10000。超过上限时
+        权重和会 > 10000；此前**无显式校验**，问题一路漏到 WeightedTargetRouter
+        才以 TARGET_WEIGHTS_INVALID 报错（错误信息与真实原因无关，排障方向被带偏）。
+        这里把预算临时调小以复现同一前提（真造 10000 个分片不现实）。
+        """
+        from app.services import anomaly_device_calibration as calibration_module
+
+        second = self._new_version(condition_value="DEV-001")
+        add_fleet_shard_to_deployment(
+            self.db,
+            deployment_id=self.deployment.id,
+            version_id=second.id,
+            condition_value="DEV-001",
+            actor_id=str(self.user.id),
+        )
+        third = self._new_version(condition_value="DEV-002")
+        with mock.patch.object(calibration_module, "FLEET_TARGET_TOTAL_WEIGHT_BPS", 2):
+            with self.assertRaises(DeviceCalibrationError) as ctx:
+                add_fleet_shard_to_deployment(
+                    self.db,
+                    deployment_id=self.deployment.id,
+                    version_id=third.id,
+                    condition_value="DEV-002",
+                    actor_id=str(self.user.id),
+                )
+        self.assertEqual(ctx.exception.code, "FLEET_SHARD_COUNT_EXCEEDS_WEIGHT_BUDGET")
+        # 失败不得留下脏状态：stable revision 仍是 2 片、权重和仍为 10000
+        stable = (
+            self.db.query(DeploymentRevision)
+            .filter(
+                DeploymentRevision.deployment_id == self.deployment.id,
+                DeploymentRevision.status == "stable",
+            )
+            .one()
+        )
+        weights = [
+            target.weight_bps
+            for target in self.db.query(DeploymentTarget)
+            .filter(DeploymentTarget.revision_id == stable.id)
+            .all()
+        ]
+        self.assertEqual(len(weights), 2)
+        self.assertEqual(sum(weights), 10000)
+
     def test_explicit_weight_bps_honoured_and_remainder_distributed(self):
         """显式 weight_bps：新分片占该权重，余下预算按既有分片比例分配
         （最大余额法），总额仍为 10000。"""

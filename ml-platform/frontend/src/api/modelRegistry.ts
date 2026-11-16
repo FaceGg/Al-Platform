@@ -20,7 +20,9 @@ export interface FeatureField {
 export interface OutputSchema {
   name: string;
   dtype: string;
-  task: "classification" | "regression";
+  // "anomaly" 是后端真实产出的 task 值（异常检测版本 output_schema.task=anomaly，
+  // 见 model_registry.py 的 recalibrate/挂载前置校验）——2026-11-15 第十一轮补。
+  task: "classification" | "regression" | "anomaly";
 }
 
 export interface RegisteredModel {

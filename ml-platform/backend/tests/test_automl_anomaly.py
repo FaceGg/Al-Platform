@@ -608,6 +608,69 @@ class TestAnomalyExecution(unittest.TestCase):
         for _name, _artifact_type, metadata, _artifact in model_artifacts:
             assert "device_id" not in metadata["input_contract"]["input_columns"]
 
+    def test_execution_constant_condition_column_is_still_traced_as_condition_column(self):
+        """B17：工况列即使本身是 CONSTANT，留痕原因也必须是 condition_column。
+
+        剔除顺序：工况列剔除**必须早于**全 NaN/常数列清洗。否则工况列先被
+        数据质量清洗摘走，removed_columns 记成 constant —— 读的人看不出这列是
+        被「当工况列」剔除的（留痕失真）。
+        """
+        rng = np.random.default_rng(7)
+        matrix = rng.normal(size=(1200, 3))
+        header = "s1,s2,s3,const_cond"
+        body = [
+            ",".join([f"{matrix[row, column]:.6f}" for column in range(3)] + ["0"])
+            for row in range(1200)
+        ]
+        self.dataset_path.write_text("\n".join([header, *body]), encoding="utf-8")
+        job_id = self.create_job(self._base_params(
+            input_columns=["s1", "s2", "s3", "const_cond"],
+            condition_column="const_cond",
+            algorithm_ids=["iforest"],
+            search_strength="light",
+        ))
+        result = self.run_job(job_id)
+        assert result.status == "completed"
+        with self.Session() as db:
+            job = db.query(TrainingJob).filter(TrainingJob.id == job_id).one()
+            removed = job.metrics["preprocessing"]["removed_columns"]
+            # 关键断言：原因码是 condition_column，不是 constant
+            assert removed.get("const_cond") == "condition_column"
+            assert "constant" not in removed.values()
+            # 工况列仍然不进特征
+            assert "const_cond" not in job.metrics["preprocessing"]["feature_columns"]
+
+    def test_execution_fails_when_condition_column_is_the_only_usable_feature(self):
+        """B16：剔除工况列后没有可用特征时，必须明确失败而不是继续跑。
+
+        旧顺序：全 NaN/常数清洗先跑 → 「至少一个可用数值特征」护栏把工况列
+        算作可用特征放行 → 随后工况列被剔除 → 特征集变成 0 列却无人报错，
+        问题一路漏到训练阶段才炸（错误信息与真实原因无关）。
+        """
+        rng = np.random.default_rng(11)
+        matrix = rng.normal(size=(1200, 1))
+        header = "s1,const_a,const_b,cond"
+        body = [
+            ",".join([
+                f"{matrix[row, 0]:.6f}", "0", "0", str(row % 4),
+            ])
+            for row in range(1200)
+        ]
+        self.dataset_path.write_text("\n".join([header, *body]), encoding="utf-8")
+        job_id = self.create_job(self._base_params(
+            # s1 不在 input_columns 里——真正被选中的只有两个常数列 + 工况列
+            input_columns=["const_a", "const_b", "cond"],
+            condition_column="cond",
+            algorithm_ids=["iforest"],
+            search_strength="light",
+        ))
+        result = self.run_job(job_id)
+        assert result.status == "failed"
+        with self.Session() as db:
+            job = db.query(TrainingJob).filter(TrainingJob.id == job_id).one()
+            message = f"{job.error_code} {job.error_message}"
+            assert "usable numeric feature column" in message
+
     def test_execution_fleet_shared_bundle_excludes_condition_column(self):
         """fleet_shared 全局共享段也不得带工况列（技术方案 §7.1 机群基线）。
 

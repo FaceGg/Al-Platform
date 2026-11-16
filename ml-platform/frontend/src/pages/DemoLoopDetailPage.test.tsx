@@ -274,7 +274,9 @@ describe("DemoLoopDetailPage", () => {
     // 派生版本链接（数据管理页 artifact 链接）
     fireEvent.click(screen.getByRole("button", { name: "派生监督数据集" }));
     await waitFor(() => expect(modelRegistryApi.deriveSupervisedDataset).toHaveBeenCalled());
-    const derivedLink = await screen.findByText("回流标签监督数据集（artifact art-derived）");
-    expect(derivedLink.closest("a")).toHaveAttribute("href", "/data?projectId=p1");
+    // 面板已抽到 components/model/AnomalyRecalibrationPanels.tsx（2026-11-16 第十一轮），
+    // 链接文案比旧内联实现更完整（多出行数与标签列）→ 按链接角色断言，href 口径不变。
+    const derivedLink = await screen.findByRole("link", { name: /回流标签监督数据集/ });
+    expect(derivedLink).toHaveAttribute("href", "/data?projectId=p1");
   });
 });

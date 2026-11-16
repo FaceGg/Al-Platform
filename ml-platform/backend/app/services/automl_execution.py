@@ -2482,8 +2482,35 @@ def _execute_anomaly_job(
     )
     validate_target_columns(frame, task, params_targets)
     feature_columns = resolve_automl_feature_columns(frame, None, params.get("input_columns"))
-    # 无监督特征专项清洗（方案 §3.4 S2）：全 NaN 列与常数列毒害距离模型，直接剔除。
     removed_columns: dict[str, str] = {}
+
+    condition_column = str(params.get("condition_column") or "").strip() or None
+    if condition_column and condition_column not in frame.columns:
+        condition_column = None  # 分组列缺失时静默降级单段（与回流自愈同语义）
+    fleet_mode = str(params.get("fleet_mode") or "").strip()
+
+    # 机群共享模式必须带分组列（§B18 / §7.1）：没有 condition_column 时
+    # 「联合段」无从谈起，引擎若静默退化成普通单段训练，调用方拿到的是一台
+    # 「看起来成功」的机群基线——机群共享模型根本没建。故此处明确失败。
+    if fleet_mode == "shared" and not condition_column:
+        raise ValueError("AUTOML_ANOMALY_FLEET_SHARED_REQUIRES_CONDITION_COLUMN")
+
+    # 工况分片列不进特征（§7.1「设备 ID 列必须从特征剔除」，第七轮 [高]）：
+    # condition_column 只作分组键——fleet_shared 联合段跨设备合并时该列若
+    # 留在特征里会成为全局模型的可判别特征（检测器学「哪台设备」而非
+    # 「共有正常形态」），违反方案 §7.1 前提。
+    #
+    # **剔除必须早于数据质量清洗**（B16/B17，2026-11-15 第十一轮）：
+    # ① 若晚于清洗——工况列本身是 CONSTANT / 全 NaN 时会先被清洗摘走，
+    #    removed_columns 记成 constant / all_nan 而非 condition_column
+    #    （留痕失真：读的人看不出这列是被「当工况列」剔除的）；
+    # ② 若晚于清洗——「至少一个可用数值特征」护栏会把工况列算作可用特征，
+    #    护栏放行后再剔除，可能剩 0 列特征却不报错（下游才炸）。
+    if condition_column and condition_column in feature_columns:
+        feature_columns.remove(condition_column)
+        removed_columns[str(condition_column)] = "condition_column"
+
+    # 无监督特征专项清洗（方案 §3.4 S2）：全 NaN 列与常数列毒害距离模型，直接剔除。
     usable_columns: list[str] = []
     for column in feature_columns:
         values = frame[column]
@@ -2513,25 +2540,6 @@ def _execute_anomaly_job(
     deadline = dependencies.monotonic() + float(params.get("time_budget", 3600))
     requested_trials = int(params.get("max_trials") or SEARCH_STRENGTH_TRIALS[search_strength])
     families = resolve_algorithm_families(list(params.get("algorithm_ids") or []), task=task)
-
-    condition_column = str(params.get("condition_column") or "").strip() or None
-    if condition_column and condition_column not in frame.columns:
-        condition_column = None  # 分组列缺失时静默降级单段（与回流自愈同语义）
-    fleet_mode = str(params.get("fleet_mode") or "").strip()
-
-    # 机群共享模式必须带分组列（§B18 / §7.1）：没有 condition_column 时
-    # 「联合段」无从谈起，引擎若静默退化成普通单段训练，调用方拿到的是一台
-    # 「看起来成功」的机群基线——机群共享模型根本没建。故此处明确失败。
-    if fleet_mode == "shared" and not condition_column:
-        raise ValueError("AUTOML_ANOMALY_FLEET_SHARED_REQUIRES_CONDITION_COLUMN")
-
-    # 工况分片列不进特征（§7.1「设备 ID 列必须从特征剔除」，第七轮 [高]）：
-    # condition_column 只作分组键——fleet_shared 联合段跨设备合并时该列若
-    # 留在特征里会成为全局模型的可判别特征（检测器学「哪台设备」而非
-    # 「共有正常形态」），违反方案 §7.1 前提。
-    if condition_column and condition_column in feature_columns:
-        feature_columns.remove(condition_column)
-        removed_columns[str(condition_column)] = "condition_column"
 
     # AE 出场策略（§6.6D，M5-0 实测）：单 trial 成本比 IF/OC-SVM 高一个量级
     # （万行×20 特征 100 epochs ≈ 12s），只在 high/ultra 强度出场——light/

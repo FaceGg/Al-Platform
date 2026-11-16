@@ -1497,3 +1497,57 @@ UnicodeEncodeError: 'charmap' codec can't encode characters in position 2-3
 - 第九轮 §10 的全部条目（A 组 6 项、B12/B16/B17、C2 残留、C3 入口归位）**状态不变**——本轮只处理 CI 编码缺陷，未触碰业务口径。
 - **本机环境差异（非代码缺陷，已登记）**：`test_week12_security_gates` / `test_evidence_manifest` 在本机 600s 内跑不完（整仓树哈希 + `node_modules`/`.venv` 体量），CI 上通过；若后续要在本机做全量周跑，需为这两个模块单独提高 `SUITE_MODULE_TIMEOUT_SECONDS` 或排除大目录。
 - **未验证**：浏览器 E2E（Chromium acceptance，push 事件下不跑）；PostgreSQL 迁移实际 apply；worker/scheduler 镜像内代码；M6 真实门槛（平台真实标签数为 0）；生产集成 job（push 事件下 skip）。
+
+## 2026-11-16 第十一轮：遗留清单剩余可修项闭环（B12 / B16 / B17 / C2 / C3）
+
+承接第十轮（CI 编码缺陷闭环）。本轮处理《遗留问题清单》里**仍开放且代码可解**的 5 项：A 组 6 项（需现场数据/产品决策）与「非数值工况列是否也加 ≤200 上限」保持开放。
+
+### 1. B16 + B17：工况列剔除必须早于全 NaN/常数列清洗（顺序修正 + 留痕归一）
+
+**B17（留痕失真）**：原实现先做全 NaN/常数列清洗、后剔除工况列 → 工况列本身若是 CONSTANT，会先被清洗摘走，`removed_columns` 记成 `constant` 而非 `condition_column`，读的人看不出这列是**被「当工况列」剔除**的。
+
+**B16（问题漏到下游）**：同一顺序还导致「至少一个可用数值特征」护栏把工况列**算作可用特征**放行 → 护栏之后才剔除工况列 → 特征集可能变成 0 列却不报错，问题一路漏到训练阶段才炸（错误信息与真实原因无关）。实测旧顺序下该场景报的是 `AUTOML_ALL_CANDIDATES_FAILED No anomaly detection trials completed`。
+
+**修**：把「工况列解析 + `fleet_mode=shared` 必带工况列校验（§B18）+ 工况列剔除」整体**前置**到清洗与护栏之前；护栏此后才执行 → 只统计真正的可用特征。`removed_columns` 中工况列恒为 `condition_column`。
+
+**回归**：`tests/test_automl_anomaly.py` 新增 2 例——① CONSTANT 工况列的留痕原因码必须是 `condition_column`（且 `constant` 不得出现在原因码里）；② 只有工况列可用时必须以 `usable numeric feature column` 明确失败。
+**变异验证**：把剔除块改回旧顺序（清洗之后）→ **两条断言均如期转红**（B16 那条退化成 `AUTOML_ALL_CANDIDATES_FAILED`，正是它描述的症状）；恢复后源文件 SHA256 前后一致（`acba3e1e…4557`）。
+
+### 2. B12：分片数上限显式校验（fail-loud）
+
+`_rebalance_fleet_weights` 的文档写着「假设分片数 <= 10000（否则无法同时满足『每片 >= 1』与『总和 = 10000』）」，但**无任何校验**：超过上限时权重和会 > 10000，问题一路漏到下游 `WeightedTargetRouter` 才以 `TARGET_WEIGHTS_INVALID` 报错（错误信息与真实原因无关，排障方向被带偏）。
+
+**修**：①`add_fleet_shard_to_deployment` 在任何写库动作**之前**显式校验（沿用「先算后写，校验失败不留脏状态」），错误码 `FLEET_SHARD_COUNT_EXCEEDS_WEIGHT_BUDGET`（`_error` 默认映射 409，与既有 `FLEET_SHARD_ALREADY_MOUNTED` 同级）；②纯函数 `_rebalance_fleet_weights` 兜一层显式断言，避免将来新增调用点时静默产出越界权重。
+**回归**：`tests/test_fleet_device_calibration.py` 新增 1 例——把权重预算临时调小复现同一前提，断言错误码正确且**失败后不留脏状态**（stable revision 仍 2 片、权重和仍 10000）。
+
+### 3. C2 残留：把「分片退化」的后果说具体（不再只有一句泛化小字）
+
+前端「工况列候选」过滤（技术方案 §3.1 G1）已实现「非数值列 ∪ 基数 ≤200 的数值列」，但**非数值列不受 ≤200 过滤保护** → 高基数非数值列（如时间戳字符串/唯一 id）仍可被选中 → 引擎侧「每段 ≥200 行」护栏把多数分段并入默认段 → **机群共享模式退化为单一全局模型**，而 UI 仍写着「按该列分片训练 N 个模型」。
+
+**修（前端）**：选中高基数列时给出**具体**告警（该列采样内的不同取值个数 + 护栏后果 + 改选建议），不再只留一句泛化小字。
+**顺带修类型缺口**：`api/modelRegistry.ts` 的 `OutputSchema.task` 只有 `"classification" | "regression"`，**缺后端真实产出的 `"anomaly"`**（后端 `output_schema.task=anomaly` 是 M6/M9 前置校验的依据）→ 补上，否则前端无法按设计条件判定「异常检测版本」。
+**回归**：`pages/AutoMLPage.test.tsx` 新增 1 例——高基数非数值列被选中时必须显示「采样内有 300 个不同取值」与护栏后果说明；未选列时不显示。
+
+### 4. C3：M6/M9 入口落到设计指定位置（模型库详情页版本操作区）
+
+技术方案 §3.2 要求 M6/M9 入口在**模型库详情页版本操作区**，`approval_status=approved` 且 `output_schema.task=anomaly` 时显示；原实现落在闭环详情页（登记为偏差）。
+
+**修**：新增 `frontend/src/components/model/AnomalyRecalibrationPanels.tsx`（导出 `AnomalyArtifactOption` / `LabelRecalibratePanel` / `DeviceRecalibratePanel`，逻辑自闭环页迁移而来），在 `ModelLibraryPage.tsx` 接线：版本操作区按设计条件显示「M6 标签重标定」「M9 设备重标定」→ 弹窗渲染对应面板；M9 的 deployment 上下文取该版本**正在服役的部署**；部署详情抽屉内挂 `FleetShardPanel`（机群分片概览）。
+**闭环详情页收敛**：闭环页的 M6/M9 改为**复用同一组件**（删除内联的 `DeviceRecalibratePanel` 与页面私有的 M6 状态/处理函数），避免两份实现漂移；闭环场景的默认标注/标定数据集仍是本闭环回流的报错数据集（现场操作顺手），派生链接带 `projectId`（`/data?projectId=…`、`/models?projectId=…`）。
+**权限门控（复核时补）**：M6/M9 是**写操作**（后端要求 `model.register` / `deployment.create`），入口在 `approved + task=anomaly` 之上**再加 `canRegister`**——与同列其它写入口一致，否则只读用户点下去必然 403。新增回归用例覆盖「只读项目成员看不到 M6/M9 入口」。
+**入口面板自检**：M6 门槛 fail-closed 时（409 `M6_GATE_NOT_UNLOCKED`）提示「confirmed_fault ≥50 未达，当前 N 条——继续标注积累」（N 从后端文案解析）；M9 unfit 时按 §7.2「不硬迁」**界面层拒绝挂载、不调 API**。
+**说明**：设计只规定了入口的**位置与适用条件**，未规定「是否移除闭环页入口」——闭环页保留同场景快捷入口，**是否移除登记为产品待确认项**（见 §6），本轮不擅自删除已上线的操作路径。
+
+### 5. 本轮验证
+
+- **后端受影响面**：`test_automl_anomaly.py` + `test_automl_anomaly_fleet_shared.py` + `test_fleet_device_calibration.py` = **70 passed**；两处变异验证均如期转红且源文件 SHA256 恢复一致。
+- **前端**：`AutoMLPage.test.tsx` 新增 1 例（高基数非数值列 → 具体基数告警 + 护栏后果）；新增 `components/model/AnomalyRecalibrationPanels.test.tsx` 5 例（M6 重标定 / M6 派生 / M6 409 门槛提示 / M9 重标定 / M9 unfit 不挂载）+ `ModelLibraryPage.test.tsx` 新增 3 例（入口可见性 / 只读用户不可见 / 打开 M6 面板并调用 API）；新测试文件已登记进 `weekAcceptance.test.ts` 的 **week 17**（与 `FleetShardPanel.test.tsx` 同组，避免再次触发「测试文件未登记 → CI 前端失败」）。
+- `npx tsc --noEmit` 零错误；前端全量 **94 文件 / 568 passed / 19 skipped**（既有 skip）。
+
+### 6. 本轮之后仍开放
+
+- **A 组 6 项**（判据④ 真实口径不通过 / §6.2 真实门槛未解锁 / M6 审批语义 / §2.3.2 编排混用无产品面 / §7.1 正文措辞 / 判据① 400vs422 口径）——需现场数据或产品决策，代码解决不了，状态不变。
+- **C2 的产品决策项**：非数值工况列是否也加「基数 ≤200」上限（方案原文「非数值列 ∪ 低基数」允许非数值列；本轮已把退化后果在 UI 上说清楚，但**候选过滤口径未改**——需方案 owner 拍板）。
+- **C3 的取舍项**：闭环详情页的同场景快捷入口是否移除（本轮只补齐设计指定位置，未删除既有路径）。
+- **B16 的既有面**：剔除与全 NaN/常数列过滤的顺序问题在**本轮之前**即为既有问题，本轮修的是「工况列 vs 清洗」的相对顺序；其余清洗顺序语义不变（既有非回归）。
+- **未验证**：浏览器 E2E；PostgreSQL 迁移实际 apply；M6 真实门槛；生产集成 job；本机 week 12 两个模块的整仓树哈希超时（环境差异，见第十轮 §4）。

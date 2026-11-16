@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { App as AntApp, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch } from "antd";
+import { App as AntApp, Alert, Card, Select, Button, Input, InputNumber, Typography, Table, Row, Col, Spin, Tag, Tabs, Modal, Form, Descriptions, Space, Switch } from "antd";
 import { AimOutlined, AlertOutlined, CheckCircleFilled, ThunderboltOutlined, TrophyOutlined, BarChartOutlined, DownloadOutlined, EyeOutlined, PlusOutlined, ReloadOutlined, StopOutlined } from "@ant-design/icons";
 import * as echarts from "echarts";
 import apiClient, { formatApiError } from "../api/client";
@@ -919,6 +919,25 @@ export default function AutoMLPage() {
             <small style={{ display: "block", color: "rgba(0,0,0,0.45)" }}>
               建议选择设备号/工位号/程序号等低基数列；高基数列会导致分片退化（仅列出非数值列与基数 ≤200 的数值列）
             </small>
+            {/* C2 残留（2026-11-15 第十一轮）：非数值列不受「基数 ≤200」候选过滤保护，
+                选中高基数非数值列时必须把后果说具体——否则 UI 承诺「按该列分片训练 N 个
+                模型」与实际「多数分段低于 200 行护栏被并入默认段」不符，且用户看不到
+                任何提示（退化对前端完全静默）。 */}
+            {conditionColumn && (() => {
+              const cardinality = datasetColumnCardinality[conditionColumn];
+              if (cardinality === undefined || cardinality <= CONDITION_COLUMN_MAX_CARDINALITY) {
+                return null;
+              }
+              return (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginTop: 6 }}
+                  message={`工况列「${conditionColumn}」采样内有 ${cardinality} 个不同取值（>${CONDITION_COLUMN_MAX_CARDINALITY}）`}
+                  description="取值过多时，多数分段会低于 200 行护栏而被并入默认段 → 机群共享模式退化为单一全局模型（非数值列不受数值列的 ≤200 候选过滤保护）。建议改选设备号/工位号等低基数列。"
+                />
+              );
+            })()}
             <div style={{ marginTop: 8 }}>
               <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6, cursor: conditionColumn ? "pointer" : "not-allowed", color: conditionColumn ? "inherit" : "rgba(0,0,0,0.35)" }}>
                 <input

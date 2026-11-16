@@ -13,10 +13,15 @@ const mocks = vi.hoisted(() => ({
   listInferenceMetrics: vi.fn(), listInferenceMetricWindow: vi.fn(), listInferenceRequestLogs: vi.fn(), getModelCard: vi.fn(),
   updateModelCardGuidance: vi.fn(), exportModelCard: vi.fn(),
   deleteRegisteredModel: vi.fn(), deleteDeployment: vi.fn(),
+  listDatasets: vi.fn(),
+  fetchFleetOverview: vi.fn(),
+  labelRecalibrateVersion: vi.fn(), deriveSupervisedDataset: vi.fn(),
+  recalibrateDeviceVersion: vi.fn(), addFleetShard: vi.fn(),
 }));
 
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
 vi.mock("../api/modelRegistry", () => mocks);
+vi.mock("../api/datasets", () => ({ listDatasets: mocks.listDatasets }));
 vi.mock("../api/client", () => ({
   default: { get: vi.fn().mockImplementation((url: string) => {
     if (String(url).includes("/model-library")) {
@@ -119,6 +124,14 @@ describe("ModelLibraryPage", () => {
     mocks.exportModelCard.mockResolvedValue({ id: "card-1", format: "markdown" });
     mocks.deleteRegisteredModel.mockResolvedValue(undefined);
     mocks.deleteDeployment.mockResolvedValue(undefined);
+    mocks.listDatasets.mockResolvedValue([
+      { id: "ds-1", name: "回流标注集" },
+      { id: "ds-2", name: "新设备纯正常集" },
+    ]);
+    mocks.fetchFleetOverview.mockResolvedValue({
+      deployment_id: "d1", condition_column: null, revision_id: null,
+      revision_number: null, shards: [], psi_per_shard: null,
+    });
   });
 
   it("deletes registered models and deployments only after confirmation", async () => {
@@ -473,5 +486,92 @@ describe("ModelLibraryPage", () => {
 
     expect(await screen.findByText("Pending")).toBeInTheDocument();
     expect(screen.queryByText("Awaiting rollout")).not.toBeInTheDocument();
+  }, 15_000);
+
+  it("offers M6/M9 recalibration only for approved anomaly versions", async () => {
+    mocks.listModelVersions.mockResolvedValue([
+      {
+        ...version,
+        id: "v-anomaly",
+        version_number: 2,
+        approval_status: "approved",
+        output_schema: { name: "score", dtype: "float64", task: "anomaly" },
+      },
+      { ...version, id: "v-class", version_number: 3, approval_status: "approved" },
+      {
+        ...version,
+        id: "v-pending",
+        version_number: 4,
+        approval_status: "pending",
+        output_schema: { name: "score", dtype: "float64", task: "anomaly" },
+      },
+    ]);
+    render(<AntApp><ModelLibraryPage /></AntApp>);
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Project" }));
+    fireEvent.click(await screen.findByText("Weld line (owner)"));
+    expect(await screen.findByText("Weld fault")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Versions Weld fault" }));
+
+    expect(await screen.findByRole("button", { name: "M6 标签重标定 版本 2" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "M9 设备重标定 版本 2" })).toBeInTheDocument();
+    // 非 anomaly 任务（classification）与未审批版本都不显示入口
+    expect(screen.queryByRole("button", { name: "M6 标签重标定 版本 3" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "M9 设备重标定 版本 3" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "M6 标签重标定 版本 4" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "M9 设备重标定 版本 4" })).not.toBeInTheDocument();
+  }, 15_000);
+
+  it("hides the M6/M9 write entries for read-only project members", async () => {
+    // M6/M9 是**写操作**（后端要求 model.register / deployment.create）→ 只读用户
+    // 点下去必然 403，入口必须按 canRegister 门控（与同列其它写入口一致）。
+    mocks.listModelVersions.mockResolvedValue([
+      {
+        ...version,
+        id: "v-anomaly",
+        version_number: 2,
+        approval_status: "approved",
+        output_schema: { name: "score", dtype: "float64", task: "anomaly" },
+      },
+    ]);
+    render(<AntApp><ModelLibraryPage /></AntApp>);
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Project" }));
+    fireEvent.click(await screen.findByText("Read only (viewer)"));
+    await waitFor(() => expect(mocks.listModelVersions).toHaveBeenCalled());
+
+    const versionsButton = screen.queryByRole("button", { name: "Versions Weld fault" });
+    if (versionsButton) {
+      fireEvent.click(versionsButton);
+      await screen.findByText("Weld fault");
+    }
+    expect(screen.queryByRole("button", { name: "M6 标签重标定 版本 2" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "M9 设备重标定 版本 2" })).not.toBeInTheDocument();
+  }, 15_000);
+
+  it("opens the M6 recalibration panel with the labeled datasets from data management", async () => {
+    mocks.listModelVersions.mockResolvedValue([
+      {
+        ...version,
+        id: "v-anomaly",
+        version_number: 2,
+        approval_status: "approved",
+        output_schema: { name: "score", dtype: "float64", task: "anomaly" },
+      },
+    ]);
+    render(<AntApp><ModelLibraryPage /></AntApp>);
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Project" }));
+    fireEvent.click(await screen.findByText("Weld line (owner)"));
+    expect(await screen.findByText("Weld fault")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Versions Weld fault" }));
+    fireEvent.click(await screen.findByRole("button", { name: "M6 标签重标定 版本 2" }));
+
+    await waitFor(() => expect(mocks.listDatasets).toHaveBeenCalledWith("p1"));
+    expect(await screen.findByRole("combobox", { name: "标注数据集" })).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "标注数据集" }));
+    fireEvent.click(await screen.findByText("回流标注集"));
+    fireEvent.click(screen.getByRole("button", { name: /M6 档 1 阈值重标定/ }));
+
+    await waitFor(() => expect(mocks.labelRecalibrateVersion).toHaveBeenCalledWith("v-anomaly", {
+      labeled_artifact_id: "ds-1",
+    }));
   }, 15_000);
 });

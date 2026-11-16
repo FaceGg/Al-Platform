@@ -24,10 +24,15 @@ import {
   exportModelCard, uploadOnnxArtifact,
 } from "../api/modelRegistry";
 import { createModelExport, downloadModelExport, getModelExport } from "../api/modelExports";
+import { listDatasets } from "../api/datasets";
 import AppLayout from "../components/AppLayout";
 import V2PageFrame from "../components/V2PageFrame";
 import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
+import FleetShardPanel from "../components/loop/FleetShardPanel";
+import {
+  DeviceRecalibratePanel, LabelRecalibratePanel, type AnomalyArtifactOption,
+} from "../components/model/AnomalyRecalibrationPanels";
 import { useI18n } from "../i18n";
 import { notifyDashboardStatsChanged } from "../events/dashboardStats";
 
@@ -71,6 +76,11 @@ export default function ModelLibraryPage() {
   const [lastLogPage, setLastLogPage] = useState<number>();
   const operationsRequestRef = useRef(0);
   const [registerSource, setRegisterSource] = useState<"platform_joblib" | "onnx_artifact">("platform_joblib");
+  // 异常检测重标定入口（技术方案 §3.2）：M6 标签阈值重标定 / M9 设备重标定。
+  // 标注/标定数据集来自数据管理列表（artifact id 即 labeled_artifact_id）。
+  const [anomalyDatasets, setAnomalyDatasets] = useState<AnomalyArtifactOption[]>([]);
+  const [anomalyPanel, setAnomalyPanel] = useState<{ kind: "m6" | "m9"; version: ModelVersion } | null>(null);
+  const [anomalyDeploymentId, setAnomalyDeploymentId] = useState<string | null>(null);
   const [registerForm] = Form.useForm();
   const [modelForm] = Form.useForm();
   const [deploymentForm] = Form.useForm();
@@ -133,6 +143,46 @@ export default function ModelLibraryPage() {
   useEffect(() => {
     if (projectId) void loadProject(projectId);
   }, [loadProject, projectId]);
+
+  // 标注/标定数据集（数据管理列表）：item.id 即 artifact id，可直接作
+  // labeled_artifact_id / calibration_artifact_id（按需拉取，打开面板时触发）。
+  const loadAnomalyDatasets = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const items = await listDatasets(projectId) as Array<{ id: string | number; name: string }>;
+      setAnomalyDatasets((items || []).map((item) => ({
+        id: String(item.id),
+        name: String(item.name),
+      })));
+    } catch (cause) {
+      message.error(formatApiError(cause, "标注数据集加载失败"));
+    }
+  }, [projectId]);
+
+  // M6/M9 入口可见条件（技术方案 §3.2）：approval_status=approved 且
+  // output_schema.task=anomaly。api/modelRegistry.ts 的 OutputSchema.task 已补
+  // "anomaly"；此处保留局部类型断言，使页面在类型尚未补齐的分支下也能编译。
+  const isAnomalyVersion = (version: ModelVersion) =>
+    version.approval_status === "approved"
+    && (version.output_schema as { task?: string } | undefined)?.task === "anomaly";
+
+  // M9 需要 deployment 上下文（挂载分片）：取该版本正在服役的部署。
+  const anomalyDeployments = useMemo(() => {
+    if (!anomalyPanel) return [];
+    return deployments.filter((item) => item.model_version_id === anomalyPanel.version.id);
+  }, [anomalyPanel, deployments]);
+
+  const openM6Panel = (version: ModelVersion) => {
+    setAnomalyPanel({ kind: "m6", version });
+    void loadAnomalyDatasets();
+  };
+
+  const openM9Panel = (version: ModelVersion) => {
+    const related = deployments.filter((item) => item.model_version_id === version.id);
+    setAnomalyDeploymentId(related[0]?.id ?? null);
+    setAnomalyPanel({ kind: "m9", version });
+    void loadAnomalyDatasets();
+  };
 
   const statusLabel = (status: string) => {
     const label = copy[status as keyof typeof copy];
@@ -616,15 +666,20 @@ export default function ModelLibraryPage() {
           const parsed = parseBackendTime(value);
           return parsed ? parsed.toLocaleString() : "-";
         };
-        return <Descriptions column={1} size="small" bordered>
-          <Descriptions.Item label={copy.name}>{detailDeployment.name}</Descriptions.Item>
-          <Descriptions.Item label={copy.assocModelVersion}>{model && version ? `${model.name} · v${version.version_number}（${statusLabel(version.approval_status)}）` : "-"}</Descriptions.Item>
-          <Descriptions.Item label={copy.desiredState}><Tag>{statusLabel(detailDeployment.desired_state)}</Tag></Descriptions.Item>
-          <Descriptions.Item label={copy.observedState}><Tag color={statusColor(detailDeployment.observed_state)}>{statusLabel(detailDeployment.observed_state)}</Tag></Descriptions.Item>
-          <Descriptions.Item label={copy.createdAt}>{formatTime(detailDeployment.created_at)}</Descriptions.Item>
-          <Descriptions.Item label={copy.lastCheckedAt}>{formatTime(detailDeployment.last_checked_at)}</Descriptions.Item>
-          <Descriptions.Item label={copy.lastError}>{detailDeployment.last_error_code || "-"}</Descriptions.Item>
-        </Descriptions>;
+        return <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Descriptions column={1} size="small" bordered>
+            <Descriptions.Item label={copy.name}>{detailDeployment.name}</Descriptions.Item>
+            <Descriptions.Item label={copy.assocModelVersion}>{model && version ? `${model.name} · v${version.version_number}（${statusLabel(version.approval_status)}）` : "-"}</Descriptions.Item>
+            <Descriptions.Item label={copy.desiredState}><Tag>{statusLabel(detailDeployment.desired_state)}</Tag></Descriptions.Item>
+            <Descriptions.Item label={copy.observedState}><Tag color={statusColor(detailDeployment.observed_state)}>{statusLabel(detailDeployment.observed_state)}</Tag></Descriptions.Item>
+            <Descriptions.Item label={copy.createdAt}>{formatTime(detailDeployment.created_at)}</Descriptions.Item>
+            <Descriptions.Item label={copy.lastCheckedAt}>{formatTime(detailDeployment.last_checked_at)}</Descriptions.Item>
+            <Descriptions.Item label={copy.lastError}>{detailDeployment.last_error_code || "-"}</Descriptions.Item>
+          </Descriptions>
+          {/* 机群分片概览（技术方案 §7 三-3，三期 M10）：per-device 阈值/兼容性/
+              回测 + PSI 分片明细；普通部署不渲染 */}
+          <FleetShardPanel deploymentId={detailDeployment.id} />
+        </Space>;
       })()}
     </Drawer>
     <Drawer title={versionModel ? `${versionModel.name} ${copy.versions}` : copy.versions} open={Boolean(versionModel)} onClose={() => setVersionModel(undefined)} width={680}>
@@ -632,12 +687,59 @@ export default function ModelLibraryPage() {
         { title: copy.version, dataIndex: "version_number", render: (value: number) => `v${value}` },
         { title: copy.status, dataIndex: "approval_status", render: (value: string) => <Tag color={statusColor(value)}>{statusLabel(value)}</Tag> },
         { title: copy.framework, dataIndex: "framework" },
-        { title: t.model.actions, render: (_: unknown, row: ModelVersion) => versionModel && canRegister ? <Space>
-          {row.approval_status === "pending" && <><Button color="green" variant="outlined" icon={<CheckOutlined />} aria-label={`${copy.approve} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => void approve(versionModel, row)}>{copy.approve}</Button><Button danger aria-label={`${copy.reject} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => reject(versionModel, row)}>{copy.reject}</Button></>}
-          {row.approval_status === "approved" && <><Button loading={exportBusy === `${row.id}:predict`} aria-label={`${copy.exportPredict} ${row.version_number}`} onClick={() => void exportVersion(row, "predict")}>{copy.exportPredict}</Button><Button loading={exportBusy === `${row.id}:annotate`} aria-label={`${copy.exportAnnotate} ${row.version_number}`} onClick={() => void exportVersion(row, "annotate")}>{copy.exportAnnotate}</Button></>}
-        </Space> : null },
+        { title: t.model.actions, render: (_: unknown, row: ModelVersion) => <Space>
+          {versionModel && canRegister && row.approval_status === "pending" && <><Button color="green" variant="outlined" icon={<CheckOutlined />} aria-label={`${copy.approve} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => void approve(versionModel, row)}>{copy.approve}</Button><Button danger aria-label={`${copy.reject} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => reject(versionModel, row)}>{copy.reject}</Button></>}
+          {versionModel && canRegister && row.approval_status === "approved" && <><Button loading={exportBusy === `${row.id}:predict`} aria-label={`${copy.exportPredict} ${row.version_number}`} onClick={() => void exportVersion(row, "predict")}>{copy.exportPredict}</Button><Button loading={exportBusy === `${row.id}:annotate`} aria-label={`${copy.exportAnnotate} ${row.version_number}`} onClick={() => void exportVersion(row, "annotate")}>{copy.exportAnnotate}</Button></>}
+          {/* 异常检测重标定入口（技术方案 §3.2）：approved + task=anomaly 才显示。
+              M6/M9 是**写操作**（重标定 / 挂载分片），后端要求 model.register /
+              deployment.create 权限——与同列其它写入口一致按 canRegister 门控，
+              否则只读用户点下去必然 403。 */}
+          {canRegister && isAnomalyVersion(row) && <><Button size="small" aria-label={`M6 标签重标定 版本 ${row.version_number}`} onClick={() => openM6Panel(row)}>M6 标签重标定</Button><Button size="small" aria-label={`M9 设备重标定 版本 ${row.version_number}`} onClick={() => openM9Panel(row)}>M9 设备重标定</Button></>}
+        </Space> },
       ]} />
     </Drawer>
+    {/* 异常检测重标定弹窗（技术方案 §3.2）：M6 标签阈值重标定 / M9 设备重标定 */}
+    <Modal
+      title={anomalyPanel ? (anomalyPanel.kind === "m6" ? "M6 标签阈值重标定（M6 档 1）" : "M9 新设备重标定") : ""}
+      open={Boolean(anomalyPanel)}
+      onCancel={() => setAnomalyPanel(null)}
+      footer={null}
+      width={760}
+      destroyOnHidden
+    >
+      {anomalyPanel?.kind === "m6" && (
+        <LabelRecalibratePanel
+          versionId={anomalyPanel.version.id}
+          labeledArtifacts={anomalyDatasets}
+          projectId={projectId ?? null}
+        />
+      )}
+      {anomalyPanel?.kind === "m9" && (
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Space wrap size={8}>
+            <Text>目标部署（挂载分片）：</Text>
+            <Select
+              aria-label="目标部署"
+              style={{ width: 260 }}
+              size="small"
+              placeholder="选择部署"
+              value={anomalyDeploymentId ?? undefined}
+              options={anomalyDeployments.map((item) => ({ value: item.id, label: item.name }))}
+              onChange={(value) => setAnomalyDeploymentId(String(value))}
+            />
+          </Space>
+          {anomalyDeployments.length === 0 && (
+            <Alert type="info" showIcon message="该版本暂无关联部署：可先完成设备重标定产出迁移版本，再在部署上挂载分片" />
+          )}
+          <DeviceRecalibratePanel
+            deploymentId={anomalyDeploymentId}
+            sourceVersionId={anomalyPanel.version.id}
+            calibrationArtifact={null}
+            datasets={anomalyDatasets}
+          />
+        </Space>
+      )}
+    </Modal>
     <Modal title={copy.createDeployment} open={deploymentOpen} onCancel={() => setDeploymentOpen(false)} onOk={() => void submitDeployment()} okText={t.common.create} okButtonProps={{ "aria-label": t.common.create }}>
       <Form form={deploymentForm} layout="vertical" autoComplete="off"><Form.Item name="name" label={copy.name} rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="model_version_id" label={copy.version} rules={[{ required: true }]}><Select options={approvedVersions.map(({ model, version }) => ({ value: version.id, label: `${model.name} v${version.version_number}` }))} /></Form.Item></Form>
     </Modal>

@@ -1021,6 +1021,37 @@ describe("AutoMLPage", () => {
     expect(screen.getByText(/基数 ≤200/)).toBeInTheDocument();
   });
 
+  it("warns with the concrete cardinality when a high-cardinality non-numeric condition column is chosen", async () => {
+    // C2 残留：非数值列不受「基数 ≤200」候选过滤保护 → 选中高基数非数值列时
+    // 必须把「分片退化」的后果说具体，不能只留一句泛化小字。
+    datasets.getDatasetPreview.mockResolvedValue({
+      columns: ANOMALY_COLUMNS,
+      dtypes: ANOMALY_DTYPES,
+      preview: ANOMALY_PREVIEW_ROWS.map((row) => ({ ...row, station_code: `ST-${row.row_id}` })),
+      total_rows: 1000,
+    });
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    fireEvent.click(await screen.findByRole("button", { name: "范式：无监督异常检测" }));
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalledWith("dataset-1", expect.objectContaining({ limit: expect.any(Number) })));
+
+    // 未选列时不显示该告警
+    expect(screen.queryByText(/采样内有 \d+ 个不同取值/)).toBeNull();
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "工况列" }));
+    fireEvent.click(await screen.findByText("station_code", { selector: ".ant-select-item-option-content" }));
+
+    // 选中 300 个取值的非数值列 → 明确告警（基数 + 护栏后果）
+    expect(await screen.findByText(/采样内有 300 个不同取值/)).toBeInTheDocument();
+    expect(screen.getByText(/多数分段会低于 200 行护栏而被并入默认段/)).toBeInTheDocument();
+  });
+
   it("blocks the fleet shared mode until a condition column is chosen", async () => {
     api.post.mockImplementation((url: string) => url === "/experiments"
       ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })

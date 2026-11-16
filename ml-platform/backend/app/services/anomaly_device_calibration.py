@@ -106,8 +106,14 @@ def _rebalance_fleet_weights(
       「weight 按段行数比例分配」），故该分片即默认分片。
 
     假设分片数 <= 10000（否则无法同时满足「每片 >= 1」与「总和 = 10000」）。
+    该前提由 :func:`add_fleet_shard_to_deployment` 显式校验（B12），此处再兜一层，
+    避免将来新增调用点时静默产出权重和 > 10000 的分片列表。
     """
     count = len(existing_weights) + 1
+    if count > FLEET_TARGET_TOTAL_WEIGHT_BPS:
+        raise ValueError(
+            f"fleet shard count {count} exceeds weight budget {FLEET_TARGET_TOTAL_WEIGHT_BPS}"
+        )
     if explicit_weight is not None:
         if count == 1:
             # 唯一分片必须承担全部预算（否则 revision 权重和 != 10000，
@@ -508,6 +514,16 @@ def add_fleet_shard_to_deployment(
     existing_weights = [
         int(getattr(target, "weight_bps", 0) or 0) for target in existing_targets
     ]
+    # 分片数上限（B12）：权重预算恒为 10000 且每片至少 1 基点 → 分片数不得超过
+    # 10000，否则「每片 >= 1」与「总和 = 10000」不可兼得。此前**无显式校验**：
+    # 超过上限会让权重和 > 10000，问题一路漏到下游 WeightedTargetRouter 才以
+    # TARGET_WEIGHTS_INVALID 报错（错误信息与真实原因无关，排障方向被带偏）。
+    if len(existing_weights) + 1 > FLEET_TARGET_TOTAL_WEIGHT_BPS:
+        raise DeviceCalibrationError(
+            "FLEET_SHARD_COUNT_EXCEEDS_WEIGHT_BUDGET",
+            f"分片数上限 {FLEET_TARGET_TOTAL_WEIGHT_BPS}"
+            f"（每片至少 1 基点，权重和须恒为 {FLEET_TARGET_TOTAL_WEIGHT_BPS}）",
+        )
     # §6.3「weight 按段行数比例分配」：调用方给出新分片行数与总分片行数时，
     # 按行数比例分配权重（此前只能等分，丢失行数比例——2026-11-14 审计 B9）。
     # 显式 weight_bps 优先；两者都缺省才等分回退。
