@@ -1544,12 +1544,12 @@ UnicodeEncodeError: 'charmap' codec can't encode characters in position 2-3
 - **前端**：`AutoMLPage.test.tsx` 新增 1 例（高基数非数值列 → 具体基数告警 + 护栏后果）；新增 `components/model/AnomalyRecalibrationPanels.test.tsx` 5 例（M6 重标定 / M6 派生 / M6 409 门槛提示 / M9 重标定 / M9 unfit 不挂载）+ `ModelLibraryPage.test.tsx` 新增 3 例（入口可见性 / 只读用户不可见 / 打开 M6 面板并调用 API）；新测试文件已登记进 `weekAcceptance.test.ts` 的 **week 17**（与 `FleetShardPanel.test.tsx` 同组，避免再次触发「测试文件未登记 → CI 前端失败」）。
 - `npx tsc --noEmit` 零错误；前端全量 **94 文件 / 568 passed / 19 skipped**（既有 skip）。
 - **端到端**：`python run_suite.py --week 17`（42 模块）经加固后的 harness 跑通：**42 passed / 0 failed**。
-- **CI run #834（`ef26f59c`）结论：success** —— Ubuntu 与 Windows 两个 job 全绿（Windows 自 #816 起第二次走完后端套件→前端→构建→Windows 冒烟全链路）。
+- **CI 结论**：run **#834**（`ef26f59c`，代码提交）= **success**；run **#835**（`2bca31cc`，台账补记）= **success** —— Ubuntu 与 Windows 两个 job 全绿（Windows 自 #816 起第二次走完后端套件→前端→构建→Windows 冒烟全链路）。
 
 ### 6. 本轮之后仍开放
 
-- **A 组 6 项**（判据④ 真实口径不通过 / §6.2 真实门槛未解锁 / M6 审批语义 / §2.3.2 编排混用无产品面 / §7.1 正文措辞 / 判据① 400vs422 口径）——需现场数据或产品决策，代码解决不了，状态不变。
-- **C2 的产品决策项**：非数值工况列是否也加「基数 ≤200」上限（方案原文「非数值列 ∪ 低基数」允许非数值列；本轮已把退化后果在 UI 上说清楚，但**候选过滤口径未改**——需方案 owner 拍板）。
-- **C3 的取舍项**：闭环详情页的同场景快捷入口是否移除（本轮只补齐设计指定位置，未删除既有路径）。
+- **A 组 5 项**（A3 已于 2026-11-16 拍板关闭：沿用源版本审批，不改为强制人工审批）：判据④ 真实口径不通过 / §6.2 真实门槛未解锁 / §2.3.2 编排混用无产品面 / §7.1 正文措辞 / 判据① 400vs422 口径——均需现场数据或产品决策，代码解决不了。
+- **C2 口径已拍板（2026-11-16）：保持现状**——仅数值列 ≤200、非数值列不限（与方案原文一致）；高基数非数值列的退化后果已由前端具体告警呈现（采样基数 + 护栏后果 + 改选建议），**不再有静默退化**。
+- **C3 取舍已拍板（2026-11-16）：保留闭环详情页快捷入口**（默认用本闭环回流报错集），同时设计指定位置（模型库详情页版本操作区）已补齐；两处共用 `frontend/src/components/model/AnomalyRecalibrationPanels.tsx`，无逻辑重复。
 - **B16 的既有面**：剔除与全 NaN/常数列过滤的顺序问题在**本轮之前**即为既有问题，本轮修的是「工况列 vs 清洗」的相对顺序；其余清洗顺序语义不变（既有非回归）。
 - **未验证**：浏览器 E2E；PostgreSQL 迁移实际 apply；M6 真实门槛；生产集成 job；本机 week 12 两个模块的整仓树哈希超时（环境差异，见第十轮 §4）。
