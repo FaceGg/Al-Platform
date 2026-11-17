@@ -427,7 +427,13 @@ def execute_agent_run(run_id, actor_id=None) -> AgentRun:
                                     ["pending", "running", "waiting_guidance"]
                                 ),
                             )
-                            .values(heartbeat_at=_agent_utcnow())
+                            .values(
+                                heartbeat_at=_agent_utcnow(),
+                                # 显式自赋值抑制 updated_at 的 onupdate——心跳
+                                # 只是保活信号，不该触碰「更新时间」（列表列
+                                # 语义=运行档案实质更新，用户实测恒跳动的根因）
+                                updated_at=_AgentRun.updated_at,
+                            )
                         )
                         heartbeat_db.commit()
                 except Exception:  # noqa: BLE001 - 心跳失败不阻断建模主链

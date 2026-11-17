@@ -500,6 +500,54 @@ class TestDeleteAgentRun(AgentCenterHarness, unittest.TestCase):
         response = client.delete(f"/api/agent/runs/{uuid4()}", headers=self.h)
         self.assertEqual(response.status_code, 404)
 
+    def test_heartbeat_refresh_does_not_touch_updated_at(self):
+        """心跳保活只刷 heartbeat_at、不碰 updated_at——updated_at 语义=运行
+        档案实质更新时间（任务列表「更新时间」列），随心跳恒跳动的根因。"""
+        from datetime import datetime, timezone
+
+        from sqlalchemy import update as sa_update
+
+        from app.models.agent_run import AgentRun as AgentRunModel
+
+        project_id, _ = self._project()
+        with SessionLocal() as db:
+            run = AgentRun(
+                project_id=uuid.UUID(project_id), target_column="fault",
+                status="running", current_stage="s1", round_count=1,
+            )
+            db.add(run)
+            db.commit()
+            run_id = run.id
+            db.refresh(run)
+            updated_before = run.updated_at
+
+            # 与 executor 心跳保活完全同款的 Core update（含自赋值技巧）
+            db.execute(
+                sa_update(AgentRunModel)
+                .where(
+                    AgentRunModel.id == run_id,
+                    AgentRunModel.status.in_(["pending", "running", "waiting_guidance"]),
+                )
+                .values(
+                    heartbeat_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                    updated_at=AgentRunModel.updated_at,
+                )
+            )
+            db.commit()
+            db.expire(run)
+            self.assertEqual(run.updated_at, updated_before)
+            self.assertIsNotNone(run.heartbeat_at)
+
+            # 对照：实质阶段推进会触碰 updated_at（ORM 路径）；SQLite
+            # CURRENT_TIMESTAMP 秒级精度，跨秒再写才能观察到变化
+            import time as _time
+
+            _time.sleep(1.1)
+            run.current_stage = "s2"
+            db.commit()
+            db.expire(run)
+            self.assertNotEqual(run.updated_at, updated_before)
+
     def test_max_rounds_accept_requires_note_and_records_situation(self):
         """轮数耗尽（硬门禁从未通过）的升级：采纳必须注明实际情况（缺注 422，
         注明后 accepted 且决策留痕带 error_code）；评审升级不受此限。"""

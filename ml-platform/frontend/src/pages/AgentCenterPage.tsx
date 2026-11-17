@@ -86,9 +86,10 @@ export default function AgentCenterPage() {
   // 重训铸造/服务化铸造）。智能体 S3 验收训练不落 TrainingJob 表、不是
   // AutoML 任务——曾经在此视图合成行混排，但智能体作业的详情就是 Agent
   // 档案页，两个分类详情撞车（用户质疑分类意义），回归纯引擎视图。
+  // 固定按创建时间排序：updated_at 随状态更新跳动，位置不稳定（用户实测）。
   const modelingRows = useMemo(() => {
     return [...jobs].sort((left, right) =>
-      String(right.updated_at || "").localeCompare(String(left.updated_at || "")));
+      String(right.created_at || "").localeCompare(String(left.created_at || "")));
   }, [jobs]);
 
   const loadJobs = () => {
@@ -115,6 +116,13 @@ export default function AgentCenterPage() {
   };
 
   useEffect(() => { loadJobs(); loadAgentData(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  // 任务页自动刷新（10 秒）：状态变化无需手动点「刷新」；「刷新」按钮保留手动强刷
+  useEffect(() => {
+    if (tab !== "tasks") return;
+    const timer = setInterval(() => { loadJobs(); loadAgentData(); }, 10000);
+    return () => clearInterval(timer);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [tab]);
 
   return (
     <AppLayout>
@@ -195,7 +203,9 @@ export default function AgentCenterPage() {
                     ? "暂无 Agent 运行记录 —— Agent 任务由智能体建模主线创建（AutoML 绑定全链接入中），P2 真实收敛验证已在拧紧/电焊两域跑通全链"
                     : "No agent runs yet — agent jobs are created by the modeling agent mainline (AutoML binding in progress); P2 convergence was verified on both real domains"}</td></tr>
                 ) : null}
-                {agentRuns.map((run) => (
+                {[...agentRuns]
+                  .sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")))
+                  .map((run) => (
                   <tr key={run.id}>
                     <td className="tt" title={run.id}>{run.id.slice(0, 8)}…</td>
                     <td>{run.project_name ?? "-"}</td>

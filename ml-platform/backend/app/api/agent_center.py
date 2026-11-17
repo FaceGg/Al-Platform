@@ -91,7 +91,9 @@ def list_agent_runs(
     rows = (
         db.query(AgentRun, Project.name)
         .outerjoin(Project, AgentRun.project_id == Project.id)
-        .order_by(AgentRun.updated_at.desc(), AgentRun.created_at.desc())
+        # 固定按创建时间排序：updated_at 会被心跳/状态更新触碰，位置总在变
+        # （用户实测任务上下跳动），创建顺序才是稳定的任务清单语义。
+        .order_by(AgentRun.created_at.desc())
         .offset(offset)
         .limit(limit)
         .all()
