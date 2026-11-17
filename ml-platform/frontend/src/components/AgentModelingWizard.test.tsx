@@ -111,7 +111,7 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     expect(payload.target_column).toContain("判定");
     expect(payload.project_id).toBe("p1");
     expect(payload.llm_profile_id).toBe("prof-1");
-    expect(payload.step_by_step).toBe(true);
+    expect(payload.step_by_step).toBe(false);
     expect(payload.guidance.analysis.column_notes).toEqual([
       { column: "ACTUAL_TORQUE", note: "核心质量信号，关注偏差" },
     ]);
@@ -295,7 +295,7 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     fireEvent.change(await screen.findByLabelText("选择项目"), { target: { value: "p1" } });
     fireEvent.change(await screen.findByLabelText("选择数据集"), { target: { value: "d1" } });
     await waitFor(() => expect(screen.getByLabelText("选择目标列").querySelectorAll("option").length).toBeGreaterThan(1));
-    // 逐步确认开关已退役（默认开启，无 UI 字样）
+    // 逐步确认开关已退役：运行期默认全自动（「逐步确认」指向导分步填写）
     expect(screen.queryByRole("switch", { name: "逐步确认模式" })).not.toBeInTheDocument();
     expect(screen.queryByText(/逐步确认：默认开启/)).not.toBeInTheDocument();
     for (let i = 0; i < 4; i += 1) {
@@ -303,8 +303,8 @@ describe("AgentModelingWizard (design five-step agent wizard)", () => {
     }
     fireEvent.click(await screen.findByRole("button", { name: /^rocket 启动智能体$/ }));
     await waitFor(() => expect(agentCenterMocks.createAgentRun).toHaveBeenCalled());
-    expect(agentCenterMocks.createAgentRun.mock.calls[0][0].step_by_step).toBe(true);
-    expect(await screen.findByText(/已开启逐步确认/)).toBeInTheDocument();
+    expect(agentCenterMocks.createAgentRun.mock.calls[0][0].step_by_step).toBe(false);
+    expect(await screen.findByText(/全自动迭代至终态/)).toBeInTheDocument();
   });
 
   it("sends knowledge sources (params + entry checkboxes + kb multiselect) in guidance", async () => {

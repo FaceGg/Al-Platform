@@ -95,7 +95,9 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
   const [conditionColumn, setConditionColumn] = useState("");
   const [profiles, setProfiles] = useState<ProfileOption[]>([]);
   const [llmProfileId, setLlmProfileId] = useState("");
-  const [stepByStep] = useState(true);
+  // 运行期全自动（2026-11-13 用户澄清：「逐步确认」指向导分步填写，训练
+  // 跑起来当然全自动——逐步确认模式开关已退役，不再插运行期暂停）
+  const stepByStep = false;
   // 知识源（S1 注入）：平台经验默认开（参数可配+条目可勾选）；知识库按多选
   const [useExperience, setUseExperience] = useState(true);
   const [kbIds, setKbIds] = useState<string[]>([]);
@@ -902,10 +904,8 @@ export default function AgentModelingWizard({ onSubmitted }: { onSubmitted?: () 
       {step === 5 && (
         <>
           <div className="v2-note" style={{ marginBottom: 12 }}>
-            {zh ? "提交后智能体将开始迭代（S1 分析 → S2 特征脚本（沙箱）→ S3 建模 → S4 双门禁评审）；"
-              + (stepByStep ? "已开启逐步确认：每个阶段之间会暂停等待你的确认。" : "逐步确认未开启：全自动迭代至终态。")
-              : "The agent iterates S1→S4 with sandboxed scripts and hard gates; "
-              + (stepByStep ? "step-by-step pauses between stages are ON." : "fully automatic.")}
+            {zh ? "提交后智能体将开始迭代（S1 分析 → S2 特征脚本（沙箱）→ S3 建模 → S4 双门禁评审）；全自动迭代至终态，仅评审升级需人工决策时暂停。"
+              : "The agent iterates S1→S4 with sandboxed scripts and hard gates; fully automatic, pausing only when a human decision is required."}
           </div>
           <div className="v2-panel">
             <h4><span className="bar" />{zh ? "验收通过后的服务化（届时在此确认）" : "Post-acceptance serving (confirmed later)"}</h4>
