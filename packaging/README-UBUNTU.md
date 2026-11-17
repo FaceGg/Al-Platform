@@ -134,6 +134,8 @@ pip download torch==2.15.0 filelock sympy jinja2 fsspec typing-extensions networ
 
 启用后无需任何配置：无监督建模任务的算法目录自动出现「AutoEncoder 自编码器」，与 IsolationForest / OC-SVM 同台搜索。未启用时它保持缺席，不产生任何报错。
 
+> **2026-11-17 修复**：worker/scheduler 镜像（`Dockerfile.worker`）此前**没有** `WITH_TORCH` 段——上面的命令对 worker/scheduler 静默无效（`--build-arg` 对未声明 ARG 的 Dockerfile 只警告不报错），导致 torch 只进 API 镜像、实际执行训练的 worker 仍报 `AUTOML_ALGORITHM_UNAVAILABLE`。现已补齐：四个 backend 家族镜像（backend/migrate/worker/scheduler）均支持 `WITH_TORCH`，compose 亦已加 `args: WITH_TORCH: ${WITH_TORCH:-0}` 透传（`WITH_TORCH=1 docker compose build ...` 前缀环境变量方式与 `--build-arg` 等效，二选一）。本机 wheelhouse 已备 torch-2.15.0+cpu 离线闭包，构建自动走纯离线安装。
+
 ## 工况分片与机群模式（无监督异常检测）
 
 无监督建模任务支持按「工况列」（如工位号/设备号）分片训练与路由（技术方案 §6.3/§7.1）：

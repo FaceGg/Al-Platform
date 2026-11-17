@@ -64,6 +64,10 @@ services:
       context: ./ml-platform/backend
       dockerfile: Dockerfile
       network: ${COMPOSE_BUILD_NETWORK:-host}
+      args:
+        # AE 自编码器族启用开关（2026-11-17 用户拍板：本地栈 WITH_TORCH=1）。
+        # 默认 0 不改默认行为；启用方式：WITH_TORCH=1 docker compose build ...
+        WITH_TORCH: ${WITH_TORCH:-0}
     command: ["alembic", "upgrade", "head"]
     environment: &production-environment
       APP_MODE: production
@@ -253,6 +257,8 @@ services:
       context: ./ml-platform/backend
       dockerfile: Dockerfile
       network: ${COMPOSE_BUILD_NETWORK:-host}
+      args:
+        WITH_TORCH: ${WITH_TORCH:-0}
     ports:
       # A-02：默认回环绑定——backend 直发端口不再暴露公网（nginx 是唯一入口；
       # CI/本地探活走 127.0.0.1 不受影响，需外部访问时显式设 BACKEND_BIND_ADDRESS）
@@ -326,6 +332,8 @@ services:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.worker
       network: ${COMPOSE_BUILD_NETWORK:-host}
+      args:
+        WITH_TORCH: ${WITH_TORCH:-0}
     environment: *production-environment
     volumes:
       - tensorboard-events:/var/lib/tensorboard/runs
@@ -352,6 +360,8 @@ services:
       context: ./ml-platform/backend
       dockerfile: Dockerfile.worker
       network: ${COMPOSE_BUILD_NETWORK:-host}
+      args:
+        WITH_TORCH: ${WITH_TORCH:-0}
     command:
       - celery
       - -A

@@ -1686,3 +1686,32 @@ AE 在栈上不可用是既定决策（torch ~200MB 不进部署镜像，fail-sa
 
 - **推送不必等 CI**（2026-11-16 用户指示）：推送成功即完成批次并汇报，CI 后台监视、结论下批顺带登记。本批 `6e0e0408` 已推送，CI 结论下批登记。
 - 本轮完成后**关闭计算机**（用户指示）。
+
+## 2026-11-17 第十五轮：pytorch 问题解决——AE 自编码器族栈上启用（用户拍板）
+
+第十四轮登记的「AE 上栈决策项」用户拍板执行：把 torch（CPU 版）放进 backend 家族镜像，AE 在栈上真实可用。
+
+### 1. 根因（比预想深一层）
+
+- 主 `Dockerfile`（backend/migrate）二期就留了 `ARG WITH_TORCH=0` 开关（wheelhouse 已备 torch-2.15.0+cpu 离线闭包 166 wheel）；
+- **但 `Dockerfile.worker`（worker/scheduler 实际执行 AutoML 训练的镜像）完全没有该段**——`--build-arg WITH_TORCH=1` 对未声明 ARG 的 Dockerfile 只警告不报错（静默无效），即便按 README 方式 A 构建也只装进 API 镜像，训练侧 AE 恒 `AUTOML_ALGORITHM_UNAVAILABLE`。
+
+### 2. 修复与启用
+
+- `Dockerfile.worker` 补同款 `WITH_TORCH` 段（wheelhouse 有 torch wheel → 纯离线装；无 → PyTorch 官方 CPU wheel 目录在线兜底；装后 import 自检）；
+- `docker-compose.yml` 四个 backend 家族服务 build 段加 `args: WITH_TORCH: ${WITH_TORCH:-0}` 透传（默认 0 不改默认行为；`WITH_TORCH=1 docker compose build ...` 前缀环境变量与 `--build-arg` 等效）；
+- 本地 `WITH_TORCH=1` 重建 backend/migrate/worker/scheduler 四标签并 force-recreate；容器内验证 worker/backend 均 `torch 2.15.0+cpu` import 成功；
+- backend API 进程不常驻 torch（AE 模块 lazy import 设计——worker 空闲与 API 路径零开销，仅 AE trial 执行时加载）。
+
+### 3. 端到端真实验证（任务 `9d38df38-b709-410a-832b-6b939978db2d`）
+
+复用点焊数据集（fault 工况列 × 3 算法 × light）：**6 行全部 completed**——AE 两段真实跑通（fault=0 段 synthetic_auc 0.9682 / fault=1 段 **0.9996 全场最高**），每族段 11 条 trial，60/60 试验完成，浏览器实测任务页 6 行全绿「通过+已完成」。AE 从「缺席族」变为与 IF/OC-SVM 同台搜索并真实产出可用模型。
+
+### 4. 环境插曲（非本轮改动引入，登记）
+
+今晨开机后 WSL VM 反复崩溃重启（uptime 反复归零，journal 留痕 `systemctl poweroff did not terminate the instance in 10000 ms`——开机初期全栈自启+8GB 上限挤压触发，与 memory 既有「WSL 崩溃循环」模式同型）；显式 `wsl --shutdown` 打破后约 20 分钟自稳，AE 验证任务在抖动间歇照常完成。**开机初期若见容器集体反复重启，先确认 VM uptime（`wsl uptime -p`），勿误判为服务故障。**
+
+### 5. 后续
+
+- `WITH_TORCH=1` 已在本地 compose 生效但**未固化**（默认仍 0）——r 系列打包是否默认启用 torch（镜像 +~700MB）待用户在下次打包时决策；现场离线启用按 `packaging/README-UBUNTU.md`「启用自编码器族」章节（方式 B 补件 wheel 已验证可用）。
+- 本批提交推送后 CI 结论下批顺带登记（2026-11-16 流程指示：推送不等 CI）。
