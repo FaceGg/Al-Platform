@@ -612,24 +612,36 @@ function TerminalOutcome({
   // waiting_escalate 是"暂停待人工决策"而非致命失败：用琥珀色与 ⏸ 区分，
   // 避免用户误读为系统错误。
   const escalated = archive.status === "waiting_escalate";
+  // waiting_guidance 是"逐步确认模式下的正常暂停"（S1 完成待放行），更不是
+  // 失败——曾掉进红色「任务未通过」分支误导用户（实测 c5aabbf5）。
+  const waitingGuidance = archive.status === "waiting_guidance";
+  const panelColor = accepted
+    ? "var(--v2-green)"
+    : escalated || waitingGuidance
+      ? "var(--v2-gold)"
+      : "var(--v2-red)";
   return (
     <div style={{
-      border: `1px solid ${accepted ? "rgba(71,195,160,.45)" : escalated ? "rgba(250,173,20,.45)" : "rgba(230,111,117,.45)"}`,
-      background: accepted ? "rgba(71,195,160,.07)" : escalated ? "rgba(250,173,20,.08)" : "rgba(230,111,117,.07)",
+      border: `1px solid ${accepted ? "rgba(71,195,160,.45)" : escalated || waitingGuidance ? "rgba(250,173,20,.45)" : "rgba(230,111,117,.45)"}`,
+      background: accepted ? "rgba(71,195,160,.07)" : escalated || waitingGuidance ? "rgba(250,173,20,.08)" : "rgba(230,111,117,.07)",
       borderRadius: 9, padding: "10px 12px", marginBottom: 6,
     }}>
       <div className="meta">
-        <b style={{ color: accepted ? "var(--v2-green)" : escalated ? "var(--v2-gold)" : "var(--v2-red)", fontSize: 13 }}>
+        <b style={{ color: panelColor, fontSize: 13 }}>
           {accepted
             ? (zh ? "✓ 验收通过" : "✓ Accepted")
-            : escalated
-              ? `⏸ ${zh ? "未达验收标准 · 待人工决策" : "Below gates · needs decision"}`
-              : `✕ ${zh ? "任务未通过" : "Not accepted"}`}
+            : waitingGuidance
+              ? `⏸ ${zh ? "逐步确认：S1 分析完成，等待放行" : "Paused after S1 — awaiting confirmation"}`
+              : escalated
+                ? `⏸ ${zh ? "未达验收标准 · 待人工决策" : "Below gates · needs decision"}`
+                : `✕ ${zh ? "任务未通过" : "Not accepted"}`}
         </b>
-        <span>{explain?.signal ?? archive.status}</span>
+        <span>{waitingGuidance
+          ? (zh ? "点击「放行继续」执行后续阶段（逐步确认模式）" : "Click resume to continue (step-by-step mode)")
+          : explain?.signal ?? archive.status}</span>
         <span style={{ marginLeft: "auto" }}>{relativeTime(archive.updated_at ?? archive.created_at, zh)}</span>
       </div>
-      {!accepted ? (
+      {!accepted && !waitingGuidance ? (
         <div className="body" style={{ marginTop: 4 }}>
           {explain ? (
             <>
