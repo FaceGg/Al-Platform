@@ -1715,3 +1715,17 @@ AE 在栈上不可用是既定决策（torch ~200MB 不进部署镜像，fail-sa
 
 - `WITH_TORCH=1` 已在本地 compose 生效但**未固化**（默认仍 0）——r 系列打包是否默认启用 torch（镜像 +~700MB）待用户在下次打包时决策；现场离线启用按 `packaging/README-UBUNTU.md`「启用自编码器族」章节（方式 B 补件 wheel 已验证可用）。
 - 本批提交推送后 CI 结论下批顺带登记（2026-11-16 流程指示：推送不等 CI）。
+
+## 2026-11-17 智能体中心四项体验/健壮性批次（用户实测驱动，全部部署）
+
+**1. ReviewVerdict 契约宽容归一化（e8dbb028，两轮真机 S4 契约失败实锤）**：5e595f92/c79ad389（升级后 r2/r3）的 S4 反复因 `surprises.0~4/business_readiness: Input should be a valid string` 契约失败升级——LLM 常把 surprises 写成对象列表（{finding}/{severity}）、business_readiness 写成对象。修：contracts.py 的 ReviewVerdict 加 before validator——对象列表提取字符串值拼接、数字 str()、business_readiness 对象/列表转 JSON 文本；None（字段缺失）仍拒收。与 11-05 的 ReviewAlignment 数字窄归一化同思路（只放宽载体形态，verdict 枚举红线不变）。
+
+**2. 「逐步确认」语义澄清（503cdcdc，用户澄清需求本意）**：11-11 的「默认逐步确认」实现理解偏了——用户本意「逐步确认」= 向导五步分步填写（固有交互），训练跑起来当然全自动。step_by_step 恒 false（S1→S4 一口气跑到终态，仅评审升级/需人工决策时停）；开关与运行期暂停逻辑退役；存量 waiting_guidance 任务渲染保留兼容（eadaa642：流式控制台 waiting_guidance 不再渲染红色「✕ 任务未通过」，改金色 ⏸ 暂停提示——实测 c5aabbf5）。
+
+**3. 任务列表排序/自动刷新/心跳（84274ba0）**：列表排序 updated_at → created_at（updated_at 随心跳/状态触碰，任务上下跳动，用户实测）；后端+前端双视图同步；任务页 10 秒自动轮询（状态变化无需手点「刷新」，按钮保留）。心跳保活 Core update 显式自赋值 updated_at（抑制 onupdate）——心跳不再触碰「更新时间」（语义=运行档案实质更新时间）。
+
+**4. DeepSeek 官方能力补接（f38d39c5，文档站全量浏览器核对后）**：① Chat Completions 官方扩展工具 `deepseek_web_search` 注入（openai_compatible+DeepSeek 端点+联网能力勾选）——此前「联网搜索」开关对 DeepSeek 主力协议无效；② PDF 附件：openai 系 document_url 块 → Files API 上传解析（rich_layout_recognition）→ file 内容块引用（官方三协议均支持 file_id；内容哈希缓存 file_id；失败降级不发送）——此前 openai 系 PDF 静默不发送。Responses API 全文核对：`response.failed/incomplete` 是官方打断信号位。
+
+**根因修正链（今日连环报障的完整解释）**：用户一天内多个智能体任务 S1/S2 长时间不更新/失败。三层根因叠加：①上游 DeepSeek Flash API 对长生成间歇性打断（`insufficient_system_resource`/`aborted`，官方 finish_reason 枚举；Flash API 90 天可用性 99.55% 全服务最低，官方日历 10 起故障多为 Flash 受影响）；②本机链路分钟级全断/全通翻转（审计按分钟分布实锤：通 2-5 分钟→断 2-5 分钟循环）；③**并行大模型流式调用挤占出网带宽**（用户观察「别的任务完成 263ba0f1 才有进度」实锤——并行长流式 SSE 下载互相摊薄带宽至涓流/断流）。平台侧修复：流式并发信号量（LLM_STREAM_CONCURRENCY=2，env 可调——封顶同时在途流式调用数，排队任务由重连/预算机制管理）+ 重连 10s×60 次密集重试（覆盖约 10 分钟断窗口）+ 网络失败总预算 NETWORK_FAILURE_LIMIT=8（生成轮次与重连共享「或」语义不嵌套，用户澄清：5 次重试算在总共 8 次中）+ 达限升级人工（数据不丢）。
+
+**验证**：后端 73 passed（契约归一化 4 用例含 None 拒收/空容器 JSON 留档；PDF 转换/缓存命中/失败降级；重连 10s×59 断言等）+ 页测 6 passed + tsc；真实任务 34f71fee **1 轮 pass**（recall 1.0/f1 0.9595，知识库 3 块注入档案 ✓）；c79ad389 三轮 accepted（评审升级自动续训 ✓）。**待用户决策**：大屏「线上模型 vN」显示优化；熔断预算跨路径统一；reasoning_effort=low（缩短生成时长降低打断概率）是否启用。
