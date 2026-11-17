@@ -123,7 +123,7 @@ export default function ServitizeActions({
     setBusy(true);
     setError("");
     setCastPhase("casting");
-    setCastNote(zh ? "引擎重铸已触发（全量搜索，约 1-3 分钟）…" : "Engine recast dispatched…");
+    setCastNote(zh ? "引擎重铸已触发（全部算法族 · 全量数据重训，约 1-3 分钟）…" : "Engine recast dispatched…");
     try {
       const started = await castDeploymentStart({
         recipe_id: recipeId,
@@ -499,9 +499,10 @@ export default function ServitizeActions({
               className="v2-btn"
               style={{ padding: "4px 14px", fontSize: 12 }}
               disabled={busy || castPhase === "casting"}
+              title={zh ? "按配方触发 AutoML 引擎重训一遍（同样全量数据 · 全部算法族搜索），产出正式引擎作业档案" : "Recast via AutoML engine (same full data, all algorithm families)"}
               onClick={() => void startCast()}
             >
-              {zh ? "引擎重铸（全量搜索）" : "Engine recast"}
+              {zh ? "引擎重铸（AutoML 全族重训 · 全量数据）" : "Engine recast"}
             </button>
           </>
         ) : null}
