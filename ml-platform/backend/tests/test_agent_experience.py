@@ -214,6 +214,73 @@ class TestExperienceStore(unittest.TestCase):
             self.assertIsNotNone(doc)
             self.assertIn("教训：", doc.content)
 
+    def test_outcome_decay_below_gate_removes_projection(self):
+        """调分跌破投影门槛 → 系统分区投影同步移除（衰减反向同步）。
+
+        用户实测：投影显示 ≥0.85 而真源已被任务失败反馈衰减到 0.81——
+        平台不再注入的教训不应继续被 RAG 检索引用。"""
+        from app.models.knowledge import Document
+        from app.services.knowledge_center import (
+            get_system_partition,
+            project_experience_entry,
+        )
+
+        with SessionLocal() as db:
+            partition, _binding = get_system_partition(db, None)
+            entry = self._record(db, confidence=0.90)  # ≥0.85 先投影
+            entry_id = entry.id
+            project_experience_entry(db, entry, None)
+            self.assertIsNotNone(
+                db.query(Document)
+                .filter(Document.kb_id == partition.id, Document.filename == f"经验 {entry_id}")
+                .first()
+            )
+        with SessionLocal() as db:
+            apply_experience_task_outcome(db, [entry_id], passed=False)  # 0.90×0.9=0.81 <0.85
+        with SessionLocal() as db:
+            partition, _binding = get_system_partition(db, None)
+            doc = (
+                db.query(Document)
+                .filter(Document.kb_id == partition.id, Document.filename == f"经验 {entry_id}")
+                .first()
+            )
+            self.assertIsNone(doc)  # 跌破门槛 → 投影移除
+            self.assertEqual(float(db.get(type(entry), entry_id).confidence), 0.81)
+
+    def test_outcome_decay_above_gate_refreshes_projection(self):
+        """调分仍达门槛 → 投影保留且正文置信度刷新（不再显示衰减前数值）。"""
+        from app.models.knowledge import Document
+        from app.services.knowledge_center import (
+            get_system_partition,
+            project_experience_entry,
+        )
+
+        with SessionLocal() as db:
+            partition, _binding = get_system_partition(db, None)
+            entry = self._record(db, confidence=0.95)  # 封顶值，投影
+            entry_id = entry.id
+            project_experience_entry(db, entry, None)
+            before = (
+                db.query(Document)
+                .filter(Document.kb_id == partition.id, Document.filename == f"经验 {entry_id}")
+                .first()
+            )
+            self.assertIsNotNone(before)
+            self.assertIn("置信度：0.95", before.content)
+        with SessionLocal() as db:
+            apply_experience_task_outcome(db, [entry_id], passed=False)  # 0.95×0.9=0.855 ≥0.85
+        with SessionLocal() as db:
+            partition, _binding = get_system_partition(db, None)
+            after = (
+                db.query(Document)
+                .filter(Document.kb_id == partition.id, Document.filename == f"经验 {entry_id}")
+                .first()
+            )
+            self.assertIsNotNone(after)  # 仍达门槛 → 投影保留
+            self.assertNotIn("置信度：0.95", after.content)  # 正文已刷新
+            self.assertIn("置信度：0.85", after.content)  # 0.855 两位小数
+            self.assertEqual(float(db.get(type(entry), entry_id).confidence), 0.855)
+
     def test_retire_filters_immediately(self):
         with SessionLocal() as db:
             entry = self._record(db)

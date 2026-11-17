@@ -190,8 +190,12 @@ def apply_experience_task_outcome(db: Session, entry_ids: list[UUID], *, passed:
 
     通过 → 置信度 +0.02（封顶 0.95）；失败 → ×0.9，跌破注入门槛的 active
     条目回 shadow（hit_count 清零重新冷静期）。同时累计 success_count/
-    fail_count——置信度从「一次性 LLM 自评」变为「被任务结果持续校准」。"""
+    fail_count——置信度从「一次性 LLM 自评」变为「被任务结果持续校准」。
+    调分后反向同步系统分区投影（§16.4 补全）：仍达门槛 → 刷新投影正文
+    置信度；跌破门槛/退出跨域 → 移除投影（平台已不注入的教训不应继续
+    被 RAG 检索引用——用户实测「投影显示 ≥0.85 而真源 0.81」的根因）。"""
     changed = 0
+    touched: list[ExperienceEntry] = []
     for raw in entry_ids[:20]:
         entry = db.get(ExperienceEntry, raw)
         if entry is None:
@@ -209,10 +213,32 @@ def apply_experience_task_outcome(db: Session, entry_ids: list[UUID], *, passed:
                 if entry.status == "active" and entry.confidence < MIN_INJECT_CONFIDENCE:
                     entry.status = "shadow"
                     entry.hit_count = 0
+        touched.append(entry)
         changed += 1
     if changed:
         db.commit()
+    sync_experience_projection(db, touched)
     return changed
+
+
+def sync_experience_projection(db: Session, entries: list[ExperienceEntry]) -> None:
+    """调分后反向同步系统分区投影（正向投影的衰减补全）。
+
+    按当前绑定门槛逐条判定：达标 → 刷新投影（正文置信度同步）；
+    跌破门槛或非跨域 → 移除投影。投影函数自带 commit，此函数不再 commit。"""
+    from app.services.knowledge_center import (
+        project_experience_entry,
+        remove_experience_projection,
+    )
+    from app.models.kb_binding import KBBinding
+
+    binding = db.query(KBBinding).filter(KBBinding.is_system.is_(True)).first()
+    gate = float(binding.sync_experience_min_confidence) if binding is not None else 0.85
+    for entry in entries:
+        if entry.generality == "cross-domain" and float(entry.confidence) >= gate:
+            project_experience_entry(db, entry, None)
+        else:
+            remove_experience_projection(db, entry.id)
 
 
 def retire_entry(db: Session, entry_id: UUID) -> ExperienceEntry:
