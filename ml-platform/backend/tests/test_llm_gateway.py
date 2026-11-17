@@ -388,6 +388,68 @@ class TestLLMGateway(unittest.TestCase):
                 created.append(api_url)
                 return mock.Mock()
 
-            with mock.patch.object(orch, "Orchestrator", side_effect=capture):
-                orch.get_orchestrator()
+        with mock.patch.object(orch, "Orchestrator", side_effect=capture):
+            orch.get_orchestrator()
         self.assertEqual(created, [_GATEWAY_URL])
+
+    def test_deepseek_pdf_attachments_convert_to_file_blocks(self):
+        """DeepSeek 端点 PDF 附件：document_url 块 → Files API 上传 → file
+        内容块（此前 openai 系直接不发送，用户上传的 PDF 静默失效）。"""
+        import base64 as _b64
+
+        pdf_b64 = _b64.b64encode(b"%PDF-1.4 fake").decode()
+        message = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "总结这份 PDF"},
+                {"type": "document_url", "document_url": {"url": f"data:application/pdf;base64,{pdf_b64}"}},
+            ],
+        }
+        uploads = []
+
+        def fake_upload(pdf_bytes, api_key):
+            uploads.append(pdf_bytes)
+            # 模拟真实 upload 的副作用：上传成功即写引用缓存
+            import hashlib as _hashlib
+
+            llm_gateway._DEEPSEEK_FILE_CACHE[_hashlib.sha256(pdf_bytes).hexdigest()] = "file-api-test123"
+            return "file-api-test123"
+
+        with mock.patch.object(llm_gateway, "_upload_pdf_to_deepseek_files", side_effect=fake_upload), \
+             mock.patch.dict(llm_gateway._DEEPSEEK_FILE_CACHE, {}, clear=True):
+            url, _headers, body = llm_gateway._build_llm_request(
+                _fake_config(api_url="https://api.deepseek.com"),
+                [message], 0.7, 100, None,
+            )
+            self.assertEqual(len(uploads), 1)
+            blocks = body["messages"][0]["content"]
+            file_blocks = [b for b in blocks if b.get("type") == "file"]
+            self.assertEqual(len(file_blocks), 1)
+            self.assertEqual(file_blocks[0]["file_id"], "file-api-test123")
+            # 缓存命中：同一 PDF 再次调用不再上传
+            _url, _headers, body2 = llm_gateway._build_llm_request(
+                _fake_config(api_url="https://api.deepseek.com"),
+                [dict(message)], 0.7, 100, None,
+            )
+            self.assertEqual(len(uploads), 1)
+
+    def test_pdf_upload_failure_drops_block(self):
+        """上传失败：该块降级丢弃（不伪造 file 块），其余块保留。"""
+        import base64 as _b64
+
+        pdf_b64 = _b64.b64encode(b"%PDF-1.4 x").decode()
+        message = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "hi"},
+                {"type": "document_url", "document_url": {"url": f"data:application/pdf;base64,{pdf_b64}"}},
+            ],
+        }
+        with mock.patch.object(llm_gateway, "_upload_pdf_to_deepseek_files", return_value=None), \
+             mock.patch.object(llm_gateway, "_DEEPSEEK_FILE_CACHE", {}):
+            _url, _headers, body = llm_gateway._build_llm_request(
+                _fake_config(api_url="https://api.deepseek.com"),
+                [message], 0.7, 100, None,
+            )
+        blocks = body["messages"][0]["content"]
+        self.assertFalse([b for b in blocks if b.get("type") == "file"])

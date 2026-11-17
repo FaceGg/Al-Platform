@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import httpx
+import logging
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import settings
@@ -27,6 +28,8 @@ from app.services.llm_profile_crypto import (
     decrypt_llm_api_key,
     encrypt_llm_api_key,
 )
+
+logger = logging.getLogger(__name__)
 
 # 模块级共享 HTTP 客户端：连接池复用，避免每次调用重新建立 TCP/TLS。
 # 每次请求仍带各自的超时参数（timeout=...），不改任何超时语义。
@@ -39,6 +42,92 @@ _HTTP_CLIENT = httpx.Client(
 # 长度；不放大则思考吃光预算、正文空/截断（deepseek-flash S1 实测根因）。
 # 非推理型模型生成完自然停，多给的余量无副作用。
 REASONING_TOKEN_HEADROOM = 4
+
+# DeepSeek Files API 的 PDF 引用缓存：内容哈希 → file_id（不设过期=永久
+# 有效），容量上限后淘汰最旧——避免同一 PDF 反复上传解析（解析同步耗时
+# 可达分钟级）。
+_DEEPSEEK_FILE_CACHE: dict[str, str] = {}
+_DEEPSEEK_FILE_CACHE_LIMIT = 128
+
+
+def _upload_pdf_to_deepseek_files(pdf_bytes: bytes, api_key: str) -> str | None:
+    """把 PDF 上传到 DeepSeek Files API（rich_layout_recognition：文字+图表
+    一起交给模型），返回 file_id；失败返回 None（调用方降级为不发送）。"""
+    import hashlib
+    import time as _time
+
+    digest = hashlib.sha256(pdf_bytes).hexdigest()
+    cached = _DEEPSEEK_FILE_CACHE.get(digest)
+    if cached:
+        return cached
+    try:
+        files = {"file": ("document.pdf", pdf_bytes, "application/pdf")}
+        data = [("purpose", "rich_layout_recognition")]  # purpose 必须在 file 之前
+        response = _HTTP_CLIENT.post(
+            "https://api.deepseek.com/files",
+            headers={"Authorization": f"Bearer {api_key}"},
+            data=data,
+            files=files,
+            timeout=150.0,
+        )
+        if response.status_code != 200:
+            logger.warning(
+                "deepseek files upload failed: %s %s",
+                response.status_code,
+                response.text[:200],
+            )
+            return None
+        file_id = str(response.json().get("id") or "")
+        if not file_id:
+            return None
+        if len(_DEEPSEEK_FILE_CACHE) >= _DEEPSEEK_FILE_CACHE_LIMIT:
+            _DEEPSEEK_FILE_CACHE.clear()  # 简单容量保护（进程级缓存，可重建）
+        _DEEPSEEK_FILE_CACHE[digest] = file_id
+        return file_id
+    except Exception:  # noqa: BLE001 - 上传失败降级，不阻断对话
+        logger.warning("deepseek files upload error", exc_info=True)
+        return None
+
+
+def _convert_pdf_attachments_for_deepseek(messages: list[dict], api_key: str) -> list[dict]:
+    """把消息中 document_url 形态的 PDF 块（data:application/pdf;base64）
+    转换为 DeepSeek file 内容块（file_id 引用）；其余块原样保留。"""
+    import base64 as _base64
+    import hashlib as _hashlib
+
+    converted: list[dict] = []
+    changed = False
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list) or not any(
+            isinstance(block, dict) and block.get("type") == "document_url"
+            for block in content
+        ):
+            converted.append(message)
+            continue
+        new_blocks: list[dict] = []
+        for block in content:
+            if not isinstance(block, dict):
+                new_blocks.append(block)
+                continue
+            url = (block.get("document_url") or {}).get("url") or ""
+            if block.get("type") == "document_url" and url.startswith("data:application/pdf;base64,"):
+                pdf_bytes = _base64.b64decode(url.split(",", 1)[1])
+                digest = _hashlib.sha256(pdf_bytes).hexdigest()
+                file_id = _DEEPSEEK_FILE_CACHE.get(digest)
+                if not file_id:
+                    file_id = _upload_pdf_to_deepseek_files(pdf_bytes, api_key)
+                if file_id:
+                    new_blocks.append({"type": "file", "file_id": file_id})
+                    changed = True
+                else:
+                    logger.warning("deepseek pdf attachment dropped: upload failed")
+            else:
+                new_blocks.append(block)
+        converted.append({**message, "content": new_blocks})
+    if changed:
+        logger.info("deepseek pdf attachments converted to file blocks")
+    return converted
 
 # 流卡死看门狗：首个增量（正文/思考）到达后，超过该秒数无新数据即判上游流
 # 卡死、立即断开交给重连。健康流的增量间隔是亚秒级；此前只能干等整段读
@@ -495,6 +584,13 @@ def _build_llm_request(
     headers = (
         {"Authorization": f"Bearer {config.api_key}"} if config.api_key else {}
     )
+    # PDF 附件（document_url 块）→ DeepSeek Files API 上传解析 → file 内容块
+    # 引用（官方三协议均支持；此前 openai 系直接不发送，用户上传的 PDF 对
+    # OpenAI 协议档案静默失效）。仅 DeepSeek 端点适用；上传同步完成解析
+    # （官方：解析期间不发送数据，120s 超时），按内容哈希缓存 file_id
+    # （不设过期=永久有效）避免重复上传；失败降级为不发送该块。
+    if provider == "openai_compatible" and "deepseek" in (config.api_url or "").lower():
+        messages = _convert_pdf_attachments_for_deepseek(messages, config.api_key)
     body = {
         "model": config.model_id,
         "messages": messages,
@@ -505,6 +601,17 @@ def _build_llm_request(
     }
     if wants_json:
         body["response_format"] = {"type": "json_object"}
+    # 「原生联网搜索」（2026-11-17 文档核对补接）：DeepSeek Chat Completions
+    # 已支持官方扩展工具 deepseek_web_search（服务端执行搜索，工具调用结果
+    # 以 deltas 内嵌返回，无需客户端回传）——模型能力勾选「联网搜索」且
+    # 档案指向 DeepSeek 时注入。此前该开关仅对 anthropic/responses 生效，
+    # DeepSeek 主力 openai_compatible 档案勾了等于没勾（缺口实测确认）。
+    if (
+        wants_web_search
+        and provider == "openai_compatible"
+        and "deepseek" in (config.api_url or "").lower()
+    ):
+        body["tools"] = [{"type": "deepseek_web_search"}]
     return config.api_url, headers, body
 
 
