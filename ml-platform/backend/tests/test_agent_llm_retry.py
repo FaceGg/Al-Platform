@@ -64,18 +64,18 @@ class TestChatCompletionWithRetry(unittest.TestCase):
         self.assertEqual(reply, "fine")
         self.assertEqual(calls, 2)
 
-    def test_transient_exhausted_after_five_reconnects(self):
-        # 定稿策略：最多 5 次重连全部失败才放弃（间隔 60s）
+    def test_transient_exhausted_after_all_reconnects(self):
+        # 调参策略（2026-11-17）：最多 60 次重连全部失败才放弃（间隔 10s）
         error = _FakeHttpxError("reset")
         error.__class__.__name__ = "ReadError"
-        reply, _usage, err, calls = self._call([error] * 5)
+        reply, _usage, err, calls = self._call([error] * 60)
         self.assertIsNone(reply)
         self.assertIn("ReadError", err)
-        self.assertIn("5 reconnect attempts, 60s interval", err)
-        self.assertEqual(calls, 5)
+        self.assertIn("60 reconnect attempts, 10s interval", err)
+        self.assertEqual(calls, 60)
 
-    def test_reconnect_interval_is_sixty_seconds(self):
-        # 每次重连间隔固定 60s（非递增退避）
+    def test_reconnect_interval_is_ten_seconds(self):
+        # 每次重连间隔固定 10s（非递增退避）
         sleeps = []
         with mock.patch("time.sleep", lambda s, *_: sleeps.append(s)):
             with mock.patch.object(llm_client, "chat_completion",
@@ -85,14 +85,14 @@ class TestChatCompletionWithRetry(unittest.TestCase):
                     messages=[{"role": "user", "content": "hi"}],
                     temperature=0.2, max_tokens=100, purpose="test",
                 )
-        self.assertEqual(sleeps, [60, 60, 60, 60])
+        self.assertEqual(sleeps, [10] * 59)
 
     def test_empty_exhausted_reports_empty(self):
         reply, _usage, err, calls = self._call([None] * 5)
         self.assertIsNone(reply)
         self.assertIn("llm_empty_completion", err)
-        self.assertIn("5 reconnect attempts", err)
-        self.assertEqual(calls, 5)
+        self.assertIn("60 reconnect attempts", err)
+        self.assertEqual(calls, 60)
 
     def test_non_transient_fails_immediately(self):
         # 确定性失败（认证/契约类，无暂态特征）不重试立即返回

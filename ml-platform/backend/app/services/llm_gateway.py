@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 import time
 import urllib.parse
+from contextlib import contextmanager
 from dataclasses import dataclass
 from types import SimpleNamespace
 from uuid import UUID
@@ -36,6 +38,28 @@ logger = logging.getLogger(__name__)
 _HTTP_CLIENT = httpx.Client(
     limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
 )
+
+# 流式调用并发上限：多个长流式 SSE 下载（每个持续数分钟、数 MB）同时在
+# 途时互相挤占出网带宽，单连接被摊薄成涓流直至断流（2026-11-17 实测：
+# 并行任务完成、带宽释放后，原本断流的任务立刻恢复）。信号量把同时在途
+# 的流式调用封顶（默认 2，env 可调），其余在信号量上排队等待——每个调用
+# 独占带宽快速完成，排队的由调用方的重连/预算机制管理。
+import os as _os
+import threading as _threading
+
+LLM_STREAM_CONCURRENCY = int(_os.environ.get("LLM_STREAM_CONCURRENCY", "2"))
+_STREAM_SEMAPHORE = _threading.BoundedSemaphore(LLM_STREAM_CONCURRENCY)
+
+
+@contextmanager
+def _stream_slot():
+    """流式调用槽位：acquire/release 包裹整个 SSE 读取期。排队中的调用由
+    各自调用方的重连/预算机制管理（信号量本身无限等待）。"""
+    _STREAM_SEMAPHORE.acquire()
+    try:
+        yield
+    finally:
+        _STREAM_SEMAPHORE.release()
 
 # 推理型思考余量系数（自动预算隔离，零配置）：请求体 max_tokens 按此倍数
 # 放大——思考与正文共享上游生成预算，推理型模型的思考通常 2-4 倍于正文
@@ -1057,7 +1081,7 @@ def chat_completion(
     usage: dict = {}
     status_code: int = 0
     try:
-        with _HTTP_CLIENT.stream(
+        with _stream_slot(), _HTTP_CLIENT.stream(
             "POST",
             url,
             headers=headers,

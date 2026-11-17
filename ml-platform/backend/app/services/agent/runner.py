@@ -40,6 +40,10 @@ MAX_ROUNDS = 3
 MAX_S2_ATTEMPTS = 8
 META_HINT_AFTER_SAME_ERROR = 3
 DEFAULT_GATES = {PRIMARY_METRIC: 0.90}
+# 网络失败总预算（2026-11-17 用户澄清的「或」语义）：S2 生成轮次与 LLM 网络
+# 重连不嵌套——网络失败（重连耗尽）计入同一总预算，达限直接升级人工，不再
+# 「8 轮生成 × 每轮 5 次重连」相乘成 40 次底层调用/80 分钟挂起。成功即清零。
+NETWORK_FAILURE_LIMIT = 8
 # 无监督（anomaly）默认门禁（技术方案 §3.3 第二层默认值，与引擎 M1 同源）：
 # normal_fpr 是反向键（越低越好，hard_gates.REVERSE_GATE_KEYS）。
 DEFAULT_GATES_ANOMALY = {
@@ -105,6 +109,8 @@ class AgentRunner:
         self._usage_total = 0
         # S3 冠军模型运行时持有（accepted 时物化；失败/升级即随进程丢弃）
         self._s3_champion: dict | None = None
+        # 网络失败连续计数（跨轮次共享的总预算，见 NETWORK_FAILURE_LIMIT）
+        self._network_fail_streak = 0
 
     # ------------------------------------------------------------------ util
     def _absorb_usage(self, usage: dict) -> bool:
@@ -637,6 +643,16 @@ class AgentRunner:
         guidance_feature = (self.guidance or {}).get("feature")
 
         for attempt in range(1, MAX_S2_ATTEMPTS + 1):
+            # 网络失败总预算（「或」语义，不与重连嵌套）：连续网络失败达限
+            # 直接升级人工——不再「8 轮 × 每轮 5 次重连」相乘挂起 80 分钟。
+            if self._network_fail_streak >= NETWORK_FAILURE_LIMIT:
+                return self._escalate(
+                    "AGENT_S2_LLM_FAILED",
+                    detail=(
+                        f"网络失败已达 {self._network_fail_streak} 次总预算上限"
+                        "（出网链路对长流式连接间歇阻断）。请检查网络后重提。"
+                    ),
+                )
             counter = Counter(entry.get("error", "") for entry in error_history)
             meta_hint = bool(
                 counter and counter.most_common(1)[0][1] >= META_HINT_AFTER_SAME_ERROR
@@ -661,10 +677,15 @@ class AgentRunner:
             if s2_reasoning:
                 attempt_record["reasoning"] = str(s2_reasoning)[:2000]
             if error:
+                # 网络层失败（重连耗尽/传输错误）计入总预算；脚本/契约失败不计
+                if error.startswith("llm_call_failed"):
+                    self._network_fail_streak += 1
                 attempt_record["error"] = error
                 error_history.append(attempt_record)
                 attempts.append(attempt_record)
                 continue
+            self._network_fail_streak = 0
+            attempt_record: dict = {"attempt": attempt, "ok": True, "script": script.script}
 
             ast_problems = ast_violations(script.script)
             if ast_problems:
