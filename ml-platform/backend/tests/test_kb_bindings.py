@@ -20,6 +20,7 @@ from app.services.knowledge_center import (  # noqa: E402
     get_or_create_binding,
     get_system_partition,
     project_experience_entry,
+    rebuild_missing_projections,
     unified_retrieve,
     update_binding,
 )
@@ -181,6 +182,52 @@ class TestKBCenter(unittest.TestCase):
             self.assertGreaterEqual(len(kb_chunks), 1)
             hits = retrieve_chunks(db, kb, "索引列", top_k=3)
         self.assertGreaterEqual(len(hits), 1)
+
+    def test_rebuild_missing_projections_self_heals_and_is_idempotent(self):
+        """正向自愈（数据库清理/文档误删后投影丢失的重建）：达标无投影的条目
+        重建、不达标跳过；幂等——再跑一次不再新建。"""
+        with SessionLocal() as db:
+            seeds = []
+            for confidence, lesson in ((0.9, "达标条目"), (0.8, "不达标条目")):
+                entry = ExperienceEntry(
+                    domain="cross-domain",
+                    situation="s",
+                    lesson=lesson,
+                    action="a",
+                    status="active",
+                    confidence=confidence,
+                    origin="distilled",
+                    generality="cross-domain",
+                    evidence_json={"source_tasks": ["t"]},
+                )
+                db.add(entry)
+                seeds.append(entry)
+            db.commit()
+            seed_ids = [e.id for e in seeds]
+            try:
+                rebuilt = rebuild_missing_projections(db, self.admin_id)
+                # 只有 ≥门槛（0.85）的 0.9 条目重建；0.8 被门槛跳过
+                self.assertEqual(rebuilt, 1)
+                # 幂等：投影齐了再跑不再新建
+                self.assertEqual(rebuild_missing_projections(db, self.admin_id), 0)
+            finally:
+                # 清理种子条目与其投影文档（共享库不残留）
+                from app.models.knowledge import Chunk as _Chunk
+
+                names = ["经验 %s" % eid for eid in seed_ids]
+                for doc in db.query(Document).filter(Document.filename.in_(names)).all():
+                    db.query(_Chunk).filter(_Chunk.doc_id == doc.id).delete()
+                    db.delete(doc)
+                for entry in seeds:
+                    db.delete(entry)
+                db.commit()
+            docs = (
+                db.query(Document)
+                .filter(Document.filename.in_(
+                    ["经验 %s" % eid for eid in seed_ids]))
+                .all()
+            )
+        self.assertEqual(len(docs), 0)  # cleanup 级联删除投影文档
 
     def test_domain_entry_not_projected(self):
         with SessionLocal() as db:

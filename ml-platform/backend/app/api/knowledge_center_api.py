@@ -89,10 +89,18 @@ def list_bindings(
     # 系统分区随列表惰性创建，保证任何部署下经验分区都存在且可检索。
     get_system_partition(db, current_user.id if _is_admin(db, current_user) else _first_admin(db))
     # 惰性回收孤儿投影（历史版本删条目未清理投影）；失败不影响列表返回
-    from app.services.knowledge_center import reconcile_system_partition
+    from app.services.knowledge_center import (
+        rebuild_missing_projections,
+        reconcile_system_partition,
+    )
 
     try:
         reconcile_system_partition(db)
+        # 正向自愈：真源达标但投影丢失（数据库清理/文档误删）的条目重建——
+        # 否则「文档 0」与真源条目数长期不一致（2026-11-17 用户实测）
+        rebuild_missing_projections(
+            db, current_user.id if _is_admin(db, current_user) else _first_admin(db)
+        )
     except Exception:  # noqa: BLE001
         db.rollback()
     bindings = db.query(KBBinding).order_by(KBBinding.is_system.desc()).all()

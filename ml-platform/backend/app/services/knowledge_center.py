@@ -235,6 +235,49 @@ def reconcile_system_partition(db: Session) -> int:
     return removed
 
 
+def rebuild_missing_projections(db: Session, admin_id) -> int:
+    """正向自愈：active + cross-domain + 达同步门槛、但系统分区缺投影文档的
+    条目自动重建（数据库清理/文档误删后投影丢失，文档数与真源条目数不一致
+    ——2026-11-17 用户实测；投影创建是唯一写入方，丢失后无自愈路径）。幂等：
+    已有投影文档的条目跳过。"""
+    from app.models.experience_entry import ExperienceEntry
+
+    binding = db.query(KBBinding).filter(KBBinding.is_system.is_(True)).first()
+    gate = (
+        float(binding.sync_experience_min_confidence)
+        if binding is not None and binding.sync_experience_min_confidence is not None
+        else 0.85
+    )
+    rebuilt = 0
+    entries = (
+        db.query(ExperienceEntry)
+        .filter(
+            ExperienceEntry.status == "active",
+            ExperienceEntry.generality == "cross-domain",
+            ExperienceEntry.confidence >= gate,
+        )
+        .all()
+    )
+    for entry in entries:
+        filename = "经验 %s" % entry.id
+        exists = (
+            db.query(Document.id)
+            .join(KnowledgeBase, Document.kb_id == KnowledgeBase.id)
+            .filter(KnowledgeBase.name == SYSTEM_PARTITION_NAME, Document.filename == filename)
+            .first()
+        )
+        if exists:
+            continue
+        try:
+            project_experience_entry(db, entry, admin_id)
+            rebuilt += 1
+        except Exception:  # noqa: BLE001 - 单条重建失败不影响其余
+            db.rollback()
+    if rebuilt:
+        db.commit()
+    return rebuilt
+
+
 def project_experience_entry(db: Session, entry: ExperienceEntry, admin_id) -> str | None:
     """正向同步（§16.4）：跨域且达门槛的条目格式化为系统分区文档。
 
