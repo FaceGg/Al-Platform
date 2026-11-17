@@ -82,6 +82,37 @@ class ReviewVerdict(BaseModel):
     business_readiness: str = Field(min_length=1, max_length=8000)
     next_iteration_hints: list[str] = Field(default_factory=list)
 
+    @field_validator("surprises", "next_iteration_hints", mode="before")
+    @classmethod
+    def _coerce_list_items_to_str(cls, value):
+        """宽容归一化（与 ReviewAlignment 的 coerce_numbers_to_str 同思路）：
+        大模型常把 surprises/hints 写成对象列表（{finding: …}）或数字——提取
+        字典中的字符串值拼为一条；非字符串标量 str()；整段非列表包装为单项。
+        只放宽载体形态，verdict 枚举红线不受影响。"""
+        if isinstance(value, list):
+            out: list[str] = []
+            for item in value:
+                if isinstance(item, str):
+                    out.append(item)
+                elif isinstance(item, dict):
+                    text = "；".join(
+                        str(v) for v in item.values() if isinstance(v, str)
+                    )
+                    out.append(text or json.dumps(item, ensure_ascii=False))
+                else:
+                    out.append(str(item))
+            return out
+        if isinstance(value, str):
+            return value
+        return [str(value)]
+
+    @field_validator("business_readiness", mode="before")
+    @classmethod
+    def _coerce_readiness_to_str(cls, value):
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        return value
+
 
 class GuidanceAnalysis(BaseModel):
     column_notes: list[dict] = Field(default_factory=list)

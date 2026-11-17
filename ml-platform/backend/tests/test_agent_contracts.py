@@ -127,6 +127,44 @@ class TestContracts(unittest.TestCase):
                     },
                 )
 
+    def test_review_verdict_coerces_object_surprises_and_readiness(self):
+        """surprises/hints 常被 LLM 写成对象列表、business_readiness 写成
+        对象（真机 c79ad389/5e595f92 两轮 S4 契约失败实锤）：提取文本收单，
+        只放宽载体形态；verdict 枚举红线不受影响。"""
+        verdict = validate_contract(
+            ReviewVerdict,
+            {
+                "verdict": "escalate",
+                "surprises": [
+                    {"finding": "重要性第一名是日期特征", "severity": "high"},
+                    42,
+                    "已是字符串的发现",
+                ],
+                "business_readiness": {"ready": False, "reason": "需人工确认"},
+                "next_iteration_hints": [{"hint": "剔除日期列"}],
+            },
+        )
+        self.assertEqual(verdict.verdict, "escalate")
+        self.assertTrue(all(isinstance(x, str) for x in verdict.surprises))
+        self.assertIn("重要性第一名是日期特征", verdict.surprises[0])
+        self.assertIn("42", verdict.surprises[1])
+        self.assertIn("需人工确认", verdict.business_readiness)
+        self.assertEqual(verdict.next_iteration_hints, ["剔除日期列"])
+
+    def test_review_verdict_still_rejects_broken_readiness(self):
+        """business_readiness 为 None（字段缺失）仍拒收；空容器收为 JSON
+        文本留档（载体放宽≠内容放行——verdict 枚举红线不受影响）。"""
+        with self.assertRaises(AgentContractError):
+            validate_contract(
+                ReviewVerdict,
+                {"verdict": "pass", "business_readiness": None},
+            )
+        ok = validate_contract(
+            ReviewVerdict,
+            {"verdict": "pass", "business_readiness": {}},
+        )
+        self.assertEqual(ok.business_readiness, "{}")
+
     def test_parse_llm_json_tolerates_fences_and_prose(self):
         fenced = "好的，以下是分析：\n```json\n" + __import__("json").dumps(_VALID_ANALYSIS) + "\n```"
         self.assertEqual(parse_llm_json(fenced)["domain_hypothesis"], "tightening")
