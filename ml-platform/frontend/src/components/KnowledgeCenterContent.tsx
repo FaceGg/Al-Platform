@@ -261,18 +261,19 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
     { title: 'ID', dataIndex: 'id', render: (v: string) => <span className="mono">{v.slice(0, 8)}</span> },
     { title: text.colLesson, dataIndex: 'lesson', ellipsis: true },
     { title: text.colAction, dataIndex: 'action', ellipsis: true },
+    { title: text.colConfidence, dataIndex: 'confidence', render: (v: number) => v.toFixed(2) },
     {
       title: text.col_hit,
       key: 'outcome',
       render: (_: unknown, record: ExperienceEntry) => (
-        <Space size={4} style={{ whiteSpace: 'nowrap' }}>
+        // 右侧留白拉开与「状态」列的距离（用户反馈两列太近）
+        <Space size={4} style={{ whiteSpace: 'nowrap', marginRight: 22 }}>
           <span>{(text.hit_n || '命中{n}').replace('{n}', String(record.hit_count ?? 0))}</span>
           <Tag color="green" style={{ marginRight: 0 }}>✓{record.success_count ?? 0}</Tag>
           <Tag color="red" style={{ marginRight: 0 }}>✗{record.fail_count ?? 0}</Tag>
         </Space>
       ),
     },
-    { title: text.colConfidence, dataIndex: 'confidence', render: (v: number) => v.toFixed(2) },
     {
       title: text.colStatus,
       dataIndex: 'status',
