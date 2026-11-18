@@ -15,7 +15,12 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
 vi.mock("../api/llmProfiles", () => mocks);
 vi.mock("../api/client", () => ({
-  default: { post: vi.fn().mockResolvedValue({ data: { models: [] } }) },
+  default: {
+    post: vi.fn().mockResolvedValue({ data: { models: [] } }),
+    // 运行参数卡片（流式并发）mount 时读取当前值
+    get: vi.fn().mockResolvedValue({ data: { value: 2, stored: null, env_default: 2 } }),
+    put: vi.fn().mockResolvedValue({ data: { value: 2 } }),
+  },
   formatApiError: (_error: unknown, fallback: string) => fallback,
 }));
 vi.mock("../i18n", () => ({
@@ -143,7 +148,9 @@ describe("LLMGatewayPage", () => {
     const modelInput = document.querySelector("#model_id") as HTMLInputElement;
     fireEvent.change(modelInput, { target: { value: "glm-4.6" } });
     fireEvent.change(screen.getByLabelText("API Key"), { target: { value: fixtureKey } });
-    const okButton = await screen.findByRole("button", { name: /保\s*存|Save|OK|确\s*定/ });
+    // 运行参数卡片也有「保存」按钮——在 Modal（dialog）范围内找 OK 按钮
+    const dialog = await screen.findByRole("dialog");
+    const okButton = await within(dialog).findByRole("button", { name: /保\s*存|Save|OK|确\s*定/ });
     fireEvent.click(okButton);
     // DeepSeek 整组（2 个模型档案）之后，自定义表单是第 3 次创建
     await waitFor(() => expect(mocks.createLlmProfile).toHaveBeenCalledTimes(3));

@@ -42,24 +42,77 @@ _HTTP_CLIENT = httpx.Client(
 # 流式调用并发上限：多个长流式 SSE 下载（每个持续数分钟、数 MB）同时在
 # 途时互相挤占出网带宽，单连接被摊薄成涓流直至断流（2026-11-17 实测：
 # 并行任务完成、带宽释放后，原本断流的任务立刻恢复）。信号量把同时在途
-# 的流式调用封顶（默认 2，env 可调），其余在信号量上排队等待——每个调用
-# 独占带宽快速完成，排队的由调用方的重连/预算机制管理。
+# 的流式调用封顶（默认 2，env 兜底+平台「大模型管理」页运行时可调），其余
+# 在门上排队等待——每个调用独占带宽快速完成，排队的由调用方的重连/预算
+# 机制管理。容量可动态调整（BoundedSemaphore 不支持改容量 → 自实现条件变量门；
+# 多进程（backend/worker）各自持门，每次流式调用前从 PlatformOption 刷新）。
 import os as _os
 import threading as _threading
 
 LLM_STREAM_CONCURRENCY = int(_os.environ.get("LLM_STREAM_CONCURRENCY", "2"))
-_STREAM_SEMAPHORE = _threading.BoundedSemaphore(LLM_STREAM_CONCURRENCY)
+# 平台选项键（系统管理→大模型管理 页写入；未设置时用 env 兜底值）
+LLM_STREAM_CONCURRENCY_OPTION_KEY = "llm_stream_concurrency"
+STREAM_CONCURRENCY_MIN = 1
+STREAM_CONCURRENCY_MAX = 16
+
+
+class _StreamGate:
+    """容量可动态调整的流式并发门。set_capacity 只改上限，不干预在途调用
+    （已持门的继续用完；调小后新调用按新上限排队）。"""
+
+    def __init__(self, capacity: int):
+        self._cond = _threading.Condition()
+        self._in_flight = 0
+        self._capacity = max(1, int(capacity))
+
+    @property
+    def capacity(self) -> int:
+        return self._capacity
+
+    def set_capacity(self, value: int) -> None:
+        value = max(STREAM_CONCURRENCY_MIN, min(STREAM_CONCURRENCY_MAX, int(value)))
+        with self._cond:
+            self._capacity = value
+            self._cond.notify_all()
+
+    def acquire(self) -> None:
+        with self._cond:
+            while self._in_flight >= self._capacity:
+                self._cond.wait()
+            self._in_flight += 1
+
+    def release(self) -> None:
+        with self._cond:
+            self._in_flight = max(0, self._in_flight - 1)
+            self._cond.notify_all()
+
+
+_STREAM_GATE = _StreamGate(LLM_STREAM_CONCURRENCY)
+
+
+def refresh_stream_gate(db) -> int:
+    """从平台选项刷新流式并发容量（多进程各自生效：每个进程的下一次流式
+    调用都会读到最新值）。读取/校验失败静默保持当前容量。返回当前容量。"""
+    try:
+        from app.models.platform_option import get_option
+
+        stored = get_option(db, LLM_STREAM_CONCURRENCY_OPTION_KEY)
+        if stored is not None:
+            _STREAM_GATE.set_capacity(int(stored))
+    except Exception:  # noqa: BLE001 - 配置读取失败不影响调用主链路
+        pass
+    return _STREAM_GATE.capacity
 
 
 @contextmanager
 def _stream_slot():
     """流式调用槽位：acquire/release 包裹整个 SSE 读取期。排队中的调用由
-    各自调用方的重连/预算机制管理（信号量本身无限等待）。"""
-    _STREAM_SEMAPHORE.acquire()
+    各自调用方的重连/预算机制管理（门本身无限等待）。"""
+    _STREAM_GATE.acquire()
     try:
         yield
     finally:
-        _STREAM_SEMAPHORE.release()
+        _STREAM_GATE.release()
 
 # 推理型思考余量系数（自动预算隔离，零配置）：请求体 max_tokens 按此倍数
 # 放大——思考与正文共享上游生成预算，推理型模型的思考通常 2-4 倍于正文
@@ -1081,6 +1134,9 @@ def chat_completion(
     usage: dict = {}
     status_code: int = 0
     try:
+        # 进入流式槽位前按平台选项刷新并发容量（多进程各自生效；主键查询
+        # 微秒级，相对分钟级流式调用可忽略）
+        refresh_stream_gate(db)
         with _stream_slot(), _HTTP_CLIENT.stream(
             "POST",
             url,

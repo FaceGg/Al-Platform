@@ -66,11 +66,24 @@ export default function AgentRunDetailPage() {
     waveform: zh ? "波形编码" : "waveform",
     mixed: zh ? "混合（自动）" : "mixed",
   };
+  // 数据形态具体化（用户反馈：「混合」看不出是什么和什么混合）——按列级
+  // 标注统计具体构成；无标注时退化为声明值（自动）。
+  const shapeValue = (() => {
+    const shapes = feature?.column_shapes ?? {};
+    const counts: Record<string, number> = {};
+    for (const s of Object.values(shapes)) counts[s] = (counts[s] ?? 0) + 1;
+    const keys = Object.keys(counts);
+    if (!keys.length) return shapeText[feature?.data_shape ?? "mixed"] ?? feature?.data_shape;
+    const parts = keys
+      .sort()
+      .map((k) => `${k === "waveform" ? (zh ? "波形编码" : "waveform") : zh ? "表格" : "tabular"} ×${counts[k]}`);
+    return parts.join("、") + (keys.length > 1 ? (zh ? " 混合" : " mixed") : "");
+  })();
   // 四阶段配置行的统一渲染：无配置的阶段整行隐藏，避免空行噪音。
   const cfgRow = (label: string, value?: ReactNode | null) =>
     value == null || value === "" || (Array.isArray(value) && value.length === 0) ? null : (
       <tr>
-        <td className="tt" style={{ width: 130 }}>{label}</td>
+        <td className="tt" style={{ width: 168, whiteSpace: "nowrap" }}>{label}</td>
         <td>{value}</td>
       </tr>
     );
@@ -128,7 +141,7 @@ export default function AgentRunDetailPage() {
 
         {guidance ? (
           <div className="v2-panel" style={{ marginBottom: 12 }}>
-            <h4><span className="bar" />{zh ? "提交配置" : "Submitted guidance"}</h4>
+            <h4><span className="bar" />{zh ? "建模配置" : "Modeling configuration"}</h4>
             <table className="v2-table">
               <tbody>
                 {cfgRow(
@@ -153,7 +166,7 @@ export default function AgentRunDetailPage() {
                     : null)}
                 {cfgRow(zh ? "数据分析 · 自定义提示" : "Prompts", promptsLine(analysis?.prompts))}
                 {/* 特征工程阶段 */}
-                {cfgRow(zh ? "特征工程 · 数据形态" : "Data shape", shapeText[feature?.data_shape ?? "mixed"] ?? feature?.data_shape)}
+                {cfgRow(zh ? "特征工程 · 数据形态" : "Data shape", shapeValue)}
                 {cfgRow(zh ? "特征工程 · 必须保留列" : "Must keep", (feature?.must_keep ?? []).join("、"))}
                 {cfgRow(zh ? "特征工程 · 建议剔除" : "Suggest drop",
                   feature?.suggest_drop?.length

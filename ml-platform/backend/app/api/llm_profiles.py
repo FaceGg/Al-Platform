@@ -7,7 +7,7 @@ return masked keys only. Every create/update/delete/test is platform-audited.
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import SecretStr
+from pydantic import BaseModel, SecretStr
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -238,6 +238,79 @@ def usage_stats(
             key=lambda item: -item["calls"],
         ),
     }
+
+
+class StreamConcurrencyUpdate(BaseModel):
+    value: int
+
+
+@router.get("/stream-concurrency")
+def get_stream_concurrency(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """流式并发上限（系统管理→大模型管理 页配置项）：当前生效值 + 平台选项
+    存储值 + env 兜底值。backend/worker 各进程在下次流式调用前自动刷新。
+
+    注意必须注册在 GET /{profile_id} 之前，否则路径被动态路由吞掉。"""
+    from app.models.platform_option import get_option
+
+    from app.services.llm_gateway import (
+        LLM_STREAM_CONCURRENCY,
+        LLM_STREAM_CONCURRENCY_OPTION_KEY,
+        refresh_stream_gate,
+    )
+
+    stored = get_option(db, LLM_STREAM_CONCURRENCY_OPTION_KEY)
+    value = refresh_stream_gate(db)
+    return {
+        "value": value,
+        "stored": stored,
+        "env_default": LLM_STREAM_CONCURRENCY,
+    }
+
+
+@router.put("/stream-concurrency")
+def set_stream_concurrency(
+    payload: StreamConcurrencyUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """运行时调整流式并发上限（1-16）：写平台选项并即时刷新本进程；
+    其他进程（worker 等）在下一次流式调用前自动读到新值。"""
+    from app.models.platform_option import set_option
+
+    from app.services.llm_gateway import (
+        LLM_STREAM_CONCURRENCY_OPTION_KEY,
+        STREAM_CONCURRENCY_MAX,
+        STREAM_CONCURRENCY_MIN,
+        _STREAM_GATE,
+    )
+
+    value = int(payload.value)
+    if not (STREAM_CONCURRENCY_MIN <= value <= STREAM_CONCURRENCY_MAX):
+        raise HTTPException(
+            422,
+            detail={"code": "STREAM_CONCURRENCY_OUT_OF_RANGE",
+                    "message": f"流式并发上限需在 {STREAM_CONCURRENCY_MIN}-{STREAM_CONCURRENCY_MAX} 之间"},
+        )
+    set_option(db, LLM_STREAM_CONCURRENCY_OPTION_KEY, value)
+    _STREAM_GATE.set_capacity(value)
+    record_platform_event(
+        db,
+        actor=admin,
+        request=request,
+        intent=PlatformAuditIntent(
+            action="llm_stream.concurrency_update",
+            resource_type="platform_option",
+            resource_id=LLM_STREAM_CONCURRENCY_OPTION_KEY,
+            changes={"value": value},
+        ),
+        result="success",
+    )
+    db.commit()
+    return {"value": value}
 
 
 @router.post("", response_model=LLMProfileOut, status_code=201)

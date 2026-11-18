@@ -318,6 +318,32 @@ export default function LLMGatewayPage() {
   const [manualKey, setManualKey] = useState('')
   const [keyDraft, setKeyDraft] = useState('')
   const [form] = Form.useForm()
+  // 流式并发上限（运行参数卡片）：平台选项存储、全服务即时生效（各进程
+  // 下次流式调用前自动刷新）；env 仅作未配置时的兜底缺省。
+  const [streamConcurrency, setStreamConcurrency] = useState<number | null>(null)
+  const [streamDirty, setStreamDirty] = useState(false)
+  const [streamBusy, setStreamBusy] = useState(false)
+
+  useEffect(() => {
+    apiClient.get('/llm-profiles/stream-concurrency')
+      .then((r) => setStreamConcurrency(Number(r.data?.value ?? 2)))
+      .catch(() => undefined)
+  }, [])
+
+  const saveStreamConcurrency = async () => {
+    if (streamConcurrency == null) return
+    setStreamBusy(true)
+    try {
+      const r = await apiClient.put('/llm-profiles/stream-concurrency', { value: streamConcurrency })
+      setStreamConcurrency(Number(r.data?.value ?? streamConcurrency))
+      setStreamDirty(false)
+      message.success(lang === 'zh' ? '流式并发上限已保存，全服务即时生效' : 'Stream concurrency saved')
+    } catch (error) {
+      message.error(formatApiError(error, lang === 'zh' ? '保存失败' : 'Failed to save'))
+    } finally {
+      setStreamBusy(false)
+    }
+  }
 
   const load = () => {
     setLoading(true)
@@ -881,6 +907,34 @@ export default function LLMGatewayPage() {
           ? '集中配置平台可用的大模型供应商：AI 对话、智能体分析/写码/评审与知识库向量化各自选用；密钥只写不读。'
           : 'Central registry of LLM providers for chat, agent analysis/codegen/review and embeddings; keys are write-only.'}
       />
+
+      {/* 运行参数（用户需求 2026-11-18：流式并发从 env 配置文件迁到平台界面） */}
+      <div className="v2-panel" style={{ marginBottom: 12, padding: '10px 14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{lang === 'zh' ? '运行参数' : 'Runtime'}</b>
+          <span style={{ fontSize: 12, color: 'var(--v2-sub)' }}>
+            {lang === 'zh'
+              ? '大模型流式调用并发上限：同时进行的流式生成数量。调大可多任务并行，但并发流互相挤占出网带宽、更容易触发断流；调小则排队串行、单个任务更快完成。保存后全服务即时生效。'
+              : 'Max concurrent streaming LLM calls. Higher = more parallel tasks (but bandwidth contention); lower = serialized, faster per task. Applies immediately.'}
+          </span>
+          <InputNumber
+            min={1}
+            max={16}
+            value={streamConcurrency ?? undefined}
+            onChange={(v) => { setStreamConcurrency(Number(v) || 2); setStreamDirty(true) }}
+            style={{ width: 76 }}
+          />
+          <Button
+            size="small"
+            type="primary"
+            disabled={!streamDirty || streamBusy || streamConcurrency == null}
+            loading={streamBusy}
+            onClick={() => void saveStreamConcurrency()}
+          >
+            {lang === 'zh' ? '保存' : 'Save'}
+          </Button>
+        </div>
+      </div>
 
       <div className="v2-panel" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '10px 14px 0' }}>
