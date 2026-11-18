@@ -280,7 +280,7 @@ export default function AgentCenterPage() {
               <table className="v2-table">
                 <thead><tr>
                   <th>{zh ? "配方" : "Recipe"}</th><th>{zh ? "项目" : "Project"}</th>
-                  <th>{zh ? "域" : "Domain"}</th><th>{zh ? "目标列" : "Target"}</th>
+                  <th>{zh ? "目标列" : "Target"}</th>
                   <th>{zh ? "版本" : "Version"}</th><th>{zh ? "状态" : "Status"}</th>
                   <th>{zh ? "变更说明" : "Change note"}</th><th>{zh ? "更新时间" : "Updated"}</th>
                   <th>{zh ? "操作" : "Actions"}</th>

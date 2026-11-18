@@ -1745,3 +1745,11 @@ AE 在栈上不可用是既定决策（torch ~200MB 不进部署镜像，fail-sa
 **需求③前半（硬门禁过但评审不符→轮数耗尽前继续迭代；符合预期→不必耗尽轮数）核实：已实现且实证过**——runner S4 分支：评审 pass→立即 accepted（不耗尽轮数）；评审 escalate 且硬门禁已过且轮次未满→continue 下一轮（hints 进下轮 memory digest）；仅轮数耗尽才升级人工（AGENT_REVIEW_ESCALATE）。任务 c79ad389 曾实证 r1 escalate→r3 pass accepted。
 
 **验证**：后端 test_agent_recipe_reuse.py 新 7 用例（agent_trace 沉淀/有界截断/复用合并覆盖/快照缺失 fail-closed/无目标 400/anomaly 强制清空/404）+ 回归 65 passed（recipe/loop_retrain/contracts）；前端 tsc + AgentModelingWizard/AgentCenterPage 16 passed + 全量 vitest。无在途任务后 backend/worker/migrate 全标签重建部署。
+
+## 2026-11-18 追加：UI 去「域」露出 + 提交配置去列类型标注（用户反馈）
+
+**「域」概念从 UI 全部移除（4 处）**：用户正确指出 domain 内部枚举（tightening/cross-domain）在「平台只有点焊/拧紧两个项目、且项目可任意命名」的现实下不可理解——新建项目叫「张三/abc」无法归入域体系。移除：知识中心经验表「域」列、经验预览抽屉 domain 标签、配方库表头「域」列、配方详情弹窗「域：」、i18n colDomain 词条。**后端 ExperienceEntry.domain / PipelineRecipe.domain 字段保留**——它是 L2 经验检索过滤键（retrieve_for_task 的 domain in [域, cross-domain]），机制正常工作，仅不再向用户暴露；蒸馏条目仍按 LLM 判断的域入库。
+
+**提交配置去「特征工程 · 列类型标注」行**：列级 dtype 标注（column_shapes）是向导第一步的预填细节，对任务详情读者无决策价值。
+
+验证：tsc + KnowledgeCenterPage/AgentCenterPage 10 passed；前端镜像重建部署后浏览器实测——经验表表头 8 列无「域」、配方库表头 8 列无「域」、提交配置无列类型标注行。复用任务 854e8496（1-5 配方 → train_v2_full.csv）运行中。

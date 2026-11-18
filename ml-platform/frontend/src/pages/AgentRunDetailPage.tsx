@@ -154,10 +154,6 @@ export default function AgentRunDetailPage() {
                 {cfgRow(zh ? "数据分析 · 自定义提示" : "Prompts", promptsLine(analysis?.prompts))}
                 {/* 特征工程阶段 */}
                 {cfgRow(zh ? "特征工程 · 数据形态" : "Data shape", shapeText[feature?.data_shape ?? "mixed"] ?? feature?.data_shape)}
-                {cfgRow(zh ? "特征工程 · 列类型标注" : "Column types",
-                  feature?.column_shapes && Object.keys(feature.column_shapes).length
-                    ? <span className="ts" style={{ fontSize: 12 }}>{Object.entries(feature.column_shapes).map(([c, s]) => `${c}=${s === "waveform" ? (zh ? "波形" : "wave") : zh ? "表格" : "tab"}`).join("，")}</span>
-                    : null)}
                 {cfgRow(zh ? "特征工程 · 必须保留列" : "Must keep", (feature?.must_keep ?? []).join("、"))}
                 {cfgRow(zh ? "特征工程 · 建议剔除" : "Suggest drop",
                   feature?.suggest_drop?.length

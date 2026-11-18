@@ -198,7 +198,6 @@ export default function RecipeRow({
       <tr>
         <td className="tt">{recipe.name}</td>
         <td>{recipe.project_name ?? "-"}</td>
-        <td>{recipe.domain ?? "-"}</td>
         <td className="tt">{recipe.target_column ?? "-"}</td>
         <td>v{recipe.current_version}</td>
         <td>
@@ -260,7 +259,7 @@ export default function RecipeRow({
             <div>
               <b>{zh ? "基础" : "Basics"}</b>
               <div style={{ color: "var(--v2-sub)", marginTop: 4 }}>
-                {zh ? "域" : "Domain"}：{detail.domain || "-"} · {zh ? "目标列" : "Target"}：
+                {zh ? "目标列" : "Target"}：
                 <span className="tt">{detail.target_column || "-"}</span> · {zh ? "更新" : "Updated"}：
                 {relative(detail.updated_at ?? detail.created_at, zh)}
               </div>
@@ -381,7 +380,7 @@ export default function RecipeRow({
       </Modal>
       {versions ? (
         <tr>
-          <td colSpan={9} style={{ background: "rgba(36,52,79,.25)", padding: "6px 18px" }}>
+          <td colSpan={8} style={{ background: "rgba(36,52,79,.25)", padding: "6px 18px" }}>
             {versions.length === 0 ? (
               <span className="v2-empty">{zh ? "无版本记录" : "No versions"}</span>
             ) : (

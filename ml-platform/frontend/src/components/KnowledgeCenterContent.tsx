@@ -259,7 +259,6 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
 
   const entryColumns = [
     { title: 'ID', dataIndex: 'id', render: (v: string) => <span className="mono">{v.slice(0, 8)}</span> },
-    { title: text.colDomain, dataIndex: 'domain' },
     { title: text.colLesson, dataIndex: 'lesson', ellipsis: true },
     { title: text.colAction, dataIndex: 'action', ellipsis: true },
     { title: text.colConfidence, dataIndex: 'confidence', render: (v: number) => v.toFixed(2) },
@@ -572,7 +571,7 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
       >
         {previewEntry && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13, lineHeight: 1.8 }}>
-            <div><Tag color="blue">{previewEntry.domain}</Tag><Tag color={previewEntry.status === 'active' ? 'green' : previewEntry.status === 'shadow' ? 'blue' : 'default'}>{previewEntry.status}</Tag><Tag color="purple">{previewEntry.origin}</Tag></div>
+            <div><Tag color={previewEntry.status === 'active' ? 'green' : previewEntry.status === 'shadow' ? 'blue' : 'default'}>{previewEntry.status}</Tag><Tag color="purple">{previewEntry.origin}</Tag></div>
             <div><b>{text.preview_situation}</b><div>{previewEntry.situation}</div></div>
             <div><b>{text.preview_lesson}</b><div>{previewEntry.lesson}</div></div>
             <div><b>{text.preview_action}</b><div>{previewEntry.action}</div></div>
