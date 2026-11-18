@@ -10,6 +10,7 @@ Retirement/supersession filters immediately.
 from __future__ import annotations
 
 import json
+import re
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -18,6 +19,12 @@ from app.models.experience_entry import ExperienceEntry
 from app.services.llm_gateway import chat_completion as _distill_chat_completion
 
 MIN_INJECT_CONFIDENCE = 0.70
+
+
+def _lesson_dedup_key(lesson: str) -> str:
+    """教训去重比较键：去空白/标点/数字、小写化。LLM 对同一教训的两次蒸馏
+    常带不同数字尾缀（「…-0.85」vs「…-0.9」），精确匹配会重复入库。"""
+    return re.sub(r"[\s\-—–_,，。；;:：.()（）\[\]【】\"'“”0-9]+", "", (lesson or "").lower())
 PROMOTE_HITS = 2
 HUMAN_DEFAULT_CONFIDENCE = 0.75
 # 结果反馈调分（§10.1 生命周期闭环）：注入教训的任务终态回写
@@ -55,16 +62,27 @@ def record_experience(
         status = "active"
         if confidence is None or confidence < HUMAN_DEFAULT_CONFIDENCE:
             confidence = HUMAN_DEFAULT_CONFIDENCE
-    # 自动合并（§10.1 去重）：同域且教训正文完全一致的条目不再重复入库，
+    # 自动合并（§10.1 去重）：同域且教训正文一致的条目不再重复入库，
     # 合并为既有条目——置信度取高者、来源任务并集、命中计数继承。
+    # 比较键做规范化（去空白/标点/数字、小写化）：LLM 对同一教训的两次蒸馏
+    # 常带不同数字尾缀（实测「…-0.85」vs「…-0.9」绕过精确匹配重复入库）。
     normalized = lesson.strip()
-    duplicate = (
+    lesson_key = _lesson_dedup_key(normalized)
+    candidates = (
         db.query(ExperienceEntry)
         .filter(
             ExperienceEntry.domain == (domain or "cross-domain"),
-            ExperienceEntry.lesson == normalized,
+            ExperienceEntry.status.in_(["active", "shadow"]),
         )
-        .first()
+        .all()
+    )
+    duplicate = next(
+        (
+            entry
+            for entry in candidates
+            if _lesson_dedup_key(entry.lesson or "") == lesson_key and lesson_key
+        ),
+        None,
     )
     if duplicate is not None:
         duplicate.confidence = max(float(duplicate.confidence), float(confidence))

@@ -1729,3 +1729,19 @@ AE 在栈上不可用是既定决策（torch ~200MB 不进部署镜像，fail-sa
 **根因修正链（今日连环报障的完整解释）**：用户一天内多个智能体任务 S1/S2 长时间不更新/失败。三层根因叠加：①上游 DeepSeek Flash API 对长生成间歇性打断（`insufficient_system_resource`/`aborted`，官方 finish_reason 枚举；Flash API 90 天可用性 99.55% 全服务最低，官方日历 10 起故障多为 Flash 受影响）；②本机链路分钟级全断/全通翻转（审计按分钟分布实锤：通 2-5 分钟→断 2-5 分钟循环）；③**并行大模型流式调用挤占出网带宽**（用户观察「别的任务完成 263ba0f1 才有进度」实锤——并行长流式 SSE 下载互相摊薄带宽至涓流/断流）。平台侧修复：流式并发信号量（LLM_STREAM_CONCURRENCY=2，env 可调——封顶同时在途流式调用数，排队任务由重连/预算机制管理）+ 重连 10s×60 次密集重试（覆盖约 10 分钟断窗口）+ 网络失败总预算 NETWORK_FAILURE_LIMIT=8（生成轮次与重连共享「或」语义不嵌套，用户澄清：5 次重试算在总共 8 次中）+ 达限升级人工（数据不丢）。
 
 **验证**：后端 73 passed（契约归一化 4 用例含 None 拒收/空容器 JSON 留档；PDF 转换/缓存命中/失败降级；重连 10s×59 断言等）+ 页测 6 passed + tsc；真实任务 34f71fee **1 轮 pass**（recall 1.0/f1 0.9595，知识库 3 块注入档案 ✓）；c79ad389 三轮 accepted（评审升级自动续训 ✓）。**待用户决策**：大屏「线上模型 vN」显示优化；熔断预算跨路径统一；reasoning_effort=low（缩短生成时长降低打断概率）是否启用。
+
+## 2026-11-18 智能体体验五项批次（用户需求驱动：附注/提交配置/配方命名/思考沉淀/一键复用）
+
+**1. 知识中心「附注」点击无反应根修**：附注卡片此前渲染在页面最底部（知识库表格+绑定表格+经验表格三张表之后），经验表格行点击「附注」后卡片落在视口外，看起来像按钮无效（用户实测）。改 Modal 弹窗（保存/取消/关闭逻辑不变，saveNote 已带关闭+刷新）。
+
+**2. 任务详情「提交配置」四阶段全展示**：标题去「（向导引导）」字样；从只显示门禁/白名单/数据形态/自定义提示 4 行，扩为按「建模范式（supervised/anomaly+迭代上限+自动服务化）→ 数据分析（全量训练开关/重点排查列/列行备注数/自定义提示）→ 特征工程（数据形态/列类型标注/必须保留列/建议剔除/自定义提示）→ 自动建模（算法白名单+**集成学习启用状态与 Top-K**/参数提示/预期异常比例/分工况列/自定义提示）→ 评估验收（指标门禁/评审关注点/独立验证集/已知异常样本数）→ 知识源（平台经验注入参数/知识库数量）」分阶段全量渲染（agentCenter.ts 类型同步扩展 UserGuidance 全字段；无配置行整行隐藏防空噪音）。
+
+**3. 固化配方支持命名**：后端 `POST /agent/recipes/fixate` 已有 name 参数（RecipeFix.name，缺省 recipe-<runid 前8>）但前端无入口——服务化操作流第①步「固化配方」旁加名称输入框（留空自动命名），名称即配方库「配方」列显示值。
+
+**4. 配方沉淀大模型思考/决策链（agent_trace）**：`build_fixation_content`（固化/重放唯一构造器）新增 `_agent_trace(run, memory)`——S1 域假设思考（reasoning/brief）、当时注入的平台经验、每轮 S2 处理描述+生成/剔除列、S3 指标+集成采纳、S4 门禁结果与失败项、评审 verdict/surprises/hints 全链路结构化沉淀，全部字段有界截断（rounds≤10/经验≤10 条/每字段 200-2000 字符），配方正文不吞脚本（feature_script 已单列）。**复用注入 S1**：build_s1_messages/run_s1 新增 recipe_trace 参数→独立引述块「复用配方（源任务思考与决策链，供推理参考）」；runner S1 阶段从 memory.recipe_trace 透传——复用建模站在源任务推理肩上起步。
+
+**5. 配方一键复用**：后端新端点 `POST /api/agent/recipes/{id}/reuse`（agent_extras.py）——配方 guidance 快照 + 用户修改项（guidance_overrides dict 深合并：dict 递归/列表整体替换）→ UserGuidance 合同校验 → 新 AgentRun（memory_json 携 recipe_trace+recipe_source）→ launch_agent_run 即启动。范式镜像互斥与 create_agent_run 同合同（anomaly 强制无目标列/supervised 必须有——配方未携带且请求未提供则 400）；快照缺失 fail-closed 409 RECIPE_GUIDANCE_MISSING（存量旧配方提示重新固化回填）。前端配方库行加「复用」按钮+弹窗：数据集下拉（listDatasets 按配方项目过滤）、目标列（选数据集后 getDatasetPreview 拉列清单，预填配方目标列）、迭代上限/集成学习开关+Top-K（预填配方快照值），提交后跳新任务详情页。
+
+**需求③前半（硬门禁过但评审不符→轮数耗尽前继续迭代；符合预期→不必耗尽轮数）核实：已实现且实证过**——runner S4 分支：评审 pass→立即 accepted（不耗尽轮数）；评审 escalate 且硬门禁已过且轮次未满→continue 下一轮（hints 进下轮 memory digest）；仅轮数耗尽才升级人工（AGENT_REVIEW_ESCALATE）。任务 c79ad389 曾实证 r1 escalate→r3 pass accepted。
+
+**验证**：后端 test_agent_recipe_reuse.py 新 7 用例（agent_trace 沉淀/有界截断/复用合并覆盖/快照缺失 fail-closed/无目标 400/anomaly 强制清空/404）+ 回归 65 passed（recipe/loop_retrain/contracts）；前端 tsc + AgentModelingWizard/AgentCenterPage 16 passed + 全量 vitest。无在途任务后 backend/worker/migrate 全标签重建部署。

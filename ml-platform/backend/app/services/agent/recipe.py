@@ -266,6 +266,64 @@ def _columns_from_digest(content: dict) -> dict:
     return {}
 
 
+def _agent_trace(run, memory: dict) -> dict:
+    """固化配方时沉淀任务全链路「大模型思考与处理过程」（用户需求 2026-11-18）。
+
+    复用建模时随 guidance 快照一起重放进 S1 提示词，让新任务站在源任务的
+    推理肩上起步（为什么选这些特征/为什么剔除那些列/哪轮门禁挂了怎么调）。
+    全部字段有界截断——配方正文不吞任务脚本（feature_script 已单列保存）：
+    - s1_reasoning：源任务 S1 的域假设思考（含数据形态判断/泄漏嫌疑/质量动作）
+    - injected_experience：当时注入的平台经验（复用即继承「经验上下文」）
+    - rounds：每轮 S2 做了什么/S3 指标/S4 门禁/评审意见与 hints（决策链）
+    """
+    rounds = memory.get("rounds", [])
+    s1_reasoning = ""
+    s1_brief = ""
+    for record in rounds:
+        s1 = record.get("s1") or {}
+        if s1.get("reasoning"):
+            s1_reasoning = str(s1["reasoning"])[:2000]
+        if s1.get("brief"):
+            s1_brief = str(s1["brief"])[:600]
+    trace_rounds: list[dict] = []
+    for record in rounds[:10]:
+        s2 = record.get("s2") or {}
+        s3 = record.get("s3") or {}
+        s4 = record.get("s4") or {}
+        review = record.get("review") or {}
+        trace_rounds.append(
+            {
+                "round": record.get("round"),
+                "s2_description": str(s2.get("description") or "")[:500],
+                "generated_columns": [str(c) for c in (s2.get("generated_columns") or [])[:30]],
+                "dropped_columns": [str(c) for c in (s2.get("dropped_columns") or [])[:30]],
+                "s3_metrics": {
+                    str(k): v for k, v in list((s3.get("metrics") or {}).items())[:8]
+                },
+                "ensemble_adopted": bool((s3.get("ensemble") or {}).get("adopted")),
+                "s4_gate_passed": s4.get("gate_passed"),
+                "s4_gate_failures": [str(x)[:200] for x in (s4.get("gate_failures") or [])[:6]],
+                "review_verdict": str(review.get("verdict") or "")[:40],
+                "review_surprises": [str(x)[:200] for x in (review.get("surprises") or [])[:6]],
+                "hints": [str(x)[:300] for x in (record.get("hints") or [])[:6]],
+            }
+        )
+    return {
+        "source_task_status": getattr(run, "status", ""),
+        "s1_reasoning": s1_reasoning,
+        "s1_brief": s1_brief,
+        "injected_experience": [
+            {
+                "lesson": str(item.get("lesson") or "")[:300],
+                "action": str(item.get("action") or "")[:300],
+                "confidence": item.get("confidence"),
+            }
+            for item in (memory.get("injected_experience") or [])[:10]
+        ],
+        "rounds": trace_rounds,
+    }
+
+
 def build_fixation_content(run, memory: dict, smoke_row: dict | None = None,
                            target_values: list | None = None) -> dict:
     """验收通过的 run → 配方版本 content（固化/重放共用的唯一构造器）。
@@ -340,6 +398,8 @@ def build_fixation_content(run, memory: dict, smoke_row: dict | None = None,
         # 序最小标签：拧紧 0=不合格碰巧对，点焊 0=正常则把正常焊点全判报错回流
         "minority_label": str(target_values[0]) if target_values else None,
         "baseline_metrics": (run.result_json or {}).get("metrics", {}),
+        # 大模型思考/处理过程沉淀（复用建模的推理指引，见 _agent_trace）
+        "agent_trace": _agent_trace(run, memory),
         "analysis_digest": "run %s" % str(run.id)[:8],
         "optimization_report": (run.result_json or {}).get("optimization_report"),
     }

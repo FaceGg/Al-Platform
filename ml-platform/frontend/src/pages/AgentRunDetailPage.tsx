@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeftOutlined } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
@@ -55,6 +55,29 @@ export default function AgentRunDetailPage() {
   const guidance = archive?.guidance_json ?? null;
   const gates = guidance?.evaluation?.metric_gates ?? {};
   const whitelist = guidance?.modeling?.algorithm_whitelist ?? [];
+  const ensemble = guidance?.modeling?.ensemble;
+  const feature = guidance?.feature;
+  const analysis = guidance?.analysis;
+  const evaluation = guidance?.evaluation;
+  const modeling = guidance?.modeling;
+  const taskType = guidance?.task_type ?? "supervised";
+  const shapeText: Record<string, string> = {
+    tabular: zh ? "表格" : "tabular",
+    waveform: zh ? "波形编码" : "waveform",
+    mixed: zh ? "混合（自动）" : "mixed",
+  };
+  // 四阶段配置行的统一渲染：无配置的阶段整行隐藏，避免空行噪音。
+  const cfgRow = (label: string, value?: ReactNode | null) =>
+    value == null || value === "" || (Array.isArray(value) && value.length === 0) ? null : (
+      <tr>
+        <td className="tt" style={{ width: 130 }}>{label}</td>
+        <td>{value}</td>
+      </tr>
+    );
+  const promptsLine = (items: string[] | undefined) =>
+    items?.length
+      ? <span style={{ fontSize: 12 }}>{items.map((p, i) => <div key={i} className="ts">{p.length > 90 ? p.slice(0, 90) + "…" : p}</div>)}</span>
+      : null;
 
   return (
     <AppLayout>
@@ -105,34 +128,89 @@ export default function AgentRunDetailPage() {
 
         {guidance ? (
           <div className="v2-panel" style={{ marginBottom: 12 }}>
-            <h4><span className="bar" />{zh ? "提交配置（向导引导）" : "Submitted guidance"}</h4>
+            <h4><span className="bar" />{zh ? "提交配置" : "Submitted guidance"}</h4>
             <table className="v2-table">
               <tbody>
-                {Object.keys(gates).length ? (
-                  <tr>
-                    <td className="tt" style={{ width: 130 }}>{zh ? "指标门禁" : "Metric gates"}</td>
-                    <td>{Object.entries(gates).map(([k, v]) => `${k} ≥ ${v}`).join("；")}</td>
-                  </tr>
-                ) : null}
-                {whitelist.length ? (
-                  <tr>
-                    <td className="tt">{zh ? "算法白名单" : "Algorithm whitelist"}</td>
-                    <td>{whitelist.join("、")}</td>
-                  </tr>
-                ) : null}
-                <tr>
-                  <td className="tt">{zh ? "数据形态" : "Data shape"}</td>
-                  <td>{guidance.feature?.data_shape ?? (zh ? "未指定（自动）" : "auto")}</td>
-                </tr>
-                {(guidance.analysis?.prompts ?? []).length || (guidance.feature?.prompts ?? []).length || (guidance.modeling?.prompts ?? []).length ? (
-                  <tr>
-                    <td className="tt">{zh ? "自定义提示" : "Custom prompts"}</td>
-                    <td style={{ fontSize: 12 }}>
-                      {[...(guidance.analysis?.prompts ?? []), ...(guidance.feature?.prompts ?? []), ...(guidance.modeling?.prompts ?? [])]
-                        .slice(0, 4).map((p, i) => <div key={i} className="ts">{p.length > 100 ? p.slice(0, 100) + "…" : p}</div>)}
-                    </td>
-                  </tr>
-                ) : null}
+                {cfgRow(
+                  zh ? "建模范式" : "Paradigm",
+                  <>
+                    {taskType === "anomaly"
+                      ? zh ? "无监督异常检测" : "anomaly"
+                      : zh ? "有监督分类" : "supervised"}
+                    <span style={{ color: "var(--v2-dim)" }}>
+                      {" · "}{zh ? "迭代上限" : "max rounds"} {guidance.max_rounds ?? 3}
+                      {guidance.auto_servitize ? ` · ${zh ? "验收通过自动起草服务化" : "auto servitize"}` : ""}
+                    </span>
+                  </>,
+                )}
+                {/* 数据分析阶段 */}
+                {cfgRow(zh ? "数据分析 · 全量训练" : "Full data",
+                  analysis?.full_data === false ? (zh ? "关闭（超大数据集降采样验收）" : "off") : zh ? "开启（100% 真实数据）" : "on")}
+                {cfgRow(zh ? "数据分析 · 重点排查列" : "Suspect focus", (analysis?.suspect_focus ?? []).join("、"))}
+                {cfgRow(zh ? "数据分析 · 列/行备注" : "Column/row notes",
+                  analysis?.column_notes?.length || analysis?.row_notes?.length
+                    ? `${(analysis?.column_notes ?? []).length} / ${(analysis?.row_notes ?? []).length} ${zh ? "条" : ""}`
+                    : null)}
+                {cfgRow(zh ? "数据分析 · 自定义提示" : "Prompts", promptsLine(analysis?.prompts))}
+                {/* 特征工程阶段 */}
+                {cfgRow(zh ? "特征工程 · 数据形态" : "Data shape", shapeText[feature?.data_shape ?? "mixed"] ?? feature?.data_shape)}
+                {cfgRow(zh ? "特征工程 · 列类型标注" : "Column types",
+                  feature?.column_shapes && Object.keys(feature.column_shapes).length
+                    ? <span className="ts" style={{ fontSize: 12 }}>{Object.entries(feature.column_shapes).map(([c, s]) => `${c}=${s === "waveform" ? (zh ? "波形" : "wave") : zh ? "表格" : "tab"}`).join("，")}</span>
+                    : null)}
+                {cfgRow(zh ? "特征工程 · 必须保留列" : "Must keep", (feature?.must_keep ?? []).join("、"))}
+                {cfgRow(zh ? "特征工程 · 建议剔除" : "Suggest drop",
+                  feature?.suggest_drop?.length
+                    ? feature.suggest_drop.map((d, i) => <span key={i} style={{ marginRight: 8 }} className="ts">{(d as { column?: string }).column ?? ""}</span>)
+                    : null)}
+                {cfgRow(zh ? "特征工程 · 自定义提示" : "Prompts", promptsLine(feature?.prompts))}
+                {/* 自动建模阶段 */}
+                {cfgRow(
+                  zh ? "自动建模 · 算法白名单" : "Algorithm whitelist",
+                  whitelist.length
+                    ? <>
+                        {whitelist.join("、")}
+                        <span style={{ color: "var(--v2-dim)" }}>
+                          {" · "}{zh ? "集成学习" : "Ensemble"}：
+                          {ensemble?.enabled
+                            ? `${zh ? "已启用" : "on"}（Top-${ensemble.top_k ?? 3} ${zh ? "加权投票" : "soft-voting"}）`
+                            : zh ? "未启用" : "off"}
+                        </span>
+                      </>
+                    : <>{zh ? "未指定（全族搜索）" : "auto"}<span style={{ color: "var(--v2-dim)" }}>{" · "}{zh ? "集成学习" : "Ensemble"}：{ensemble?.enabled ? `${zh ? "已启用" : "on"}（Top-${ensemble.top_k ?? 3}）` : zh ? "未启用" : "off"}</span></>,
+                )}
+                {cfgRow(zh ? "自动建模 · 参数提示" : "Param hints",
+                  modeling?.param_hints && Object.keys(modeling.param_hints).length
+                    ? <span className="ts" style={{ fontSize: 12 }}>{Object.entries(modeling.param_hints).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join("，")}</span>
+                    : null)}
+                {cfgRow(zh ? "自动建模 · 预期异常比例" : "Contamination",
+                  taskType === "anomaly" && modeling?.contamination != null ? String(modeling.contamination) : null)}
+                {cfgRow(zh ? "自动建模 · 分工况列" : "Condition column", modeling?.condition_column || null)}
+                {cfgRow(zh ? "自动建模 · 自定义提示" : "Prompts", promptsLine(modeling?.prompts))}
+                {/* 评估验收阶段 */}
+                {cfgRow(zh ? "评估验收 · 指标门禁" : "Metric gates",
+                  Object.keys(gates).length
+                    ? Object.entries(gates).map(([k, v]) => `${k} ≥ ${v}`).join("；")
+                    : zh ? "未设硬门禁" : "none")}
+                {cfgRow(zh ? "评估验收 · 评审关注点" : "Review focus", (evaluation?.review_focus ?? []).join("；"))}
+                {cfgRow(zh ? "评估验收 · 独立验证集" : "Holdout dataset", evaluation?.custom_test_dataset_id || null)}
+                {cfgRow(zh ? "评估验收 · 已知异常样本" : "Known anomalies",
+                  taskType === "anomaly" && evaluation?.known_anomaly_rows?.length
+                    ? `${evaluation.known_anomaly_rows.length} ${zh ? "条" : "rows"}`
+                    : null)}
+                {/* 知识源 */}
+                {cfgRow(
+                  zh ? "知识源" : "Knowledge",
+                  <>
+                    {guidance.use_platform_experience === false
+                      ? zh ? "平台经验：关闭" : "experience off"
+                      : zh ? "平台经验：注入" : "experience on"}
+                    <span style={{ color: "var(--v2-dim)" }}>
+                      {` · Top-${guidance.experience_top_k ?? 5} · ≥${guidance.experience_min_confidence ?? 0.8}`}
+                      {guidance.knowledge_base_ids?.length ? ` · ${zh ? "知识库" : "KB"}×${guidance.knowledge_base_ids.length}` : ""}
+                    </span>
+                  </>,
+                )}
               </tbody>
             </table>
           </div>

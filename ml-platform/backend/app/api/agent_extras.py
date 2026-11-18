@@ -305,6 +305,160 @@ def recipe_rollback(
 
 
 # --------------------------------------------------------------------------
+# 配方一键复用（2026-11-18 用户需求）：按配方 guidance 快照重建智能体任务
+# --------------------------------------------------------------------------
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """引导覆盖合并：dict 递归合并，列表/标量整体替换。"""
+    out = dict(base or {})
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+class RecipeReuse(BaseModel):
+    """配方复用请求：新数据 + 可选修改项 → 用配方 guidance 快照重建任务。
+
+    配方保存的 agent_trace（源任务大模型思考/决策链）随新任务进 S1 提示词
+    ——复用建模站在源任务推理肩上起步。"""
+
+    dataset_artifact_id: str = Field(min_length=1, max_length=64)
+    # 缺省沿用配方目标列（anomaly 范式强制清空——合同镜像互斥）
+    target_column: str | None = Field(default=None, max_length=256)
+    project_id: str | None = Field(default=None, max_length=64)
+    llm_profile_id: str | None = Field(default=None, max_length=64)
+    llm_model_id: str | None = Field(default=None, max_length=128)
+    token_budget: int | None = Field(default=None, ge=1000, le=10_000_000)
+    # 配置修改项：与配方 guidance 快照深合并（dict 递归、列表整体替换）。
+    # 例：{"max_rounds": 5, "modeling": {"ensemble": {"enabled": true}}}
+    guidance_overrides: dict = Field(default_factory=dict)
+
+
+@router.post("/recipes/{recipe_id}/reuse", status_code=201)
+def reuse_recipe(
+    recipe_id: str,
+    payload: RecipeReuse,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """一键复用：配方 guidance 快照 + 用户修改项 → 新智能体任务并立即启动。
+
+    幂等性不需要（每次复用都是新任务）；配方缺 guidance 快照 fail-closed
+    （存量配方先对源 run 重新固化回填）。"""
+    from pydantic import ValidationError
+
+    from app.services.agent.contracts import UserGuidance
+
+    try:
+        recipe_uuid = uuid_module.UUID(recipe_id)
+    except (TypeError, ValueError, AttributeError) as error:
+        raise HTTPException(422, detail={"code": "IDENTIFIER_INVALID"}) from error
+    recipe = db.get(PipelineRecipe, recipe_uuid)
+    if recipe is None:
+        raise HTTPException(404, detail={"code": "RECIPE_NOT_FOUND"})
+    from app.services.agent.recipe import get_current_version
+
+    current = get_current_version(db, recipe.id)
+    content = dict(current.content_json or {})
+    snapshot = content.get("guidance")
+    if not isinstance(snapshot, dict) or not snapshot:
+        raise HTTPException(
+            409,
+            detail={"code": "RECIPE_GUIDANCE_MISSING",
+                    "message": "该配方缺 guidance 快照（存量旧配方），请对源任务重新固化后再复用"},
+        )
+    try:
+        artifact_uuid = uuid_module.UUID(payload.dataset_artifact_id)
+    except (TypeError, ValueError, AttributeError) as error:
+        raise HTTPException(422, detail={"code": "IDENTIFIER_INVALID"}) from error
+    if db.get(Artifact, artifact_uuid) is None:
+        raise HTTPException(404, detail={"code": "ARTIFACT_NOT_FOUND"})
+
+    merged = _deep_merge(snapshot, payload.guidance_overrides)
+    try:
+        guidance = UserGuidance.model_validate(merged)
+    except ValidationError as error:
+        safe_errors = [
+            {key: value for key, value in item.items() if key != "ctx"}
+            for item in error.errors()[:8]
+        ]
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "AGENT_RUN_GUIDANCE_INVALID", "errors": safe_errors},
+        )
+    guidance_data = guidance.model_dump()
+    # 范式镜像互斥（与 create_agent_run 同一合同）
+    task_type = guidance_data.get("task_type") or "supervised"
+    target = payload.target_column or (content.get("inputs") or {}).get("target_column")
+    if task_type == "anomaly":
+        target = None
+    elif not target:
+        raise HTTPException(
+            400,
+            detail={"code": "AGENT_RUN_TARGET_REQUIRED",
+                    "message": "有监督任务必须指定目标列（配方未携带且请求未提供）"},
+        )
+    project_uuid = None
+    if payload.project_id:
+        try:
+            project_uuid = uuid_module.UUID(payload.project_id)
+        except (TypeError, ValueError, AttributeError) as error:
+            raise HTTPException(422, detail={"code": "IDENTIFIER_INVALID"}) from error
+    profile_uuid = None
+    if payload.llm_profile_id:
+        try:
+            profile_uuid = uuid_module.UUID(payload.llm_profile_id)
+        except (TypeError, ValueError, AttributeError) as error:
+            raise HTTPException(422, detail={"code": "IDENTIFIER_INVALID"}) from error
+
+    run = AgentRun(
+        project_id=project_uuid or recipe.project_id,
+        dataset_artifact_id=artifact_uuid,
+        target_column=target,
+        llm_profile_id=profile_uuid,
+        llm_model_id=payload.llm_model_id,
+        token_budget=payload.token_budget,
+        status="pending",
+        current_stage="s1",
+        memory_json={
+            # 源任务思考/决策链 → S1 引述块（复用建模的推理指引）
+            "recipe_trace": content.get("agent_trace") or {},
+            "recipe_source": {
+                "recipe_id": str(recipe.id),
+                "recipe_name": recipe.name,
+                "version": current.version,
+            },
+        },
+        result_json={},
+        guidance_json=guidance_data,
+        created_by=current_user.id,
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    from app.services.agent.executor import AgentRunNotExecutable, launch_agent_run
+
+    try:
+        launch_agent_run(run.id, actor_id=current_user.id)
+    except AgentRunNotExecutable as error:
+        run.status = "waiting_escalate"
+        run.error_code = "AGENT_RUN_NOT_EXECUTABLE"
+        run.result_json = {"executor_error": str(error)}
+        db.commit()
+        db.refresh(run)
+    return {
+        "run_id": str(run.id),
+        "status": run.status,
+        "recipe_id": str(recipe.id),
+        "version": current.version,
+        "target_column": target,
+    }
+
+
+# --------------------------------------------------------------------------
 # S5 servitization (§12.1): draft (①–④ dry-run smoke) + approval switch (⑤)
 # --------------------------------------------------------------------------
 

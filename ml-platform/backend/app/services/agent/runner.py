@@ -816,6 +816,8 @@ class AgentRunner:
                 guidance=(self.guidance or {}).get("analysis") if isinstance(self.guidance, dict) else None,
                 actor=self.actor,
                 task_type=self.task_type,
+                # 配方复用任务：源任务的思考/决策链（reuse 端点写入 memory）
+                recipe_trace=(self.memory or {}).get("recipe_trace"),
             )
             s1_reasoning = (usage or {}).pop("reasoning_content", None)
             if not self._absorb_usage(usage):

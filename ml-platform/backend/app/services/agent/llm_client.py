@@ -75,6 +75,7 @@ def build_s1_messages(
     experience_references: list[dict] | None = None,
     guidance: dict | None = None,
     task_type: str = "supervised",
+    recipe_trace: dict | None = None,
 ) -> list[dict]:
     """Assemble the S1 prompt; all untrusted content stays inside quote blocks."""
     sections = [_quote_block("数据画像", json.dumps(profile_report, ensure_ascii=False))]
@@ -94,6 +95,16 @@ def build_s1_messages(
     if guidance:
         sections.append(
             _quote_block("用户引导", json.dumps(guidance, ensure_ascii=False))
+        )
+    if recipe_trace:
+        # 配方复用（2026-11-18 用户需求）：源任务的 S1 思考/特征决策链/轮次
+        # 教训随引述块进入 S1——复用建模不是从零推理，而是站在源任务的
+        # 推理肩上起步；引述块语义=参考数据，指令仍以本次任务为准。
+        sections.append(
+            _quote_block(
+                "复用配方（源任务思考与决策链，供推理参考）",
+                json.dumps(recipe_trace, ensure_ascii=False),
+            )
         )
     sections.append("请输出 AnalysisReport JSON。")
     system_prompt = (
@@ -247,6 +258,7 @@ def run_s1(
     guidance: dict | None = None,
     actor=None,
     task_type: str = "supervised",
+    recipe_trace: dict | None = None,
 ) -> tuple[AnalysisReport | None, str | None, dict]:
     """One S1 attempt: gateway call → JSON parse → contract validation.
 
@@ -261,6 +273,7 @@ def run_s1(
         experience_references=experience_references,
         guidance=guidance,
         task_type=task_type,
+        recipe_trace=recipe_trace,
     )
     # 瞬时网络故障与空回复自动重试（含 Errno 104 连接重置）：本周任务死于
     # S1 非流式长生成的连接被掐/空回复，重试 2 次可救回绝大多数；退避 5s/15s。

@@ -67,6 +67,9 @@ export default function ServitizeActions({
   const [deploymentId, setDeploymentId] = useState("");
   const [draft, setDraft] = useState<DraftResult | null>(null);
   const [published, setPublished] = useState(false);
+  // ③ 配方命名：固化时用户可自定名称（显示在配方库「配方」列）；留空走
+  // 后端默认 recipe-<runid 前 8>。
+  const [recipeName, setRecipeName] = useState("");
   // 铸造新部署流（「启动并服务化」完整语义）
   const [castPhase, setCastPhase] = useState<CastPhase>("idle");
   const [castNote, setCastNote] = useState("");
@@ -79,7 +82,7 @@ export default function ServitizeActions({
     setBusy(true);
     setError("");
     try {
-      const result = await fixateRecipe(runId);
+      const result = await fixateRecipe(runId, recipeName.trim() || undefined);
       onRecipeFixed(result.recipe_id);
     } catch (caught) {
       setError(String((caught as { response?: { data?: { detail?: { message?: string } } } })?.response?.data?.detail?.message ?? caught));
@@ -472,15 +475,32 @@ export default function ServitizeActions({
       {/* 当前步操作区 */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         {stateOf(1) === "active" ? (
-          <button
-            type="button"
-            className="v2-btn primary"
-            style={{ padding: "4px 14px", fontSize: 12 }}
-            disabled={busy}
-            onClick={() => void fixate()}
-          >
-            {zh ? "① 固化配方" : "① Fixate recipe"}
-          </button>
+          <>
+            <input
+              value={recipeName}
+              onChange={(e) => setRecipeName(e.target.value)}
+              maxLength={64}
+              placeholder={zh ? "配方名称（留空自动命名）" : "Recipe name (auto if empty)"}
+              style={{
+                padding: "4px 10px",
+                fontSize: 12,
+                borderRadius: 8,
+                border: "1px solid var(--v2-line)",
+                background: "var(--v2-input-bg)",
+                color: "var(--v2-txt)",
+                width: 190,
+              }}
+            />
+            <button
+              type="button"
+              className="v2-btn primary"
+              style={{ padding: "4px 14px", fontSize: 12 }}
+              disabled={busy}
+              onClick={() => void fixate()}
+            >
+              {zh ? "① 固化配方" : "① Fixate recipe"}
+            </button>
+          </>
         ) : null}
 
         {recipeId && !draft && !published && (stateOf(2) === "active" || stateOf(2) === "busy") ? (

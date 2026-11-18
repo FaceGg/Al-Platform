@@ -444,23 +444,26 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
           }}
         />
       </Card>
-      {noteTarget && (
-        <Card title={text.noteTitle} style={{ marginTop: 16 }}>
-          <Space.Compact style={{ width: '100%' }}>
-            <Input value={noteText} onChange={(event) => setNoteText(event.target.value)} placeholder={text.notePlaceholder} />
-            <Button
-              type="primary"
-              onClick={() => {
-                const entry = entries.find((item) => item.id === noteTarget)
-                if (entry) saveNote(entry)
-              }}
-            >
-              {text.noteSave}
-            </Button>
-            <Button onClick={() => setNoteTarget(null)}>{text.noteCancel}</Button>
-          </Space.Compact>
-        </Card>
-      )}
+      {/* 附注走 Modal：此前渲染在页面最底部（三张表格之后），视口外
+          看起来像「点击没反应」（2026-11-18 用户实测）。 */}
+      <Modal
+        title={text.noteTitle}
+        open={noteTarget != null}
+        onCancel={() => setNoteTarget(null)}
+        onOk={() => {
+          const entry = entries.find((item) => item.id === noteTarget)
+          if (entry) saveNote(entry)
+        }}
+        okText={text.noteSave}
+        cancelText={text.noteCancel}
+        destroyOnHidden
+      >
+        <Input
+          value={noteText}
+          onChange={(event) => setNoteText(event.target.value)}
+          placeholder={text.notePlaceholder}
+        />
+      </Modal>
       <Modal
         title={text.kb_modal_title}
         open={kbModalOpen}

@@ -76,10 +76,41 @@ export interface AgentRunDetail extends AgentRunItem {
     escalation?: { code?: string; detail?: string | null; round?: number; resolved?: { decision?: string; note?: string | null; actor?: string; at?: string } };
   };
   guidance_json: {
-    analysis?: { column_notes?: unknown[]; row_notes?: unknown[]; prompts?: string[]; suspect_focus?: string[] };
-    feature?: { data_shape?: string; must_keep?: string[]; suggest_drop?: string[]; prompts?: string[] };
-    modeling?: { algorithm_whitelist?: string[]; param_hints?: Record<string, unknown>; prompts?: string[] };
-    evaluation?: { custom_test_dataset_id?: string | null; metric_gates?: Record<string, number>; review_focus?: string[] };
+    task_type?: string;
+    analysis?: {
+      full_data?: boolean;
+      column_notes?: unknown[];
+      row_notes?: unknown[];
+      prompts?: string[];
+      suspect_focus?: string[];
+    };
+    feature?: {
+      data_shape?: string;
+      column_shapes?: Record<string, string>;
+      must_keep?: string[];
+      suggest_drop?: string[];
+      prompts?: string[];
+    };
+    modeling?: {
+      algorithm_whitelist?: string[];
+      param_hints?: Record<string, unknown>;
+      prompts?: string[];
+      contamination?: number | null;
+      condition_column?: string | null;
+      ensemble?: { enabled?: boolean; top_k?: number };
+    };
+    evaluation?: {
+      custom_test_dataset_id?: string | null;
+      metric_gates?: Record<string, number>;
+      review_focus?: string[];
+      known_anomaly_rows?: unknown[];
+    };
+    max_rounds?: number;
+    auto_servitize?: boolean;
+    use_platform_experience?: boolean;
+    knowledge_base_ids?: string[];
+    experience_top_k?: number;
+    experience_min_confidence?: number;
     pause_at_stages?: string[];
   } | null;
   result_json: Record<string, unknown>;
@@ -297,6 +328,20 @@ export async function getRecipeDetail(recipeId: string): Promise<RecipeDetail> {
 
 export async function deleteRecipe(recipeId: string): Promise<void> {
   await apiClient.delete(`/agent/recipes/${recipeId}`);
+}
+
+// 配方一键复用：guidance 快照 + 用户修改项 → 新智能体任务并立即启动
+export async function reuseRecipe(
+  recipeId: string,
+  payload: {
+    dataset_artifact_id: string;
+    target_column?: string | null;
+    project_id?: string | null;
+    guidance_overrides?: Record<string, unknown>;
+  }
+): Promise<{ run_id: string; status: string; target_column: string | null }> {
+  const response = await apiClient.post(`/agent/recipes/${recipeId}/reuse`, payload);
+  return response.data;
 }
 
 // 「启动并服务化」完整语义：按配方铸造最优模型并新建部署（两段式）
