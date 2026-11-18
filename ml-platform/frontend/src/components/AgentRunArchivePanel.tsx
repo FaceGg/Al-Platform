@@ -299,11 +299,13 @@ export default function AgentRunArchivePanel({ runId, archive, archiveError, zh,
           </div>
           <div className="v2-panel" style={{ margin: 0, flex: 1, minWidth: 260 }}>
             <h4><span className="bar" />{zh ? "注入的经验（L2 检索）" : "Injected experience (L2)"}</h4>
-            {(archive.memory_json?.injected_experience as Array<{ entry?: string; lesson?: string; confidence?: number }> | undefined)?.length ? (
-              (archive.memory_json.injected_experience as Array<{ entry?: string; lesson?: string; confidence?: number }>).map((ref, index) => (
+            {(archive.memory_json?.injected_experience as Array<{ entry?: string; lesson?: string; confidence?: number; domain?: string }> | undefined)?.length ? (
+              (archive.memory_json.injected_experience as Array<{ entry?: string; lesson?: string; confidence?: number; domain?: string }>).map((ref, index) => (
                 <div key={ref.entry ?? index} style={{ fontSize: 12, lineHeight: 1.8, color: "var(--v2-sub)" }}>
                   · <span className="tt">[{ref.entry?.slice(0, 8) ?? "?"}]</span> {ref.lesson ?? ""}
                   {ref.confidence != null ? <span style={{ color: "var(--v2-dim)" }}>（{ref.confidence.toFixed(2)}）</span> : null}
+                  {/* 软优先域排序：其他域的经验也可能注入，来源域透明可见 */}
+                  {ref.domain ? <span style={{ color: "var(--v2-dim)" }}> · 来源域 {ref.domain}</span> : null}
                 </div>
               ))
             ) : (

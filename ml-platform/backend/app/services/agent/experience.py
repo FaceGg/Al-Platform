@@ -13,6 +13,7 @@ import json
 import re
 from uuid import UUID
 
+from sqlalchemy import case
 from sqlalchemy.orm import Session
 
 from app.models.experience_entry import ExperienceEntry
@@ -120,23 +121,32 @@ def retrieve_for_task(
 ) -> list[ExperienceEntry]:
     """Top-k injectable entries for a new task's S1.
 
-    Active entries matching the domain (plus cross-domain) with
-    ``confidence >= min_confidence or 0.70``, ranked by confidence then hit
-    count. Shadow entries are NOT returned but their hit count increments (the
-    cooldown counter); the fingerprint parameter is reserved for vector
-    similarity in the knowledge-center milestone (P6).
+    软优先域排序（方案 B，用户拍板 2026-11-18）：不再按域硬过滤——其他域
+    的经验也参与注入，但排序本域 > cross-domain > 其他域，域秩优先于置信度
+    （本域专属最相关）。原先的硬过滤（domain.in_([domain, "cross-domain"])）
+    会静默隔离有用经验（LLM 域标签判断歪了没人知道），且当前仅两域、池小
+    收益≈0。confidence >= min_confidence or 0.70 门槛不变；shadow 命中计数
+    同步放宽为全池（与 active 候选同语义），cooldown 计数语义不变。
     """
     threshold = float(min_confidence) if min_confidence is not None else MIN_INJECT_CONFIDENCE
     db.flush()  # sessions run with autoflush off — see the caller's pending state
+    # 域三段秩：本域 0 < cross-domain 1 < 其他域 2（SQL case 纯 SQL 可下推）
+    task_domain = domain or "cross-domain"
+    domain_rank = case(
+        (ExperienceEntry.domain == task_domain, 0),
+        (ExperienceEntry.domain == "cross-domain", 1),
+        else_=2,
+    )
     candidates = (
         db.query(ExperienceEntry)
         .filter(
             ExperienceEntry.status == "active",
             ExperienceEntry.confidence >= threshold,
-            ExperienceEntry.domain.in_([domain, "cross-domain"]),
         )
         .order_by(
-            ExperienceEntry.confidence.desc(), ExperienceEntry.hit_count.desc()
+            domain_rank,
+            ExperienceEntry.confidence.desc(),
+            ExperienceEntry.hit_count.desc(),
         )
         .all()
     )
@@ -148,14 +158,13 @@ def retrieve_for_task(
         ]
     selected = candidates[:top_k]
 
-    # Shadow cooldown: every shadow entry that WOULD have matched this task
-    # (same domain filter) counts the hit, regardless of the top-k cut.
+    # Shadow cooldown: every shadow entry in the pool counts the hit（软优先
+    # 后候选不再按域收窄，shadow 与 active 同语义全池计数）。
     shadow = (
         db.query(ExperienceEntry)
         .filter(
             ExperienceEntry.status == "shadow",
             ExperienceEntry.confidence >= threshold,
-            ExperienceEntry.domain.in_([domain, "cross-domain"]),
         )
         .all()
     )

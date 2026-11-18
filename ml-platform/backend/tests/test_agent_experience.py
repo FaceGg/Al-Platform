@@ -141,8 +141,11 @@ class TestExperienceStore(unittest.TestCase):
             self.assertEqual(entry.confidence, 0.75)
 
     def test_retrieval_filters_status_confidence_and_domain(self):
+        """软优先域排序（方案 B，2026-11-18 用户拍板）：status/confidence 仍是
+        硬门槛（shadow 不返回、0.69 < 0.7 拒收），域改为**排序软优先**——
+        其他域条目仍返回但排在本域之后。"""
         with SessionLocal() as db:
-            # A 批次：互异 lesson 防同文合并折叠（§10.1），保持过滤语义可断言
+            # 互异 lesson 防同文合并折叠（§10.1），保持过滤语义可断言
             self._record(db, confidence=0.86, lesson="教训-影子")  # shadow → counted, not returned
             active = self._record(db, confidence=0.9, lesson="教训-主条目")
             active.status = "active"
@@ -157,7 +160,29 @@ class TestExperienceStore(unittest.TestCase):
             returned = [item.id for item in entries]
         self.assertIn(active_id, returned)
         self.assertNotIn(low_id, returned)      # 0.69 < 0.7
-        self.assertNotIn(other_id, returned)    # domain mismatch
+        self.assertIn(other_id, returned)       # 软优先：其他域仍注入
+        # 域三段秩：本域在前，异域靠后（即便异域置信度更高 0.95 > 0.9）
+        self.assertLess(returned.index(active_id), returned.index(other_id))
+
+    def test_retrieval_soft_domain_ranking_order(self):
+        """域三段秩：本域 > cross-domain > 其他域，域秩优先于置信度。"""
+        with SessionLocal() as db:
+            cross = self._record(db, confidence=0.93, lesson="软排序-跨域通用", generality="cross-domain")
+            cross.domain = "cross-domain"
+            cross.status = "active"
+            other = self._record(db, confidence=0.92, lesson="软排序-其他域", domain="welding")
+            other.status = "active"
+            mine = self._record(db, confidence=0.72, lesson="软排序-本域")
+            mine.status = "active"
+            mine_id, cross_id, other_id = mine.id, cross.id, other.id
+            entries = retrieve_for_task(
+                db, domain="tightening", profile_fingerprint={}, top_k=10
+            )
+            order = [item.id for item in entries]
+        self.assertEqual(
+            order.index(mine_id), 0, "本域低置信（0.72）仍应排最前（域秩优先）"
+        )
+        self.assertLess(order.index(cross_id), order.index(other_id))
 
     def test_confidence_boundary_is_inclusive(self):
         with SessionLocal() as db:

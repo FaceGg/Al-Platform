@@ -446,6 +446,9 @@ class AgentRunner:
                 "action": entry.action,
                 "confidence": entry.confidence,
                 "origin": entry.origin,
+                # 软优先域排序（方案 B）：注入档案带来源域——其他域的经验
+                # 也可能被注入，S1 引述块与任务详情都要能看到它来自哪里
+                "domain": entry.domain,
             }
             for entry in entries
         ]
