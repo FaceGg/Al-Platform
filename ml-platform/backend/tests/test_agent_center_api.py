@@ -337,6 +337,37 @@ class TestRecipeListing(AgentCenterHarness, unittest.TestCase):
         self.assertNotIn("content_json", recipe)
         self.assertNotIn("TORQUE_DEVIATION", response.text)
 
+    def test_lists_recipes_newest_first(self):
+        """配方库按更新时间倒序：新添加/新更新的配方在最上面（用户指定
+        2026-11-18；与列表「更新时间」列同语义）。"""
+        project_id, _project_name = self._project()
+        with SessionLocal() as db:
+            create_recipe(
+                db,
+                project_id=uuid.UUID(project_id),
+                name="old-recipe",
+                domain="tightening",
+                target_column="DECIDE",
+                content={},
+                created_by=uuid.UUID(self.user_id),
+            )
+            import time as _time
+
+            _time.sleep(1.1)  # 跨过时间戳同秒（SQLite 秒级精度）
+            create_recipe(
+                db,
+                project_id=uuid.UUID(project_id),
+                name="new-recipe",
+                domain="tightening",
+                target_column="DECIDE",
+                content={},
+                created_by=uuid.UUID(self.user_id),
+            )
+        response = client.get("/api/agent/recipes", headers=self.h)
+        self.assertEqual(response.status_code, 200)
+        names = [item["name"] for item in response.json()]
+        self.assertLess(names.index("new-recipe"), names.index("old-recipe"), names)
+
     def test_lists_each_recipe_once_across_mixed_current_versions(self):
         """回归：列表 join 每配方恰一行（真机事故——旧子查询笛卡尔积让
         同一配方随「其他配方的 current_version 号」重复出现多行，删除

@@ -468,9 +468,10 @@ def list_pipeline_recipes(
             (PipelineRecipeVersion.recipe_id == PipelineRecipe.id)
             & (PipelineRecipeVersion.version == PipelineRecipe.current_version),
         )
-        # 配方库固定按创建时间正序（老配方在上）——updated_at 随状态触碰导致
-        # 顺序跳动（用户指定：演示清单从上到下按创建先后稳定排列）
-        .order_by(PipelineRecipe.created_at.asc(), PipelineRecipe.name.desc())
+        # 配方库按更新时间倒序：新添加/新更新的配方在最上面（用户指定
+        # 2026-11-18；与列表「更新时间」列同语义）。updated_at 只在配方
+        # 行实质变更（新版本固化/回滚/改名）时刷新。
+        .order_by(PipelineRecipe.updated_at.desc(), PipelineRecipe.name.desc())
         .offset(offset)
         .limit(limit)
         .all()

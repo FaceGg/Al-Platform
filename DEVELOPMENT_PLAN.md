@@ -1808,3 +1808,7 @@ CI（windows+ubuntu 双 OS）backend suite 三模块失败，本地复现定位�
 
 教训（随批）：新增测试文件必须同批登记 week_manifest；造「互异」测试数据时去重键剥数字——数字尾缀不构成互异性，要语义互异。
 验证：三模块 37 passed（manifest 含 discovered==owners 校验）。
+
+## 2026-11-18 追加八：配方库改按更新时间倒序（新配方在最上面）
+
+用户指定：配方库新添加的配方应该在最上面。排序 created_at.asc → **updated_at.desc()**（与列表「更新时间」列同语义）。中途曾先改 created_at.desc——实测发现这批配方的 created_at 被此前数据整理回填成 1-1 最新（与用户「新」的语义相反），改 updated_at（配方行实质变更：新版本固化/回滚/改名才刷新，updated_at 排序曾致的顺序跳动根源已随配方行低频实质变更而消失）。补 test_lists_recipes_newest_first 用例（跨秒造新旧两配方断言顺序）；27 passed；部署后 API 实测顺序：无监督学习1（今天新固化）→ 1-5 → 1-4 → 1-3 → 1-2 → 1-1。
