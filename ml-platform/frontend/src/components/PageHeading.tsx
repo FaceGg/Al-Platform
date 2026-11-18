@@ -43,6 +43,7 @@ export const NAV_FALLBACK: Record<string, { zh: string; en: string }> = {
   prompt_templates: { zh: "提示词模板", en: "Prompt Templates" },
   chat: { zh: "AI对话", en: "AI Chat" },
   kubernetes: { zh: "Kubernetes 集群", en: "Kubernetes Clusters" },
+  infra_overview: { zh: "集群总览", en: "Cluster overview" },
   cluster_governance: { zh: "集群治理", en: "Cluster Governance" },
   job_runs: { zh: "作业运行", en: "Job Runs" },
   notebooks: { zh: "Notebook 会话", en: "Notebook Sessions" },

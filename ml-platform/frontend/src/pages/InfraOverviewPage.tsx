@@ -44,18 +44,23 @@ export default function InfraOverviewPage() {
 
   const load = () => {
     setLoading(true);
-    listClusters().then((res) => {
+    // 全部请求落地后复位 loading（此前 setLoading(true) 后无人复位——
+    // 刷新按钮的圈转个不停，用户反馈 2026-11-18）
+    const clustersJob = listClusters().then((res) => {
       setClusters(res.items || []);
       // Nodes per cluster (clusters are few; one bounded call each).
-      (res.items || []).slice(0, 4).forEach((cluster) => {
-        listClusterNodes(cluster.id)
-          .then((nodes) => setNodesByCluster((current) => ({ ...current, [cluster.id]: nodes.items || [] })))
-          .catch(() => setNodesByCluster((current) => ({ ...current, [cluster.id]: [] })));
-      });
+      return Promise.allSettled(
+        (res.items || []).slice(0, 4).map((cluster) =>
+          listClusterNodes(cluster.id)
+            .then((nodes) => setNodesByCluster((current) => ({ ...current, [cluster.id]: nodes.items || [] })))
+            .catch(() => setNodesByCluster((current) => ({ ...current, [cluster.id]: [] }))),
+        ),
+      );
     }).catch(() => setClusters([]));
-    listJobRuns(0, 6).then((res) => setJobs(res.items || [])).catch(() => setJobs([]));
-    listNotebooks(0, 1).then((res) => setNotebookTotal(res.total ?? null)).catch(() => setNotebookTotal(null));
-    apiClient.get("/monitor/current").catch(() => undefined);
+    const jobsJob = listJobRuns(0, 6).then((res) => setJobs(res.items || [])).catch(() => setJobs([]));
+    const notebooksJob = listNotebooks(0, 1).then((res) => setNotebookTotal(res.total ?? null)).catch(() => setNotebookTotal(null));
+    const monitorJob = apiClient.get("/monitor/current").catch(() => undefined);
+    Promise.allSettled([clustersJob, jobsJob, notebooksJob, monitorJob]).finally(() => setLoading(false));
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);

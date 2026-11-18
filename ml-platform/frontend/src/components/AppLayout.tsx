@@ -115,6 +115,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     ],
     infra: [
       { label: zh ? "集群" : "Cluster", items: [
+        { key: "/infra", icon: <AppstoreOutlined />, label: nav("infra_overview") },
         { key: "/kubernetes", icon: <ClusterOutlined />, label: nav("kubernetes") },
         { key: "/cluster-governance", icon: <ControlOutlined />, label: nav("cluster_governance") },
       ] },

@@ -31,6 +31,7 @@ const ZH = {
     annotation: "\u6570\u636e\u6807\u6ce8",
     compute: "\u8ba1\u7b97\u8d44\u6e90",
     kubernetes: "Kubernetes 集群",
+    infra_overview: "集群总览",
     job_runs: "作业运行",
     notebooks: "Notebook 会话",
     images: "镜像目录",
@@ -892,7 +893,7 @@ const ZH = {
 
 const EN: Record<string, any> = {
   app: { title: "Linkraft", login: "Login", register: "Register", logout: "Logout", success: "Success", error: "Error", confirm: "Confirm" },
-  nav: { dashboard: "Dashboard", projects: "Projects", models: "Model Library", users: "User Management", data: "Data Management", data_annotation: "Data Annotation", knowledge: "Knowledge Base", training: "Model Training", monitor: "Resource Monitor", chat: "AI Chat", automl: "AutoML", orchestration: "App Orchestration", demo_loop: "Closed-Loop Automation", algorithms: "Algorithms", api_market: "API Market", annotation: "Annotation", compute: "Compute Resources", kubernetes: "Kubernetes Clusters", job_runs: "Job Runs", notebooks: "Notebook Sessions", images: "Image Catalog", cluster_governance: "Cluster Governance", llm_gateway: "LLM Management", knowledge_center: "Knowledge Center",
+  nav: { dashboard: "Dashboard", projects: "Projects", models: "Model Library", users: "User Management", data: "Data Management", data_annotation: "Data Annotation", knowledge: "Knowledge Base", training: "Model Training", monitor: "Resource Monitor", chat: "AI Chat", automl: "AutoML", orchestration: "App Orchestration", demo_loop: "Closed-Loop Automation", algorithms: "Algorithms", api_market: "API Market", annotation: "Annotation", compute: "Compute Resources", kubernetes: "Kubernetes Clusters", infra_overview: "Cluster overview", job_runs: "Job Runs", notebooks: "Notebook Sessions", images: "Image Catalog", cluster_governance: "Cluster Governance", llm_gateway: "LLM Management", knowledge_center: "Knowledge Center",
     prompt_templates: "Prompt Templates", agent_new: "New task", agent_tasks: "Jobs", agent_recipes: "Recipes",
     announcements: "Notices", audit: "Audit log", settings: "Platform Status", llm_usage: "Token usage" },
   demo_loop: {

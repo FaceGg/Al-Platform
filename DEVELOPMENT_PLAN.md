@@ -1834,3 +1834,8 @@ CI（windows+ubuntu 双 OS）backend suite 三模块失败，本地复现定位�
 ## 2026-11-18 追加十一：删七处页面顶部解释性文字（用户：去掉平台中多余的解释性文字）
 
 PageHeading desc / 内嵌说明条删除：①智能体中心→知识中心 tab 的 v2-note（§16.1 内嵌说明）；②基础设施→集群总览 desc；③公告管理 desc；④审计管理 desc；⑤平台状态 desc；⑥大模型管理 desc；⑦tokens 使用统计 desc。**集群总览菜单说明**：/infra 是基础设施分组首屏页（sectionDefaultRoute 默认落点，点组标题即进入），无独立菜单项为既有设计——仅删文字不改菜单。tsc + 相关 vitest 13 passed；frontend 重建部署。
+
+## 2026-11-18 追加十二：集群总览加独立菜单项 + 刷新按钮永转圈修复（用户反馈）
+
+1. **集群总览加入左侧菜单**（用户拍板「需要单独出现」）：基础设施→集群组第一位加 `/infra` 菜单项（AppstoreOutlined，nav("infra_overview")）；三处同步——i18n nav zh（集群总览）/en（Cluster overview）+ PageHeading NAV_FALLBACK（parity 测试锁定的回退表）。浏览器实测菜单出现 ✓。
+2. **集群总览刷新按钮圈一直转**：load() 的 setLoading(true) 后**无人复位**（四个并行请求各自 then/catch，没有一个兜底 setLoading(false)）——修：Promise.allSettled 聚合全部请求（集群内节点子请求也 allSettled 收口）后 finally 复位。浏览器实测加载完成 spin 消失 ✓。
