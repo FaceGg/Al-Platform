@@ -520,10 +520,14 @@ class TestL2InjectionAndDistill(ExecutorHarness, unittest.TestCase):
         self._patch_llm()
         # A 批次：教训文本带 run_id 后缀——同文自动合并（§10.1）会把跨测试
         # 同文蒸馏折叠进既有条目（并可能被命中升级为 active），唯一文本
-        # 保证本用例断言的是"新蒸馏条目从 shadow 起步"这一原始语义
+        # 保证本用例断言的是"新蒸馏条目从 shadow 起步"这一原始语义。
+        # 2026-11-18 CI 双 OS 实测：run_id 十六进制尾缀剥数字后只剩少数字母，
+        # 与模块内其他「优先轻量模型」变体规范化同文 → 合并+跨用例命中累计
+        # 两次 promote 升 active → 'active' != 'shadow'。改为**语义唯一**
+        # 文本（去重键剥不掉中文字），与 _DISTILL_REPLY 原文及所有变体互异。
         unique_reply = _DISTILL_REPLY.replace(
             '"lesson": "优先轻量模型"',
-            f'"lesson": "优先轻量模型-{run_id[:8]}"',
+            '"lesson": "蒸馏回归专用：小样本优先选轻量模型家族"',
         )
         with mock.patch(
             "app.services.agent.experience._distill_chat_completion",

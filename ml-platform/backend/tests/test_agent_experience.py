@@ -295,12 +295,19 @@ class TestExperienceStore(unittest.TestCase):
 
     def test_top_k_ranking_by_confidence(self):
         with SessionLocal() as db:
-            # A 批次：同文自动合并（§10.1）上线后，排名/计数类用例必须用
-            # 互异 lesson 造独立条目，否则三条会折叠为一条
-            for confidence in (0.8, 0.9, 0.85):
+            # 同文自动合并（§10.1）的去重键剥空白/标点/数字（「同教训不同
+            # 置信度尾缀」视为重复）——排名/计数类用例必须用**语义互异**的
+            # lesson 造独立条目；仅改数字尾缀（-0.8/-0.9）规范化后同文会
+            # 折叠为一条（CI 双 OS 实测 1 != 2）。
+            distinct_lessons = (
+                "索引类单基数码列默认剔除",
+                "索引列改用频度编码保留",
+                "波形索引列禁止默认剔除",
+            )
+            for confidence, lesson in zip((0.8, 0.9, 0.85), distinct_lessons):
                 entry = self._record(
                     db, confidence=confidence,
-                    lesson=f"索引类列默认剔除-{confidence}",
+                    lesson=lesson,
                 )
                 entry.status = "active"
             entries = retrieve_for_task(

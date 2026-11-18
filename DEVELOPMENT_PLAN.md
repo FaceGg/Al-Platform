@@ -1798,3 +1798,13 @@ AE 在栈上不可用是既定决策（torch ~200MB 不进部署镜像，fail-sa
 **连续四次崩溃修复（193923b7 实证链）**：S3 训练器白名单点名的 autoencoder 在无 torch 环境 `AlgorithmUnavailable` 直接崩任务；resume/恢复拉起同处再崩 → 连续四次。修：anomaly_trainer 循环内 catch AlgorithmUnavailable 跳过记 unavailable（与引擎「族自动缺席」同语义），全部缺席显式 RuntimeError；topk_metrics 兼容缺席条目。另修 executor 恢复链认知：waiting_escalate/failed 状态 execute 状态门不放行（重拉须先置 running/pending）。
 
 **验证**：test_agent_contracts 19 passed（新增修复回路 2 用例：自愈成功+两次仍败带 raw_evidence）；test_anomaly_trainer_unavailable 新 2 用例（缺席跳过/全部缺席显式报错）+ 相关回归 44 passed；重提任务 a915036a：S1 一次通过（骨架提示词生效）、档案重点特征首次有真实值（wld1c/wld2c/energy/ron1——digest 取错字段的历史显示缺陷同批修复）。
+
+## 2026-11-18 追加七：CI run 848 双 OS backend suite 失败修复（三处）
+
+CI（windows+ubuntu 双 OS）backend suite 三模块失败，本地复现定位：
+1. **test_suite_manifest**：新建 3 个测试文件（test_agent_recipe_reuse / test_llm_stream_concurrency / test_anomaly_trainer_unavailable）未在 week_manifest 登记归属（每模块必须恰好一组）——分别登记 p3 / p1 / 现周组。
+2. **test_agent_experience::test_top_k_ranking_by_confidence**：`1 != 2`——去重键剥数字后「索引类列默认剔除-0.8/-0.9/-0.85」规范化同文折叠为一条；改三条**语义互异** lesson（单基码剔除/频度编码保留/波形索引禁止剔除）。
+3. **test_agent_executor::test_distill_creates_shadow_entries_with_evidence_chain**：`'active' != 'shadow'`——run_id 十六进制尾缀剥数字后剩少数字母，与模块内其他「优先轻量模型」变体规范化同文 → 合并+跨用例命中累计两次 promote 升 active；改**语义唯一**蒸馏文本。
+
+教训（随批）：新增测试文件必须同批登记 week_manifest；造「互异」测试数据时去重键剥数字——数字尾缀不构成互异性，要语义互异。
+验证：三模块 37 passed（manifest 含 discovered==owners 校验）。

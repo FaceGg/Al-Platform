@@ -131,6 +131,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         # M6 机制先行（2026-11-13）：半监督档 1 标签阈值重标定（confirmed≥50 解锁）
         "test_anomaly_threshold_recalibration",
         "test_m6_precision_at_k",          # M6 判据② 验收证据（2026-11-13）
+        # 2026-11-18 批次：无监督训练器缺席族跳过（193923b7 连续崩溃回归）
+        "test_anomaly_trainer_unavailable",
         "test_label_schema",
         "test_label_schema_api",
         "test_run_suite",
@@ -229,6 +231,8 @@ PHASE_TEST_MODULES: dict[str, list[str]] = {
         "test_llm_profiles_api",
         "test_llm_gateway",
         "test_llm_provider_formats",
+        # 2026-11-18 批次：流式并发运行时可调（动态门+PlatformOption）
+        "test_llm_stream_concurrency",
         "test_usage_stats_daily",
         "test_agent_profile_data",
         "test_agent_contracts",
@@ -244,6 +248,8 @@ PHASE_TEST_MODULES: dict[str, list[str]] = {
         "test_agent_experience",
         "test_agent_serving_binding",
         "test_agent_recipe_gated_swap",
+        # 2026-11-18 批次：agent_trace 思考沉淀 + 配方一键复用端点
+        "test_agent_recipe_reuse",
         "test_agent_servitize",
         "test_closed_loop_ensemble",
     ],
