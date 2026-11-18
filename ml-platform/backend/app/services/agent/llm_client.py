@@ -320,10 +320,48 @@ _S1_ITEM_RULES = {
 }
 
 
+def _normalize_expected_features(data: dict) -> None:
+    """expected_important_features 条目宽容归一化（c90901d0 实测：模型全部
+    条目缺 name_hint——常用别名 feature/name/column 收单；纯字符串条目
+    name_hint=reason 同串兜底；reason 缺失走别名 why/rationale，仍无则同串）。
+    与 ReviewVerdict 归一化同思路：只放宽载体形态，红线（必须给出重要特征
+    清单）不放宽——一条都救不回时保持空列表让契约拒绝。"""
+    items = data.get("expected_important_features")
+    if not isinstance(items, list):
+        return
+    normalized: list = []
+    for item in items:
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                normalized.append({"name_hint": text[:128], "reason": text[:2000]})
+            continue
+        if not isinstance(item, dict):
+            continue
+        if not item.get("name_hint"):
+            for alias in ("feature", "name", "column", "feature_name", "column_name"):
+                value = item.get(alias)
+                if isinstance(value, str) and value.strip():
+                    item["name_hint"] = value.strip()
+                    break
+        if not item.get("reason"):
+            for alias in ("why", "rationale", "reasoning"):
+                value = item.get(alias)
+                if isinstance(value, str) and value.strip():
+                    item["reason"] = value.strip()
+                    break
+        if not item.get("reason") and item.get("name_hint"):
+            item["reason"] = str(item["name_hint"])
+        if item.get("name_hint") and item.get("reason"):
+            normalized.append(item)
+    data["expected_important_features"] = normalized
+
+
 def _sanitize_analysis_payload(data: dict) -> None:
     """LLM 输出入口净化（§11 契约前置）：可修复的长度违规不再整单拒收。"""
     import logging
 
+    _normalize_expected_features(data)
     dropped: list[str] = []
     for field, limit in _S1_TEXT_LIMITS.items():
         value = data.get(field)

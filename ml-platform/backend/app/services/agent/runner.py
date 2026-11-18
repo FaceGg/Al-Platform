@@ -200,7 +200,9 @@ class AgentRunner:
                 for item in report.focus_channels[:6]
             ],
             "expected_features": [
-                getattr(item, "feature", getattr(item, "name", ""))
+                # ExpectedFeature 契约字段是 name_hint（此前 getattr 取
+                # feature/name 双双落空 → 档案重点特征恒空串）
+                item.name_hint
                 for item in report.expected_important_features[:8]
             ],
             "leakage": [

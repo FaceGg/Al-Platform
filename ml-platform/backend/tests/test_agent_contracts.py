@@ -270,6 +270,31 @@ class TestRunS1(unittest.TestCase):
         self.assertEqual(len(report.focus_channels), 1)
         self.assertLessEqual(len(report.focus_channels[0].name), 64)
 
+    def test_run_s1_normalizes_expected_features_without_name_hint(self):
+        """c90901d0 回归：模型全部条目缺 name_hint（用 feature 别名）不再整单
+        拒收——别名收单 + 纯字符串条目 + reason 别名 why 三种形态都救回。"""
+        payload = {
+            **_VALID_ANALYSIS,
+            "expected_important_features": [
+                {"feature": "TORQUE_DEV", "reason": "偏差主导"},          # 别名 feature
+                "WLD_INDEX",                                              # 纯字符串
+                {"name": "SPIKES", "why": "飞溅尖峰特征"},                # 别名 name + why
+                {"reason": "无任何名称字段"},                              # 救不回 → 丢弃
+            ],
+        }
+        with SessionLocal() as db, mock.patch(
+            "app.services.agent.llm_client.chat_completion",
+            return_value=(__import__("json").dumps(payload), {}, None),
+        ):
+            report, error, _usage = run_s1(
+                db, config=self._config(), profile_report={"row_count": 10}
+            )
+        self.assertIsNone(error)
+        hints = [item.name_hint for item in report.expected_important_features]
+        self.assertEqual(hints, ["TORQUE_DEV", "WLD_INDEX", "SPIKES"])
+        self.assertEqual(report.expected_important_features[1].reason, "WLD_INDEX")
+        self.assertEqual(report.expected_important_features[2].reason, "飞溅尖峰特征")
+
     def test_run_s1_non_json_output_returns_parse_error(self):
         with SessionLocal() as db, mock.patch(
             "app.services.agent.llm_client.chat_completion",

@@ -1767,3 +1767,11 @@ AE 在栈上不可用是既定决策（torch ~200MB 不进部署镜像，fail-sa
 ## 2026-11-18 追加四：流式并发配置并入面板工具行（三轮反馈：右侧空白）
 
 独立「运行参数」通栏卡片取消（内容只占左 1/3，右侧大片空白）——并入供应商面板顶部工具行：左半「流式并发上限 ⓘ [数值] [保存] 全服务即时生效」，右半既有「刷新/添加供应商」页面操作，space-between 一行两用，无空白条带；InputNumber 改 small 尺寸（宽 60）。保存链路回归：改 3→GET=3→改回 2→GET=2 ✓；LLMGatewayPage 7 passed。
+
+## 2026-11-18 追加五：c90901d0 报错双根因修复（S1 契约 name_hint + compose 主密钥缺陷）
+
+**1. S1 契约宽容归一化（净化器补 expected_important_features）**：任务 c90901d0（无监督点焊）S1 全部条目缺 `name_hint` 字段 → 整单拒收 AGENT_S1_CONTRACT_FAILED（与 ReviewVerdict 归一化同类：模型换了字段名形态）。修：`_sanitize_analysis_payload` 前置 `_normalize_expected_features`——别名（feature/name/column/feature_name/column_name）收单进 name_hint；纯字符串条目 name_hint=reason 同串；reason 缺失走别名 why/rationale 再同串兜底；救不回的条目丢弃，全空仍拒收（红线不放宽）。**顺藤揪出隐藏 bug**：runner `_s1_digest` 的 expected_features 取 `getattr(item,"feature"/"name")` 而契约字段是 name_hint——档案「重点特征」恒空串（历史显示缺陷），改直取 name_hint。
+
+**2. compose 主密钥部署缺陷（force-recreate 后智能体全挂）**：`production-environment` 锚（migrate/worker/scheduler 共用）缺 `LLM_MASTER_KEY`——只有 backend 服务段有。此前 worker 容器是带旧 env 的历史 compose 版本创建的，本日 force-recreate worker 后旧 env 丢失 → 档案密钥解密失败 → resolve_profile 返回空 → 全部任务 AGENT_RUN_NOT_EXECUTABLE「LLM profile has no api key」。修：锚内补 `LLM_MASTER_KEY: ${LLM_MASTER_KEY:-}`，worker 重建后解密验证通过（sk-3b0…）。
+
+**验证**：test_agent_contracts.py 新增 name_hint 归一化用例（feature 别名/纯字符串/name+why 别名/救不回丢弃四形态）17 passed + 流式并发回归 22 passed；修复后同参数重提任务 193923b7：S1 通过（域「电阻点焊（焊接车间）」识别正确，修复前同样输入 100% 契约失败）→ S2 进行中。原任务 c90901d0 留档 waiting_escalate（留痕不删）。

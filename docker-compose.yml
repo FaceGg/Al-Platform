@@ -72,6 +72,11 @@ services:
     environment: &production-environment
       APP_MODE: production
       PYTHON_SCRIPT_VENV_DIR: /data/python-script-venv
+      # LLM 档案密钥解密主密钥：worker/scheduler 同样跑智能体链路（S1-S4
+      # 网关调用要解密档案密钥），缺失时 resolve_profile 返回空 key、任务
+      # 全部 AGENT_RUN_NOT_EXECUTABLE（2026-11-18 实测：仅 backend 配置，
+      # force-recreate worker 后智能体全挂）。
+      LLM_MASTER_KEY: ${LLM_MASTER_KEY:-}
       # 初始管理员口令（仅全新数据库首启需要；已部署环境 admin 已存在不受影响）。
       # 留空时后端在"库中无 admin"场景拒绝启动（fail-closed），由后端裁决而非
       # compose 强制，保证老部署升级重启不因缺新变量而失败。
