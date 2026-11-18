@@ -1754,6 +1754,16 @@ AE 在栈上不可用是既定决策（torch ~200MB 不进部署镜像，fail-sa
 
 验证：tsc + KnowledgeCenterPage/AgentCenterPage 10 passed；前端镜像重建部署后浏览器实测——经验表表头 8 列无「域」、配方库表头 8 列无「域」、提交配置无列类型标注行。复用任务 854e8496（1-5 配方 → train_v2_full.csv）运行中。
 
+## 2026-11-18 追加二：流式并发 UI 化 + 复用弹窗四阶段全配置 + 建模配置排版（用户反馈三项）
+
+**1. 大模型流式并发迁平台界面（env 配置退役为兜底）**：llm_gateway 的 BoundedSemaphore 换自实现动态门 _StreamGate（Condition+容量，set_capacity 只改上限不干预在途）——多进程（backend/worker）各自持门，每次流式调用进入前 refresh_stream_gate(db) 从 PlatformOption（键 llm_stream_concurrency）读取，任一进程保存后全服务下一次调用即生效。API：GET/PUT /api/llm-profiles/stream-concurrency（PUT 管理员、1-16 越界 422、平台审计留痕；注意必须注册在 GET /{profile_id} 动态路由之前，否则被吞）。UI：系统管理→大模型管理页 PageHeading 下新增「运行参数」卡片（说明文字+InputNumber 1-16+保存，未改动 disabled）。
+
+**2. 配方复用弹窗四阶段全配置**：从「数据集/目标列/迭代上限/集成」4 项扩为全参数——基础区（数据集/目标列/迭代上限）+ Tabs 四页签：数据分析（全量训练 Switch/重点排查列/自定义提示）、特征工程（数据形态/必须保留列/自定义提示）、自动建模（算法白名单 8 族或异常 3 族/集成学习+Top-K/分工况列/预期异常比例——anomaly 专属）、评估验收（指标门禁动态行可增删/评审关注点/独立验证数据集）。全部预填配方 guidance 快照值，提交时全量 guidance_overrides 深合并（未改字段=快照同值等价）。
+
+**3. 任务详情「提交配置」改名「建模配置」+排版**：标签列宽 130→168+nowrap（「数据分析 · 全量训练」不再单字换行）；数据形态具体化——按 column_shapes 统计显示「表格 ×86、波形编码 ×4 混合」（此前只显示「混合（自动）」看不出构成），无列标注时退化为声明值。
+
+验证：后端 test_llm_stream_concurrency.py 新 5 用例（GET/PUT/越界/边界/动态门并发语义）+ profiles API 回归 19 passed；前端 tsc+LLMGatewayPage 修复（mock 补 get/put、保存按钮改 dialog 域内查找）后相关 27 passed+全量套件 exit 0。四镜像重建部署后浏览器实测：运行参数卡片改 3 保存提示出现→改回 2→GET stored=2 持久化 ✓；复用弹窗四页签预填正确（门禁 3 行/白名单 8 族/集成 Top-3）✓；建模配置无换行、数据形态显示真实构成 ✓。
+
 ## 2026-11-18 追加三：运行参数紧凑化 + 复用弹窗列级数据分类 + 术语对齐向导（用户反馈三项）
 
 **1. 运行参数卡片紧凑化**：长说明改 Tooltip（QuestionCircleOutlined），单行布局「运行参数 | 流式并发上限 ⓘ | 数值 | 保存 | 全服务即时生效」，卡片高度 139px→50px。
