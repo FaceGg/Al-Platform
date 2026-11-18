@@ -91,9 +91,6 @@ export default function AnnouncementsAdminPage() {
       <PageHeading
         section="admin"
         navKey="announcements"
-        desc={zh
-          ? '维护门户首页「平台公告」面板：新增、编辑、置顶与删除公告。'
-          : 'Maintain the portal notices panel: publish, edit, pin and delete notices.'}
         actions={(
           <>
             <button type="button" className="v2-btn" onClick={load}>

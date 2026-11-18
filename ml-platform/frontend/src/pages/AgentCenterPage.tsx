@@ -301,9 +301,6 @@ export default function AgentCenterPage() {
 
       {tab === "knowledge" && (
         <>
-          <div className="v2-note" style={{ marginBottom: 10 }}>{zh
-            ? "知识中心内嵌于智能体中心（§16.1 合并呈现）：绑定配置 + 平台经验真源条目与独立页完全同源；S1 分析与 AI 对话统一检索全部绑定库。"
-            : "The knowledge center is embedded here (§16.1): bindings and experience entries share the same source as the standalone page."}</div>
           <KnowledgeCenterContent t={t} />
         </>
       )}

@@ -903,9 +903,6 @@ export default function LLMGatewayPage() {
       <PageHeading
         section="admin"
         navKey="llm_gateway"
-        desc={lang === 'zh'
-          ? '集中配置平台可用的大模型供应商：AI 对话、智能体分析/写码/评审与知识库向量化各自选用；密钥只写不读。'
-          : 'Central registry of LLM providers for chat, agent analysis/codegen/review and embeddings; keys are write-only.'}
       />
 
       {/* 流式并发（用户需求 2026-11-18：env 配置迁平台界面；三轮反馈：不做

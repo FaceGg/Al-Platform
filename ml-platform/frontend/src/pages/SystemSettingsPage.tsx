@@ -69,7 +69,6 @@ export default function SystemSettingsPage() {
       <PageHeading
         section="admin"
         navKey="settings"
-        desc={zh ? "平台组件健康状态与运行配置。" : "Component health and runtime configuration."}
         actions={(
           <button type="button" className="v2-btn" onClick={load}>
             <ReloadOutlined spin={loading} /> {zh ? "刷新" : "Refresh"}

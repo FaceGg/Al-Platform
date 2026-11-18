@@ -1830,3 +1830,7 @@ CI（windows+ubuntu 双 OS）backend suite 三模块失败，本地复现定位�
 **二轮修正（同日）**：列间距问题根因是 auto 宽度分配漂移（命中/成败列被压到内容宽紧贴状态列）。改 fixed 布局 + 全 px 列宽（表格实测 965px：ID 96/教训 200/动作 120/置信度 76/命中成败 150/状态 80/附注 64/操作 200）——百分比 width 不被 antd 处理（实测忽略），px 数字才生效；内容左对齐后命中/成败与状态列自然拉开（截图+几何实测验证）。ID 列 96px 防 8 字符换行。
 
 **追加：系统分区名 EN 显示层映射**：绑定列表「平台经验（系统分区）」在 EN 界面显示「Platform Experience (system partition)」（i18n systemPartitionName 词条）。后端该名是固定中文常量（get_system_partition 按名定位创建，不可改存）——仅前端显示层映射，zh 与其他名称原样。组件内补 useI18n 拿 lang（不改两处调用方 props）。EN/zh 双界面浏览器实测 ✓。
+
+## 2026-11-18 追加十一：删七处页面顶部解释性文字（用户：去掉平台中多余的解释性文字）
+
+PageHeading desc / 内嵌说明条删除：①智能体中心→知识中心 tab 的 v2-note（§16.1 内嵌说明）；②基础设施→集群总览 desc；③公告管理 desc；④审计管理 desc；⑤平台状态 desc；⑥大模型管理 desc；⑦tokens 使用统计 desc。**集群总览菜单说明**：/infra 是基础设施分组首屏页（sectionDefaultRoute 默认落点，点组标题即进入），无独立菜单项为既有设计——仅删文字不改菜单。tsc + 相关 vitest 13 passed；frontend 重建部署。

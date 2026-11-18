@@ -90,9 +90,6 @@ export default function LLMUsageStatsPage() {
       <PageHeading
         section="admin"
         navKey="llm_usage"
-        desc={zh
-          ? "大模型网关调用的用量聚合：tokens、调用次数、延迟与趋势（数据来自平台审计）。"
-          : "Aggregated LLM gateway usage from the platform audit trail."}
         actions={(
           <>
             <Segmented

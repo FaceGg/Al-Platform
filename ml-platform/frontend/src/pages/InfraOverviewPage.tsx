@@ -76,9 +76,6 @@ export default function InfraOverviewPage() {
       <PageHeading
         section="infra"
         title={zh ? "集群总览" : "Cluster overview"}
-        desc={zh
-          ? "运行时能力独立成中心；算法平台与智能体提交的训练全部调度到这里。"
-          : "Runtime as its own center; every training job from the platform lands here."}
         actions={(
           <>
             <button type="button" className="v2-btn" onClick={load}><ReloadOutlined spin={loading} />{zh ? "刷新" : "Refresh"}</button>

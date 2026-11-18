@@ -30,7 +30,6 @@ export default function AuditLogPage() {
       <PageHeading
         section="admin"
         navKey="audit"
-        desc={zh ? "平台全部操作审计记录：谁在何时对什么做了什么。" : "Platform-wide audit trail."}
         actions={(
           <button type="button" className="v2-btn" onClick={load}>
             <ReloadOutlined spin={loading} /> {zh ? "刷新" : "Refresh"}
