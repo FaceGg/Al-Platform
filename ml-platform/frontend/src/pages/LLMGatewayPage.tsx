@@ -908,51 +908,51 @@ export default function LLMGatewayPage() {
           : 'Central registry of LLM providers for chat, agent analysis/codegen/review and embeddings; keys are write-only.'}
       />
 
-      {/* 运行参数（用户需求 2026-11-18：流式并发从 env 配置文件迁到平台界面；
-          二轮反馈：紧凑单行，不要大条带） */}
-      <div className="v2-panel" style={{ marginBottom: 12, padding: '8px 14px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <b style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{lang === 'zh' ? '运行参数' : 'Runtime'}</b>
-          <span style={{ fontSize: 12, color: 'var(--v2-sub)', whiteSpace: 'nowrap' }}>
-            {lang === 'zh' ? '流式并发上限' : 'Stream concurrency'}
-            <Tooltip title={lang === 'zh'
-              ? '同时进行的大模型流式生成数量：调大可多任务并行，但并发流互相挤占出网带宽、更容易触发断流；调小则排队串行、单个任务更快完成。保存后 backend/worker 全服务在下一次流式调用前自动生效，无需重启。'
-              : 'Max concurrent streaming LLM calls. Higher = more parallel tasks (bandwidth contention risk); lower = serialized, faster per task. Applies to all services on the next streaming call.'}>
-              <QuestionCircleOutlined style={{ marginLeft: 4, color: 'var(--v2-dim, #999)' }} />
-            </Tooltip>
-          </span>
-          <InputNumber
-            min={1}
-            max={16}
-            value={streamConcurrency ?? undefined}
-            onChange={(v) => { setStreamConcurrency(Number(v) || 2); setStreamDirty(true) }}
-            style={{ width: 64 }}
-          />
-          <Button
-            size="small"
-            type="primary"
-            disabled={!streamDirty || streamBusy || streamConcurrency == null}
-            loading={streamBusy}
-            onClick={() => void saveStreamConcurrency()}
-          >
-            {lang === 'zh' ? '保存' : 'Save'}
-          </Button>
-          {!streamDirty && streamConcurrency != null ? (
-            <span style={{ fontSize: 12, color: 'var(--v2-dim, #999)' }}>
-              {lang === 'zh' ? '全服务即时生效' : 'applies immediately'}
-            </span>
-          ) : null}
-        </div>
-      </div>
-
+      {/* 流式并发（用户需求 2026-11-18：env 配置迁平台界面；三轮反馈：不做
+          通栏卡片——并入供应商面板顶部工具行左侧，右半是既有页面操作，
+          无空白条带） */}
       <div className="v2-panel" style={{ padding: 0, overflow: 'hidden' }}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '10px 14px 0' }}>
-          <Button icon={<ReloadOutlined spin={loading} />} onClick={load}>
-            {text.refresh}
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            {zh ? '添加供应商' : 'Add provider'}
-          </Button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '10px 14px 0', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, color: 'var(--v2-sub)', whiteSpace: 'nowrap' }}>
+              {lang === 'zh' ? '流式并发上限' : 'Stream concurrency'}
+              <Tooltip title={lang === 'zh'
+                ? '同时进行的大模型流式生成数量：调大可多任务并行，但并发流互相挤占出网带宽、更容易触发断流；调小则排队串行、单个任务更快完成。保存后 backend/worker 全服务在下一次流式调用前自动生效，无需重启。'
+                : 'Max concurrent streaming LLM calls. Higher = more parallel tasks (bandwidth contention risk); lower = serialized, faster per task. Applies to all services on the next streaming call.'}>
+                <QuestionCircleOutlined style={{ marginLeft: 4, color: 'var(--v2-dim, #999)' }} />
+              </Tooltip>
+            </span>
+            <InputNumber
+              min={1}
+              max={16}
+              value={streamConcurrency ?? undefined}
+              onChange={(v) => { setStreamConcurrency(Number(v) || 2); setStreamDirty(true) }}
+              size="small"
+              style={{ width: 60 }}
+            />
+            <Button
+              size="small"
+              type="primary"
+              disabled={!streamDirty || streamBusy || streamConcurrency == null}
+              loading={streamBusy}
+              onClick={() => void saveStreamConcurrency()}
+            >
+              {lang === 'zh' ? '保存' : 'Save'}
+            </Button>
+            {!streamDirty && streamConcurrency != null ? (
+              <span style={{ fontSize: 12, color: 'var(--v2-dim, #999)' }}>
+                {lang === 'zh' ? '全服务即时生效' : 'applies immediately'}
+              </span>
+            ) : null}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button icon={<ReloadOutlined spin={loading} />} onClick={load}>
+              {text.refresh}
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              {zh ? '添加供应商' : 'Add provider'}
+            </Button>
+          </div>
         </div>
         <div style={{ display: 'flex', minHeight: 520 }}>
           {/* 左栏：供应商分组列表 */}
