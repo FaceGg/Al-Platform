@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Table, Tag, Button, Input, message, Popconfirm, Space, Card, Switch, Form, Modal, Select, Drawer, InputNumber, Alert } from 'antd'
 import { ReloadOutlined, StopOutlined, PlusOutlined, DeleteOutlined, FileTextOutlined, EyeOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
+import { useI18n } from '../i18n'
 import apiClient from '../api/client'
 import {
   ExperienceEntry,
@@ -20,6 +21,7 @@ import { formatApiError } from '../api/client'
  */
 export default function KnowledgeCenterContent({ t }: { t: any }) {
   const text = t.kbcenter
+  const { lang } = useI18n()
   const navigate = useNavigate()
   const [bindings, setBindings] = useState<KBBinding[]>([])
   const [entries, setEntries] = useState<ExperienceEntry[]>([])
@@ -191,7 +193,11 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
       dataIndex: 'kb_name',
       render: (value: string, record: KBBinding) => (
         <Space>
-          <span>{value}</span>
+          {/* 系统分区名是后端固定中文常量（按名定位依赖它不可改存），EN 界面
+              仅做显示层映射——zh 与其他名称原样 */}
+          <span>
+            {lang !== 'zh' && value === '平台经验（系统分区）' ? text.systemPartitionName : value}
+          </span>
           {record.is_system && <Tag color="purple">{text.systemTag}</Tag>}
         </Space>
       ),
