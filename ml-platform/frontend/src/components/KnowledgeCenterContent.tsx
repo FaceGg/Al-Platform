@@ -258,16 +258,18 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
   ]
 
   const entryColumns = [
-    { title: 'ID', dataIndex: 'id', render: (v: string) => <span className="mono">{v.slice(0, 8)}</span> },
-    { title: text.colLesson, dataIndex: 'lesson', ellipsis: true },
-    { title: text.colAction, dataIndex: 'action', ellipsis: true },
-    { title: text.colConfidence, dataIndex: 'confidence', render: (v: number) => v.toFixed(2) },
+    // 窄列固定宽度（表格约 965px，antd 只认 px 数字宽度）：教训/动作是
+    // 核心内容列给最大占比，置信度/命中成败/状态不再漂移贴邻（用户截图反馈）
+    { title: 'ID', dataIndex: 'id', width: 96, render: (v: string) => <span className="mono" style={{ whiteSpace: 'nowrap' }}>{v.slice(0, 8)}</span> },
+    { title: text.colLesson, dataIndex: 'lesson', width: 200, ellipsis: true },
+    { title: text.colAction, dataIndex: 'action', width: 120, ellipsis: true },
+    { title: text.colConfidence, dataIndex: 'confidence', width: 76, render: (v: number) => v.toFixed(2) },
     {
       title: text.col_hit,
       key: 'outcome',
+      width: 150,
       render: (_: unknown, record: ExperienceEntry) => (
-        // 右侧留白拉开与「状态」列的距离（用户反馈两列太近）
-        <Space size={4} style={{ whiteSpace: 'nowrap', marginRight: 22 }}>
+        <Space size={4} style={{ whiteSpace: 'nowrap' }}>
           <span>{(text.hit_n || '命中{n}').replace('{n}', String(record.hit_count ?? 0))}</span>
           <Tag color="green" style={{ marginRight: 0 }}>✓{record.success_count ?? 0}</Tag>
           <Tag color="red" style={{ marginRight: 0 }}>✗{record.fail_count ?? 0}</Tag>
@@ -277,6 +279,7 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
     {
       title: text.colStatus,
       dataIndex: 'status',
+      width: 80,
       render: (value: string) => (
         <Tag color={value === 'active' ? 'green' : value === 'shadow' ? 'blue' : 'default'}>
           {/* 中文界面显示中文状态名（试用期/生效中/已否决），英文界面保留英文枚举 */}
@@ -284,10 +287,10 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
         </Tag>
       ),
     },
-    { title: text.colNote, dataIndex: 'human_note', ellipsis: true, render: (value: string | null) => value || '—' },
+    { title: text.colNote, dataIndex: 'human_note', width: 64, ellipsis: true, render: (value: string | null) => value || '—' },
     {
       title: text.colActions,
-      width: 280,
+      width: 200,
       render: (_: unknown, record: ExperienceEntry) => (
         <Space>
           <Button size="small" icon={<EyeOutlined />} onClick={() => setPreviewEntry(record)}>
@@ -437,6 +440,7 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
         <Table
           rowKey="id"
           size="small"
+          tableLayout="fixed"
           columns={entryColumns as never}
           dataSource={entries}
           pagination={{ pageSize: 10 }}
