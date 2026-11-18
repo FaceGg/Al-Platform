@@ -1820,3 +1820,7 @@ CI（windows+ubuntu 双 OS）backend suite 三模块失败，本地复现定位�
 **retrieve_for_task 改造**：域硬过滤（domain.in_([域, cross-domain])）退役——全部 active+达门槛条目入候选，排序键改「域三段秩：本域 0 < cross-domain 1 < 其他域 2」（SQL case 下推），域秩优先于置信度（本域 0.72 排在异域 0.95 前）；shadow 冷静期计数同步放宽为全池（与 active 候选同语义）。**注入档案透明化**：_l2_references 每条带 domain 字段，任务详情「注入的经验」面板显示「来源域 xxx」——其他域经验注入时用户可见来源（黑盒变白盒）。
 
 **验证**：test_agent_experience 改域断言（异域条目仍返回且排本域后——即便置信度更高）+ 新增软排序三段秩用例（本域 0.72 > cross 0.93 > 异域 0.92 的顺序断言）；experience/kb_bindings/executor/loop_retrain 46+52 passed；tsc 零错误；四镜像重建部署。
+
+## 2026-11-18 追加十：经验表状态中文化 + 命中/成败列左移（用户反馈）
+
+知识中心「平台经验（真源条目）」表：①状态列中文界面显示中文状态名（shadow→试用期 / active→生效中 / retired→已否决 / superseded→已替代，i18n statusLabels 词条 zh/en 双份——EN 界面保留英文枚举），预览抽屉状态标签同步；②「命中/成败」列从置信度之后左移到置信度之前（教训/动作之后紧跟效果数据）。浏览器实测表头顺序与中文状态显示 ✓。

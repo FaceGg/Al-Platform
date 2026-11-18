@@ -261,7 +261,6 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
     { title: 'ID', dataIndex: 'id', render: (v: string) => <span className="mono">{v.slice(0, 8)}</span> },
     { title: text.colLesson, dataIndex: 'lesson', ellipsis: true },
     { title: text.colAction, dataIndex: 'action', ellipsis: true },
-    { title: text.colConfidence, dataIndex: 'confidence', render: (v: number) => v.toFixed(2) },
     {
       title: text.col_hit,
       key: 'outcome',
@@ -273,11 +272,15 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
         </Space>
       ),
     },
+    { title: text.colConfidence, dataIndex: 'confidence', render: (v: number) => v.toFixed(2) },
     {
       title: text.colStatus,
       dataIndex: 'status',
       render: (value: string) => (
-        <Tag color={value === 'active' ? 'green' : value === 'shadow' ? 'blue' : 'default'}>{value}</Tag>
+        <Tag color={value === 'active' ? 'green' : value === 'shadow' ? 'blue' : 'default'}>
+          {/* 中文界面显示中文状态名（试用期/生效中/已否决），英文界面保留英文枚举 */}
+          {(text as { statusLabels?: Record<string, string> }).statusLabels?.[value] ?? value}
+        </Tag>
       ),
     },
     { title: text.colNote, dataIndex: 'human_note', ellipsis: true, render: (value: string | null) => value || '—' },
@@ -571,7 +574,7 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
       >
         {previewEntry && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13, lineHeight: 1.8 }}>
-            <div><Tag color={previewEntry.status === 'active' ? 'green' : previewEntry.status === 'shadow' ? 'blue' : 'default'}>{previewEntry.status}</Tag><Tag color="purple">{previewEntry.origin}</Tag></div>
+            <div><Tag color={previewEntry.status === 'active' ? 'green' : previewEntry.status === 'shadow' ? 'blue' : 'default'}>{(text as { statusLabels?: Record<string, string> }).statusLabels?.[previewEntry.status] ?? previewEntry.status}</Tag><Tag color="purple">{previewEntry.origin}</Tag></div>
             <div><b>{text.preview_situation}</b><div>{previewEntry.situation}</div></div>
             <div><b>{text.preview_lesson}</b><div>{previewEntry.lesson}</div></div>
             <div><b>{text.preview_action}</b><div>{previewEntry.action}</div></div>
