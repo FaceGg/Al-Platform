@@ -63,11 +63,11 @@ export default function AgentRunDetailPage() {
   const taskType = guidance?.task_type ?? "supervised";
   const shapeText: Record<string, string> = {
     tabular: zh ? "表格" : "tabular",
-    waveform: zh ? "波形编码" : "waveform",
-    mixed: zh ? "混合（自动）" : "mixed",
+    waveform: zh ? "波形" : "waveform",
+    mixed: zh ? "未知（自动）" : "unknown (auto)",
   };
-  // 数据形态具体化（用户反馈：「混合」看不出是什么和什么混合）——按列级
-  // 标注统计具体构成；无标注时退化为声明值（自动）。
+  // 数据形态具体化（用户反馈）：按列级数据分类（表格/波形/未知，与新建
+  // 任务向导同一套三级取值）统计显示构成；无列标注时退化为声明值。
   const shapeValue = (() => {
     const shapes = feature?.column_shapes ?? {};
     const counts: Record<string, number> = {};
@@ -76,8 +76,8 @@ export default function AgentRunDetailPage() {
     if (!keys.length) return shapeText[feature?.data_shape ?? "mixed"] ?? feature?.data_shape;
     const parts = keys
       .sort()
-      .map((k) => `${k === "waveform" ? (zh ? "波形编码" : "waveform") : zh ? "表格" : "tabular"} ×${counts[k]}`);
-    return parts.join("、") + (keys.length > 1 ? (zh ? " 混合" : " mixed") : "");
+      .map((k) => `${k === "waveform" ? (zh ? "波形" : "waveform") : zh ? "表格" : "tabular"} ×${counts[k]}`);
+    return parts.join("、");
   })();
   // 四阶段配置行的统一渲染：无配置的阶段整行隐藏，避免空行噪音。
   const cfgRow = (label: string, value?: ReactNode | null) =>

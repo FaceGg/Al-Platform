@@ -70,8 +70,8 @@ export default function RecipeRow({
   const [reuseFullData, setReuseFullData] = useState(true);
   const [reuseSuspectFocus, setReuseSuspectFocus] = useState<string[]>([]);
   const [reuseAnalysisPrompts, setReuseAnalysisPrompts] = useState<string[]>([]);
-  // 特征工程
-  const [reuseDataShape, setReuseDataShape] = useState("mixed");
+  // 特征工程（列级数据分类，与新建任务向导同一套三级取值：表格/波形/未知）
+  const [reuseColumnShapes, setReuseColumnShapes] = useState<Record<string, string>>({});
   const [reuseMustKeep, setReuseMustKeep] = useState<string[]>([]);
   const [reuseFeaturePrompts, setReuseFeaturePrompts] = useState<string[]>([]);
   // 自动建模
@@ -143,7 +143,7 @@ export default function RecipeRow({
         task_type?: string;
         max_rounds?: number;
         analysis?: { full_data?: boolean; suspect_focus?: string[]; prompts?: string[] };
-        feature?: { data_shape?: string; must_keep?: string[]; prompts?: string[] };
+        feature?: { data_shape?: string; column_shapes?: Record<string, string>; must_keep?: string[]; prompts?: string[] };
         modeling?: {
           algorithm_whitelist?: string[];
           ensemble?: { enabled?: boolean; top_k?: number };
@@ -162,8 +162,9 @@ export default function RecipeRow({
       setReuseFullData(g.analysis?.full_data !== false);
       setReuseSuspectFocus(g.analysis?.suspect_focus ?? []);
       setReuseAnalysisPrompts(g.analysis?.prompts ?? []);
-      // 特征工程
-      setReuseDataShape(g.feature?.data_shape ?? "mixed");
+      // 特征工程（列级数据分类预填快照；快照无标注的列选数据集后按向导
+      // 同款兜底规则识别：列名含 wave/波形 → 波形，否则未知）
+      setReuseColumnShapes(g.feature?.column_shapes ?? {});
       setReuseMustKeep(g.feature?.must_keep ?? []);
       setReuseFeaturePrompts(g.feature?.prompts ?? []);
       // 自动建模
@@ -195,7 +196,10 @@ export default function RecipeRow({
     }
   };
 
-  // 选定数据集后拉列清单（目标列下拉可选项）
+  // 选定数据集后拉列清单（目标列下拉可选项 + 特征工程页签的列级分类表）。
+  // 快照无标注的列按向导同款规则识别：结构指纹优先（预览行中长编码串
+  // ≥100 字符判波形，cve* 这类换名列也能命中），列名含 wave/波形兜底；
+  // 其余未知。快照已有的标注不覆盖。
   const onReuseDatasetChange = async (datasetId: string) => {
     setReuseDatasetId(datasetId);
     setReuseColumns([]);
@@ -207,7 +211,22 @@ export default function RecipeRow({
             (c): c is string => typeof c === "string",
           ))
         : [];
+      const rows = Array.isArray((data as { preview?: unknown }).preview)
+        ? ((data as { preview: unknown[] }).preview as Record<string, unknown>[])
+        : [];
       setReuseColumns(cols);
+      setReuseColumnShapes((prev) => {
+        const next = { ...prev };
+        for (const col of cols) {
+          if (next[col] === undefined) {
+            const structural = rows
+              .slice(0, 3)
+              .some((row) => typeof row?.[col] === "string" && (row[col] as string).length >= 100);
+            next[col] = structural || /wave|波形/i.test(col) ? "waveform" : "unknown";
+          }
+        }
+        return next;
+      });
       // 换数据后目标列不再有效就清掉；仍存在则保留预填
       if (cols.length && reuseTarget && !cols.includes(reuseTarget)) {
         setReuseTarget("");
@@ -245,7 +264,11 @@ export default function RecipeRow({
             prompts: reuseAnalysisPrompts,
           },
           feature: {
-            data_shape: reuseDataShape,
+            // 列级数据分类与向导同一合同：未知不提交，波形的存储类型是
+            // 编码字符串（select 选项名与向导一致：表格/波形/未知）
+            column_shapes: Object.fromEntries(
+              Object.entries(reuseColumnShapes).filter(([, shape]) => shape !== "unknown"),
+            ),
             must_keep: reuseMustKeep,
             prompts: reuseFeaturePrompts,
           },
@@ -280,6 +303,8 @@ export default function RecipeRow({
   const featureScript = String(content.feature_script ?? "");
   const algorithmIds = (content.retrain_algorithm_ids ?? []) as string[];
   const retrainEnsemble = (content.retrain_ensemble ?? {}) as { enabled?: boolean; top_k?: number };
+  // 平台 v2 风格的字段标签（小字号灰度，替代粗黑 <b>）
+  const labelStyle = { fontSize: 12, color: "var(--v2-sub)", fontWeight: 600 } as const;
 
   return (
     <>
@@ -411,7 +436,7 @@ export default function RecipeRow({
           {/* 基础区（必选） */}
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
             <label style={{ display: "flex", flexDirection: "column", gap: 4, flex: "1 1 240px" }}>
-              <b>{zh ? "数据集（必选）" : "Dataset (required)"}</b>
+              <span style={labelStyle}>{zh ? "数据集（必选）" : "Dataset (required)"}</span>
               <Select
                 showSearch
                 optionFilterProp="label"
@@ -426,7 +451,7 @@ export default function RecipeRow({
             </label>
             {reuseTaskType !== "anomaly" ? (
               <label style={{ display: "flex", flexDirection: "column", gap: 4, flex: "1 1 160px" }}>
-                <b>{zh ? "目标列" : "Target column"}</b>
+                <span style={labelStyle}>{zh ? "目标列" : "Target column"}</span>
                 {reuseColumns.length ? (
                   <Select
                     showSearch
@@ -445,8 +470,8 @@ export default function RecipeRow({
                 )}
               </label>
             ) : null}
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-              <b style={{ whiteSpace: "nowrap" }}>{zh ? "迭代上限" : "Max rounds"}</b>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, paddingBottom: 2 }}>
+              <span style={labelStyle}>{zh ? "迭代上限" : "Max rounds"}</span>
               <InputNumber min={1} max={10} value={reuseMaxRounds} onChange={(v) => setReuseMaxRounds(Number(v) || 3)} />
             </label>
           </div>
@@ -458,16 +483,16 @@ export default function RecipeRow({
                 key: "analysis",
                 label: zh ? "数据分析" : "Analysis",
                 children: (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                      <b>{zh ? "全量数据训练" : "Full data"}</b>
+                      <span style={labelStyle}>{zh ? "全量数据训练" : "Full data"}</span>
                       <Switch checked={reuseFullData} onChange={setReuseFullData} />
                       <span style={{ color: "var(--v2-dim)", fontSize: 12 }}>
                         {reuseFullData ? (zh ? "验收用 100% 真实数据" : "train/validate on 100% rows") : zh ? "超大数据集时降采样验收" : "downsample validation"}
                       </span>
                     </label>
                     <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      <b>{zh ? "重点排查列" : "Suspect columns"}</b>
+                      <span style={labelStyle}>{zh ? "重点排查列" : "Suspect columns"}</span>
                       <Select
                         mode="tags"
                         open={false}
@@ -479,7 +504,7 @@ export default function RecipeRow({
                       />
                     </label>
                     <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      <b>{zh ? "自定义提示（给分析阶段的补充要求）" : "Prompts"}</b>
+                      <span style={labelStyle}>{zh ? "自定义提示（给分析阶段的补充要求）" : "Prompts"}</span>
                       <Select
                         mode="tags"
                         open={false}
@@ -495,21 +520,60 @@ export default function RecipeRow({
                 key: "feature",
                 label: zh ? "特征工程" : "Features",
                 children: (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span style={labelStyle}>
+                        {zh ? "列数据分类（与新建任务向导一致：波形=长编码串列；「未知」列不进分类标注）" : "Column classes (same three levels as the wizard)"}
+                      </span>
+                      <div
+                        style={{
+                          maxHeight: 240,
+                          overflowY: "auto",
+                          border: "1px solid var(--v2-line, #e5e7eb)",
+                          borderRadius: 8,
+                        }}
+                      >
+                        <table className="v2-table" style={{ width: "100%" }}>
+                          <thead>
+                            <tr>
+                              <th style={{ textAlign: "left", padding: "4px 10px" }}>{zh ? "列名" : "Column"}</th>
+                              <th style={{ textAlign: "left", padding: "4px 10px", width: 130 }}>{zh ? "数据分类" : "Class"}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {reuseColumns.map((col) => (
+                              <tr key={col}>
+                                <td className="tt" style={{ padding: "3px 10px", fontSize: 12 }}>{col}</td>
+                                <td style={{ padding: "2px 8px" }}>
+                                  <select
+                                    className="v2-select"
+                                    style={{ minWidth: 92, fontSize: 12 }}
+                                    aria-label={`${zh ? "数据分类" : "data class"} ${col}`}
+                                    value={reuseColumnShapes[col] ?? "unknown"}
+                                    onChange={(e) =>
+                                      setReuseColumnShapes((prev) => ({ ...prev, [col]: e.target.value }))
+                                    }
+                                  >
+                                    <option value="tabular">{zh ? "表格" : "Tabular"}</option>
+                                    <option value="waveform">{zh ? "波形" : "Waveform"}</option>
+                                    <option value="unknown">{zh ? "未知" : "Unknown"}</option>
+                                  </select>
+                                </td>
+                              </tr>
+                            ))}
+                            {!reuseColumns.length ? (
+                              <tr>
+                                <td colSpan={2} style={{ padding: "10px 12px", color: "var(--v2-dim)", fontSize: 12 }}>
+                                  {zh ? "选择数据集后加载列清单" : "Pick a dataset to load columns"}
+                                </td>
+                              </tr>
+                            ) : null}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
                     <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      <b>{zh ? "数据形态" : "Data shape"}</b>
-                      <Select
-                        value={reuseDataShape}
-                        onChange={(v) => setReuseDataShape(v as string)}
-                        options={[
-                          { value: "mixed", label: zh ? "混合（自动识别）" : "Mixed (auto)" },
-                          { value: "tabular", label: zh ? "表格" : "Tabular" },
-                          { value: "waveform", label: zh ? "波形编码" : "Waveform" },
-                        ]}
-                      />
-                    </label>
-                    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      <b>{zh ? "必须保留列" : "Must keep"}</b>
+                      <span style={labelStyle}>{zh ? "必须保留列" : "Must keep"}</span>
                       <Select
                         mode="tags"
                         open={false}
@@ -521,7 +585,7 @@ export default function RecipeRow({
                       />
                     </label>
                     <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      <b>{zh ? "自定义提示（给特征工程阶段的补充要求）" : "Prompts"}</b>
+                      <span style={labelStyle}>{zh ? "自定义提示（给特征工程阶段的补充要求）" : "Prompts"}</span>
                       <Select
                         mode="tags"
                         open={false}
@@ -537,9 +601,9 @@ export default function RecipeRow({
                 key: "modeling",
                 label: zh ? "自动建模" : "Modeling",
                 children: (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      <b>{zh ? "算法白名单（不选 = 全族搜索）" : "Algorithm whitelist (empty = all)"}</b>
+                      <span style={labelStyle}>{zh ? "算法白名单（不选 = 全族搜索）" : "Algorithm whitelist (empty = all)"}</span>
                       <Select
                         mode="multiple"
                         placeholder={zh ? "选择算法族" : "Pick families"}
@@ -552,18 +616,18 @@ export default function RecipeRow({
                     </label>
                     <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "center" }}>
                       <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                        <b>{zh ? "集成学习" : "Ensemble"}</b>
+                        <span style={labelStyle}>{zh ? "集成学习" : "Ensemble"}</span>
                         <Switch checked={reuseEnsemble} onChange={setReuseEnsemble} />
                       </label>
                       {reuseEnsemble ? (
                         <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                          <b>Top-K</b>
+                          <span style={labelStyle}>Top-K</span>
                           <InputNumber min={2} max={5} value={reuseTopK} onChange={(v) => setReuseTopK(Number(v) || 3)} />
                         </label>
                       ) : null}
                     </div>
                     <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      <b>{zh ? "分工况列（按工况值分片建模，可空）" : "Condition column (optional)"}</b>
+                      <span style={labelStyle}>{zh ? "分工况列（按工况值分片建模，可空）" : "Condition column (optional)"}</span>
                       <Select
                         allowClear
                         showSearch
@@ -575,7 +639,7 @@ export default function RecipeRow({
                     </label>
                     {reuseTaskType === "anomaly" ? (
                       <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                        <b>{zh ? "预期异常比例" : "Contamination"}</b>
+                        <span style={labelStyle}>{zh ? "预期异常比例" : "Contamination"}</span>
                         <InputNumber
                           min={0.001}
                           max={0.5}
@@ -592,9 +656,9 @@ export default function RecipeRow({
                 key: "evaluation",
                 label: zh ? "评估验收" : "Evaluation",
                 children: (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      <b>{zh ? "指标门禁（硬性验收线）" : "Metric gates"}</b>
+                      <span style={labelStyle}>{zh ? "指标门禁（硬性验收线）" : "Metric gates"}</span>
                       {reuseGates.map((gate, idx) => (
                         <div key={idx} style={{ display: "flex", gap: 8, alignItems: "center" }}>
                           <Select
@@ -632,7 +696,7 @@ export default function RecipeRow({
                       </Button>
                     </div>
                     <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      <b>{zh ? "评审关注点" : "Review focus"}</b>
+                      <span style={labelStyle}>{zh ? "评审关注点" : "Review focus"}</span>
                       <Select
                         mode="tags"
                         open={false}
@@ -642,7 +706,7 @@ export default function RecipeRow({
                       />
                     </label>
                     <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      <b>{zh ? "独立验证数据集（可空 = 自动留出）" : "Holdout dataset (optional)"}</b>
+                      <span style={labelStyle}>{zh ? "独立验证数据集（可空 = 自动留出）" : "Holdout dataset (optional)"}</span>
                       <Select
                         allowClear
                         showSearch
