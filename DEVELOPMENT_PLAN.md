@@ -1775,3 +1775,16 @@ AE 在栈上不可用是既定决策（torch ~200MB 不进部署镜像，fail-sa
 **2. compose 主密钥部署缺陷（force-recreate 后智能体全挂）**：`production-environment` 锚（migrate/worker/scheduler 共用）缺 `LLM_MASTER_KEY`——只有 backend 服务段有。此前 worker 容器是带旧 env 的历史 compose 版本创建的，本日 force-recreate worker 后旧 env 丢失 → 档案密钥解密失败 → resolve_profile 返回空 → 全部任务 AGENT_RUN_NOT_EXECUTABLE「LLM profile has no api key」。修：锚内补 `LLM_MASTER_KEY: ${LLM_MASTER_KEY:-}`，worker 重建后解密验证通过（sk-3b0…）。
 
 **验证**：test_agent_contracts.py 新增 name_hint 归一化用例（feature 别名/纯字符串/name+why 别名/救不回丢弃四形态）17 passed + 流式并发回归 22 passed；修复后同参数重提任务 193923b7：S1 通过（域「电阻点焊（焊接车间）」识别正确，修复前同样输入 100% 契约失败）→ S2 进行中。原任务 c90901d0 留档 waiting_escalate（留痕不删）。
+
+## 2026-11-18 追加六：LLM 契约漂移系统性方案（用户问「总不能测试一个解决一个」）+ 连续崩溃修复
+
+**用户问题**：契约失败（ReviewVerdict/S1 name_hint）反复出现，逐个打补丁不可持续；上线后用户遇到无法复现怎么办。
+
+**三层系统性方案（本批落地）**：
+1. **契约失败自动修复回路（根治面最大）**：`_validate_with_repair`（llm_client.py，S1/S4 共用）——第一次输出违反契约时，把「原对话+模型自己的坏输出+具体校验错误（field required 的确切字段名）」喂回模型修正重试一次，绝大多数形态漂移自愈，不再需要人工穷举别名；两次 usage 合并进 token 预算。本地能修的（既有宽容归一化）不耗网关调用——回路上层。
+2. **失败证据留存（可复现性）**：修复重试仍失败 → 错误信息携带两次原始输出截断（raw_first/raw_retry 各 1500 字符）→ 随 escalation.detail 落档案。线上用户遇到契约失败无需复现，任务详情「待人工决策」直接可看模型给了什么形态。
+3. **输出骨架提示词（用户建议「S1 默认提示词规范格式」）**：S1（监督+无监督两版）与 S4（监督+无监督两版）系统提示词嵌入精确 JSON 骨架——字段名逐字示例化（照抄骨架即不会漏/换字段名），取代纯文字字段罗列。
+
+**连续四次崩溃修复（193923b7 实证链）**：S3 训练器白名单点名的 autoencoder 在无 torch 环境 `AlgorithmUnavailable` 直接崩任务；resume/恢复拉起同处再崩 → 连续四次。修：anomaly_trainer 循环内 catch AlgorithmUnavailable 跳过记 unavailable（与引擎「族自动缺席」同语义），全部缺席显式 RuntimeError；topk_metrics 兼容缺席条目。另修 executor 恢复链认知：waiting_escalate/failed 状态 execute 状态门不放行（重拉须先置 running/pending）。
+
+**验证**：test_agent_contracts 19 passed（新增修复回路 2 用例：自愈成功+两次仍败带 raw_evidence）；test_anomaly_trainer_unavailable 新 2 用例（缺席跳过/全部缺席显式报错）+ 相关回归 44 passed；重提任务 a915036a：S1 一次通过（骨架提示词生效）、档案重点特征首次有真实值（wld1c/wld2c/energy/ron1——digest 取错字段的历史显示缺陷同批修复）。

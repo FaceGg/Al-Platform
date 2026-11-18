@@ -19,7 +19,7 @@ from app.services.automl_anomaly import (
     evaluate_anomaly_candidate,
     normalize_anomaly_contamination,
 )
-from app.services.automl_catalog import resolve_algorithm_families
+from app.services.automl_catalog import AlgorithmUnavailable, resolve_algorithm_families
 
 # 目录族 id 与无监督白名单天然一致（M1 目录层互斥保证监督族不可见）。
 _ANOMALY_HYPERPARAMS = {
@@ -191,10 +191,21 @@ def _train_single(frame, hints: dict, contamination: float, full_data: bool) -> 
 
     scored: list[dict] = []
     champion_result: dict | None = None
+    champion_family = None
+    champion_params: dict = {}
     for family in families:
         params = dict(_ANOMALY_HYPERPARAMS.get(family.id, {}))
+        try:
+            candidate_model = family.build("anomaly_detection", params)
+        except AlgorithmUnavailable as unavailable:
+            # 白名单显式点名的族在当前环境缺席（实测：无 torch 的 autoencoder
+            # 崩整任务 193923b7）——跳过并记 unavailable（与引擎「族自动缺席」
+            # 同语义），其余族继续。
+            scored.append({"algorithm": family.id, "unavailable": True,
+                           "note": str(unavailable)[:200]})
+            continue
         metrics = evaluate_anomaly_candidate(
-            family.build("anomaly_detection", params),
+            candidate_model,
             train_matrix,
             holdout_matrix,
             benchmark,
@@ -208,7 +219,9 @@ def _train_single(frame, hints: dict, contamination: float, full_data: bool) -> 
             champion_family = family
             champion_params = params
 
-    assert champion_result is not None and champion_family is not None
+    if champion_result is None or champion_family is None:
+        # 全部候选族不可用：显式报错（信息进升级档案）而非 assert
+        raise RuntimeError("无可用异常检测算法族（白名单内全部缺席，见 scored[].unavailable）")
     champion_model = champion_family.build("anomaly_detection", champion_params)
     champion_model.fit(train_matrix)
     metrics = {
@@ -220,7 +233,10 @@ def _train_single(frame, hints: dict, contamination: float, full_data: bool) -> 
     result = {
         "metrics": metrics,
         "topk_metrics": [
-            {"synthetic_auc": item["synthetic_auc"]} for item in scored
+            # unavailable 条目无 synthetic_auc（缺席族不参与 Top-K 排名）
+            {"synthetic_auc": item["synthetic_auc"]}
+            for item in scored
+            if "synthetic_auc" in item
         ],
         # 无监督无传统重要性：M2 置空（泄漏进 top10 检查对空列表安全跳过），
         # 逐特征归因 top_contributors 在 M3 接线。

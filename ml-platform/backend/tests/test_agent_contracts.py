@@ -20,7 +20,9 @@ from app.services.agent.contracts import (  # noqa: E402
 )
 from app.services.agent.llm_client import (  # noqa: E402
     build_s1_messages,
+    build_s4_messages,
     run_s1,
+    run_s4,
 )
 from app.services.llm_gateway import GatewayLLMConfig  # noqa: E402
 
@@ -294,6 +296,64 @@ class TestRunS1(unittest.TestCase):
         self.assertEqual(hints, ["TORQUE_DEV", "WLD_INDEX", "SPIKES"])
         self.assertEqual(report.expected_important_features[1].reason, "WLD_INDEX")
         self.assertEqual(report.expected_important_features[2].reason, "飞溅尖峰特征")
+
+    def test_run_s1_contract_repair_retry_self_heals(self):
+        """契约失败修复回路（系统性方案）：第一次输出缺 name_hint → 把坏输出
+        +具体校验错误喂回模型 → 第二次修正 → run_s1 成功；第二次调用必须
+        携带修正指令。"""
+        # 用「既有宽容归一化救不回」的形态触发修复回路：
+        # focus_channels=[]（min_length=1，本地无兜底）
+        bad = {**_VALID_ANALYSIS, "focus_channels": [], "expected_important_features": [{"reason": "无名称"}]}
+        good = dict(_VALID_ANALYSIS)
+        calls = []
+
+        def fake_completion(db, *, config, messages, **kwargs):
+            calls.append(messages)
+            if len(calls) == 1:
+                return (__import__("json").dumps(bad), {"total_tokens": 100}, None)
+            # 修复调用：messages 末尾应是 assistant 坏输出 + user 修正指令
+            assert messages[-1]["role"] == "user"
+            assert "违反了 AnalysisReport 契约" in messages[-1]["content"]
+            assert messages[-2]["role"] == "assistant"
+            return (__import__("json").dumps(good), {"total_tokens": 50}, None)
+
+        with SessionLocal() as db, mock.patch(
+            "app.services.agent.llm_client.chat_completion_with_retry", side_effect=fake_completion
+        ):
+            report, error, usage = run_s1(
+                db, config=self._config(), profile_report={"row_count": 10}
+            )
+        self.assertIsNone(error)
+        self.assertIsNotNone(report)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(usage.get("total_tokens"), 150, "两次调用 token 应合并进预算")
+
+    def test_run_s4_contract_repair_failure_keeps_raw_evidence(self):
+        """修复重试仍失败：错误信息必须携带两次原始输出（线上可复盘，无需复现）。"""
+        # bad1 用归一化救不回的形态：alignment 非列表（无 before-validator）
+        bad1 = {"verdict": "pass", "alignment": "oops", "surprises": [], "business_readiness": "ok",
+                "next_iteration_hints": []}
+        bad2 = {"verdict": " banana", "alignment": [], "surprises": [], "business_readiness": "ok",
+                "next_iteration_hints": []}
+        calls = []
+
+        def fake_completion(db, *, config, messages, **kwargs):
+            calls.append(messages)
+            return (__import__("json").dumps(bad1 if len(calls) == 1 else bad2), {}, None)
+
+        with SessionLocal() as db, mock.patch(
+            "app.services.agent.llm_client.chat_completion_with_retry", side_effect=fake_completion
+        ):
+            verdict, error, _usage = run_s4(
+                db, config=self._config(), metrics={"recall_minority": 0.9},
+                importance=[], expectations=[], gate_failures=[], round_number=1,
+            )
+        self.assertIsNone(verdict)
+        self.assertIn("修复重试仍失败", error)
+        self.assertIn("raw_first", error)
+        self.assertIn("raw_retry", error)
+        self.assertIn("banana", error)
+        self.assertEqual(len(calls), 2)
 
     def test_run_s1_non_json_output_returns_parse_error(self):
         with SessionLocal() as db, mock.patch(
