@@ -239,9 +239,9 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
       title: text.colScope,
       dataIndex: 'scope_projects',
       render: (value: string[]) =>
-        !value || value.length === 0 ? (
-          <Tag>{text.scopeUnbound}</Tag>
-        ) : value.includes('*') ? (
+        // 空列表与 ["*"] 同语义：不限制 = 全体项目（后端 _binding_allows）。
+        // 此前空显示「未绑定」误导（用户反馈：未指定项目本来就是默认全体）。
+        !value || value.length === 0 || value.includes('*') ? (
           <Tag color="green">{text.scopeAll}</Tag>
         ) : (
           <Tag color="blue">{value.length}</Tag>
