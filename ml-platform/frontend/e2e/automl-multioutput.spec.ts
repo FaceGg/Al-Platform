@@ -51,7 +51,9 @@ test("submits a multi-output AutoML contract from the browser", async ({ page })
       body: JSON.stringify({ id: "experiment-1", name: "Contract experiment", automl_used: true }),
     });
   });
-  await page.route("**/api/datasets/dataset-1/preview", async (route) => {
+  // 条件列批次（部署目标条件值）给预览请求加了 ?limit=N 查询串，
+  // 路由模式必须容忍查询串，否则回落真实后端 404、下拉空（CI 三跑挂因）。
+  await page.route("**/api/datasets/dataset-1/preview?*", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
