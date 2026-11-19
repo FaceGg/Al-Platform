@@ -553,6 +553,8 @@ export default function KnowledgeGraphPage() {
     const nodes = view.nodes.map((n) => {
       const deg = degree.get(n.id) || 0;
       const isHub = deg >= hubCut;
+      // 点击的节点（focusId）紫色高亮：节点本体+标签+关联连线全部变紫
+      const isFocus = focusId === n.id;
       const size = isHub
         ? 10 + Math.min(8, ((deg - hubCut) / Math.max(1, maxDeg - hubCut)) * 10)
         : 4;
@@ -562,12 +564,23 @@ export default function KnowledgeGraphPage() {
         category: groupIndexOf(n),
         x: (posMap.get(n.id) ?? [0.5, 0.5])[0],
         y: (posMap.get(n.id) ?? [0.5, 0.5])[1],
-        symbolSize: size,
-        label: { show: isHub, fontSize: isHub ? 12 : 10 },
+        symbolSize: isFocus ? Math.max(size, 12) : size,
+        label: {
+          show: isHub || isFocus,
+          fontSize: isFocus ? 13 : isHub ? 12 : 10,
+          fontWeight: isFocus ? "bold" : "normal",
+          color: isFocus ? "#7b4fc0" : undefined,
+        },
         itemStyle: {
-          // 大圆浅一档、小圆深一档（用户反馈 2026-11-19）
-          color: isHub ? (isDark ? "#A8B4CB" : "#6e6e6e") : (isDark ? "#48596f" : "#7a7a7a"),
-          opacity: isHub ? 0.9 : 0.6,
+          // 大圆浅一档、小圆深一档（用户反馈 2026-11-19）；选中节点紫色
+          color: isFocus
+            ? "#8a5cc7"
+            : isHub
+              ? (isDark ? "#A8B4CB" : "#6e6e6e")
+              : (isDark ? "#48596f" : "#7a7a7a"),
+          opacity: isFocus ? 1 : isHub ? 0.9 : 0.6,
+          borderColor: isFocus ? "#7b4fc0" : "transparent",
+          borderWidth: isFocus ? 2 : 0,
         },
         raw: n,
       };
@@ -577,7 +590,7 @@ export default function KnowledgeGraphPage() {
       target: e.target,
       // 点击节点后其关联连线紫色高亮（用户需求 2026-11-19：点击高亮紫色）
       lineStyle: focusId && (e.source === focusId || e.target === focusId)
-        ? { color: "rgba(138,92,199,0.75)", width: 1.5 }
+        ? { color: "rgba(138,92,199,0.9)", width: 2 }
         : undefined,
     }));
     // 同步当前坐标与邻接表（拖动联动 effect 的数据源）
@@ -649,9 +662,15 @@ export default function KnowledgeGraphPage() {
         },
         emphasis: {
           focus: "adjacency",
-          label: { show: true, fontWeight: "bold" },
-          itemStyle: { shadowBlur: 12, shadowColor: "rgba(138,92,199,0.45)" },
-          lineStyle: { width: 2, opacity: 0.9, color: "rgba(138,92,199,0.7)" },
+          label: { show: true, fontWeight: "bold", color: "#7b4fc0" },
+          // 高亮紫色（用户指定 2026-11-19）：当前节点+关联节点+连线全部变紫
+          itemStyle: {
+            color: "#8a5cc7",
+            borderColor: "#7b4fc0",
+            shadowBlur: 12,
+            shadowColor: "rgba(138,92,199,0.55)",
+          },
+          lineStyle: { width: 2, opacity: 0.95, color: "rgba(138,92,199,0.85)" },
         },
         blur: {
           itemStyle: { opacity: 0.06 },
@@ -673,6 +692,8 @@ export default function KnowledgeGraphPage() {
   useEffect(() => {
     const inst = chartRef.current?.getEchartsInstance?.();
     if (!inst) return;
+    // 调试桥：自动化验证/排障用（图坐标读取与交互模拟）
+    (window as any).__kgInst = inst;
     inst.dispatchAction({ type: "downplay", seriesIndex: 0 });
     if (focusId) {
       const idx = view.nodes.findIndex((n) => n.id === focusId);
