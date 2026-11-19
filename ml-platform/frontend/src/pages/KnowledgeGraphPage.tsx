@@ -32,6 +32,19 @@ const GROUP_PALETTE = [
   "#98c379", "#ff9f6a", "#6bcfff", "#d19cf5", "#e8a0a0",
 ];
 
+// 实体类型显示名：抽取层 type 是英文标识（jieba 词性映射），中文界面翻译显示；
+// 未知类型显示原值
+const TYPE_DISPLAY_ZH: Record<string, string> = {
+  concept: "概念", term: "术语", person: "人物", location: "地点",
+  organization: "机构", standard: "标准", material: "材料", equipment: "设备",
+  process: "工艺", disease: "疾病", indicator: "指标", unit: "单位",
+};
+
+function typeDisplayName(type: string, lang: string): string {
+  if (lang !== "zh") return type;
+  return TYPE_DISPLAY_ZH[type] ?? type;
+}
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -167,7 +180,7 @@ export default function KnowledgeGraphPage() {
       return {
         dim: "type" as const,
         items: types.map((t, i) => ({
-          key: t, name: t, color: GROUP_PALETTE[i % GROUP_PALETTE.length],
+          key: t, name: typeDisplayName(t, lang), color: GROUP_PALETTE[i % GROUP_PALETTE.length],
         })),
       };
     }
@@ -180,7 +193,7 @@ export default function KnowledgeGraphPage() {
         color: GROUP_PALETTE[i % GROUP_PALETTE.length],
       })),
     };
-  }, [graphData.nodes, graphText]);
+  }, [graphData.nodes, graphText, lang]);
 
   const groupIndexOf = useCallback((node: GraphNode): number => {
     if (!grouping) return 0;
@@ -217,7 +230,11 @@ export default function KnowledgeGraphPage() {
         name: n.label,
         category: groupIndexOf(n),
         symbolSize: Math.min(38, 10 + Math.sqrt(deg) * 5 + freqBoost),
-        itemStyle: { color: groupColorOf(n) },
+        itemStyle: {
+          color: groupColorOf(n),
+          // Obsidian 式小节点淡化：度数越低越透明，减轻低频实体「点海」的视觉压迫
+          opacity: 0.55 + Math.min(0.45, (deg / 16) * 0.45),
+        },
         raw: n,
       };
     });
@@ -485,7 +502,9 @@ export default function KnowledgeGraphPage() {
                   ]}
                 >
                   <Space>
-                    <Tag style={{ marginInlineEnd: 0 }} color={groupColorOf(node)}>{node.type || "entity"}</Tag>
+                    <Tag style={{ marginInlineEnd: 0 }} color={groupColorOf(node)}>
+                      {typeDisplayName(node.type || "entity", lang)}
+                    </Tag>
                     <Text>{node.label}</Text>
                     {node.source === "auto"
                       ? <Tag color="orange">{graphText.auto}</Tag>

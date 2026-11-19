@@ -1873,3 +1873,13 @@ PageHeading desc / 内嵌说明条删除：①智能体中心→知识中心 tab
 - 首轮实测窄画布（自动化浏览器 767px 视口把画布压到 172px）force 堆左下角不收敛：repulsion 600→`min(400, 80+n*4)`、gravity 0.08→0.25、edgeLength [60,140]→[50,110] 后收敛居中；布局行加 `flexWrap` + 左列 `minWidth:460`，窄屏图表自动换行全宽。
 
 **验证**：KnowledgeGraphPage 2 tests + `npm run build`（tsc）通过；全量 vitest 567 passed（TrainingJobsPage 1 例首轮失败系与 docker build 并行资源抖动，独立复跑 7/7 通过，非回归）；frontend 镜像重建部署（chunk hash 变化核验新代码）。浏览器实测（点焊标准法规库，库内 5,070 实体 Top-100）：力导向收敛居中、多类型三色分组（紫/黄橙/绿）、度数分级、搜索「上呼吸道」聚焦邻域（当前视图 100→14）、返回总览恢复 100、重置视图无错误、暗/亮双主题截图配色可读、console 零错误。**未做像素级验证**：hover adjacency 高亮、滚轮缩放、拖动平移、节点拖拽——canvas 不在 a11y 树无法自动化模拟鼠标，均为 echarts 内建能力且 option 已配置、运行零 JS 错误，待用户真机体验。
+
+## 2026-11-19 追加：知识图谱三问修正（实体量语义/圆形确认/中文图例）
+
+**用户三问**：①抽取实体太多（满屏紫点）对吗；②Obsidian 是否以圆形节点为主；③底部图例是英文。
+
+**数据取证**（graph_entities 实查，点焊标准法规库 5,070 实体）：concept 3,386 (67%) / term 1,479 (29%) / person 120 / location 62 / organization 23。**紫色一片的根源**：抽取层 [knowledge_graph_extraction.py](ml-platform/backend/app/services/knowledge_graph_extraction.py) 的 POS_ENTITY_TYPE 只映射 nr/ns/nt/eng 四种词性，其余（含专有名词 nz）全落 concept。**5,070 是设计行为**：规则+词频抽取（min_freq≥2）存储层无上限（模块 docstring 明确「存储全量、视图层限制渲染」），页面 Top-N=100 只渲染高频实体，非异常。
+
+**改动**：①后端 POS 映射补 `nz→term`（专有名词归术语；重新抽取生效，点焊库重抽后 concept 3,386→3,275、term 1,479→1,590）；②前端类型中文显示映射 TYPE_DISPLAY_ZH（概念/术语/人物/地点/机构/标准/材料/设备/工艺/疾病/指标/单位，未知类型显原值）应用于图例/列表 Tag/tooltip 分组名；③节点按度数透明分层（0.55-1.0，小节点淡化减「点海」压迫，Obsidian 同款观感）；④Q2 回答确认：Obsidian 节点即实心圆，echarts graph 默认 symbol=circle 已一致，未改。
+
+**验证**：test_knowledge 容器内复跑通过；KnowledgeGraphPage 2 tests + tsc build 通过（frontend 镜像重建 chunk hash 核验）；点焊库重新抽取（52331ms，5,070 实体/88,775 关系）；浏览器实测——图例显示「概念/术语/机构/人物/地点」中文、tooltip 全中文（限值/概念/自动/度数:173/出处文档 3 篇）、小节点淡化分层清晰、console 零错误。

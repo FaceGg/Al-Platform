@@ -43,7 +43,9 @@ RELATION_PATTERNS = [
 ]
 
 # Distinct jieba POS tags carried over as entity types; the rest map to concept.
-POS_ENTITY_TYPE = {"nr": "person", "ns": "location", "nt": "organization", "eng": "term"}
+# nz (proper noun) counts as term so regulation corpora do not collapse almost
+# every noun into concept — the graph page colors by type.
+POS_ENTITY_TYPE = {"nr": "person", "ns": "location", "nt": "organization", "eng": "term", "nz": "term"}
 
 
 def _normalize_name(name: str) -> str:
