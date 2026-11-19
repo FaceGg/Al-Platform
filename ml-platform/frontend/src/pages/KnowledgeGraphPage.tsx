@@ -75,12 +75,12 @@ export default function KnowledgeGraphPage() {
     resetView: "重置视图",
     degreeLabel: "度数",
     modeRadial: "放射关系图", modeEntity: "实体图谱",
-    centerDoc: "中心文档", innerCount: "内圈", outerCount: "外圈",
+    centerDoc: "中心文档",
     centerDocEmpty: "该文档未抽取到实体",
     relatedDocs: "相关文档", centerEntities: "文档实体",
     sharedEntities: (n: number) => `共享实体 ${n} 个`,
     docType: "文档类型", chunks: (n: number) => `${n} 个分块`,
-    pickEntity: "点击实体高亮其与中心文档的关系",
+    pickEntity: "拖动节点可调整位置 · 点击外圈文档切换中心 · 点击实体高亮",
     noDocs: "该知识库还没有文档",
   } : {
     extract: "Auto extract", extracting: "Extracting...",
@@ -96,12 +96,12 @@ export default function KnowledgeGraphPage() {
     resetView: "Reset view",
     degreeLabel: "Links",
     modeRadial: "Radial map", modeEntity: "Entity graph",
-    centerDoc: "Center document", innerCount: "Inner", outerCount: "Outer",
+    centerDoc: "Center document",
     centerDocEmpty: "No entity extracted from this document",
     relatedDocs: "Related documents", centerEntities: "Document entities",
     sharedEntities: (n: number) => `${n} shared entities`,
     docType: "Type", chunks: (n: number) => `${n} chunks`,
-    pickEntity: "Click an entity to highlight its link to the center",
+    pickEntity: "Drag nodes to rearrange · click an outer document to recenter · click an entity to highlight",
     noDocs: "This knowledge base has no document yet",
   };
   const chartRef = useRef<any>(null);
@@ -113,8 +113,6 @@ export default function KnowledgeGraphPage() {
   const [docs, setDocs] = useState<DocItem[]>([]);
   const [centerDocId, setCenterDocId] = useState<string | null>(null);
   const [mode, setMode] = useState<"radial" | "entity">("radial");
-  const [innerCount, setInnerCount] = useState(14);
-  const [outerCount, setOuterCount] = useState(10);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
   const [hoverInfo, setHoverInfo] = useState<{ x: number; y: number; lines: string[] } | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
@@ -204,54 +202,100 @@ export default function KnowledgeGraphPage() {
     return counts;
   }, [graphData.nodes]);
 
-  // 放射图模型：中心文档 + 内圈实体（该文档抽出的实体）+ 外圈相关文档（共享实体最多的）
+  // 放射图模型：中心文档（自动选取，点外圈可切换）+ 内圈实体（数量按圆周自动）
+  // + 外圈全部文档（单圈容量用尽时自动追加一圈）
   const radial = useMemo(() => {
     if (docs.length === 0 || graphData.nodes.length === 0) return null;
     let center = docs.find((d) => d.id === centerDocId);
     if (!center) {
-      const best = [...docs].sort((a, b) => (docEntityCount.get(b.id) || 0) - (docEntityCount.get(a.id) || 0))[0];
-      center = best;
+      center = [...docs].sort((a, b) => (docEntityCount.get(b.id) || 0) - (docEntityCount.get(a.id) || 0))[0];
     }
     if (!center) return null;
-    const inner = graphData.nodes
-      .filter((n) => (n.docIds || []).includes(center!.id))
-      .sort((a, b) => (b.freq || 0) - (a.freq || 0) || (degree.get(b.id) || 0) - (degree.get(a.id) || 0))
-      .slice(0, innerCount);
     const shared = new Map<string, number>();
     for (const n of graphData.nodes) {
-      if (!(n.docIds || []).includes(center!.id)) continue;
+      if (!(n.docIds || []).includes(center.id)) continue;
       for (const d of n.docIds || []) {
-        if (d === center!.id) continue;
+        if (d === center.id) continue;
         shared.set(d, (shared.get(d) || 0) + 1);
       }
     }
     const outer = docs
-      .filter((d) => d.id !== center!.id)
+      .filter((d) => d.id !== center.id)
       .map((d) => ({ doc: d, shared: shared.get(d.id) || 0 }))
-      .filter((x) => x.shared > 0)
-      .sort((a, b) => b.shared - a.shared)
-      .slice(0, outerCount);
+      .sort((a, b) => b.shared - a.shared);
 
     const { w, h } = mapSize;
     const cx = w / 2;
     const cy = h / 2;
     const base = Math.min(w, h);
     const r1 = base * 0.33;
-    const r2 = base * 0.5;
-    const place = (count: number, radius: number, offset: number) => Array.from({ length: count }, (_, i) => {
-      const angle = -Math.PI / 2 + (offset + i) * (2 * Math.PI / Math.max(count, 1));
-      return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius, angle };
+    const r2 = base * 0.46;
+    // 内圈实体数量按圆周可用长度自动决定（标签不互相压盖）
+    const maxInner = Math.max(6, Math.floor((2 * Math.PI * r1) / 54));
+    const inner = graphData.nodes
+      .filter((n) => (n.docIds || []).includes(center.id))
+      .sort((a, b) => (b.freq || 0) - (a.freq || 0) || (degree.get(b.id) || 0) - (degree.get(a.id) || 0))
+      .slice(0, maxInner);
+
+    // 外圈展示全部文档，单圈容量用尽时自动追加一圈
+    const perRing = 36;
+    const ringGap = 56;
+    const outerPlaced = outer.map((item, i) => {
+      const ring = Math.floor(i / perRing);
+      const count = Math.min(perRing, outer.length - ring * perRing);
+      const idxInRing = i % perRing;
+      const angle = -Math.PI / 2 + (idxInRing + (ring % 2) * 0.5) * (2 * Math.PI / Math.max(count, 1));
+      const radius = r2 + ring * ringGap;
+      return { ...item, x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
     });
-    const innerPos = place(inner.length, r1, 0);
-    const outerPos = place(outer.length, r2, 0.5);
+    const innerPos = Array.from({ length: inner.length }, (_, i) => {
+      const angle = -Math.PI / 2 + i * (2 * Math.PI / Math.max(inner.length, 1));
+      return { x: cx + Math.cos(angle) * r1, y: cy + Math.sin(angle) * r1 };
+    });
     return {
       center,
       inner: inner.map((node, i) => ({ node, ...innerPos[i] })),
-      outer: outer.map((item, i) => ({ ...item, ...outerPos[i] })),
+      outer: outerPlaced,
       cx,
       cy,
     };
-  }, [docs, graphData.nodes, centerDocId, innerCount, outerCount, degree, docEntityCount, mapSize]);
+  }, [docs, graphData.nodes, centerDocId, degree, docEntityCount, mapSize]);
+
+  // 节点拖动：拖动后位置保持（不自动回位），中心点拖动时所有连线随之更新
+  const [dragNodes, setDragNodes] = useState<Record<string, { x: number; y: number }>>({});
+  const [draggingKey, setDraggingKey] = useState<string | null>(null);
+  const dragRef = useRef<{ key: string; startX: number; startY: number; originX: number; originY: number; moved: boolean } | null>(null);
+
+  const radialPosition = (key: string, autoX: number, autoY: number) => dragNodes[key] ?? { x: autoX, y: autoY };
+
+  const startNodeDrag = (e: React.PointerEvent<SVGGElement>, key: string, x: number, y: number) => {
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* 忽略捕获失败 */ }
+    dragRef.current = { key, startX: e.clientX, startY: e.clientY, originX: x, originY: y, moved: false };
+    setDraggingKey(key);
+  };
+
+  const moveNodeDrag = (e: React.PointerEvent<SVGGElement>, key: string) => {
+    const drag = dragRef.current;
+    if (!drag || drag.key !== key) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
+    drag.moved = true;
+    const nx = drag.originX + dx;
+    const ny = drag.originY + dy;
+    setDragNodes((prev) => ({ ...prev, [key]: { x: nx, y: ny } }));
+  };
+
+  const endNodeDrag = (e: React.PointerEvent<SVGGElement>, key: string, onClick?: () => void) => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    setDraggingKey(null);
+    if (drag && drag.moved) return;
+    onClick?.();
+  };
+
+  // 数据刷新后复位拖动位置（保留拖动手感，不残留旧坐标）
+  useEffect(() => { setDragNodes({}); }, [selectedKb, graphData]);
 
   // 实体图谱视图模型：枢纽-卫星采样（少数大点 + 大量小点）
   const view = useMemo((): GraphData => {
@@ -405,8 +449,8 @@ export default function KnowledgeGraphPage() {
       const deg = degree.get(n.id) || 0;
       const isHub = deg >= hubCut;
       const size = isHub
-        ? 14 + Math.min(14, ((deg - hubCut) / Math.max(1, maxDeg - hubCut)) * 16)
-        : 5.5;
+        ? 10 + Math.min(8, ((deg - hubCut) / Math.max(1, maxDeg - hubCut)) * 10)
+        : 4;
       return {
         id: n.id,
         name: n.label,
@@ -599,40 +643,60 @@ export default function KnowledgeGraphPage() {
       return <Empty description={docs.length ? graphText.centerDocEmpty : graphText.noDocs} style={{ marginTop: 180 }} />;
     }
     const { center, inner, outer, cx, cy } = radial;
+    const centerPos = radialPosition("center", cx, cy);
+    const innerPos = inner.map((item) => ({ ...item, ...radialPosition(item.node.id, item.x, item.y) }));
+    const outerPos = outer.map((item) => ({ ...item, ...radialPosition(item.doc.id, item.x, item.y) }));
+    const cursor = draggingKey ? "grabbing" : "grab";
     return (
       <div ref={mapRef} style={{ position: "relative", width: "100%", height: "100%" }}>
         <svg width="100%" height="100%" viewBox={`0 0 ${mapSize.w} ${mapSize.h}`} style={{ display: "block" }}>
           {/* 射线：中心 → 外圈（虚线、更淡） */}
-          {outer.map((item) => (
+          {outerPos.map((item) => (
             <line
               key={`outer-line-${item.doc.id}`}
-              x1={cx} y1={cy} x2={item.x} y2={item.y}
+              x1={centerPos.x} y1={centerPos.y} x2={item.x} y2={item.y}
               stroke={radialColors.spokeOuter} strokeWidth={1} strokeDasharray="3 4"
             />
           ))}
           {/* 射线：中心 → 内圈实体 */}
-          {inner.map((item) => (
+          {innerPos.map((item) => (
             <line
               key={`inner-line-${item.node.id}`}
-              x1={cx} y1={cy} x2={item.x} y2={item.y}
+              x1={centerPos.x} y1={centerPos.y} x2={item.x} y2={item.y}
               stroke={radialColors.spoke} strokeWidth={1}
             />
           ))}
-          {/* 中心节点 */}
-          <circle cx={cx} cy={cy} r={11} fill={radialColors.center} />
-          <text
-            x={cx} y={cy + 27} textAnchor="middle"
-            fill={radialColors.label} fontSize={13.5} fontWeight={600}
-            stroke={radialColors.halo} strokeWidth={3} paintOrder="stroke" strokeLinejoin="round"
+          {/* 中心节点（可拖动） */}
+          <g
+            role="button"
+            aria-label={center.filename}
+            tabIndex={0}
+            onPointerDown={(e) => startNodeDrag(e, "center", centerPos.x, centerPos.y)}
+            onPointerMove={(e) => moveNodeDrag(e, "center")}
+            onPointerUp={(e) => endNodeDrag(e, "center")}
+            style={{ cursor }}
           >
-            {fitText(center.filename, cx, cx, 13.5)}
-          </text>
-          {/* 内圈实体 */}
-          {inner.map((item) => {
+            <circle cx={centerPos.x} cy={centerPos.y} r={11} fill={radialColors.center} />
+            <text
+              x={centerPos.x} y={centerPos.y + 27} textAnchor="middle"
+              fill={radialColors.label} fontSize={13.5} fontWeight={600}
+              stroke={radialColors.halo} strokeWidth={3} paintOrder="stroke" strokeLinejoin="round"
+            >
+              {fitText(center.filename, centerPos.x, cx, 13.5)}
+            </text>
+          </g>
+          {/* 内圈实体（可拖动） */}
+          {innerPos.map((item) => {
             const active = highlightId === item.node.id;
             return (
               <g
                 key={`inner-${item.node.id}`}
+                role="button"
+                aria-label={item.node.label}
+                tabIndex={0}
+                onPointerDown={(e) => startNodeDrag(e, item.node.id, item.x, item.y)}
+                onPointerMove={(e) => moveNodeDrag(e, item.node.id)}
+                onPointerUp={(e) => endNodeDrag(e, item.node.id, () => setHighlightId(active ? null : item.node.id))}
                 onMouseEnter={(e) => {
                   setHoverKey(item.node.id);
                   setHoverInfo({
@@ -647,8 +711,7 @@ export default function KnowledgeGraphPage() {
                 }}
                 onMouseMove={(e) => setHoverInfo((prev) => (prev ? { ...prev, x: e.clientX, y: e.clientY } : prev))}
                 onMouseLeave={() => { setHoverKey(null); setHoverInfo(null); }}
-                onClick={() => setHighlightId(active ? null : item.node.id)}
-                style={{ cursor: "pointer" }}
+                style={{ cursor }}
               >
                 <circle
                   cx={item.x} cy={item.y} r={active ? 6 : 4.5}
@@ -668,10 +731,16 @@ export default function KnowledgeGraphPage() {
               </g>
             );
           })}
-          {/* 外圈相关文档 */}
-          {outer.map((item) => (
+          {/* 外圈相关文档（可拖动，点击换中心） */}
+          {outerPos.map((item) => (
             <g
               key={`outer-${item.doc.id}`}
+              role="button"
+              aria-label={item.doc.filename}
+              tabIndex={0}
+              onPointerDown={(e) => startNodeDrag(e, item.doc.id, item.x, item.y)}
+              onPointerMove={(e) => moveNodeDrag(e, item.doc.id)}
+              onPointerUp={(e) => endNodeDrag(e, item.doc.id, () => setCenterDocId(item.doc.id))}
               onMouseEnter={(e) => {
                 setHoverKey(item.doc.id);
                 setHoverInfo({
@@ -685,8 +754,7 @@ export default function KnowledgeGraphPage() {
               }}
               onMouseMove={(e) => setHoverInfo((prev) => (prev ? { ...prev, x: e.clientX, y: e.clientY } : prev))}
               onMouseLeave={() => { setHoverKey(null); setHoverInfo(null); }}
-              onClick={() => setCenterDocId(item.doc.id)}
-              style={{ cursor: "pointer" }}
+              style={{ cursor }}
             >
               <circle cx={item.x} cy={item.y} r={4} fill={radialColors.outer} />
               <text
@@ -766,42 +834,17 @@ export default function KnowledgeGraphPage() {
               { label: graphText.modeEntity, value: "entity" },
             ]}
           />
-          {mode === "radial" && (
-            <>
-              <Select
-                placeholder={graphText.centerDoc}
-                style={{ width: 260 }}
-                value={radial?.center.id}
-                onChange={(v) => setCenterDocId(v)}
-                options={docs.map((d) => ({ value: d.id, label: d.filename }))}
-                showSearch
-                optionFilterProp="label"
-              />
-              <InputNumber
-                min={4} max={40} step={2} value={innerCount}
-                onChange={(v) => setInnerCount(Number(v) || 14)}
-                style={{ width: 78 }}
-                addonBefore={graphText.innerCount}
-              />
-              <InputNumber
-                min={2} max={30} step={2} value={outerCount}
-                onChange={(v) => setOuterCount(Number(v) || 10)}
-                style={{ width: 78 }}
-                addonBefore={graphText.outerCount}
-              />
-            </>
-          )}
+          <AutoComplete
+            options={searchOptions}
+            style={{ width: 240 }}
+            placeholder={graphText.searchPh}
+            filterOption={(input, option) =>
+              (option?.value || "").toLowerCase().includes(input.toLowerCase())}
+            onSelect={(value: string | undefined) => { if (value) focusByLabel(value); }}
+            value={undefined}
+          />
           {mode === "entity" && (
             <>
-              <AutoComplete
-                options={searchOptions}
-                style={{ width: 240 }}
-                placeholder={graphText.searchPh}
-                filterOption={(input, option) =>
-                  (option?.value || "").toLowerCase().includes(input.toLowerCase())}
-                onSelect={(value: string | undefined) => { if (value) focusByLabel(value); }}
-                value={undefined}
-              />
               {focusId && (
                 <Button icon={<AimOutlined />} onClick={() => setFocusId(null)}>
                   {graphText.overview}
