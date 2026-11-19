@@ -1,19 +1,23 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
   Select, Button, Form, Input, List, Typography, message, Card, Space, Tag, Empty,
-  AutoComplete, Statistic, InputNumber,
+  AutoComplete, Statistic, InputNumber, Tooltip,
 } from "antd";
-import { PlusOutlined, DeleteOutlined, ReloadOutlined, ThunderboltOutlined, AimOutlined } from "@ant-design/icons";
+import {
+  PlusOutlined, DeleteOutlined, ReloadOutlined, ThunderboltOutlined, AimOutlined, ScanOutlined,
+} from "@ant-design/icons";
+import ReactECharts from "echarts-for-react";
 import apiClient from "../api/client";
 import AppLayout from "../components/AppLayout";
 import PageHeading from "../components/PageHeading";
 import { useI18n } from "../i18n";
+import { useTheme } from "../stores/themeContext";
 
 const { Text } = Typography;
 
 interface GraphNode {
   id: string; label: string; type?: string; source?: string; freq?: number;
-  docCount?: number; x?: number; y?: number;
+  docCount?: number;
 }
 interface GraphEdge {
   source: string; target: string; label?: string; type?: string;
@@ -22,8 +26,25 @@ interface GraphData {
   nodes: GraphNode[]; edges: GraphEdge[];
 }
 
+// Obsidian 风格柔和分组色板：type 优先分色，来源兜底，按序轮转
+const GROUP_PALETTE = [
+  "#8a7dff", "#4ec9b0", "#f7c65d", "#e06c9f", "#61afef",
+  "#98c379", "#ff9f6a", "#6bcfff", "#d19cf5", "#e8a0a0",
+];
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export default function KnowledgeGraphPage() {
   const { t, lang } = useI18n();
+  const { theme } = useTheme();
+  const isDark = theme === "dark";
   const graphText = lang === "zh" ? {
     extract: "自动抽取", extracting: "抽取中...",
     extractDone: (e: number, r: number) => `抽取完成：新增实体 ${e} 个、关系 ${r} 条`,
@@ -35,7 +56,9 @@ export default function KnowledgeGraphPage() {
     inLibrary: "库内实体", viewOf: "当前视图",
     viewHint: (lib: number, view: number) => `库内 ${lib} 实体 · 视图 ${view} 个${view < lib ? "（Top 高频 + 其关系）" : ""}`,
     neighborhood: "邻域",
-    expandHint: "点击画布或列表中的实体可聚焦其邻域",
+    expandHint: "点击实体聚焦邻域 · 滚轮缩放 / 拖动平移 / 拖拽节点",
+    resetView: "重置视图",
+    degreeLabel: "度数",
   } : {
     extract: "Auto extract", extracting: "Extracting...",
     extractDone: (e: number, r: number) => `Extracted: ${e} entities, ${r} relations`,
@@ -47,21 +70,22 @@ export default function KnowledgeGraphPage() {
     inLibrary: "In library", viewOf: "View",
     viewHint: (lib: number, view: number) => `${lib} entities in library · ${view} in view${view < lib ? " (top hubs + their edges)" : ""}`,
     neighborhood: "Neighborhood",
-    expandHint: "Click an entity on the canvas or in the list to focus its neighborhood",
+    expandHint: "Click an entity to focus · scroll to zoom / drag to pan / drag nodes",
+    resetView: "Reset view",
+    degreeLabel: "Links",
   };
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const chartRef = useRef<any>(null);
+  const focusIdRef = useRef<string | null>(null);
   const [bases, setBases] = useState<any[]>([]);
   const [selectedKb, setSelectedKb] = useState<string | null>(null);
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [] });
   const [loading, setLoading] = useState(false);
   const [extracting, setExtracting] = useState(false);
-  const [hover, setHover] = useState<{ x: number; y: number; node: GraphNode } | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [viewSize, setViewSize] = useState(100);
   const [form] = Form.useForm();
   const [edgeForm] = Form.useForm();
-  const [simNodes, setSimNodes] = useState<Array<GraphNode & { vx: number; vy: number }>>([]);
-  const animRef = useRef<number>(0);
+  focusIdRef.current = focusId;
 
   useEffect(() => {
     apiClient.get("/knowledge/bases").then((res) => {
@@ -75,15 +99,13 @@ export default function KnowledgeGraphPage() {
     apiClient.get("/knowledge/bases/" + selectedKb + "/graph")
       .then((res) => {
         const data = res.data;
-        const nodes = (data.nodes || []).map((n: any, i: number) => ({
+        const nodes = (data.nodes || []).map((n: any) => ({
           id: n.id,
           label: n.label ?? n.name ?? n.id,
           type: n.type ?? n.entity_type ?? "entity",
           source: n.properties?.source,
           freq: n.properties?.freq ?? 0,
           docCount: Array.isArray(n.properties?.doc_ids) ? n.properties.doc_ids.length : undefined,
-          x: Math.random() * 600 + 50,
-          y: Math.random() * 400 + 50,
         }));
         const edges = (data.edges || []).map((edge: any) => ({
           source: edge.source ?? edge.source_id,
@@ -100,6 +122,16 @@ export default function KnowledgeGraphPage() {
 
   useEffect(() => { loadGraph(); }, [selectedKb]);
 
+  // 全库度数（Obsidian 以链接数决定节点大小，聚焦视图下仍按全库度数缩放）
+  const degree = useMemo(() => {
+    const d = new Map<string, number>();
+    for (const e of graphData.edges) {
+      d.set(e.source, (d.get(e.source) || 0) + 1);
+      d.set(e.target, (d.get(e.target) || 0) + 1);
+    }
+    return d;
+  }, [graphData.edges]);
+
   // 视图模型：聚焦邻域 或 Top-N 总览（数据全量在 graphData，渲染只取子集）
   const view = useMemo((): GraphData => {
     const all = graphData.nodes;
@@ -115,11 +147,6 @@ export default function KnowledgeGraphPage() {
       };
     }
     if (all.length <= viewSize) return graphData;
-    const degree = new Map<string, number>();
-    for (const e of graphData.edges) {
-      degree.set(e.source, (degree.get(e.source) || 0) + 1);
-      degree.set(e.target, (degree.get(e.target) || 0) + 1);
-    }
     const hubs = [...all]
       .sort((a, b) => (b.freq || 0) - (a.freq || 0)
         || (degree.get(b.id) || 0) - (degree.get(a.id) || 0))
@@ -129,7 +156,43 @@ export default function KnowledgeGraphPage() {
       nodes: all.filter((n) => keep.has(n.id)),
       edges: graphData.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
     };
-  }, [graphData, focusId, viewSize]);
+  }, [graphData, focusId, viewSize, degree]);
+
+  // 分组维度：type 优先（≥2 种类型时按类型分色），否则退回 auto/manual 来源
+  const grouping = useMemo(() => {
+    const nodes = graphData.nodes;
+    if (nodes.length === 0) return null;
+    const types = [...new Set(nodes.map((n) => n.type || "entity"))];
+    if (types.length > 1) {
+      return {
+        dim: "type" as const,
+        items: types.map((t, i) => ({
+          key: t, name: t, color: GROUP_PALETTE[i % GROUP_PALETTE.length],
+        })),
+      };
+    }
+    const sources = [...new Set(nodes.map((n) => n.source || "manual"))];
+    return {
+      dim: "source" as const,
+      items: sources.map((s, i) => ({
+        key: s,
+        name: s === "auto" ? graphText.auto : graphText.manual,
+        color: GROUP_PALETTE[i % GROUP_PALETTE.length],
+      })),
+    };
+  }, [graphData.nodes, graphText]);
+
+  const groupIndexOf = useCallback((node: GraphNode): number => {
+    if (!grouping) return 0;
+    const value = grouping.dim === "type" ? (node.type || "entity") : (node.source || "manual");
+    const idx = grouping.items.findIndex((g) => g.key === value);
+    return idx >= 0 ? idx : 0;
+  }, [grouping]);
+
+  const groupColorOf = useCallback((node: GraphNode): string | undefined => {
+    if (!grouping) return undefined;
+    return grouping.items[groupIndexOf(node)]?.color;
+  }, [grouping, groupIndexOf]);
 
   const searchOptions = useMemo(
     () => graphData.nodes.map((n) => ({ value: n.label, id: n.id })),
@@ -141,133 +204,109 @@ export default function KnowledgeGraphPage() {
     if (node) setFocusId(node.id);
   };
 
-  // Simple force-directed layout simulation over the current view
-  useEffect(() => {
-    const viewNodes = view.nodes;
-    if (viewNodes.length === 0) { setSimNodes([]); return; }
-    const nodes = viewNodes.map((n) => ({ ...n, vx: 0, vy: 0 }));
-    const edges = view.edges;
-    setSimNodes(nodes);
-
-    let frame = 0;
-    const maxFrames = 300;
-    const tick = () => {
-      frame++;
-      if (frame > maxFrames) return;
-      setSimNodes((prev) => {
-        const next = prev.map((n) => ({ ...n }));
-        // Repulsion
-        for (let i = 0; i < next.length; i++) {
-          for (let j = i + 1; j < next.length; j++) {
-            const dx = (next[j].x || 0) - (next[i].x || 0);
-            const dy = (next[j].y || 0) - (next[i].y || 0);
-            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-            const repForce = Math.min(2000 / (dist * dist), 20);
-            const fx = (dx / dist) * repForce;
-            const fy = (dy / dist) * repForce;
-            next[i].vx -= fx; next[i].vy -= fy;
-            next[j].vx += fx; next[j].vy += fy;
+  // Obsidian 风格力导向图配置：hover 邻居高亮 + 其余淡出，滚轮缩放、拖动平移、节点可拖拽
+  const option = useMemo(() => {
+    const nodeCount = view.nodes.length;
+    if (nodeCount === 0) return {};
+    const repulsion = Math.min(400, 80 + nodeCount * 4);
+    const nodes = view.nodes.map((n) => {
+      const deg = degree.get(n.id) || 0;
+      const freqBoost = Math.min(4, (n.freq || 0) / 25);
+      return {
+        id: n.id,
+        name: n.label,
+        category: groupIndexOf(n),
+        symbolSize: Math.min(38, 10 + Math.sqrt(deg) * 5 + freqBoost),
+        itemStyle: { color: groupColorOf(n) },
+        raw: n,
+      };
+    });
+    const links = view.edges.map((e) => ({ source: e.source, target: e.target }));
+    return {
+      backgroundColor: "transparent",
+      tooltip: {
+        confine: true,
+        backgroundColor: isDark ? "rgba(22,34,58,0.96)" : "#ffffff",
+        borderColor: isDark ? "#24344f" : "#d9d9d9",
+        textStyle: { color: isDark ? "#D8E2F0" : "#142A33", fontSize: 12 },
+        formatter: (p: any) => {
+          if (p.dataType !== "node") return "";
+          const raw = p.data?.raw as GraphNode | undefined;
+          if (!raw) return escapeHtml(p.data?.name ?? "");
+          const group = grouping?.items[groupIndexOf(raw)];
+          const lines = [`<b>${escapeHtml(raw.label)}</b>`];
+          if (group) {
+            lines.push(`<span style="color:${group.color}">●</span> ${escapeHtml(group.name)}`);
           }
-        }
-        // Attraction along edges
-        for (const e of edges) {
-          const si = next.findIndex((n) => n.id === e.source);
-          const ti = next.findIndex((n) => n.id === e.target);
-          if (si < 0 || ti < 0) continue;
-          const dx = (next[ti].x || 0) - (next[si].x || 0);
-          const dy = (next[ti].y || 0) - (next[si].y || 0);
-          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-          const attrForce = (dist - 150) * 0.005;
-          const fx = (dx / dist) * attrForce;
-          const fy = (dy / dist) * attrForce;
-          next[si].vx += fx; next[si].vy += fy;
-          next[ti].vx -= fx; next[ti].vy -= fy;
-        }
-        // Center gravity
-        for (const n of next) {
-          n.vx += (300 - (n.x || 0)) * 0.001;
-          n.vy += (250 - (n.y || 0)) * 0.001;
-        }
-        // Apply velocity with damping
-        for (const n of next) {
-          n.vx *= 0.85; n.vy *= 0.85;
-          n.x = Math.max(30, Math.min(770, (n.x || 0) + n.vx));
-          n.y = Math.max(30, Math.min(470, (n.y || 0) + n.vy));
-        }
-        return next;
-      });
-      if (frame < maxFrames) {
-        animRef.current = requestAnimationFrame(tick);
-      }
+          lines.push(raw.source === "auto" ? graphText.auto : graphText.manual);
+          lines.push(`${graphText.degreeLabel}: ${degree.get(raw.id) || 0}`);
+          if (raw.docCount) lines.push(graphText.docCount(raw.docCount));
+          return lines.join("<br/>");
+        },
+      },
+      legend: grouping && grouping.items.length > 1 ? {
+        data: grouping.items.map((g) => g.name),
+        bottom: 8,
+        icon: "circle",
+        itemWidth: 10,
+        itemHeight: 10,
+        type: "scroll",
+        textStyle: { color: isDark ? "#8FA8C4" : "#57707B", fontSize: 11 },
+      } : undefined,
+      series: [{
+        type: "graph",
+        layout: "force",
+        roam: true,
+        draggable: true,
+        force: {
+          repulsion,
+          edgeLength: [50, 110],
+          gravity: 0.25,
+          layoutAnimation: nodeCount <= 300,
+        },
+        categories: grouping?.items.map((g) => ({ name: g.name })) || [],
+        data: nodes,
+        links,
+        lineStyle: {
+          color: isDark ? "rgba(216,226,240,0.22)" : "rgba(20,42,51,0.25)",
+          width: 1,
+          curveness: 0.12,
+        },
+        label: {
+          show: true,
+          position: "bottom",
+          distance: 4,
+          color: isDark ? "#8FA8C4" : "#57707B",
+          fontSize: 11,
+        },
+        labelLayout: { hideOverlap: true },
+        edgeLabel: { show: false },
+        emphasis: {
+          focus: "adjacency",
+          itemStyle: { shadowBlur: 12, shadowColor: "rgba(0,0,0,0.35)" },
+          lineStyle: { width: 2, opacity: 0.9 },
+        },
+        blur: {
+          itemStyle: { opacity: 0.06 },
+          lineStyle: { opacity: 0.03 },
+          label: { show: false },
+        },
+      }],
     };
-    animRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(animRef.current);
-  }, [view]);
+  }, [view, grouping, degree, groupIndexOf, groupColorOf, isDark, graphText]);
 
-  // Canvas drawing (view subset only)
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || simNodes.length === 0) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = canvas.clientWidth * dpr;
-    canvas.height = canvas.clientHeight * dpr;
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+  // onEvents 需保持稳定引用（echarts-for-react 按引用重绑），最新 focusId 走 ref
+  const chartEvents = useMemo(() => ({
+    click: (p: any) => {
+      if (p.dataType !== "node") return;
+      const id = p.data?.id;
+      if (id) setFocusId(focusIdRef.current === id ? null : id);
+    },
+  }), []);
 
-    // Draw edges
-    for (const e of view.edges) {
-      const s = simNodes.find((n) => n.id === e.source);
-      const t = simNodes.find((n) => n.id === e.target);
-      if (!s || !t) continue;
-      ctx.beginPath();
-      ctx.moveTo(s.x || 0, s.y || 0);
-      ctx.lineTo(t.x || 0, t.y || 0);
-      ctx.strokeStyle = "#ccc";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      if (e.label) {
-        const mx = ((s.x || 0) + (t.x || 0)) / 2;
-        const my = ((s.y || 0) + (t.y || 0)) / 2;
-        ctx.fillStyle = "#999";
-        ctx.font = "10px sans-serif";
-        ctx.fillText(e.label, mx, my - 4);
-      }
-    }
-
-    // Draw nodes
-    for (const n of simNodes) {
-      ctx.beginPath();
-      ctx.arc(n.x || 0, n.y || 0, 18, 0, Math.PI * 2);
-      ctx.fillStyle = n.id === focusId ? "#fa8c16" : n.type === "entity" ? "#1890ff" : "#52c41a";
-      ctx.fill();
-      ctx.strokeStyle = "#fff";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.fillStyle = "#fff";
-      ctx.font = "bold 10px sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      const lbl = n.label.length > 8 ? n.label.slice(0, 7) + ".." : n.label;
-      ctx.fillText(lbl, n.x || 0, n.y || 0);
-    }
-  }, [simNodes, view, focusId]);
-
-  const handleCanvasMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    let best: { d: number; node: GraphNode } | null = null;
-    for (const n of simNodes) {
-      const dx = (n.x || 0) - mx;
-      const dy = (n.y || 0) - my;
-      const d = dx * dx + dy * dy;
-      if (d <= 20 * 20 && (!best || d < best.d)) best = { d, node: n };
-    }
-    setHover(best ? { x: mx, y: my, node: best.node } : null);
+  const resetView = () => {
+    const inst = chartRef.current?.getEchartsInstance?.();
+    if (inst) inst.dispatchAction({ type: "restore" });
   };
 
   const addRelation = async (values: any) => {
@@ -370,44 +409,32 @@ export default function KnowledgeGraphPage() {
           <Text type="secondary" style={{ fontSize: 12 }}>{graphText.expandHint}</Text>
         </Space>
       </div>
-      <div style={{ display: "flex", gap: 16 }}>
-        <div style={{ flex: 1 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
+        <div style={{ flex: 1, minWidth: 460 }}>
           <Card
-            style={{ height: 500, padding: 0, overflow: "hidden" }}
+            style={{ height: 520, padding: 0, overflow: "hidden" }}
             styles={{ body: { height: "100%", padding: 0 } }}
           >
             {view.nodes.length === 0 && !loading ? (
               <Empty description={t.common.loading} style={{ marginTop: 200 }} />
             ) : (
               <div style={{ position: "relative", width: "100%", height: "100%" }}>
-                <canvas
-                  ref={canvasRef}
-                  style={{ width: "100%", height: "100%", display: "block", cursor: hover ? "pointer" : "default" }}
-                  onMouseMove={handleCanvasMove}
-                  onMouseLeave={() => setHover(null)}
-                  onClick={() => { if (hover) setFocusId(hover.node.id === focusId ? null : hover.node.id); }}
+                <ReactECharts
+                  ref={chartRef}
+                  option={option}
+                  notMerge
+                  lazyUpdate
+                  style={{ width: "100%", height: "100%" }}
+                  onEvents={chartEvents}
                 />
-                {hover && (
-                  <div style={{
-                    position: "absolute", left: (hover.x || 0) + 14, top: (hover.y || 0) + 10,
-                    background: "#fff", border: "1px solid #d9d9d9", borderRadius: 6,
-                    padding: "6px 10px", pointerEvents: "none", boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-                    zIndex: 10, whiteSpace: "nowrap",
-                  }}>
-                    <Space size={6}>
-                      <Text strong>{hover.node.label}</Text>
-                      <Tag color="blue" style={{ marginInlineEnd: 0 }}>{hover.node.type || "entity"}</Tag>
-                      {hover.node.source === "auto"
-                        ? <Tag color="orange" style={{ marginInlineEnd: 0 }}>{graphText.auto}</Tag>
-                        : <Tag style={{ marginInlineEnd: 0 }}>{graphText.manual}</Tag>}
-                    </Space>
-                    {hover.node.docCount ? (
-                      <Text type="secondary" style={{ display: "block", fontSize: 11, marginTop: 2 }}>
-                        {graphText.docCount(hover.node.docCount)}
-                      </Text>
-                    ) : null}
-                  </div>
-                )}
+                <Tooltip title={graphText.resetView}>
+                  <Button
+                    size="small"
+                    icon={<ScanOutlined />}
+                    onClick={resetView}
+                    style={{ position: "absolute", top: 10, right: 10, zIndex: 5 }}
+                  />
+                </Tooltip>
               </div>
             )}
           </Card>
@@ -458,7 +485,7 @@ export default function KnowledgeGraphPage() {
                   ]}
                 >
                   <Space>
-                    <Tag color={node.type === "entity" ? "blue" : "green"}>{node.type || "entity"}</Tag>
+                    <Tag style={{ marginInlineEnd: 0 }} color={groupColorOf(node)}>{node.type || "entity"}</Tag>
                     <Text>{node.label}</Text>
                     {node.source === "auto"
                       ? <Tag color="orange">{graphText.auto}</Tag>

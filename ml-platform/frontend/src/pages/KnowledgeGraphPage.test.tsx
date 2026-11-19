@@ -8,6 +8,7 @@ const { get, post } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
 vi.mock("../api/client", () => ({ default: { get, post, delete: vi.fn() } }));
+vi.mock("echarts-for-react", () => ({ default: () => <div data-testid="chart" /> }));
 vi.mock("../i18n", () => ({
   useI18n: () => ({
     t: {

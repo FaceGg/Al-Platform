@@ -1860,3 +1860,16 @@ PageHeading desc / 内嵌说明条删除：①智能体中心→知识中心 tab
 1. 绑定表「项目范围」空列表显示「未绑定」→「全部项目」——空 scopes 与 ["*"] 同语义（后端 _binding_allows 空列表不限制），「未绑定」误导（像不可用，实际是默认全体）。
 2. 内层绑定卡片 title「知识中心」→「检索绑定」（与页签/页名「知识中心」重名，用户反馈名称重复；EN: Retrieval Bindings）。
 浏览器实测：卡片新名 ✓、系统分区行项目范围显「全部项目」✓。
+
+## 2026-11-19 追加：知识图谱 Obsidian 风格重构（echarts 力导向，用户需求）
+
+**需求**：「智能体中心→知识图谱」参考 Obsidian 图谱视图样式。原实现为自研 canvas + 自研力导向（每帧 setState 重渲、节点固定 18px 白字白边、灰直线、无缩放/平移/拖拽、hover 白底 tooltip 与暗色主题不符）。用户拍板：① 用依赖已有 echarts（graph 系列 `layout:'force'`）不自研不引新依赖；② 分组着色 type 优先、类型单一时退回 auto/manual 来源。
+
+**改动**（[KnowledgeGraphPage.tsx](ml-platform/frontend/src/pages/KnowledgeGraphPage.tsx) 单文件重写渲染层 + [KnowledgeGraphPage.test.tsx](ml-platform/frontend/src/pages/KnowledgeGraphPage.test.tsx) 加 echarts-for-react mock 照 DashboardPage 先例；业务功能——建库选择/刷新/自动抽取/手动添加实体关系/删除/搜索聚焦/Top-N——全部保留不动）：
+- Obsidian 核心体验映射 echarts 内建：力导向微动画（`force.layoutAnimation`）、节点大小按**全库度数**映射（10-38px，freq 小幅加权）、`emphasis.focus:'adjacency'` hover 邻居高亮+其余淡出（blur opacity 0.06）、`roam` 滚轮缩放/拖动平移、节点 `draggable`、标签节点下方 `labelLayout.hideOverlap` 避让、细半透明曲线边（curveness 0.12）+ 边标签关闭、`backgroundColor: transparent` 融入卡片。
+- 分组色板 Obsidian 柔和系（#8a7dff 紫/#4ec9b0 青/#f7c65d 琥珀/#e06c9f 粉/#61afef 蓝/#98c379 绿…轮转），导出映射函数供右侧实体列表 Tag 复用保证图/列表同色；tooltip（名称/分组/来源/度数/出处文档数）随主题配色，实体名 escapeHtml 防注入。
+- 主题适配：`useTheme()`（stores/themeContext）读 dark/light 决定边线/标签/tooltip 配色；`notMerge` 全量 setOption。
+- 交互保留：echarts click → setFocusId 邻域聚焦（onEvents 稳定引用 + focusIdRef 防陈旧闭包）；Card 右上角「重置视图」按钮 `dispatchAction restore`。
+- 首轮实测窄画布（自动化浏览器 767px 视口把画布压到 172px）force 堆左下角不收敛：repulsion 600→`min(400, 80+n*4)`、gravity 0.08→0.25、edgeLength [60,140]→[50,110] 后收敛居中；布局行加 `flexWrap` + 左列 `minWidth:460`，窄屏图表自动换行全宽。
+
+**验证**：KnowledgeGraphPage 2 tests + `npm run build`（tsc）通过；全量 vitest 567 passed（TrainingJobsPage 1 例首轮失败系与 docker build 并行资源抖动，独立复跑 7/7 通过，非回归）；frontend 镜像重建部署（chunk hash 变化核验新代码）。浏览器实测（点焊标准法规库，库内 5,070 实体 Top-100）：力导向收敛居中、多类型三色分组（紫/黄橙/绿）、度数分级、搜索「上呼吸道」聚焦邻域（当前视图 100→14）、返回总览恢复 100、重置视图无错误、暗/亮双主题截图配色可读、console 零错误。**未做像素级验证**：hover adjacency 高亮、滚轮缩放、拖动平移、节点拖拽——canvas 不在 a11y 树无法自动化模拟鼠标，均为 echarts 内建能力且 option 已配置、运行零 JS 错误，待用户真机体验。
