@@ -376,26 +376,10 @@ export default function KnowledgeGraphPage() {
     const nodeCount = view.nodes.length;
     if (nodeCount === 0) return {};
 
-    // —— 星形放射布局（用户参考图 2026-11-19：中心 hub 大圆 + 一级邻居
-    // 内圈放射 + 二级外圈淡显，三级大小/颜色渐变）——此前 force 聚团混乱。
-    const centerId = focusId ?? view.nodes.reduce(
-      (best, n) => ((degree.get(n.id) || 0) > (degree.get(best) || 0) ? n.id : best),
-      view.nodes[0]?.id ?? "",
-    );
-    const levelMap = new Map<string, 0 | 1 | 2>();
-    levelMap.set(centerId, 0);
-    for (const e of view.edges) {
-      if (e.source === centerId && !levelMap.has(e.target)) levelMap.set(e.target, 1);
-      if (e.target === centerId && !levelMap.has(e.source)) levelMap.set(e.source, 1);
-    }
-    for (const e of view.edges) {
-      const s = levelMap.get(e.source);
-      const t = levelMap.get(e.target);
-      if (s != null && t == null) levelMap.set(e.target, 2);
-      if (t != null && s == null) levelMap.set(e.source, 2);
-    }
-    // 与中心无路径相连的孤立节点：归二级外圈
-    for (const n of view.nodes) if (!levelMap.has(n.id)) levelMap.set(n.id, 2);
+    // —— 均匀云团 + 尺寸两极化（用户终版 2026-11-19：没有特殊中心节点——
+    // 重要节点是大圆、其余是小圆，全域均匀随机散布，无环无中心）——
+    const maxDeg = Math.max(1, ...view.nodes.map((n) => degree.get(n.id) || 0));
+    const hubCut = maxDeg * 0.12;
 
     const hash01 = (id: string, salt: number) => {
       let h = (salt * 0x9e3779b9) & 0x7fffffff;
@@ -404,35 +388,25 @@ export default function KnowledgeGraphPage() {
       h = Math.imul(h, 0xc2b2ae35) & 0x7fffffff;
       return (h >>> 8) / 0x7fffff;
     };
-    const l1 = view.nodes.filter((n) => levelMap.get(n.id) === 1);
-    const l2 = view.nodes.filter((n) => levelMap.get(n.id) === 2);
     // graph layout:"none" 的 x/y 是像素坐标——归一化 0-1 曾致全节点挤在
     // 左上原点（画布空白/中心黑团）。按窗口估算图区尺寸后转像素。
     const VW = Math.max(420, window.innerWidth * 0.55);
     const VH = 620;
     const RR = Math.min(VW, VH) * 0.42;
     const posMap = new Map<string, [number, number]>();
-    posMap.set(centerId, [VW / 2, VH / 2]);
-    l1.forEach((n, i) => {
-      const a = (i / Math.max(1, l1.length)) * Math.PI * 2 - Math.PI / 2
-        + (hash01(n.id, 3) - 0.5) * 0.5;
-      posMap.set(n.id, [VW / 2 + RR * 0.6 * Math.cos(a), VH / 2 + RR * 0.6 * Math.sin(a)]);
-    });
-    l2.forEach((n, i) => {
-      const a = (i / Math.max(1, l2.length)) * Math.PI * 2 + 1.1
-        + (hash01(n.id, 4) - 0.5) * 0.3;
-      posMap.set(n.id, [VW / 2 + RR * Math.cos(a), VH / 2 + RR * Math.sin(a)]);
+    // 圆盘均匀撒点（sqrt 面密度）：全域随机，无环无中心
+    view.nodes.forEach((n) => {
+      const r = RR * Math.sqrt(hash01(n.id, 1));
+      const a = hash01(n.id, 7) * Math.PI * 2;
+      posMap.set(n.id, [VW / 2 + r * Math.cos(a), VH / 2 + r * Math.sin(a)]);
     });
 
-    const repulsion = Math.min(600, 150 + nodeCount * 1.1);
-    const levelColor = (level: 0 | 1 | 2 | undefined) =>
-      level === 0 ? (isDark ? "#E8ECF4" : "#262626")
-        : level === 1 ? (isDark ? "#9AA8BF" : "#5c5c5c")
-          : (isDark ? "#5A6B84" : "#9a9a9a");
     const nodes = view.nodes.map((n) => {
       const deg = degree.get(n.id) || 0;
-      const level = levelMap.get(n.id);
-      const size = level === 0 ? 26 : level === 1 ? 11 : 6.5;
+      const isHub = deg >= hubCut;
+      const size = isHub
+        ? 14 + Math.min(14, ((deg - hubCut) / Math.max(1, maxDeg - hubCut)) * 16)
+        : 5.5;
       return {
         id: n.id,
         name: n.label,
@@ -440,10 +414,10 @@ export default function KnowledgeGraphPage() {
         x: (posMap.get(n.id) ?? [0.5, 0.5])[0],
         y: (posMap.get(n.id) ?? [0.5, 0.5])[1],
         symbolSize: size,
-        label: { show: true, fontSize: level === 0 ? 13 : level === 1 ? 11 : 10 },
+        label: { show: isHub, fontSize: isHub ? 12 : 10 },
         itemStyle: {
-          color: levelColor(level as 0 | 1 | 2 | undefined),
-          opacity: level === 2 ? 0.65 : 0.9,
+          color: isHub ? (isDark ? "#9AA8BF" : "#4a4a4a") : (isDark ? "#5A6B84" : "#9a9a9a"),
+          opacity: isHub ? 0.9 : 0.6,
         },
         raw: n,
       };
