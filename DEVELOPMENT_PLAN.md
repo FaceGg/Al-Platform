@@ -1971,3 +1971,5 @@ PageHeading desc / 内嵌说明条删除：①智能体中心→知识中心 tab
 2. **拖动实时联动**：邻居跟随从 mouseup（松手才跳）改为 **mousemove 实时跟随**——拖动过程中直连邻居按相同 delta 平移（coordsRef 当前坐标 vs echarts 实时 data 差值），被拖节点坐标由 echarts 维护不干预。
 3. **画布拖拽全区域生效**：根因=canvas 锁死初始尺寸（621×530），容器变宽后不跟随——canvas 外区域点击自然无效。修：**ResizeObserver 监听容器**自动 inst.resize()（实测容器 +200px canvas 跟随 821 ✓）。
 另：hover 高亮触发验证踩坑——window.__kgInst 调试桥（echarts 实例挂 window）+synthetic click 不被 zrender 识别为节点点击（focusId 不变），最终 CUA 真实鼠标 move/drag 验证 ✓。
+
+**hover 紫色实测生效（setOption 染色替代 emphasis——emphasis 机制对节点本体颜色在本页实测不生效，弃用）**：mousemove 命中节点变化时 setOption 直接染色——命中节点紫圆+紫边框、关联节点淡紫、关联连线紫色 0.85/宽 1.6、非关联淡化 0.12 透明度；移开恢复原始样式（__orig 缓存）。浏览器实测截图：紫线清晰+淡化生效 ✓。

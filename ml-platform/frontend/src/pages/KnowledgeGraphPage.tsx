@@ -714,6 +714,7 @@ export default function KnowledgeGraphPage() {
     const zr = inst?.getZr?.();
     if (!inst || !zr) return;
     let downNode: string | null = null;
+    const hoverNodeRef: { current: string | null } = { current: null };
     const onDown = (ev: any) => {
       downNode = null;
       const px = ev.offsetX;
@@ -724,8 +725,65 @@ export default function KnowledgeGraphPage() {
         if (d < bestD) { bestD = d; downNode = id; }
       }
     };
-    const onMove = () => {
-      if (!downNode) return;
+    const onMove = (ev: any) => {
+      // —— hover 紫色高亮（用户需求：鼠标放到节点上，节点+相连节点+连线
+      // 变紫并增加透明度，移开恢复）——**setOption 直接染色**（emphasis
+      // 机制在本页实测对节点本体不生效，弃用）——命中变化时才 setOption。
+      if (!downNode) {
+        const px = ev.offsetX;
+        const py = ev.offsetY;
+        let best: string | null = null;
+        let bestD = 14;
+        for (const [id, p] of coordsRef.current) {
+          const d = Math.hypot(p[0] - px, p[1] - py);
+          if (d < bestD) { bestD = d; best = id; }
+        }
+        if (best !== hoverNodeRef.current) {
+          hoverNodeRef.current = best;
+          const PURPLE = "rgba(138,92,199,0.85)";
+          const PURPLE_DIM = "rgba(138,92,199,0.45)";
+          const data = (inst.getOption()?.series?.[0]?.data ?? []) as Array<any>;
+          const links = (inst.getOption()?.series?.[0]?.links ?? []) as Array<any>;
+          const related = best != null ? new Set([best, ...(adjRef.current.get(best) || [])]) : null;
+          for (const d of data) {
+            // 首次缓存原始样式（恢复用）
+            if (!d.__orig) d.__orig = {
+              color: d.itemStyle?.color, opacity: d.itemStyle?.opacity,
+              borderColor: d.itemStyle?.borderColor, borderWidth: d.itemStyle?.borderWidth,
+            };
+            const o = d.__orig;
+            if (related && related.has(d.id)) {
+              // 关联节点（含命中节点本体）：紫色
+              d.itemStyle = {
+                ...d.itemStyle,
+                color: d.id === best ? "rgba(138,92,199,0.95)" : "rgba(138,92,199,0.65)",
+                opacity: 0.95,
+                borderColor: "#7b4fc0",
+                borderWidth: d.id === best ? 2 : 1,
+              };
+            } else if (related) {
+              // 非关联节点：淡化（透明度增加）
+              d.itemStyle = { ...d.itemStyle, color: o.color, opacity: 0.12 };
+            } else {
+              // 无 hover：恢复原始样式
+              d.itemStyle = { ...d.itemStyle, color: o.color, opacity: o.opacity, borderColor: o.borderColor, borderWidth: o.borderWidth };
+            }
+          }
+          for (const l of links) {
+            if (!l.__orig) l.__orig = { color: l.lineStyle?.color, width: l.lineStyle?.width };
+            const o = l.__orig;
+            const isRel = related && (l.source === best || l.target === best);
+            l.lineStyle = {
+              ...l.lineStyle,
+              color: isRel ? PURPLE : (related ? PURPLE_DIM : o.color),
+              width: isRel ? 1.6 : (related ? 0.6 : (o.width ?? 0.9)),
+            };
+          }
+          inst.setOption({ series: [{ data, links }] });
+        }
+        return;
+      }
+      // —— 拖动联动（按下节点后）：直连邻居实时跟随相同位移 ——
       const data = (inst.getOption()?.series?.[0]?.data ?? []) as Array<{ id?: string; x?: number; y?: number }>;
       const idx = data.findIndex((d) => d.id === downNode);
       if (idx < 0) return;
