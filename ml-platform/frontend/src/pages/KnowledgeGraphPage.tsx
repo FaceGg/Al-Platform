@@ -69,7 +69,7 @@ export default function KnowledgeGraphPage() {
     inLibrary: "库内实体", viewOf: "当前视图",
     viewHint: (lib: number, view: number) => `库内 ${lib} 实体 · 视图 ${view} 个${view < lib ? "（Top 高频 + 其关系）" : ""}`,
     neighborhood: "邻域",
-    expandHint: "点击实体聚焦邻域 · 滚轮缩放 / 拖动平移 / 拖拽节点",
+    expandHint: "点击实体高亮其邻域 · 滚轮缩放 / 拖动平移 / 拖拽节点",
     resetView: "重置视图",
     degreeLabel: "度数",
   } : {
@@ -83,7 +83,7 @@ export default function KnowledgeGraphPage() {
     inLibrary: "In library", viewOf: "View",
     viewHint: (lib: number, view: number) => `${lib} entities in library · ${view} in view${view < lib ? " (top hubs + their edges)" : ""}`,
     neighborhood: "Neighborhood",
-    expandHint: "Click an entity to focus · scroll to zoom / drag to pan / drag nodes",
+    expandHint: "Click an entity to highlight its links · scroll to zoom / drag to pan / drag nodes",
     resetView: "Reset view",
     degreeLabel: "Links",
   };
@@ -145,26 +145,28 @@ export default function KnowledgeGraphPage() {
     return d;
   }, [graphData.edges]);
 
-  // 视图模型：聚焦邻域 或 Top-N 总览（数据全量在 graphData，渲染只取子集）
+  // 视图模型：Top-N 总览；聚焦实体不在视图内时才并入其邻域（视图内容不变的
+  // 点击只做粘性高亮，echarts-for-react 深比较跳过 setOption，力导向不重算）
   const view = useMemo((): GraphData => {
     const all = graphData.nodes;
-    if (focusId) {
-      const keep = new Set([focusId]);
+    if (all.length === 0) return graphData;
+    const keep = new Set<string>();
+    if (all.length > viewSize) {
+      const hubs = [...all]
+        .sort((a, b) => (b.freq || 0) - (a.freq || 0)
+          || (degree.get(b.id) || 0) - (degree.get(a.id) || 0))
+        .slice(0, viewSize);
+      for (const n of hubs) keep.add(n.id);
+    } else {
+      for (const n of all) keep.add(n.id);
+    }
+    if (focusId && !keep.has(focusId)) {
+      keep.add(focusId);
       for (const e of graphData.edges) {
         if (e.source === focusId) keep.add(e.target);
         if (e.target === focusId) keep.add(e.source);
       }
-      return {
-        nodes: all.filter((n) => keep.has(n.id)),
-        edges: graphData.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
-      };
     }
-    if (all.length <= viewSize) return graphData;
-    const hubs = [...all]
-      .sort((a, b) => (b.freq || 0) - (a.freq || 0)
-        || (degree.get(b.id) || 0) - (degree.get(a.id) || 0))
-      .slice(0, viewSize);
-    const keep = new Set(hubs.map((n) => n.id));
     return {
       nodes: all.filter((n) => keep.has(n.id)),
       edges: graphData.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
@@ -221,18 +223,21 @@ export default function KnowledgeGraphPage() {
   const option = useMemo(() => {
     const nodeCount = view.nodes.length;
     if (nodeCount === 0) return {};
-    const repulsion = Math.min(400, 80 + nodeCount * 4);
+    const repulsion = Math.min(500, 100 + nodeCount * 4);
     const nodes = view.nodes.map((n) => {
       const deg = degree.get(n.id) || 0;
-      const freqBoost = Math.min(4, (n.freq || 0) / 25);
+      const size = Math.min(28, 4 + Math.sqrt(deg) * 1.5);
       return {
         id: n.id,
         name: n.label,
         category: groupIndexOf(n),
-        symbolSize: Math.min(38, 10 + Math.sqrt(deg) * 5 + freqBoost),
+        // Obsidian 尺寸分布：绝大多数是小圆点，只有度数枢纽明显放大；
+        // 小节点隐藏标签（hover 才显示），避免满屏文字挤压
+        symbolSize: size,
+        label: { show: size >= 10 },
         itemStyle: {
           color: groupColorOf(n),
-          // Obsidian 式小节点淡化：度数越低越透明，减轻低频实体「点海」的视觉压迫
+          // 小节点淡化：度数越低越透明，减轻低频实体「点海」的视觉压迫
           opacity: 0.55 + Math.min(0.45, (deg / 16) * 0.45),
         },
         raw: n,
@@ -275,10 +280,12 @@ export default function KnowledgeGraphPage() {
         layout: "force",
         roam: true,
         draggable: true,
+        // 圆环初始布局 + 较强向心力：整体轮廓收敛成近似圆形团聚（Obsidian 观感）
+        initLayout: "circular",
         force: {
           repulsion,
-          edgeLength: [50, 110],
-          gravity: 0.25,
+          edgeLength: [55, 85],
+          gravity: 0.38,
           layoutAnimation: nodeCount <= 300,
         },
         categories: grouping?.items.map((g) => ({ name: g.name })) || [],
@@ -300,6 +307,7 @@ export default function KnowledgeGraphPage() {
         edgeLabel: { show: false },
         emphasis: {
           focus: "adjacency",
+          label: { show: true },
           itemStyle: { shadowBlur: 12, shadowColor: "rgba(0,0,0,0.35)" },
           lineStyle: { width: 2, opacity: 0.9 },
         },
@@ -320,6 +328,20 @@ export default function KnowledgeGraphPage() {
       if (id) setFocusId(focusIdRef.current === id ? null : id);
     },
   }), []);
+
+  // 聚焦=邻域粘性高亮：dispatchAction 只改状态不改数据，option 深比较不变则
+  // setOption 被跳过，力导向不重算——点击后其他节点不会抖动
+  useEffect(() => {
+    const inst = chartRef.current?.getEchartsInstance?.();
+    if (!inst) return;
+    inst.dispatchAction({ type: "downplay", seriesIndex: 0 });
+    if (focusId) {
+      const idx = view.nodes.findIndex((n) => n.id === focusId);
+      if (idx >= 0) {
+        inst.dispatchAction({ type: "highlight", seriesIndex: 0, dataIndex: idx });
+      }
+    }
+  }, [focusId, view]);
 
   const resetView = () => {
     const inst = chartRef.current?.getEchartsInstance?.();

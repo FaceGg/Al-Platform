@@ -1884,6 +1884,19 @@ PageHeading desc / 内嵌说明条删除：①智能体中心→知识中心 tab
 
 **验证**：test_knowledge 容器内复跑通过；KnowledgeGraphPage 2 tests + tsc build 通过（frontend 镜像重建 chunk hash 核验）；点焊库重新抽取（52331ms，5,070 实体/88,775 关系）；浏览器实测——图例显示「概念/术语/机构/人物/地点」中文、tooltip 全中文（限值/概念/自动/度数:173/出处文档 3 篇）、小节点淡化分层清晰、console 零错误。
 
+## 2026-11-19 追加二：知识图谱观感三轮调优 + 抽取卡死根治（FK 索引缺失 + 批量持久化）
+
+**用户三问**：①尺寸分布要「少数大圆点+大量小圆点」，现在太乱相互遮挡；②点击节点其他节点剧烈抖动；③「圆形」指整体轮廓应是圆形团聚（不只节点形状）。
+
+**前端**（[KnowledgeGraphPage.tsx](ml-platform/frontend/src/pages/KnowledgeGraphPage.tsx)）：
+1. **点击零抖动**：抖动根因是点击→focusId→视图重筛→option 全新→setOption 力导向从圆环重算。改为**粘性邻域高亮**：点击/搜索只 `dispatchAction highlight/downplay`（echarts-for-react 对 option 深比较，数据不变则 setOption 被完全跳过，已核 node_modules core.js pickKeys 机制），视图仅在聚焦实体不在 Top-N 内时才并入其邻域（搜索库内低频实体仍可达）。实测点击后布局逐点不变、邻域亮其余淡。
+2. **尺寸分布**：`10+sqrt(deg)*5` → `4+sqrt(deg)*1.5` 上限 28——deg173 枢纽 23px，多数节点 5-10px 小点；小节点（<10px）隐藏标签、hover 才显示（emphasis.label.show），减少满屏文字。
+3. **圆形轮廓**：`initLayout:'circular'` + gravity 0.25→0.38 + edgeLength [50,110]→[55,85]，收敛为近圆团聚，外围拖尾消失。
+
+**后端抽取卡死根治**（[knowledge_graph_extraction.py](ml-platform/backend/app/services/knowledge_graph_extraction.py) + 迁移 102）：重抽点焊库从 52s 劣化到 >180s 卡死且并发请求互相持锁。链路取证（pg_stat_activity）：服务端事务卡在逐条 DELETE 实体——根因是 **graph_relations.kb_id/source_id/target_id 与 graph_entities.kb_id 四个列全无索引**（基线建表只有主键，Postgres 不给 FK 自动建索引），每删一行都对 8.8 万行子表全表扫描，多次重抽表膨胀后雪崩。修复：①`_clear_auto_layer` 逐条 ORM 删除→批量 `.delete()`；②持久化逐条 `db.add()` 8.8 万关系→客户端生成 uuid + `insert().values()` 分块 executemany（实体 2k/批、关系 5k/批，max_relations 截断语义不变）；③STOPWORDS 补英文虚词 of/to/in/on/at/by/as/is/or/be/not/shall/may（of/to 等不再成为实体）；④迁移 `20261119_102_graph_fk_indexes`（模型列 index=True + create_index×4，downgrade 齐备）。**注意：migrate 服务是独立构建镜像，改迁移后必须 `docker compose build migrate` 再 `run --rm migrate`，只 build backend 不会执行新迁移**（本次踩坑：backend 因 DATABASE_SCHEMA_OUTDATED 拒启）。
+
+**验证**：迁移 Running upgrade 20261114_101→20261119_102 ✓、四索引 pg_indexes 就位 ✓；重抽 **15.5s**（5,057 实体/85,949 关系，of/to/in/on 已不生成）；test_knowledge 18 tests OK（SQLite 兼容）；前端 2 tests + build 通过、镜像重建部署。浏览器实测：整体近圆团聚无拖尾、边缘节点显著变小、滚轮缩放生效、点击列表实体布局零变化+粘性高亮、tooltip 全中文、console 零错误。
+
 ## 2026-11-19 追加：知识库向量化文案/图谱抽取预算/上传分块/图谱环形布局（用户实测四项）
 
 1. **「已向量化0个分块」文案误导**：前端读 `count` 字段而端点返回 `vectorized/already_vectorized`（恒 0）。改按真实字段：本次新增 N 块 / 「全部 626 个分块此前已向量化，无需重复处理」。

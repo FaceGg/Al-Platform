@@ -54,7 +54,7 @@ class GraphEntity(Base):
     __tablename__ = "graph_entities"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    kb_id = Column(UUID(as_uuid=True), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    kb_id = Column(UUID(as_uuid=True), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(256), nullable=False, index=True)
     entity_type = Column(String(64), default="concept")
     properties = Column(JSON, default=dict)
@@ -69,9 +69,9 @@ class GraphRelation(Base):
     __tablename__ = "graph_relations"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    kb_id = Column(UUID(as_uuid=True), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
-    source_id = Column(UUID(as_uuid=True), ForeignKey("graph_entities.id", ondelete="CASCADE"), nullable=False)
-    target_id = Column(UUID(as_uuid=True), ForeignKey("graph_entities.id", ondelete="CASCADE"), nullable=False)
+    kb_id = Column(UUID(as_uuid=True), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_id = Column(UUID(as_uuid=True), ForeignKey("graph_entities.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_id = Column(UUID(as_uuid=True), ForeignKey("graph_entities.id", ondelete="CASCADE"), nullable=False, index=True)
     relation_type = Column(String(64), default="related_to")
     properties = Column(JSON, default=dict)
     created_at = Column(DateTime, server_default=func.now())

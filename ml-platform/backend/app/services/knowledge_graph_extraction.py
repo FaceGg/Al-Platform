@@ -14,7 +14,10 @@ decides what to render.
 import re
 import time
 import unicodedata
+import uuid
 from collections import Counter, defaultdict
+
+from sqlalchemy import insert
 
 from app.config import settings
 from app.models.knowledge import GraphEntity, GraphRelation
@@ -27,6 +30,7 @@ STOPWORDS = {
     "可以", "应该", "需要", "使用", "进行", "出现", "发生", "导致", "造成", "问题",
     "情况", "方法", "方式", "结果", "原因", "时候", "方面", "内容", "数据", "系统",
     "the", "and", "for", "with", "this", "that", "from", "are", "was", "were",
+    "of", "to", "in", "on", "at", "by", "as", "is", "or", "be", "not", "shall", "may",
     # 法律/规范文本高频虚词与套话
     "应当", "不得", "可以", "有关", "下列", "或者", "以及", "其中", "依法", "按照",
     "要求", "规定", "办法", "管理", "责任", "部门", "单位", "机构", "国家", "实行",
@@ -133,40 +137,50 @@ def extract_kb_graph(db, kb, doc_contents: list[tuple[str, str]]) -> dict:
             truncated = True
             break
 
-    # Persist: replace the auto layer, keep manual rows untouched.
+    # Persist: replace the auto layer, keep manual rows untouched. Entity ids
+    # are generated client-side so relations can be bulk-inserted too: per-row
+    # db.add() emits 88k+ single INSERTs, which on bloated tables degrades a
+    # re-extract into minutes-long stalls (observed 2026-11-19).
     _clear_auto_layer(db, kb.id)
-    entity_ids: dict[str, GraphEntity] = {}
+    entity_rows: list[dict] = []
+    entity_ids: dict[str, uuid.UUID] = {}
     for name, count in (ranked if not max_entities else ranked[:max_entities]):
+        entity_ids[name] = uuid.uuid4()
         pos_counter = entity_pos.get(name)
         entity_type = "concept"
         if pos_counter:
             top_flag, _ = pos_counter.most_common(1)[0]
             entity_type = POS_ENTITY_TYPE.get(top_flag, "concept")
-        entity = GraphEntity(
-            kb_id=kb.id, name=name, entity_type=entity_type,
-            properties={
+        entity_rows.append({
+            "id": entity_ids[name], "kb_id": kb.id, "name": name,
+            "entity_type": entity_type,
+            "properties": {
                 "source": "auto", "method": "rules", "freq": count,
                 "doc_ids": sorted(doc_freq.get(name, set())),
             },
-        )
-        db.add(entity)
-        entity_ids[name] = entity
-    db.flush()
-
-    relations_created = 0
-    for (source, target, relation_type), weight in relation_counter.most_common():
-        if 0 < max_relations <= relations_created:
-            truncated = True
-            break
-        db.add(GraphRelation(
-            kb_id=kb.id, source_id=entity_ids[source].id, target_id=entity_ids[target].id,
-            relation_type=relation_type,
-            properties={"source": "auto", "method": "rules", "weight": weight},
-        ))
-        relations_created += 1
+        })
+    relations_rows = [
+        {
+            "kb_id": kb.id,
+            "source_id": entity_ids[source],
+            "target_id": entity_ids[target],
+            "relation_type": relation_type,
+            "properties": {"source": "auto", "method": "rules", "weight": weight},
+        }
+        for (source, target, relation_type), weight in relation_counter.most_common()
+    ]
+    relations_created = len(relations_rows)
+    if 0 < max_relations < relations_created:
+        relations_rows = relations_rows[:max_relations]
+        relations_created = max_relations
+        truncated = True
+    for start in range(0, len(entity_rows), 2000):
+        db.execute(insert(GraphEntity).values(entity_rows[start:start + 2000]))
+    for start in range(0, len(relations_rows), 5000):
+        db.execute(insert(GraphRelation).values(relations_rows[start:start + 5000]))
     db.commit()
 
-    return _report(len(entity_ids), relations_created, candidates, started, truncated)
+    return _report(len(entity_rows), relations_created, candidates, started, truncated)
 
 
 def _report(entities: int, relations: int, candidates: int, started: float, truncated: bool) -> dict:
@@ -180,7 +194,12 @@ def _report(entities: int, relations: int, candidates: int, started: float, trun
 
 
 def _clear_auto_layer(db, kb_id) -> int:
-    """Delete this KB's auto entities and their relations; manual rows survive."""
+    """Delete this KB's auto entities and their relations; manual rows survive.
+
+    Both deletes are bulk SQL: per-entity ORM deletes fire an FK existence
+    check against ~88k relation rows each, which after repeated re-extraction
+    bloats into minutes-long stalls (observed 2026-11-19).
+    """
     auto_entities = db.query(GraphEntity).filter(
         GraphEntity.kb_id == kb_id,
         GraphEntity.properties["source"].as_string() == "auto",
@@ -192,6 +211,5 @@ def _clear_auto_layer(db, kb_id) -> int:
         GraphRelation.kb_id == kb_id,
         GraphRelation.source_id.in_(auto_ids) | GraphRelation.target_id.in_(auto_ids),
     ).delete(synchronize_session=False)
-    for entity in auto_entities:
-        db.delete(entity)
-    return len(auto_entities)
+    db.query(GraphEntity).filter(GraphEntity.id.in_(auto_ids)).delete(synchronize_session=False)
+    return len(auto_ids)
