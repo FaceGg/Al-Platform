@@ -406,18 +406,22 @@ export default function KnowledgeGraphPage() {
     };
     const l1 = view.nodes.filter((n) => levelMap.get(n.id) === 1);
     const l2 = view.nodes.filter((n) => levelMap.get(n.id) === 2);
-    const R1 = 0.30, R2 = 0.62; // 相对半宽的归一化半径
+    // graph layout:"none" 的 x/y 是像素坐标——归一化 0-1 曾致全节点挤在
+    // 左上原点（画布空白/中心黑团）。按窗口估算图区尺寸后转像素。
+    const VW = Math.max(420, window.innerWidth * 0.55);
+    const VH = 620;
+    const RR = Math.min(VW, VH) * 0.42;
     const posMap = new Map<string, [number, number]>();
-    posMap.set(centerId, [0.5, 0.5]);
+    posMap.set(centerId, [VW / 2, VH / 2]);
     l1.forEach((n, i) => {
       const a = (i / Math.max(1, l1.length)) * Math.PI * 2 - Math.PI / 2
         + (hash01(n.id, 3) - 0.5) * 0.5;
-      posMap.set(n.id, [0.5 + R1 * Math.cos(a), 0.5 + R1 * Math.sin(a)]);
+      posMap.set(n.id, [VW / 2 + RR * 0.6 * Math.cos(a), VH / 2 + RR * 0.6 * Math.sin(a)]);
     });
     l2.forEach((n, i) => {
       const a = (i / Math.max(1, l2.length)) * Math.PI * 2 + 1.1
         + (hash01(n.id, 4) - 0.5) * 0.3;
-      posMap.set(n.id, [0.5 + R2 * Math.cos(a), 0.5 + R2 * Math.sin(a)]);
+      posMap.set(n.id, [VW / 2 + RR * Math.cos(a), VH / 2 + RR * Math.sin(a)]);
     });
 
     const repulsion = Math.min(600, 150 + nodeCount * 1.1);
