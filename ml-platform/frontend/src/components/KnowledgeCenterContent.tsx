@@ -380,40 +380,30 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
             {
               title: text.colName,
               dataIndex: 'name',
-              render: (value: string, record: Record<string, unknown>) => (
-                <Space size={4}>
-                  <span className="tt">{value}</span>
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<EditOutlined />}
-                    title={text.kbEditTitle}
-                    onClick={() => setKbEdit({ id: String(record.id), name: String(value ?? ''), text: String(record.description ?? '') })}
-                  />
-                </Space>
-              ),
+              render: (value: string) => <span className="tt">{value}</span>,
             },
-            { title: text.col_desc, dataIndex: 'description', ellipsis: true, render: (v: string, record: Record<string, unknown>) => (
-              <Space size={4}>
-                <span>{v || '—'}</span>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<EditOutlined />}
-                  title={text.kbEditTitle}
-                  onClick={() => setKbEdit({ id: String(record.id), name: String(record.name ?? ''), text: String(v ?? '') })}
-                />
-              </Space>
-            ) },
+            { title: text.col_desc, dataIndex: 'description', ellipsis: true, render: (v: string) => v || '—' },
             { title: text.col_doc_count, dataIndex: 'document_count', width: 80, render: (v: number) => v ?? 0 },
             {
               title: text.colActions,
               key: 'actions',
-              width: 220,
+              width: 260,
               render: (_: unknown, record: Record<string, unknown>) => {
                 const isSystemKb = systemKbIds.has(String(record.id));
                 return (
                 <Space>
+                  {/* 名称/描述统一走一个编辑按钮（用户反馈：不要两列铅笔） */}
+                  <Button
+                    size="small"
+                    icon={<EditOutlined />}
+                    onClick={() => setKbEdit({
+                      id: String(record.id),
+                      name: String(record.name ?? ''),
+                      text: String(record.description ?? ''),
+                    })}
+                  >
+                    {text.kbEditBtn}
+                  </Button>
                   <Button
                     size="small"
                     icon={<FileTextOutlined />}
