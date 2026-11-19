@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>竞品对比与新平台分析简报：本平台 vs AI Quality Guard vs 工序平台</title>
+<style>
+  :root {
+    --ink: #1f2937; --muted: #6b7280; --line: #e5e7eb;
+    --bg: #ffffff; --soft: #f8fafc; --green: #0e7b44; --blue: #5b7c99;
+    --accent-soft: #ecf5f0;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+    color: var(--ink); background: var(--bg); line-height: 1.65;
+    max-width: 980px; margin: 0 auto; padding: 40px 28px 56px;
+  }
+  h1 { font-size: 24px; margin-bottom: 6px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .meta span { margin-right: 18px; }
+  h2 { font-size: 17px; margin: 30px 0 10px; padding-left: 10px; border-left: 4px solid var(--green); }
+  p.note { color: var(--muted); font-size: 13px; margin: 4px 0 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 8px 0 4px; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--soft); font-weight: 600; white-space: nowrap; }
+  td.num { text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.ours td { background: #fbfefc; }
+  tr.summary td { background: var(--soft); border-top: 2px solid #cfd6e0; }
+  tr.summary td.num, tr.summary td:first-child { font-weight: 700; }
+  .part { margin: 40px 0 8px; font-size: 13px; letter-spacing: 3px; color: var(--muted); font-weight: 700; display: flex; align-items: center; gap: 12px; }
+  .part::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .part-break { break-before: page; }
+  h3.sub { font-size: 14.5px; margin: 18px 0 6px; }
+  .kpi-row { display: flex; flex-wrap: wrap; gap: 12px; margin: 10px 0 6px; }
+  .kpi { flex: 1 1 130px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; background: var(--soft); }
+  .kpi .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .kpi .l { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .bar-wrap { background: #eef1f5; border-radius: 4px; height: 10px; min-width: 90px; margin-top: 4px; }
+  .bar-fill { height: 10px; border-radius: 4px; }
+  .bar-m { background: var(--blue); }
+  .bar-a { background: #d98524; }
+  .bar-cell { white-space: nowrap; font-size: 12px; color: var(--muted); }
+  tr.warn td { background: #fdf8f0; }
+  ul, ol { padding-left: 22px; font-size: 13.5px; }
+  li { margin: 5px 0; }
+  li b { color: var(--ink); }
+  .legend-row { display: flex; gap: 24px; justify-content: center; font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .legend-row .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .score-bar { display: inline-block; height: 8px; border-radius: 4px; vertical-align: 1px; }
+  .p0 { color: #b45309; font-weight: 600; }
+  .p1 { color: var(--muted); font-weight: 600; }
+  .quote { border-left: 3px solid var(--line); padding: 8px 14px; background: var(--soft); font-size: 13.5px; margin: 10px 0; }
+  .footer { color: var(--muted); font-size: 12px; margin-top: 36px; border-top: 1px solid var(--line); padding-top: 12px; }
+  .switch-bar { display: flex; gap: 10px; margin: 0 0 6px; }
+  .switch-btn { font: inherit; font-size: 14px; font-weight: 600; padding: 8px 24px; border-radius: 999px; border: 1px solid var(--line); background: var(--soft); color: var(--muted); cursor: pointer; transition: all .15s ease; }
+  .switch-btn:hover { border-color: var(--green); color: var(--green); }
+  .switch-btn.active { background: var(--green); border-color: var(--green); color: #fff; }
+  @media print { body { padding: 12px; } h2 { break-after: avoid; } table { break-inside: avoid; }
+    .switch-bar { display: none; } .view { display: block !important; } }
+</style>
+</head>
+<body>
+
+<h1>竞品对比与新平台分析简报：本平台 · AI Quality Guard · 工序工业时序建模平台</h1>
+<div class="meta">
+  <span>日期：2026-11-16（差异功能清单、交互实测记录与无监督专项核查 2026-11-18 更新）</span>
+  <span>调研方式：竞品三份内部文档 + 以管理员账号登录实例实测（111.228.32.230:8082，遍历 12 个核心页面）；2026-11-18 复测受限于凭据轮换，仅核验公开面</span>
+  <span>结论有效期：竞品功能版本 v20261115.17</span>
+  <span>使用方式：点击下方按钮切换「对比简报 / 竞品分析 / 工序平台分析 / 工序 vs 本平台 / 三平台对比·路线」五个视图；打印或导出 PDF 时五部分自动全部包含</span>
+</div>
+
+<div class="switch-bar">
+  <button id="btn-brief" class="switch-btn active" type="button" onclick="showView('brief')">对比简报</button>
+  <button id="btn-report" class="switch-btn" type="button" onclick="showView('report')">竞品分析</button>
+  <button id="btn-newplat" class="switch-btn" type="button" onclick="showView('newplat')">工序平台分析</button>
+  <button id="btn-vsours" class="switch-btn" type="button" onclick="showView('vsours')">工序 vs 本平台</button>
+  <button id="btn-trio" class="switch-btn" type="button" onclick="showView('trio')">三平台对比·路线</button>
+</div>
+
+<div id="view-brief" class="view">
+<div class="part">第一部分 · 对比简报</div>
+
+<h2>一、定位差异</h2>
+<table>
+  <tr><th style="width:90px">维度</th><th>本平台（灵工 · 工业智能平台）</th><th>竞品（AI Quality Guard）</th></tr>
+  <tr><td>定位</td><td>面向<b>工程师</b>的通用 MLOps + LLM 智能体编排平台</td><td>面向<b>质量部门</b>的“AI 预警 + MLOps + QMS 质量体系”三合一闭环平台</td></tr>
+  <tr><td>核心叙事</td><td>数据 → 标注 → AutoML → 工作流 → 模型库 → 推理部署 → 闭环自动化 → 智能体，拼<b>建模自动化与编排深度</b></td><td>预警 → 处置 → 标注 → 重训 → 发布 → 边缘，拼<b>质量闭环完整性与可审核性</b></td></tr>
+  <tr><td>技术栈</td><td>React + FastAPI + PostgreSQL + Redis + MinIO + MLflow + 独立推理运行时，十余个容器服务</td><td>FastAPI + MySQL + Kafka，无构建静态站（原生 JS），2C/1.9G 低资源设计</td></tr>
+</table>
+
+<h2>二、能力雷达对比（0–5 分）</h2>
+<p class="note">评分依据：竞品文档宣称 + 登录实测核验；本平台依据代码与功能现状。</p>
+
+<svg viewBox="0 0 660 480" width="100%" style="max-width:620px;display:block;margin:0 auto" role="img" aria-label="能力雷达图">
+  <!-- 网格环（1-5 分） -->
+  <g fill="none" stroke="#dfe4ea" stroke-width="1">
+    <polygon points="320,202 346.9,213.1 358,240 346.9,266.9 320,278 293.1,266.9 282,240 293.1,213.1"/>
+    <polygon points="320,164 373.7,186.3 396,240 373.7,293.7 320,316 266.3,293.7 244,240 266.3,186.3"/>
+    <polygon points="320,126 400.6,159.4 434,240 400.6,320.6 320,354 239.4,320.6 206,240 239.4,159.4"/>
+    <polygon points="320,88 427.5,132.5 472,240 427.5,347.5 320,392 212.5,347.5 168,240 212.5,132.5"/>
+    <polygon points="320,50 454.4,105.6 510,240 454.4,374.4 320,430 185.6,374.4 130,240 185.6,105.6" stroke="#c3cbd6"/>
+  </g>
+  <!-- 轴线 -->
+  <g stroke="#e2e7ee" stroke-width="1">
+    <line x1="320" y1="240" x2="320" y2="50"/>
+    <line x1="320" y1="240" x2="454.4" y2="105.6"/>
+    <line x1="320" y1="240" x2="510" y2="240"/>
+    <line x1="320" y1="240" x2="454.4" y2="374.4"/>
+    <line x1="320" y1="240" x2="320" y2="430"/>
+    <line x1="320" y1="240" x2="185.6" y2="374.4"/>
+    <line x1="320" y1="240" x2="130" y2="240"/>
+    <line x1="320" y1="240" x2="185.6" y2="105.6"/>
+  </g>
+  <!-- 竞品（钢蓝） -->
+  <polygon points="320,69 440.9,119.1 434,240 346.9,266.9 320,354 199.1,360.9 168,240 185.6,105.6"
+           fill="rgba(91,124,153,0.22)" stroke="#5b7c99" stroke-width="2" stroke-linejoin="round"/>
+  <!-- 本平台（绿） -->
+  <polygon points="320,126 427.5,132.5 510,240 427.5,347.5 320,411 212.5,347.5 244,240 306.6,226.6"
+           fill="rgba(14,123,68,0.30)" stroke="#0e7b44" stroke-width="2" stroke-linejoin="round"/>
+  <!-- 顶点 -->
+  <g fill="#5b7c99">
+    <circle cx="320" cy="69" r="4"/><circle cx="440.9" cy="119.1" r="4"/><circle cx="434" cy="240" r="4"/>
+    <circle cx="346.9" cy="266.9" r="4"/><circle cx="320" cy="354" r="4"/><circle cx="199.1" cy="360.9" r="4"/>
+    <circle cx="168" cy="240" r="4"/><circle cx="185.6" cy="105.6" r="4"/>
+  </g>
+  <g fill="#0e7b44">
+    <circle cx="320" cy="126" r="4"/><circle cx="427.5" cy="132.5" r="4"/><circle cx="510" cy="240" r="4"/>
+    <circle cx="427.5" cy="347.5" r="4"/><circle cx="320" cy="411" r="4"/><circle cx="212.5" cy="347.5" r="4"/>
+    <circle cx="244" cy="240" r="4"/><circle cx="306.6" cy="226.6" r="4"/>
+  </g>
+  <!-- 轴标签 -->
+  <g font-size="15" fill="#4b5563" text-anchor="middle" font-family="inherit">
+    <text x="320" y="26">数据接入</text>
+    <text x="472" y="88">标注体系</text>
+    <text x="536" y="245">AutoML建模</text>
+    <text x="472" y="410">工作流编排</text>
+    <text x="320" y="458">LLM智能体</text>
+    <text x="168" y="410">推理部署</text>
+    <text x="103" y="245">模型监控</text>
+    <text x="168" y="88">质量体系</text>
+  </g>
+  <!-- 刻度提示 -->
+  <g font-size="11" fill="#9ca3af" text-anchor="start">
+    <text x="326" y="200">1</text><text x="326" y="162">2</text><text x="326" y="124">3</text>
+    <text x="326" y="86">4</text><text x="326" y="48">5</text>
+  </g>
+</svg>
+<div class="legend-row">
+  <span><span class="sw" style="background:rgba(14,123,68,0.85)"></span>本平台（灵工）</span>
+  <span><span class="sw" style="background:rgba(91,124,153,0.85)"></span>竞品（AI Quality Guard）</span>
+</div>
+
+<table>
+  <tr><th style="width:110px">维度</th><th style="width:70px">本平台</th><th style="width:70px">竞品</th><th>差异要点</th></tr>
+  <tr class="ours"><td>数据接入</td><td class="num">3.0</td><td class="num">4.5</td><td>竞品多 Kafka 实时链路与 MySQL/PG 只读直连；本平台以文件上传为主</td></tr>
+  <tr class="ours"><td>标注体系</td><td class="num">4.0</td><td class="num">4.5</td><td>本平台三端协作/版本冲突/验收退回工程化强；竞品主动学习选样、Kappa 仲裁策略全</td></tr>
+  <tr class="ours"><td>AutoML 建模</td><td class="num">5.0</td><td class="num">3.0</td><td>7 算法族 × 5 种超参搜索 + 集成 + MLflow 追踪 vs 固定分类器下拉</td></tr>
+  <tr class="ours"><td>工作流编排</td><td class="num">5.0</td><td class="num">1.0</td><td>近 90 算子 DAG 画布 + Python 脚本算子 vs 无自由编排（纯固定页面）</td></tr>
+  <tr class="ours"><td>LLM 智能体</td><td class="num">4.5</td><td class="num">3.0</td><td>LLM 驱动建模智能体 / 应用编排 / RAG vs 规则型工具 + 模板审计问答</td></tr>
+  <tr class="ours"><td>推理部署</td><td class="num">4.0</td><td class="num">4.0</td><td>本平台金丝雀/条件分流 rollout、独立运行时；竞品边缘盒子 + 设备影子 + OTA</td></tr>
+  <tr class="ours"><td>模型监控</td><td class="num">2.0</td><td class="num">4.0</td><td>本平台 PSI 仅内嵌闭环触发；竞品独立漂移监控页（PSI+PCA+DQ，实测运转中）</td></tr>
+  <tr class="ours"><td>质量体系</td><td class="num">0.5</td><td class="num">5.0</td><td>SPC/8D/NCR/控制计划/MSA/预警处置：本平台空白，竞品机制齐全（多空态）</td></tr>
+  <tr class="summary">
+    <td>合计统计</td>
+    <td class="num">28.0</td>
+    <td class="num">29.0</td>
+    <td>均分 3.50 vs 3.63（单项满分 5，合计满分 40）；本平台领先 3 项，竞品领先 4 项，打平 1 项（推理部署）。总分接近、形状互补：本平台失分集中在质量体系单点（0.5 vs 5.0），赢在 AutoML 建模、工作流编排、LLM 智能体三大底座——该单点正是第四～六节补齐策略的靶心。</td>
+  </tr>
+</table>
+
+<h2>三、核心结论</h2>
+<ol>
+  <li><b>路线之争，火力点几乎不重叠</b>：拼技术底座（建模、编排、LLM、部署工程化）本平台全面领先；拼质量业务域（SPC、质量体系、预警处置、证据链）竞品全面领先。</li>
+  <li><b>本平台四大底座优势稳固</b>（实测确认竞品均无对应物）：AutoML 深度、可视化工作流编排、LLM 驱动智能体、推理部署工程化。</li>
+  <li><b>竞品是“框架真实、流量空转”的验证型实例</b>：14 条预警全部 SLA 超时未分配；主动学习任务等待标注 2 天无人处理；3 条工艺建议超过 72h 审批有效期被自动回收；全站页脚标注“实时链路未启动”，驾驶舱自曝推理数据已 4 天未更新。其卖点是闭环框架，不是闭环运营。</li>
+  <li><b>竞品成色最实的是漂移监控</b>：定时批检真实运转（实测当日 PSI 4.454 严重级、39/89 特征漂移、DQ 硬失败 15 条）。其“诚实设计”最值得抄：数据陈旧自曝横幅、风险分口径脚注、空态引导文案、审批过期回收、设备影子。</li>
+  <li><b>售前对抗实证弹药</b>（均有页面级证据）：47.5% 置信度即发“强飞溅”预警；已发布生产模型 F1 0.999（验证集仅 600 条带标签样本），发布门禁形同虚设；工艺参数优化对疑似 ID 列（wldindex，百万级取值）给出期望 NG 率 0.0% 的“建议窗口”。</li>
+</ol>
+
+<h2>四、功能缺口全景与可行性（竞品有、本平台无，共 37 项，2026-11-18 逐项复核）</h2>
+<p class="note">逐项评估结论：<b>无技术不可行项</b>——全部有清晰架构落点；真正的约束是范围与领域语义，不是能力。</p>
+<table>
+  <tr><th style="width:118px">域（项数）</th><th>缺口内容</th><th>架构落点</th><th style="width:60px">复杂度</th><th style="width:186px">可行性判断</th></tr>
+  <tr><td>A 实时接入（2）</td><td>Kafka 实时链路；MySQL/PG 只读数据源</td><td>compose 新增 Kafka + consumer 服务；SQLAlchemy + SELECT 白名单</td><td>中 / 小</td><td>✅ 可行；Kafka 会加重现有 13 服务栈，建议做成可选部署 profile</td></tr>
+  <tr><td>B 预警监控（5）</td><td>预警中心；处置工作台；实时生产监控；质量 KPI 驾驶舱；趋势/帕累托</td><td>新表 + API router + React 页面；复用闭环事件流与通知中心</td><td>小-中</td><td>✅ 最易落地的一批</td></tr>
+  <tr><td>C 质量工程（11）</td><td>SPC；MSA；FMEA；8D；NCR/CAPA；供应商 IQC→SCAR；动态控制计划；案例中心；质量报告；批次追溯；知识库</td><td>表单 + 状态机 + 统计公式 + 图表；8D 草稿可复用 LLM 网关</td><td>各小、合计大</td><td>✅ 技术可行；成本在 IATF 16949/8D 领域口径评审。竞品实测 NCR/SCAR/控制计划/知识库均为空态——投标 checkbox，非日用功能</td></tr>
+  <tr><td>D 模型运营（7）</td><td>独立漂移监控页；影子推理；发布门禁；可信度评分+CBPE（含模型卡、单样本解释）；主动学习选样（熵/Margin/最小置信度等 9 种不确定性策略）；多标注者 Kappa+仲裁（含整簇纯度门槛≥0.8 且≥10、聚类注册表）；Champion/Challenger 别名</td><td>PSI 从闭环抽出独立报告；影子=推理运行时双版本并行打分（rollout 基建已有）；选样=predict_proba 采样；整簇标注本平台已有（annotation_strategies 聚类发现+簇策略命中），缺纯度门槛门禁与聚类注册表</td><td>中</td><td>✅ 可行且回报高；Kappa 需把单标注员指派制改为多人标注+仲裁，触及标注员门户核心流程，回归面最大</td></tr>
+  <tr><td>E 智能体治理（5）</td><td>四眼审批中心；智能体动作审计；审计问答（证据引用）；工艺参数分析/优化（响应曲线+候选窗口+DOE 建议+单样本多曲线叠加/目标窗口）；自然语言问数</td><td>复用应用编排 AgentTask 审批流泛化；审计问答=LLM 网关+SQL 白名单（RAG/向量库基建已有）</td><td>中-大</td><td>✅ 审计问答是本平台反超点（LLM 深度远超竞品模板问答）；工艺参数优化需先建特征语义防线，否则重蹈竞品“ID 列推 0% NG 窗口”覆辙</td></tr>
+  <tr><td>F 边缘体系（3）</td><td>推理盒子管理；设备影子（desired/reported）；灰度/OTA/断网补传</td><td>ONNX 转换/导出已有；缺盒子代理程序（心跳/环形缓冲/幂等）+ 管理页</td><td>大</td><td>⚠️ 代码可行，唯一有非代码前提的域：需硬件供应链与现场运维能力，无真实边缘订单前不建议启动</td></tr>
+  <tr><td>G 平台配套（4）</td><td>钉钉/企业微信/短信通知通道（本平台已有 SMTP 邮件+通用 Webhook）；场景与设备管理（字段角色/心跳）；证据链 ZIP 导出（SHA-256）；QMS/MES 只读数据开放接口（API Key/轮换/掩码，供外部系统主动取数）</td><td>通知适配器；配置页；audit 日志打包；复用 platform_api 的 API 发布/鉴权基建改造为业务数据只读开放</td><td>小</td><td>✅ 随手可做；本平台 platform_api 已有 API 开放基建但方向相反（对外发布模型/编排/对话能力，非数据只读开放）</td></tr>
+</table>
+
+<h2>五、补齐策略：一次性全量（37 项） vs 推荐门控式分批</h2>
+<table>
+  <tr><th style="width:86px">对比维度</th><th>一次性全量补齐</th><th>推荐：门控式分批（同样覆盖 37 项，节奏不同）</th></tr>
+  <tr><td>交付节奏</td><td>37 项并行开发、一次交付</td><td>首批 13 项（约 1/3 范围）做实 → 二批 10 项反超 → QMS 10 项按单逐项 → 边缘 3 项 + DOE 1 项条件触发</td></tr>
+  <tr><td>竞争力</td><td>形式上 100% 对齐，但含竞品实测空壳功能（NCR/SCAR/控制计划等 0 记录）</td><td>首批即覆盖竞品实际运转的能力，形成正面对打；其余按需补齐</td></tr>
+  <tr><td>主线影响</td><td>11 项 QMS 长尾与本平台主线（AutoML/工作流/LLM）零复用，挤占差异化迭代带宽</td><td>主线带宽受控，四大底座优势持续迭代</td></tr>
+  <tr><td>风险节奏</td><td>Kafka 栈膨胀、质量域语义门槛、标注流程重构一次性全担</td><td>分批释放；Kappa 核心流程重构独占二批；边缘等硬件前提到位再动</td></tr>
+  <tr><td>维护成本</td><td>全量长期维护，含低使用率模块</td><td>空态型模块按单才建，不背无谓维护</td></tr>
+</table>
+
+<h2>六、推荐补齐路线（四段门控，覆盖全部 37 项）</h2>
+<table>
+  <tr><th style="width:142px">批次</th><th style="width:48px">项数</th><th>内容</th><th style="width:158px">启动门控</th></tr>
+  <tr><td class="p0">第一批 · 闭环运营必需集</td><td class="num">13</td><td>预警中心、处置工作台、质量 KPI 驾驶舱、趋势/帕累托、实时生产监控、SPC 控制图、Kafka 实时接入、外部数据库直连、独立漂移监控页、场景与设备管理、通知渠道补齐（钉钉/企业微信/短信）、证据链导出、QMS/MES 只读开放接口。随批落地五项“抄作业”：陈旧数据自检横幅、置信度/风险分口径脚注、空态引导文案、审批有效期+过期回收、设备影子模式</td><td>立即启动——做完即可正面对打：竞品“机制在、无人转”，本平台有三端标注运营，闭环能真的转</td></tr>
+  <tr><td class="p0">第二批 · 差异化反超集</td><td class="num">10</td><td>审计问答+自然语言问数（LLM+证据引用，反超竞品模板问答）、影子推理、发布门禁、模型可信度+CBPE、主动学习选样、多标注者 Kappa+仲裁、统一四眼审批中心、智能体动作审计、Champion/Challenger 别名</td><td>首批上线后；Kappa 涉及标注模型重构，须带完整回归</td></tr>
+  <tr><td class="p1">第三批 · QMS 合规长尾</td><td class="num">10</td><td>MSA、FMEA、8D、NCR/CAPA、供应商 IQC→SCAR、动态控制计划、案例中心、质量报告、批次追溯、知识库</td><td>有标书/客户明确要求才逐项建；需质量专家评审口径</td></tr>
+  <tr><td class="p1">条件启动 · 边缘与 DOE</td><td class="num">4</td><td>推理盒子、设备影子下发、灰度/OTA/断网补传；工艺参数优化（需先建特征语义防线）</td><td>真实边缘订单 / DOE 语义防线就绪</td></tr>
+</table>
+
+<div class="quote">
+<b>一句话总结</b>：竞品把质量域骨架搭得又全又诚实，但闭环上没有人、线上没有数据流；本平台底座深得多，缺的恰是那层质量域骨架——而三端标注运营体系正是让闭环“活起来”的差异化拼图。补齐策略上，37 项一次性全量并建不经济；<b>推荐门控式分批：首批 13 项做实即可正面对打，二批 10 项反超，QMS 10 项按单、边缘与 DOE 4 项按条件触发，全程保住 AutoML/工作流/LLM 智能体的主线迭代</b>。
+</div>
+
+</div>
+
+<div id="view-report" class="view" style="display:none">
+<div class="part part-break">第二部分 · 竞品深度分析报告</div>
+
+<h2>七、产品速览与价值主张</h2>
+<div class="kpi-row">
+  <div class="kpi"><div class="v">31</div><div class="l">功能页面（六大功能域）</div></div>
+  <div class="kpi"><div class="v">1170</div><div class="l">双端自动化测试项（宣称全绿）</div></div>
+  <div class="kpi"><div class="v">2C/1.9G</div><div class="l">最低部署资源（无 Redis 设计）</div></div>
+  <div class="kpi"><div class="v">4 角色</div><div class="l">权限体系 + 四眼审批</div></div>
+  <div class="kpi"><div class="v">12 环节</div><div class="l">闭环证据链</div></div>
+  <div class="kpi"><div class="v">双端</div><div class="l">原版平台 + 边缘版 AQGedge</div></div>
+</div>
+<p class="note">定位：面向离散制造的<b>工业质量过程预警 + 模型持续迭代 + QMS 质量体系</b>三合一平台。三条产品底线：零演示数据、标签红线（人工确认才进训练）、AI 不越权（关键动作人工审批）。</p>
+<table>
+  <tr><th style="width:110px">要素</th><th>内容</th></tr>
+  <tr><td>解决的痛点</td><td>标签贵（破坏性检测/人工复检）→ 半监督+主动学习冷启动；发现晚（抽检滞后）→ 全量推理+实时预警；模型不敢用（黑盒/漂移）→ 门禁+影子+证据链；体系割裂 → 8D/FMEA/控制计划/供应商一体化</td></tr>
+  <tr><td>目标客户画像</td><td>汽车零部件/3C 工厂，有焊接/拧紧/压装工序，做过 SPC 但苦于抽检滞后，想上 AI 预警又担心模型不可控、无法过客户审厂（IATF 16949）</td></tr>
+  <tr><td>自称的竞争定位</td><td>「开源库解决算法有没有，商业平台解决流程有没有，本产品解决在标签稀缺的真实工厂里，AI 质量闭环敢不敢用、审不审得过」</td></tr>
+  <tr><td>自认的边界</td><td>不做视觉表面缺陷（推荐 anomalib）、不做毫秒级在线控制（不替代 PLC）、无过程数据的纯装配场景不适用</td></tr>
+  <tr><td>已落地场景</td><td>电阻点焊、汽车拧紧（宣称真实产线数据全流程验证；实测实例为电焊 + 拧紧两个测试项目）</td></tr>
+</table>
+
+<h2>八、功能与技术全景</h2>
+<table>
+  <tr><th style="width:110px">功能域</th><th>模块构成</th><th>要点</th></tr>
+  <tr><td>监控中心</td><td>质量驾驶舱、实时生产监控、预警中心、异常处置工作台</td><td>预警分级（高风险 0.85/严重 0.95）、SLA 账龄、同因合并、证据聚合（实测值/基线/规格限/模型依据）、误报回流、转 NCR</td></tr>
+  <tr><td>分析中心</td><td>质量趋势、Top NOK 帕累托、SPC、工艺参数分析、多曲线叠加+目标窗口、自然语言问数</td><td>7 种控制图 + Nelson 1-8 + Cp/Cpk 能力指数；MSA Gage R&R 与 FMEA 同页工具</td></tr>
+  <tr><td>智能闭环</td><td>闭环总览、模型漂移、监督训练向导、主动学习标注、模型管理、推理运行</td><td>12 环节证据链；9 种主动学习选样策略；Kappa 一致性+仲裁；影子推理；Champion/Challenger 别名</td></tr>
+  <tr><td>质量闭环</td><td>案例中心、8D 向导、NCR/CAPA、供应商 IQC→SCAR、动态控制计划、模型可信度、质量报告、批次追溯、知识库</td><td>8D 带 Agent 草稿 + D6 门禁；控制计划版本 diff + 四因子抽样加严；简化 CBPE 无真值性能估计</td></tr>
+  <tr><td>智能体中心</td><td>四眼审批中心、动作审计、标注迭代编排、工艺参数优化、审计问答</td><td>发起人≠审批人、拒绝须附意见、72h 有效期；审计问答十类模板 + [E1] 证据引用 + Markdown/PDF 导出</td></tr>
+  <tr><td>平台配置</td><td>场景与设备管理、系统设置（24 类参数、五通道通知）、用户与权限、帮助手册</td><td>MySQL/PG 只读数据源（SELECT 白名单）；QMS/MES 只读 API（API Key）；Kafka 实时接入</td></tr>
+  <tr><td>边缘版 AQGedge</td><td>推理盒子、模型下发、设备影子、灰度/OTA、断网补传</td><td>ONNX 统一导出、场景/特征版本强校验、A/B 双槽原子切换、(box_id, trace_id) 幂等</td></tr>
+</table>
+<p class="note">技术栈：FastAPI + SQLAlchemy + MySQL，Kafka 实时链路；前端为<b>无构建静态站</b>（原生 JS + ECharts）；算法侧 Khiops 聚类/分类、sklearn、modAL 主动学习、PCA 漂移、简化 CBPE。宣称工程质量：双端 1170 项测试全绿、ruff 零债务（43K 行业务代码）、四角色 38/38 写接口冒烟拦截、真实数据端到端 35 项检查。</p>
+
+<h2>九、实测成色核验（2026-11-16 登录实测）</h2>
+<p class="note">核心发现：<b>机制完备度均值 4.2/5，实例活跃度均值 1.9/5——「框架真实、流量空转」</b>。闭环各环节机制都在，但「人」的环节（标注/审批/处置）与实时数据流均未运转。</p>
+<table>
+  <tr><th style="width:96px">功能域</th><th style="width:170px">机制完备度</th><th style="width:170px">实例活跃度</th><th>实测依据</th></tr>
+  <tr><td>监控中心</td><td class="bar-cell">4.5<div class="bar-wrap"><div class="bar-fill bar-m" style="width:90%"></div></div></td><td class="bar-cell">1.5<div class="bar-wrap"><div class="bar-fill bar-a" style="width:30%"></div></div></td><td>14 条预警全部「待确认 + 责任人未分配 + SLA 超时 2 天 4 小时」</td></tr>
+  <tr><td>分析中心</td><td class="bar-cell">4.0<div class="bar-wrap"><div class="bar-fill bar-m" style="width:80%"></div></div></td><td class="bar-cell">2.5<div class="bar-wrap"><div class="bar-fill bar-a" style="width:50%"></div></div></td><td>SPC 机制齐全（106,504 行取 5,000 行示例可复算）；趋势页 Top NOK 为空</td></tr>
+  <tr><td>智能闭环</td><td class="bar-cell">5.0<div class="bar-wrap"><div class="bar-fill bar-m" style="width:100%"></div></div></td><td class="bar-cell">3.0<div class="bar-wrap"><div class="bar-fill bar-a" style="width:60%"></div></div></td><td>漂移批检真实运转（当日 PSI 4.454 严重级、39/89 特征漂移）；训练任务 #11 等 20 条标注 2 天无人处理；闭环 9/12 环节</td></tr>
+  <tr><td>质量闭环</td><td class="bar-cell">4.0<div class="bar-wrap"><div class="bar-fill bar-m" style="width:80%"></div></div></td><td class="bar-cell">0.5<div class="bar-wrap"><div class="bar-fill bar-a" style="width:10%"></div></div></td><td>控制计划 0 条、NCR 空、SCAR 空、知识库空；案例 16 个全部未结</td></tr>
+  <tr><td>智能体中心</td><td class="bar-cell">4.0<div class="bar-wrap"><div class="bar-fill bar-m" style="width:80%"></div></div></td><td class="bar-cell">1.0<div class="bar-wrap"><div class="bar-fill bar-a" style="width:20%"></div></div></td><td>3 条工艺建议超 72h 审批有效期被自动回收；动作审计仅 1 条 8D 草稿记录</td></tr>
+  <tr><td>边缘版</td><td class="bar-cell">3.5<div class="bar-wrap"><div class="bar-fill bar-m" style="width:70%"></div></div></td><td class="bar-cell">1.5<div class="bar-wrap"><div class="bar-fill bar-a" style="width:30%"></div></div></td><td>单盒注册（点焊生产边缘盒子，ONNX 包 89.6 KB）+ 心跳 + 设备影子机制在；断网补传无现场验证</td></tr>
+  <tr><td>平台配置</td><td class="bar-cell">4.5<div class="bar-wrap"><div class="bar-fill bar-m" style="width:90%"></div></div></td><td class="bar-cell">3.0<div class="bar-wrap"><div class="bar-fill bar-a" style="width:60%"></div></div></td><td>5 个启用账号、2 管理员在用；系统参数/调度/通知通道可配置</td></tr>
+</table>
+<p class="note">评分口径：机制完备度=功能/流程/校验是否存在且可用（依据页面与操作路径）；实例活跃度=当前实例中的真实使用痕迹（依据数据记录与留痕）。均为分析判断口径，非厂商宣称。</p>
+
+<h3 class="sub">宣称与实测的矛盾清单（均有页面级证据）</h3>
+<table>
+  <tr><th style="width:110px">事项</th><th>宣称</th><th>实测</th></tr>
+  <tr class="warn"><td>概率校准</td><td>市场版：「风险分数经过可信度校准」</td><td>页面脚注：「风险评分由模型置信度与规则阈值映射」；置信度 47.5% 即发「强飞溅」低风险预警——校准口径自相矛盾</td></tr>
+  <tr class="warn"><td>标签红线</td><td>「只有人工确认的标签才能进入训练」</td><td>训练表单存在「自动伪标签（闭环训练）」选项，与红线宣称冲突（该实例生产版本记录为使用人工标注）</td></tr>
+  <tr class="warn"><td>实时链路</td><td>Kafka 实时接入、边生产边分析</td><td>全站页脚「实时链路未启动」；驾驶舱自曝推理数据已停滞（实测日距最后更新 4 天）</td></tr>
+  <tr class="warn"><td>发布门禁</td><td>影子推理 + 可信度评估 + 样本不足拦截，新模型不带病上岗</td><td>已发布生产模型 F1 高达 0.999（验证集仅 600 条带标签批量任务，准确率记 100%），其余版本 0.47–0.80——浅验证集放行，门禁未起到宣称作用</td></tr>
+  <tr class="warn"><td>工艺参数优化</td><td>响应曲线 + 可行窗口 + DOE 建议（需工程评审）</td><td>3 条建议全部作用于疑似 ID/序号列（wldindex，取值 420 万~457 万），期望 NG 率 0.0%，MES 工单全空——对特征语义无任何防御</td></tr>
+  <tr class="warn"><td>审计严谨性</td><td>证据引用编号支撑审计归档</td><td>其调研报告自查发现：问答报告存在 E1/E2 引用编号跨小节重复、引用提示与证据清单指向不同表</td></tr>
+</table>
+
+<h3 class="sub">交互实测记录（2026-11-15 管理员遍历 30 入口 + 11-16 复测；2026-11-18 复测受限于凭据轮换）</h3>
+
+<div class="quote">
+<b>2026-11-18 复测说明（本次实际点击）</b>：用原凭据 admin1/Aa123456 三次登录均被拒绝（<span style="font-family:monospace">/api/auth/login</span> 返回 401「账号或口令错误」）——口令在 48 小时内被轮换或账号被停用，说明对方实例处于<b>活跃维护状态</b>。未登录可达面仅剩落地页：① 版本标识 v1.0.0 · MySQL + Kafka · 数据接口 FastAPI /api；② 落地页文案自述「覆盖…10 个页面」，导航实际已挂 15 个业务入口，<b>竞品自己的门面页也滞后于功能扩张</b>；③ 抽查 dashboard / alert-center / agent-audit / help 等 5 个业务页全部强制重定向登录页，<span style="font-family:monospace">/api/health</span> 返回 401「未登录或登录已过期」。以下逐页交互证据以 11-15 遍历与 11-16 复测为准，取得新口令后可逐页复核更新。
+</div>
+
+<table>
+  <tr><th style="width:120px">点击目标</th><th>实际交互效果（点击后页面真实反应）</th><th style="width:120px">成色判定</th></tr>
+  <tr><td>驾驶舱下钻</td><td>KPI 卡与走势图可点，下钻直达生产监控 / 预警列表 / 质量趋势 / NCR / 报告；顶栏工厂→车间→产线→场景四级范围联动切换；命中率口径在页内注明（已确认异常÷已关闭预警）</td><td>机制真实</td></tr>
+  <tr><td>实时生产监控</td><td>左侧产线 / 工位 / 设备树与工位卡联动；选中工位出产品、批次、最新生产时间、OK/NG、班次产量、风险分数、现场参数及参考值；支持自动 / 手动刷新，展示本班次未关闭事件，可跳转历史或预警；<b>「确认收到」「呼叫质量人员」入口在位</b>。所见三个工位的运行状态由最新记录与预警推导，设备标识有缺省项</td><td>机制真实、现场接入不全</td></tr>
+  <tr><td>预警中心</td><td>行级查看 / 确认 / 分配按钮、勾选批量操作、CSV 导出全部在位；筛选覆盖风险、状态、类型、产线、责任人、时间及 SLA 临期/超时；高风险 0.85 / 严重 0.95 阈值页面可配。但 14 条预警全部「待确认 + 责任人为空 + SLA 超时 2 天 4 小时」</td><td>机制真实、数据空转</td></tr>
+  <tr><td>异常处置工作台</td><td>五阶段流转（待确认→已确认→处理中→待复核→已关闭）+ 独立误报处置；证据区并列实测值 / 基线 / 规格上下限 / 模型依据；判据优先级写死为规格超限→3σ→2σ→基线偏离 30%；轨迹逐条追加。<b>附件上传实测提示「未配置」；点焊预警缺曲线列，叠加曲线无数据</b></td><td>判据引擎真实、现场配置半成品</td></tr>
+  <tr><td>SPC 过程控制</td><td>数据源 / 参数 / 窗口 / 子组 2–10 / USL / LSL / 目标值均可配；X-bar R、X-bar S、I-MR、P/NP/C/U 全套图；8 类判异开关；点击点位出判异明细；Cp/Cpk/Pp/Ppk/Cpm/Cr/σ/PPM 全套指数，缺规格限自动留空。示例从 106,504 行取 5,000 行，1 个越界 + 43 个规则警告，<b>口径可复算</b></td><td>全套中最扎实的一页</td></tr>
+  <tr><td>趋势页内嵌 MSA / FMEA</td><td>MSA Gage R&R 支持 CSV / 表单录入，均值极差法算 %GRR、注明 ndc 分级；FMEA 维护 S/O/D、服务端计算 RPN、措施可同步控制计划——入口齐全</td><td>当前项目均为空态</td></tr>
+  <tr><td>工艺参数分析（含 DOE）</td><td>单样本下钻场景 / 设备 / 工位 / 车型 / 批次或 VIN / 模型版本 / 时序窗口，并列实测值、参考基线与规格；参数明细、窗口特征贡献、相似历史事件、多曲线叠加。<b>当前样本仅有标量参数，叠加曲线与特征贡献显示缺少可用数据</b>；只读 DOE 入口可从历史数据与质量结果生成 2–3 个可控参数的组合候选（区间参考，不涉审批与 MES 配方）</td><td>入口真实、当前样本数据缺失</td></tr>
+  <tr><td>闭环总览（12 环节证据链）</td><td>按模型版本查看 12 环节（接入→切分→智能分群→人工标注→主动选样→训练→评估→发布上线→推送生产→现场验证→问题反馈→迭代优化）完成 / 待发生 / 缺失状态，各步可打开依据串到数据集、切分、训练轮次、模型、推理与反馈记录；证据可导出，上线检查含模型文件、校验和、数据版本、评估完整性、生产版本唯一。抽查生产模型（随机森林，106,504 行 × 92 列）完成 <b>9/12 环节、上线检查 8/8，其中「智能分群」环节缺失</b>；现场验证条目引用 600 条带标签数据集推理，页面准确率记 100%</td><td>证据链机制真实；分群环节缺、验证口径浅</td></tr>
+  <tr><td>模型漂移监控</td><td>PSI + PCA 重构误差 + DQ 三类检测；报告可展开特征级明细；历史推理可回放检测；默认标记「观察信号」不自动处置。当日批检真实产出严重级报告（PSI 4.454、39/89 特征漂移）</td><td>唯一自动运转的能力</td></tr>
+  <tr><td>主动学习标注</td><td>队列按待标注 / 已标注 / 待复核 / 来源筛选；单件提交正常 / 缺陷 / 无法判断，支持快捷键、撤销、历史、导出；标签体检、分群标注、弱监督规则、Kappa 一致性 + 仲裁四入口在位；概率明确标注「未校准、仅相对排序」。整簇标注门槛（纯度≥0.8 且规模≥10）在配置可查</td><td>交互完整、无人使用（任务 #11 等 20 条标注 2 天无人处理）</td></tr>
+  <tr><td>监督训练向导</td><td>分类器下拉 7 种（RF / Extra Trees / HistGradientBoosting / 逻辑回归 / Khiops / sklearn / AutoML）、选样策略 10 种、自动切分、聚类特征与自动发布开关、跨 Run 比较。表单暴露「自动伪标签（闭环训练）」选项</td><td>表单可走通；伪标签选项与「人工标签红线」宣称矛盾</td></tr>
+  <tr><td>AI 模型管理</td><td>注册表 5 个分类版本（1 生产 + 4 归档）+ 3 个聚类版本；学习曲线 / 混淆矩阵 / 分类别 P-R-F1 可查看、可导出、可跨 Run 比较；别名（Champion/Challenger）、退役计划、发布 / 下线、回滚按钮齐全</td><td>按钮齐；实际发布仅 1 条，F1 0.999 浅验证集放行</td></tr>
+  <tr><td>模型可信度（CBPE）</td><td>七因子加权分数、A–D 档、硬门禁与历史趋势入口在位；模型卡 11 章节可生成草稿、签署审批，数据指纹变化后重建；单样本解释接受字段值或样本 JSON。<b>所抽生产版本无可信度评分、无模型卡，页面实际展示由预测日志概率估计的简化 CBPE</b>，脚注注明置信区间为近似公式、概率校准是前提——当前数值均属估计</td><td>机制真实；生产版本未产出实际评分</td></tr>
+  <tr><td>推理运行</td><td>可选已发布 / 指定模型 × 数据集 / 外部表 × 测试 / 验证 / 训练池；影子模式并行对候选与线上模型打分，页面注明「只输出一致率与指标对照」；历史 2 条批量任务（600 条数据集推理 + 5,000 条影子对比）可下载结果、有反馈入口</td><td>机制真实、无实时流量</td></tr>
+  <tr><td>质量体系页（案例 / NCR / 供应商 / 控制计划 / 知识库）</td><td>案例可从预警自动开案（实测有 1 例）、8D 草拟按 D0–D8 顺序推进、D6 验证通过才可结案；NCR 关闭门禁 = 连续三个验证周期无复发、早期可驳回；IQC 不合格自动生成唯一 SCAR；控制计划同项目唯一生效版 + 漂移 / 预警 / 能力 / 复发四因子加严乘数进待审批、决策流水留痕；知识库支持症状查 Top 5 相似案例。全部规则在页面可见</td><td>规则真实、台账空壳（NCR 0 / SCAR 0 / 控制计划 0 / 知识库空，案例 16 个全部未结）</td></tr>
+  <tr><td>质量报告与批次追溯</td><td>日报 / 周报 / 月报可定期生成或手工补报，详情含预警总量与趋势、NG 率、Cpk 达标率、Top 缺陷与设备、NCR 概况，HTML / JSON 导出；抽看 11-14 日报记录 14 条预警（轻微飞溅 10、强飞溅 4），<b>平均 NG 率与 Cpk 指标留空</b>。批次追溯提供样本追溯（业务样本 ID 串起原始数据、模型判定、预警与 NCR）与批次概览，<b>但当前推理数据缺少可用批次字段，完整链路查询依赖数据接入时维护对应键</b></td><td>报告机制真实；追溯键缺失</td></tr>
+  <tr><td>四眼审批中心</td><td>统一队列管理异常处置 / 重训 / 模型发布 / 工艺配方变更四类；强制发起人≠审批人、拒绝须附意见、批准后平台执行并留痕、72h 过期自动回收——规则全部页面在位</td><td>3 条工艺建议全部超期回收，无一条走完闭环</td></tr>
+  <tr><td>审计问答</td><td>10 类模板、可限定项目、指代不清给澄清态；答案附数据库表 + 记录引用；历史报告可重开；Markdown / PDF 导出。实测已有 6 份报告产出</td><td>有产出；但引用编号 E1/E2 跨小节重复、引用提示与证据清单指向不同表——审计严谨性有洞</td></tr>
+  <tr><td>边缘版与系统设置</td><td>单盒注册在位（点焊生产边缘盒子、ONNX 包 89.6 KB、心跳、设备影子 desired/reported）；系统设置 24 类参数、QMS/MES 只读 API（API Key GET、单页 500 上限）、钉钉 / 企微 / 短信 / SMTP / Webhook 五通道可测试、数据源限 SELECT/WITH 白名单；Kafka 状态表标「告警」</td><td>配置面齐全；实时链路从未启动、断网补传无现场验证</td></tr>
+  <tr><td>场景管理 / 用户权限 / 帮助手册</td><td>场景配置三页签：场景编码 / 工序 / 数据源 / 标签体系 / 窗口策略 / 参数上下限（点焊与拧紧已启用，故障诊断与通用场景配置中）；设备页按产线 / 工位 / 设备显示协议、心跳与连接，<b>设备树由最新推理推导、尚未落库，采集接口为空</b>；字段角色可将目标 / ID / 时间 / 分组字段默认排除出模型输入。用户与权限四角色（超管 / 工程师 / 操作员 / 观察员）、写权限服务端按接口授权，5 个启用账号、2 个管理员在用。帮助手册 14 章 + 全局搜索 + 边缘版手册（A/B 槽、OTA 校验、断网回传）</td><td>配置面真实；设备数据未落库</td></tr>
+</table>
+<p class="note">判定口径：「机制真实」= 点击后交互路径完整、校验与留痕存在；「半成品 / 空态」= 入口与规则在但无数据或配置缺失；「矛盾」= 页面行为与宣称冲突。全部条目来自登录态逐页点击（2026-11-15/16），非文档转述。</p>
+
+<h2>十、确认的优势与弱点</h2>
+<h3 class="sub">优势（不可轻敌的部分）</h3>
+<ol>
+  <li><b>质量域机制完整度业内少见</b>：SPC（Nelson 1-8 + 能力指数）、8D/NCR/CAPA/SCAR/控制计划/MSA、预警处置、证据链打包（SHA-256）一应俱全，且细节口径诚实（Cp 用组内标准差、Ppk 用整体标准差等均有脚注）。</li>
+  <li><b>漂移监控是实测中唯一自动运转的能力</b>：定时批检真实产出严重级报告（PSI 4.454），指标口径（PSI / PCA 重构误差 99 分位 / DQ 硬失败）教科书级严谨。</li>
+  <li><b>「诚实设计」抬升可信度</b>：数据陈旧自曝横幅、风险分口径脚注、空态引导文案、审批过期自动回收、影子模式注明「只输出一致率」——面向审核者的产品语言做得到位。</li>
+  <li><b>低资源 + 边缘是真实成本优势</b>：2C/1.9G 不依赖 Redis（数据库队列+原子抢占）；边缘版单盒已注册运行（ONNX 包 + 设备影子 desired/reported + 心跳），适配无 GPU 车间机房。</li>
+  <li><b>标签治理设计有想法</b>：整簇标注门槛（纯度≥0.8 且样本≥10）、Kappa 一致性 + 仲裁、弱监督仅作建议——理念正确，只差运营验证。</li>
+</ol>
+<h3 class="sub">弱点与风险</h3>
+<ol>
+  <li><b>闭环无人运转</b>：预警、标注、审批三个「人」的环节全部停滞（超时/等待/过期），产品卖的是框架而非运营验证。</li>
+  <li><b>技术底座薄弱且路线受限</b>：无工作流编排、AutoML 仅固定分类器下拉（无超参搜索/实验追踪）、智能体为规则型（模板问答 + MCP 工具调用），无 LLM 深度应用；前端无构建静态站，长期可维护性与交互上限低。</li>
+  <li><b>实时能力未验证</b>：实时链路停留在功能存在层面，本实例从未启动过。</li>
+  <li><b>验证与门禁的实际成色</b>：F1 0.999 的浅验证集放行、DOE 作用于 ID 列，说明「严谨机制」之下工程判断仍有明显漏洞。</li>
+  <li><b>质量体系长尾是空壳</b>：NCR/SCAR/控制计划/知识库均为 0 记录——这些模块是投标 checkbox，缺乏真实业务流量打磨。</li>
+</ol>
+
+<h2>十一、威胁评估与应对</h2>
+<table>
+  <tr><th style="width:110px">维度</th><th>评估</th></tr>
+  <tr><td>短期威胁</td><td><b>低</b>。与我方战场几乎不重叠（其强项恰为我方空白，反之亦然），且当前实例处于空转状态，尚无「闭环运营中」的标杆客户证据。</td></tr>
+  <tr><td>中期威胁</td><td><b>中</b>。若其落地 1–2 个真实运营客户，闭环故事将由「框架」变「实证」，叠加边缘+低资源的成本优势，在质量部门主导的标战中威胁实质化。</td></tr>
+  <tr><td>我方不可失分项</td><td>四大底座（AutoML 深度、工作流编排、LLM 智能体、推理工程化）必须持续迭代拉开代差——竞品补底座是深度问题（难），我方补质量域是广度+CRUD 问题（相对易），<b>时间窗口在我方</b>。</td></tr>
+  <tr><td>对抗策略</td><td>① 按第一部分四段门控补齐质量域（首批 12 项做实即可正面对打）；② 售前直接使用第九节矛盾清单的页面级实证；③ 吸收其「诚实设计」五项（自曝横幅/口径脚注/空态引导/审批过期回收/设备影子）以彼之道还施彼身。</td></tr>
+</table>
+
+<h2>十二、竞品分析结论</h2>
+<div class="quote">
+AI Quality Guard 是一款<b>「审核合规导向的质量 AI 闭环框架」</b>：质量域机制完整、细节诚实、低资源可部署，设计理念明显针对主机厂审厂场景；但当前实例「框架真实、流量空转」——预警无人处理、标注无人执行、审批过期回收、实时链路从未启动，其「闭环」尚停留在机制完备而非运营验证阶段。其技术底座（编排/AutoML/LLM）与我方存在代差，且补齐难度远高于我方补齐质量域。<b>对它的正确姿势：尊重其质量域机制与诚实设计，攻击其空转与浅验证，用更深的底座 + 真正运转的闭环正面竞争。</b>
+</div>
+
+</div>
+
+<div id="view-newplat" class="view" style="display:none">
+<div class="part part-break">第三部分 · 工序 · 工业时序建模平台深度分析报告</div>
+
+<h2>一、项目定位与来源</h2>
+<table>
+  <tr><th style="width:110px">维度</th><th>结论</th></tr>
+  <tr><td>定位</td><td>面向工业质量建模任务的<b>单机闭环平台</b>：Agent 驱动训练闭环 + 独立终验 / 影子验收 + 按工位灰度发布治理。单轮闭环串起数据快照、特征生成、训练、验证门、独立盲测和不回退检查，审批人可采纳冠军模型或填写理由豁免一次回退</td></tr>
+  <tr><td>来源</td><td><b>AI 智能体构建</b>：Git 全部 16 个提交作者为 Codex，2026-11-13～11-14 两天内按 S-PRE → S0 → S1 → S2 → S3 → S4 → S5–S8 阶段化交付，每阶段附验收回执 JSON、pytest 日志与浏览器截图证据，验收通过才进入下一阶段</td></tr>
+  <tr><td>部署形态</td><td>FastAPI + SQLite（WAL）单进程，自研 migrations；<b>无 Kafka / Redis / MinIO / MLflow 等外部中间件</b>；执行器为 Windows Job Object 隔离子进程（另有 Docker runner）；前端 React 19 + Vite 8 + TypeScript 7，构建时强制 tsc 检查</td></tr>
+</table>
+
+<h2>二、规模概览</h2>
+<div class="kpi-row">
+  <div class="kpi"><div class="v">247</div><div class="l">Git 跟踪文件（backend 163 / frontend 47）</div></div>
+  <div class="kpi"><div class="v">~18.4K</div><div class="l">后端 Python 行数（含测试，227 文件）</div></div>
+  <div class="kpi"><div class="v">13</div><div class="l">后端业务模块（约 14K 行）</div></div>
+  <div class="kpi"><div class="v">207</div><div class="l">验收宣称的后端测试用例</div></div>
+  <div class="kpi"><div class="v">16</div><div class="l">阶段化提交（S-PRE → S8）</div></div>
+</div>
+<p class="note">模块分布：services 2285 行（含 Agent 对话）、field 2109 行（工位执行器/适配器）、api 1427 行（19 个路由）、loop 1294 行（闭环编排）、ml 1256 行（AutoML）、workflow 987 行、core 1099 行、pool 874 行（数据池）、retrain 660 行、notify 377 行、registry 221 行、migrations 167 行。</p>
+
+<h2>三、能力真实性核验（README 宣称 vs 代码与验收证据）</h2>
+<table>
+  <tr><th style="width:130px">能力</th><th>实现证据</th><th style="width:140px">成色判定</th></tr>
+  <tr><td>Agent 闭环推进</td><td>backend/services/agent_chat.py 真实调用 Chat Completions 兼容服务（urllib + 60s 超时 + JSON 提取 + 代码标记检测）；backend/loop/orchestrator.py 后台线程巡检 queued/running 闭环并推进，失败落库；模型服务不可用时按规则兜底（S2 实现 12 步诊断决策协议）</td><td>真实（非空壳）</td></tr>
+  <tr><td>AutoML</td><td>backend/ml/automl.py：8 种有监督候选（LightGBM / XGBoost / CatBoost / GBDT / RF / Extra Trees / HistGB / MLP）+ 3 种无监督（IsolationForest / OCSVM / AutoEncoder）；试验上限与训练时长预算；多模型加权软投票（权重手填或验证集寻优）；伪标签高置信自训练（每类限量 + 降权 + 验证比较后选用）</td><td>真实；无自定义超参空间与独立实验追踪（无 MLflow）</td></tr>
+  <tr><td>发布治理</td><td>独立测试划分建模轮次开始后锁定；离线 + 影子双验收后按工位预授权自动灰度放量、工位回执确认生效；授权人 ≠ 申请人、有效期 / 发布次数限制、质量门变化或授权撤销后失效；豁免回退需审批理由；无适用授权时发布单等独立审批</td><td>真实（本机演练级，现场待签收）</td></tr>
+  <tr><td>SPC 与质量处置</td><td>按稳定历史时段冻结 SPC 基线，规格越界与已确认工位版本的 AI 风险合并为工件处置单；SOP 带编号 / 工况 / 生效时间版本化；处置单记录当时适用的 SOP、SPC 基线与模型版本；分群标注记录标注人 / 来源 / 依据；处置台统计每千件处置单 / 首次处理均时 / 结案率</td><td>机制真实，无现场流量</td></tr>
+  <tr><td>安全实现</td><td>scrypt 口令哈希（backend/core/security.py）、Fernet 主密钥加密凭据 + 轮换脚本（backend/core/crypto.py）、审计详情自动去敏（password/secret/token 等键名替换 ***）、SSRF 白名单防护（notify/http.py、field/adapter.py）、钉钉 HMAC 加签；验收含 HTTPS 响应头 / Secure / HttpOnly / SameSite / CSRF / 三角色冒烟</td><td>真实</td></tr>
+  <tr><td>执行器隔离</td><td>S8-03：独立 Windows Python 执行器经回环 HTTPS 下载模型包、子进程打分、提交版本回执；内存 / 超时 / 结果契约 / 产物 / 日志上限 6 项检查通过；26 个 wheel 离线安装 + SHA256 清单校验</td><td>真实（演练级）</td></tr>
+</table>
+
+<h2>四、验收体系（工程纪律亮点）</h2>
+<table>
+  <tr><th style="width:150px">验收项</th><th>结果（docs/ACCEPTANCE.md 记录，附回执）</th></tr>
+  <tr><td>API 回归</td><td>59/59 项通过，每轮生成 JSON 回执</td></tr>
+  <tr><td>闭环场景</td><td>C1–C18 共 38/38 项：质量门、采纳、通知、数据不足、回退豁免、泄漏暂停、无效回复切换特征、拒绝水位线、人工回写、达标自动发布、失败后接管复验</td></tr>
+  <tr><td>后端测试</td><td>S5–S8 最终 196 项、S8-03 分组 207 项全部通过（宣称，附 pytest 日志）</td></tr>
+  <tr><td>审计链</td><td>232 条完整校验；备份异目录恢复后 SHA-256 一致</td></tr>
+  <tr><td>性能实测</td><td>20 万行 × 96 点波形上传入库 35.94s；1 万行闭环 13.19s；50 任务工作台 140–188ms</td></tr>
+  <tr><td>安全与依赖</td><td>pip-audit 与 pnpm audit 当次零已知漏洞；Windows Job Object 资源上限检查通过</td></tr>
+  <tr><td>公开数据回放</td><td>公开点焊数据 1,965 条样本本机回放，通过迁移与 SQLite 完整性 / 外键检查</td></tr>
+</table>
+<p class="note">注意：验收证据（回执 JSON / 截图 / pytest 日志）保存在 runtime/verification/——该目录被 .gitignore 排除，克隆仓库后文档中的引用全部落空（见风险第 3 条）。</p>
+
+<h2>五、风险与缺口</h2>
+<ol>
+  <li><b>当前机器跑不起来</b>：.venv 指向已卸载的 Codex 托管 Python（启动报错 103）；README 要求 Python 3.12+，本机仅有 3.14 / 3.11——需安装 3.12 重建环境才能复现与运行。</li>
+  <li><b>测试证据缺口</b>：.pytest_cache 的 lastfailed 显示最近一次缓存运行中 test_autonomous_acceptance.py 有 2 个用例失败（达标自动发布、失败后接管复验），与「207 项全部通过」的宣称未闭合，需复跑确认。</li>
+  <li><b>验收证据不进 Git</b>：全部回执、截图、日志位于被 .gitignore 的 runtime/ 目录，提交文档沦为空引用，无法离线追溯。</li>
+  <li><b>无 CI / 无 lint 门禁</b>：没有 .github/workflows、pyproject / ruff / mypy 配置；质量全靠本地 20 个 verify / preflight 脚本，换环境即失守。</li>
+  <li><b>扩展性天花板</b>：单机 SQLite + 单进程后台线程调度，适合车间级部署；无多租户、高并发、分布式执行设计。</li>
+  <li><b>从未上产线</b>：FIELD-ACCEPTANCE 现场签收表全部待签收；无实时数据链路，批次仍以文件上传为主。</li>
+</ol>
+
+<h2>六、分析结论</h2>
+<div class="quote">
+工序平台是一个<b>「治理纵深见长、底座广度有限」的闭环样板</b>：独立盲测锁定、影子窗口、按工位预授权、灰度回执、豁免审计——恰好是竞品「宣称齐全但全线空转」而我方尚未成体系的环节，且全部有代码与本机验收证据支撑，不是 PPT 功能。弱点同样清晰：无编排、无实时链路、无多租户、无 CI，两天 AI 构建的代码尚未经过真实产线与人手维护的考验。<b>对它的正确姿势：把它当作发布治理与验收纪律的参照系（可直接借鉴四项机制），而非直接竞品——它在能力广度上与本平台不同级；真正的威胁路径是它先落地真实产线、抢占「闭环运转」叙事。</b>
+</div>
+
+</div>
+
+<div id="view-vsours" class="view" style="display:none">
+<div class="part part-break">第四部分 · 工序平台 vs 本平台（灵工）对比分析</div>
+
+<h2>一、定位与形态差异</h2>
+<table>
+  <tr><th style="width:110px">维度</th><th>本平台（灵工 · 工业智能平台）</th><th>工序 · 工业时序建模平台</th></tr>
+  <tr><td>定位</td><td>面向工程师的通用 MLOps + LLM 智能体编排平台</td><td>面向质量建模任务的 Agent 驱动单机闭环平台</td></tr>
+  <tr><td>核心叙事</td><td>数据 → 标注 → AutoML → 工作流 → 模型库 → 推理部署 → 闭环自动化 → 智能体，拼<b>建模自动化与编排深度</b></td><td>数据快照 → 特征程序 → 训练试验 → 验证门 → 独立盲测 → 影子 → 灰度放量，拼<b>闭环治理与可审计发布</b></td></tr>
+  <tr><td>技术栈</td><td>React + FastAPI + PostgreSQL + Redis + MinIO + MLflow + 独立推理运行时，十余个容器服务</td><td>FastAPI + SQLite（WAL）单进程 + 自研迁移，无外部中间件；React 19 + Vite 8 + TS 7</td></tr>
+  <tr><td>构建方式</td><td>团队工程，持续迭代</td><td>Codex AI 智能体 2 天阶段化构建（16 提交，2026-11-13～14），尚无人工维护史</td></tr>
+</table>
+
+<h2>二、八维能力对比（与竞品简报同一口径，0–5 分）</h2>
+<table>
+  <tr><th style="width:110px">维度</th><th style="width:70px">本平台</th><th style="width:70px">工序平台</th><th>差异要点</th></tr>
+  <tr class="ours"><td>数据接入</td><td class="num">3.0</td><td class="num">2.5</td><td>双方均无实时链路；工序平台 CSV 批次流式上传（超 20MiB 自动流式、上限 200MiB）+ 数据池回流，数据库导入仍在规划</td></tr>
+  <tr class="ours"><td>标注体系</td><td class="num">4.0</td><td class="num">3.5</td><td>本平台三端协作 / 版本冲突 / 验收退回工程化更强；工序平台分群标注（代表 / 边界 / 偏离样本、整群确认）+ 独立盲测复核队列（隐藏模型分数）设计独特，但无多标注者仲裁</td></tr>
+  <tr class="ours"><td>AutoML 建模</td><td class="num">5.0</td><td class="num">4.0</td><td>本平台 7 算法族 × 5 种超参搜索 + MLflow 追踪；工序平台 8+3 候选 + 软投票权重寻优 + 时长 / 试验预算，试验记录在库但无独立追踪系统</td></tr>
+  <tr class="ours"><td>工作流编排</td><td class="num">5.0</td><td class="num">1.0</td><td>本平台近 90 算子 DAG 画布；工序平台无编排，固定闭环流程——差距最大且最难补齐</td></tr>
+  <tr class="ours"><td>LLM 智能体</td><td class="num">4.5</td><td class="num">3.5</td><td>本平台 LLM 驱动建模智能体 / 应用编排 / RAG；工序平台为应用级 Agent（训练配置提案 + 自动推进 + 12 步诊断决策协议 + 规则兜底），赛道不同</td></tr>
+  <tr class="ours"><td>推理部署</td><td class="num">4.0</td><td class="num">3.5</td><td>本平台金丝雀 / 条件分流 rollout + 独立运行时；工序平台独立执行器子进程 + 工位回执 + 影子 / 灰度 / 全量放量，无在线分流路由</td></tr>
+  <tr class="warn"><td>模型监控</td><td class="num">2.0</td><td class="num">2.5</td><td>双方均无独立漂移监控页：本平台 PSI 内嵌闭环触发；工序平台 SPC 基线冻结 + 越界合并处置单，单项唯一反超</td></tr>
+  <tr class="ours"><td>质量体系</td><td class="num">0.5</td><td class="num">1.5</td><td>本平台空白；工序平台有处置单 / SOP 版本 / 分群标注，但无 NCR / 8D / SCAR / 控制计划——竞品（5.0）在该维仍遥遥领先</td></tr>
+  <tr class="summary">
+    <td>合计</td>
+    <td class="num">28.0</td>
+    <td class="num">22.0</td>
+    <td>均分 3.50 vs 2.75；本平台 7 项领先，工序平台 1 项领先（模型监控）。总差距 6 分主要由工作流（4 分差）与 LLM（1 分差）贡献，工序平台最难补的是编排底座，本平台最难补的是治理纵深。</td>
+  </tr>
+</table>
+
+<h2>三、治理与交付对比（打分之外的纵深差异）</h2>
+<table>
+  <tr><th style="width:130px">维度</th><th>本平台</th><th>工序平台</th></tr>
+  <tr><td>发布治理</td><td>推理层金丝雀 / 条件分流 rollout（工程化分流）</td><td><b>闭环治理化</b>：独立盲测锁定 → 影子窗口 → 按工位预授权（授权人隔离 / 有效期 / 次数）→ 灰度放量 → 工位回执；豁免回退需审批理由；伪标签用量凭证可下载</td></tr>
+  <tr><td>验收纪律</td><td>docs/验收-*.md + release gates，证据入 Git 跟踪目录</td><td>S-PRE–S8 阶段化回执链（API 59/59、C1–C18 38/38、pytest 207、审计链 232 条、性能实测）；但证据放在 gitignored runtime/，克隆即断链；无 CI / lint</td></tr>
+  <tr><td>数据回流重训</td><td>闭环事件流触发</td><td>数据池批次追加 → 冠军辅助抽检回写 → 达标自动生成重训提案 → 审批后下一轮，轮次历史完整</td></tr>
+  <tr><td>部署扩展性</td><td>十余容器（PG / Redis / MinIO / MLflow），可水平扩展、多任务并发</td><td>单机 SQLite 单进程，2C 级可跑；执行器可独立部署；无多租户与高并发设计</td></tr>
+</table>
+
+<h2>四、结论与借鉴清单</h2>
+<ol>
+  <li><b>总比分 28 : 22，本平台在底座广度上整体领先</b>（编排 / AutoML 深度 / LLM 编排 / 多容器工程），差距最大的工作流（5.0 vs 1.0）正是工序平台最难补齐的。</li>
+  <li><b>工序平台在治理纵深上单点领先</b>：盲测锁定、影子验收、预授权灰度、工位回执、豁免审计——这套「发布可治理」机制是竞品全线空转、我方尚未成体系的环节，且全部有代码与本机验收证据。</li>
+  <li><b>可立即借鉴四项</b>：① 独立终验 + 盲测样本锁定（防止「用训练数据自证」）；② 按工位 / 场景预授权发布（授权人与申请人分离 + 有效期 + 次数 + 撤销失效）；③ 伪标签用量凭证与降权验证后选用；④ 阶段化验收回执工程化——但证据必须进 Git 跟踪目录，工序平台在这一点上是反面教材。</li>
+  <li><b>威胁路径</b>：它当前不是直接对手（无编排、无实时、未上产线），但若率先接入真实产线跑通灰度闭环，「闭环真正运转」的叙事将同时压过竞品的空转与我方的待建——治理机制应提前进入我方路线图。</li>
+</ol>
+
+</div>
+
+<div id="view-trio" class="view" style="display:none">
+<div class="part part-break">第五部分 · 三平台横向对比与本平台借鉴路线</div>
+
+<h2>一、三平台全景</h2>
+<table>
+  <tr><th style="width:110px">维度</th><th>本平台（灵工）</th><th>AI Quality Guard（竞品）</th><th>工序 · 工业时序建模平台</th></tr>
+  <tr><td>定位</td><td>面向工程师的通用 MLOps + LLM 智能体编排平台</td><td>面向质量部门的「AI 预警 + MLOps + QMS」三合一闭环平台</td><td>面向质量建模任务的 Agent 驱动单机闭环平台</td></tr>
+  <tr><td>核心叙事</td><td>拼<b>建模自动化与编排深度</b>（四大底座）</td><td>拼<b>质量闭环完整性与可审核性</b>（机制最全）</td><td>拼<b>闭环治理与可审计发布</b>（治理最真）</td></tr>
+  <tr><td>技术栈</td><td>React + FastAPI + PG + Redis + MinIO + MLflow，十余容器</td><td>FastAPI + MySQL + Kafka，无构建静态站，2C/1.9G 低资源</td><td>FastAPI + SQLite 单进程，无外部中间件，React 19 + TS</td></tr>
+  <tr><td>构建方式</td><td>团队工程，持续迭代</td><td>团队工程（v20261115.17）</td><td>Codex AI 两天阶段化构建（16 提交，尚无人工维护史）</td></tr>
+  <tr><td>闭环运转状态</td><td><b>半转</b>：三端标注运营真实使用，但质量域（预警/处置/SPC）空白</td><td><b>空转</b>：机制完备度 4.2/5，实例活跃度仅 1.9/5——预警、标注、审批三个「人」的环节全部停滞</td><td><b>演练转</b>：C1–C18 治理场景 38/38 本机全过，但仅合成数据、现场签收全部待签</td></tr>
+  <tr><td>八维总分</td><td class="num"><b>28.0</b></td><td class="num"><b>29.0</b></td><td class="num"><b>22.0</b></td></tr>
+</table>
+
+<h2>二、能力雷达对比（0–5 分）</h2>
+
+<svg viewBox="0 0 660 480" width="100%" style="max-width:620px;display:block;margin:0 auto" role="img" aria-label="三平台能力雷达图">
+  <g fill="none" stroke="#dfe4ea" stroke-width="1">
+    <polygon points="320,202 346.9,213.1 358,240 346.9,266.9 320,278 293.1,266.9 282,240 293.1,213.1"/>
+    <polygon points="320,164 373.7,186.3 396,240 373.7,293.7 320,316 266.3,293.7 244,240 266.3,186.3"/>
+    <polygon points="320,126 400.6,159.4 434,240 400.6,320.6 320,354 239.4,320.6 206,240 239.4,159.4"/>
+    <polygon points="320,88 427.5,132.5 472,240 427.5,347.5 320,392 212.5,347.5 168,240 212.5,132.5"/>
+    <polygon points="320,50 454.4,105.6 510,240 454.4,374.4 320,430 185.6,374.4 130,240 185.6,105.6" stroke="#c3cbd6"/>
+  </g>
+  <g stroke="#e2e7ee" stroke-width="1">
+    <line x1="320" y1="240" x2="320" y2="50"/>
+    <line x1="320" y1="240" x2="454.4" y2="105.6"/>
+    <line x1="320" y1="240" x2="510" y2="240"/>
+    <line x1="320" y1="240" x2="454.4" y2="374.4"/>
+    <line x1="320" y1="240" x2="320" y2="430"/>
+    <line x1="320" y1="240" x2="185.6" y2="374.4"/>
+    <line x1="320" y1="240" x2="130" y2="240"/>
+    <line x1="320" y1="240" x2="185.6" y2="105.6"/>
+  </g>
+  <polygon points="320,145 414.1,145.9 472,240 346.9,266.9 320,373 225.9,334.1 225,240 279.7,199.7" fill="rgba(217,133,36,0.22)" stroke="#d98524" stroke-width="2" stroke-linejoin="round"/>
+  <polygon points="320,69 440.9,119.1 434,240 346.9,266.9 320,354 199.1,360.9 168,240 185.6,105.6" fill="rgba(91,124,153,0.22)" stroke="#5b7c99" stroke-width="2" stroke-linejoin="round"/>
+  <polygon points="320,126 427.5,132.5 510,240 454.4,374.4 320,411 212.5,347.5 244,240 306.6,226.6" fill="rgba(14,123,68,0.30)" stroke="#0e7b44" stroke-width="2" stroke-linejoin="round"/>
+  <g fill="#d98524">
+    <circle cx="320" cy="145" r="4"/><circle cx="414.1" cy="145.9" r="4"/><circle cx="472" cy="240" r="4"/>
+    <circle cx="346.9" cy="266.9" r="4"/><circle cx="320" cy="373" r="4"/><circle cx="225.9" cy="334.1" r="4"/>
+    <circle cx="225" cy="240" r="4"/><circle cx="279.7" cy="199.7" r="4"/>
+  </g>
+  <g fill="#5b7c99">
+    <circle cx="320" cy="69" r="4"/><circle cx="440.9" cy="119.1" r="4"/><circle cx="434" cy="240" r="4"/>
+    <circle cx="346.9" cy="266.9" r="4"/><circle cx="320" cy="354" r="4"/><circle cx="199.1" cy="360.9" r="4"/>
+    <circle cx="168" cy="240" r="4"/><circle cx="185.6" cy="105.6" r="4"/>
+  </g>
+  <g fill="#0e7b44">
+    <circle cx="320" cy="126" r="4"/><circle cx="427.5" cy="132.5" r="4"/><circle cx="510" cy="240" r="4"/>
+    <circle cx="454.4" cy="374.4" r="4"/><circle cx="320" cy="411" r="4"/><circle cx="212.5" cy="347.5" r="4"/>
+    <circle cx="244" cy="240" r="4"/><circle cx="306.6" cy="226.6" r="4"/>
+  </g>
+  <g font-size="15" fill="#4b5563" text-anchor="middle" font-family="inherit">
+    <text x="320" y="26">数据接入</text>
+    <text x="472" y="88">标注体系</text>
+    <text x="536" y="245">AutoML建模</text>
+    <text x="472" y="410">工作流编排</text>
+    <text x="320" y="458">LLM智能体</text>
+    <text x="168" y="410">推理部署</text>
+    <text x="103" y="245">模型监控</text>
+    <text x="168" y="88">质量体系</text>
+  </g>
+  <g font-size="11" fill="#9ca3af" text-anchor="start">
+    <text x="326" y="200">1</text><text x="326" y="162">2</text><text x="326" y="124">3</text>
+    <text x="326" y="86">4</text><text x="326" y="48">5</text>
+  </g>
+</svg>
+<div class="legend-row">
+  <span><span class="sw" style="background:rgba(14,123,68,0.85)"></span>本平台（灵工）</span>
+  <span><span class="sw" style="background:rgba(91,124,153,0.85)"></span>竞品（AI Quality Guard）</span>
+  <span><span class="sw" style="background:rgba(217,133,36,0.85)"></span>工序平台</span>
+</div>
+<p class="note">八维口径与第一部分第二节竞品雷达完全一致，可跨视图横向比较；本平台与竞品评分同源（第一部分），工序平台评分依据第四部分代码级调研。</p>
+
+<h3 class="sub">八维分数与三向解读</h3>
+<table>
+  <tr><th style="width:110px">维度</th><th style="width:66px">本平台</th><th style="width:66px">竞品</th><th style="width:66px">工序平台</th><th>三向解读</th></tr>
+  <tr><td>数据接入</td><td class="num">3.0</td><td class="num">4.5</td><td class="num">2.5</td><td>竞品独有 Kafka 实时链路（实测未启动）；三方实时能力全部未经产线验证</td></tr>
+  <tr><td>标注体系</td><td class="num">4.0</td><td class="num">4.5</td><td class="num">3.5</td><td>竞品策略全、工序有分群+盲测队列设计、我方三端运营最强——但只有我方有真实标注流量</td></tr>
+  <tr><td>AutoML 建模</td><td class="num">5.0</td><td class="num">3.0</td><td class="num">4.0</td><td>我方 7 算法族×5 种搜索+MLflow；工序 8+3 候选+软投票次之；竞品固定下拉最弱</td></tr>
+  <tr><td>工作流编排</td><td class="num">5.0</td><td class="num">1.0</td><td class="num">1.0</td><td>近 90 算子 DAG 画布是我方独有代差项，两个对手都无编排</td></tr>
+  <tr><td>LLM 智能体</td><td class="num">4.5</td><td class="num">3.0</td><td class="num">3.5</td><td>我方平台级（建模智能体/应用编排/RAG）；工序应用级 Agent 真实可用；竞品模板问答最浅</td></tr>
+  <tr><td>推理部署</td><td class="num">4.0</td><td class="num">4.0</td><td class="num">3.5</td><td>我方金丝雀/条件分流 vs 竞品边缘盒子 vs 工序工位回执——路线不同，得分接近</td></tr>
+  <tr><td>模型监控</td><td class="num">2.0</td><td class="num">4.0</td><td class="num">2.5</td><td>竞品独立漂移监控页是唯一自动运转的能力（PSI 4.454 实测）；我方 PSI 仅内嵌闭环</td></tr>
+  <tr><td>质量体系</td><td class="num">0.5</td><td class="num">5.0</td><td class="num">1.5</td><td>竞品 SPC/8D/NCR/控制计划机制最全（台账全空）；工序有处置单+SOP；我方空白</td></tr>
+  <tr class="summary">
+    <td>合计</td>
+    <td class="num">28.0</td>
+    <td class="num">29.0</td>
+    <td class="num">22.0</td>
+    <td>三平台形状互补：竞品赢在「质量体系+监控」（恰是我方最弱两项），我方赢在「AutoML+工作流+LLM」三大底座（恰是两个对手的共同短板），工序平台总分最低但治理纵深独一份——三者拼图恰好互为答案。</td>
+  </tr>
+</table>
+
+<h3 class="sub">补充：无监督能力三向对比（2026-11-18 专项核查）</h3>
+<table>
+  <tr><th style="width:80px">平台</th><th>无监督能力清单</th><th style="width:170px">用法定位</th><th style="width:160px">实测 / 核查结论</th></tr>
+  <tr><td>竞品</td><td>4 种分群方式（自动选择 / KMeans / DBSCAN / Khiops）+ 聚类注册表（3 个聚类版本）+ 训练聚类特征开关 + 聚类感知 / 簇内边界与稀有度选样 + 群覆盖迭代信号 + PCA 重构误差漂移检测——<b>无无监督异常检测建模</b></td><td>「标注辅助设施」：聚类 → 整簇标注 → 聚类特征，全链条服务监督学习加速；整簇门槛纯度≥0.8 且规模≥10</td><td>闭环 12 环节实测「智能分群」缺失（9/12）；3 个聚类版本停留在注册表层</td></tr>
+  <tr><td>工序平台</td><td>IsolationForest / One-Class SVM / AutoEncoder 3 种无监督异常检测算法（分群侧同为 KMeans / DBSCAN / Khiops + 自动选择）</td><td>「无标签场景的独立建模出口」：异常分数按相对分位输出，无真值时显示打分与待复核样本</td><td>代码实现确认（backend/ml/automl.py）；验收含小样本拟合测试（触及迭代上限仍产出有效分数）</td></tr>
+  <tr><td>本平台</td><td>标注侧：聚类发现 + 簇策略命中（annotation_strategies，整簇标注已有）；监控侧：PSI 内嵌闭环触发；<b>无监督异常检测建模出口待代码确认</b></td><td>聚类辅助路线与竞品同向，但缺整簇纯度门槛门禁与聚类注册表（第一部分 D 域已列）</td><td>本次三平台对比未逐项核查，列为待办：若建模侧缺失，建议随第二批「主动学习选样」同批补齐（对标工序 3 算法出口）</td></tr>
+</table>
+<p class="note">结论：无监督在竞品是<b>标注加速器</b>（且实测未运转），在工序平台是<b>独立建模路线</b>——两者用法互斥；本平台建模侧能力待核查，是本次对比发现的唯一未闭环核查项。</p>
+
+<h2>三、核心结论</h2>
+<ol>
+  <li><b>路线三分、火力互补</b>：本平台拼<b>底座深度</b>（AutoML 5.0 / 工作流 5.0 / LLM 4.5），竞品拼<b>质量机制完备</b>（质量体系 5.0 / 监控 4.0），工序平台拼<b>治理真实</b>（盲测锁定、预授权、灰度回执全程演练实证）——三条路线几乎不重叠，任何一方的最强项都是另两方的空白或短板，行业内尚无同时具备三者者。</li>
+  <li><b>总分接近、缺口形状决定打法</b>：29.0 vs 28.0 vs 22.0——竞品仅胜我方 1 分，且其中 6.5 分来自质量体系+监控两项；我方对工序平台 8 维中 7 维领先。这是「形状对抗」而非「总分对抗」：对我方而言，补短板（质量域+治理）比拼长板更快改变战局。</li>
+  <li><b>「闭环运转」是三方共同软肋，也是决胜点</b>：竞品<b>空转</b>（预警/标注/审批全停滞、实时链路从未启动）、工序<b>演练转</b>（C1–C18 全过但仅合成数据）、本平台<b>半转</b>（三端标注真实运营，质量域未建）——谁先在真实产线跑通「预警 → 处置 → 标注 → 重训 → 灰度发布」全链，谁拿走质量 AI 的核心叙事；我方的真实标注流量是三方中唯一的抢跑本钱。</li>
+  <li><b>41 项缺口无技术不可行项</b>：37 项竞品系 + 4 项工序系（H 域闭环治理）全部有清晰架构落点，真正的约束是范围与领域语义（IATF/8D 口径评审、标注流程重构），不是能力；唯一带非代码前提的是边缘域（硬件供应链）。</li>
+  <li><b>治理是新的护城河</b>：借鉴清单 13 项中 6 项高优先级全部关于「让闭环可信可审计」；第二批 + 治理四件套落地后，本平台将成为三者中唯一「底座深 + 质量域全 + 治理真转 + 标注有真实流量」的平台——对两个对手同时形成压制。</li>
+</ol>
+
+<h2>四、功能缺口全景与可行性（两对手并集，41 项 = 竞品系 37 + 工序系 4）</h2>
+<p class="note">A–G 域沿用第一部分第四节口径（来源竞品，2026-11-18 逐项代码复核成立），本节以两对手实测证据交叉更新可行性判断；新增 <b>H 域「闭环治理」</b>（来源工序平台）。H 域与 D 域「影子推理/发布门禁」互补不重叠：D 域是模型运营视角（双模型并行打分、门禁指标），H 域是发布治理视角（授权、盲测、回执、凭证）。逐项结论：<b>41 项无技术不可行项</b>。另：工序平台的无监督异常检测建模出口（IsolationForest / OCSVM / AutoEncoder）未计入上述 41 项——本平台建模侧同能力待代码确认，若缺失建议并入第二批，届时缺口总数相应 +1~3 项。</p>
+<table>
+  <tr><th style="width:126px">域（项数·来源）</th><th>缺口内容</th><th>架构落点</th><th style="width:56px">复杂度</th><th style="width:216px">可行性判断（两对手实证交叉）</th></tr>
+  <tr><td>A 实时接入（2·竞品）</td><td>Kafka 实时链路；MySQL/PG 只读数据源</td><td>compose Kafka profile；SQLAlchemy + SELECT 白名单</td><td>中 / 小</td><td>✅ 可行；竞品 Kafka 状态实测「告警、从未启动」——我方做成可选部署 profile 即可对齐宣称且不必实背中间件</td></tr>
+  <tr><td>B 预警监控（5·竞品）</td><td>预警中心；处置工作台；实时生产监控；质量 KPI 驾驶舱；趋势/帕累托</td><td>新表 + API router + React 页面；复用闭环事件流与通知中心</td><td>小-中</td><td>✅ 最易落地；竞品 14 条预警全部 SLA 超时——做得出来还要转得起来，我方三端标注运营正是流量来源</td></tr>
+  <tr><td>C 质量工程（11·竞品）</td><td>SPC；MSA；FMEA；8D；NCR/CAPA；供应商 IQC→SCAR；动态控制计划；案例中心；质量报告；批次追溯；知识库</td><td>表单 + 状态机 + 统计公式 + 图表；8D 草稿复用 LLM 网关</td><td>各小、合计大</td><td>✅ 技术可行；工序平台处置单 + SOP 版本化证明轻量路径可走，竞品规则设计（D0–D8 顺序、NCR 三周期无复发关闭、控制计划四因子加严）可直接移植省口径评审成本</td></tr>
+  <tr><td>D 模型运营（7·竞品）</td><td>独立漂移监控页；影子推理；发布门禁；可信度评分+CBPE；主动学习选样（9 种策略）；多标注者 Kappa+仲裁；Champion/Challenger 别名</td><td>PSI 从闭环抽出独立报告；影子=rollout 双版本并行打分；选样=predict_proba 采样</td><td>中</td><td>✅ 可行且回报高；竞品漂移监控是其唯一自动运转能力（PSI 4.454 实测）——独立漂移页是对标刚需；Kappa 触及标注流程重构，回归面最大</td></tr>
+  <tr><td>E 智能体治理（5·竞品）</td><td>四眼审批中心；智能体动作审计；审计问答（证据引用）；工艺参数分析/优化；自然语言问数</td><td>AgentTask 审批流泛化；审计问答=LLM 网关+SQL 白名单</td><td>中-大</td><td>✅ 审计问答是本平台反超点（LLM 深度远超竞品模板问答）；工序平台 C1–C18 审批治理场景演练全过，证明该域可工程化落地</td></tr>
+  <tr><td>F 边缘体系（3·竞品+工序）</td><td>推理盒子管理；设备影子；灰度/OTA/断网补传</td><td>ONNX 转换/导出已有；缺盒子代理程序 + 管理页</td><td>大</td><td>⚠️ 唯一有非代码前提的域（硬件供应链与现场运维）；竞品单盒注册在位可参考，工序 S8-03 执行器隔离（Job Object + 回环 HTTPS + 回执）提供安全基线</td></tr>
+  <tr><td>G 平台配套（4·竞品）</td><td>钉钉/企微/短信通知通道；场景与设备管理；证据链 ZIP 导出（SHA-256）；QMS/MES 只读开放接口</td><td>通知适配器；配置页；audit 日志打包；platform_api 反向改造</td><td>小</td><td>✅ 随手可做</td></tr>
+  <tr><td class="p0">H 闭环治理（4·工序）</td><td>独立终验 + 盲测样本锁定；按工位/场景预授权发布（授权人≠申请人 + 有效期 + 次数 + 撤销失效）；影子窗口 + 按工位灰度放量 + 工位生效回执；伪标签用量凭证 + 每类限量 + 降样本权重</td><td>数据集划分管理 + 发布门禁；rollout 之上加预授权层与回执闭环；annotation_strategies 补限量/降权/凭证</td><td>中</td><td>✅ 可行且回报高——竞品发布门禁形同虚设（F1 0.999 浅验证集放行），工序已全程演练验证该体系；落地后本平台发布治理同时领先两个对手</td></tr>
+</table>
+
+<h2>五、本平台借鉴清单（两个参照系共 13 项，含优先级）</h2>
+<p class="note">优先级口径：<span class="p0">高</span>＝进入第一/二批补齐路线；<span class="p1">中</span>＝二批后择机；「按单/条件」＝随第三批 QMS 或边缘条件触发。</p>
+<table>
+  <tr><th style="width:26px">#</th><th style="width:150px">借鉴项</th><th style="width:76px">来源</th><th>对方实现证据</th><th style="width:170px">我方落点（既有基建）</th><th style="width:56px">优先级</th></tr>
+  <tr><td>1</td><td>独立漂移监控页</td><td>竞品</td><td>PSI+PCA 重构误差+DQ 三类检测，定时批检真实产出严重级报告（PSI 4.454、39/89 特征）</td><td>PSI 从闭环事件流抽出独立报告+页面（第一部分 D 域落点）</td><td class="p0">高</td></tr>
+  <tr><td>2</td><td>SPC 全套</td><td>竞品</td><td>Nelson 1–8 判异 + Cp/Cpk/Pp/Ppk/Cpm/Cr/PPM 全套指数，10.6 万行取 5 千行口径可复算</td><td>新表+统计公式+图表组件（B/C 域）</td><td class="p0">高</td></tr>
+  <tr><td>3</td><td>「诚实设计」五项</td><td>竞品</td><td>数据陈旧自曝横幅 / 风险分口径脚注 / 空态引导文案 / 审批过期自动回收 / 设备影子</td><td>随第一批「抄作业」落地，产品语言层成本极低</td><td class="p0">高</td></tr>
+  <tr><td>4</td><td>审批有效期+过期回收</td><td>竞品</td><td>72h 过期自动回收实测（3 条工艺建议超期）；发起人≠审批人</td><td>AgentTask 审批流泛化加有效期字段</td><td class="p1">中</td></tr>
+  <tr><td>5</td><td>独立终验+盲测样本锁定</td><td>工序</td><td>独立测试划分建模轮次开始后锁定；已用盲测留作历史证据，复验用新批次</td><td>数据集划分管理+发布门禁（防止「用训练数据自证」——直接打竞品 F1 0.999 浅验证的软肋）</td><td class="p0">高</td></tr>
+  <tr><td>6</td><td>按工位/场景预授权发布</td><td>工序</td><td>授权人≠申请人+有效期+发布次数+质量门变化或撤销后失效，验收 C18 实证</td><td>推理 rollout 之上加预授权层（金丝雀基建已有）</td><td class="p0">高</td></tr>
+  <tr><td>7</td><td>影子窗口+灰度放量+回执</td><td>工序</td><td>离线+影子双验收→按工位规则灰度→回执确认生效；S8-03 回环 HTTPS 演练实证</td><td>rollout 双版本并行打分已有，补影子窗口调度与生效回执闭环</td><td class="p1">中</td></tr>
+  <tr><td>8</td><td>伪标签用量凭证+降权</td><td>工序</td><td>每类按已标真值限量+降样本权重+开发验证比较后选用；用量凭证可下载</td><td>标注门户 annotation_strategies 已有伪标签落点，补限量/降权/凭证</td><td class="p1">中</td></tr>
+  <tr><td>9</td><td>分群标注增强</td><td>工序 + 竞品</td><td>工序：群内代表/边界/偏离三类视图+独立盲测复核队列（隐藏分数）；竞品：整簇纯度≥0.8 且≥10 门槛</td><td>三端标注已有聚类发现+簇策略命中，补纯度门槛门禁与盲测复核队列</td><td class="p1">中</td></tr>
+  <tr><td>10</td><td>质量体系长尾的规则设计</td><td>竞品</td><td>8D 按 D0–D8 顺序推进、D6 验证通过方可结案；NCR 关闭=连续三验证周期无复发；控制计划唯一生效版+四因子加严乘数</td><td>第三批 QMS 按单建设时直接抄规则设计，省口径评审成本</td><td>按单</td></tr>
+  <tr><td>11</td><td>边缘版设计</td><td>竞品</td><td>ONNX 统一导出、场景/特征版本强校验、A/B 双槽原子切换、(box_id, trace_id) 幂等、断网补传</td><td>条件启动批参考（ONNX 转换/导出已有）</td><td>条件</td></tr>
+  <tr><td>12</td><td>执行器隔离</td><td>工序</td><td>Job Object 子进程+内存/超时/产物/日志上限 6 项检查；wheel 离线安装+SHA256 清单</td><td>边缘批落地时的执行器安全基线参考</td><td>条件</td></tr>
+  <tr><td>13</td><td>阶段化验收回执工程化</td><td>工序（反面教材）</td><td>S-PRE–S8 每阶段回执 JSON+pytest 日志+截图，但证据放 gitignored 目录，克隆即断链、且无 CI</td><td>我方 docs/验收-*.md+release gates 已是正向实践；可补回执 JSON 化与结构化比对，<b>证据必须保持进 Git 跟踪目录</b></td><td class="p1">中</td></tr>
+</table>
+
+<h2>六、补齐路线（三平台竞争版：四段门控 × 双参照系）</h2>
+<p class="note">与第一部分第六节四段门控完全兼容——批次划分、项数、启动门控不变，此处叠加「对标口径」与新增借鉴项的归属批次。各模块的功能定义、用户流程、实现细节（数据表 / API / 复用基建 / 借鉴要点）与逐项验收口径，见<a href="补齐路线实施文档.html">《补齐路线实施文档》</a>（2026-11-19，41 项 + 待确认 1 项 + 诚实设计 5 项全展开）。</p>
+<table>
+  <tr><th style="width:150px">批次（项数）</th><th>内容（含新增借鉴项归属）</th><th style="width:200px">对标口径（做完后的竞争位置）</th></tr>
+  <tr><td class="p0">第一批 · 闭环运营必需集（13）</td><td>预警中心、处置工作台、驾驶舱、趋势/帕累托、实时监控、SPC（借鉴 2）、Kafka 接入、外部库直连、<b>独立漂移监控页（借鉴 1）</b>、场景与设备管理、通知渠道、证据链导出、QMS/MES 只读接口；随批「抄作业」<b>诚实设计五项（借鉴 3）</b></td><td>对竞品：质量域骨架对齐，且我方有三端标注运营让闭环<b>真转</b>——正面对打其「机制全、无人转」；对工序：预警/处置/SPC/漂移全面超出其单机范围</td></tr>
+  <tr><td class="p0">第二批 · 差异化反超集（10+4）</td><td>原 10 项：审计问答+问数（LLM 反超点）、影子推理、发布门禁、可信度+CBPE、主动学习选样、Kappa+仲裁、四眼审批中心、动作审计、Champion/Challenger。<b>新增治理四件套（借鉴 5/6/7/8）：独立终验+盲测锁定、按工位预授权发布、影子窗口+灰度回执、伪标签凭证+降权</b>；审批有效期回收（借鉴 4）并入审批中心</td><td>对竞品：发布门禁由「形同虚设」变「盲测锁定+预授权」的代差；对工序：治理机制对齐且挂载在多租户底座上——其单机 SQLite 无法跟随</td></tr>
+  <tr><td class="p1">第三批 · QMS 合规长尾（10）</td><td>MSA、FMEA、8D、NCR/CAPA、供应商 IQC→SCAR、动态控制计划、案例中心、质量报告、批次追溯、知识库——<b>规则设计直接抄竞品（借鉴 10）</b>，口径评审成本减半</td><td>对竞品：质量体系从 0.5 追到机制对齐；竞品台账全空，我方按单建设即有真实客户流量打磨</td></tr>
+  <tr><td class="p1">条件启动 · 边缘与 DOE（4）</td><td>推理盒子、设备影子下发、灰度/OTA/断网补传（<b>设计抄竞品借鉴 11 + 执行器基线抄工序借鉴 12</b>）；工艺参数优化（先建特征语义防线，防竞品「ID 列推 0% NG」覆辙）</td><td>触发条件：真实边缘订单 / DOE 语义防线就绪——不抢跑</td></tr>
+</table>
+
+<h2>七、威胁矩阵与时间窗口</h2>
+<table>
+  <tr><th style="width:110px">对手</th><th style="width:80px">当前威胁</th><th>威胁触发条件</th><th>我方对策</th></tr>
+  <tr><td>AI Quality Guard</td><td><b>低</b>（中期中）</td><td>落地 1–2 个真实运营客户，闭环故事由「框架」变「实证」，叠加边缘+低资源成本优势在质量部门主导的标战中实质化</td><td>首批 13 项做实 + 售前直接使用第九节矛盾清单页面级实证（F1 0.999 浅验证、47.5% 置信度发强飞溅预警、ID 列推 0% NG）</td></tr>
+  <tr><td>工序平台</td><td><b>低</b></td><td>接入真实产线跑通灰度闭环，以「治理真转」叙事同时压过竞品空转与我方待建；或被并入更大平台获得编排/多租户底座</td><td>治理四件套提前入第二批；保持 AutoML/工作流/LLM 三大底座代差持续迭代</td></tr>
+</table>
+<div class="quote">
+<b>时间窗口结论</b>：三向补齐难度不对称——竞品补底座是<b>深度问题</b>（编排/AutoML/LLM 需要长期积累），工序平台补广度是<b>工程量问题</b>（且无人工维护史、AI 代码上产线存疑），我方补质量域+治理是<b>广度+CRUD 问题</b>（相对易，第一部分已论证 37 项无技术不可行项）。<b>时间窗口在我方</b>；唯一的叙事风险是「闭环真正运转」的实证被工序平台抢先——这正是把治理四件套提前塞入第二批的原因：第二批落地之日，我方将是三者中唯一「底座深 + 质量域全 + 治理真转 + 标注有真实流量」的平台，形成对两个对手的同时压制。
+</div>
+
+</div>
+
+<div class="footer">
+  证据来源：竞品《产品介绍与全景分析 v20261115.17》《AI Quality Guard 产品调研》（2026-11-15 管理员登录遍历 30 个主入口）《平台能力介绍（市场版）》；登录实测（admin1，2026-11-16，遍历预警中心/驾驶舱/SPC/闭环总览/漂移监控/模型管理/标注/训练/推理运行/推理盒子/审批中心/审计问答/系统设置）；2026-11-18 未登录复测（凭据已失效，核验落地页与鉴权边界）。本平台依据：ml-platform 代码现状与平台说明文档。补齐可行性评估基于本平台既有基建（compose 服务栈、推理 rollout、闭环事件流、通知中心、LLM 网关与 RAG/向量库）。工序平台（第三、四部分）依据：E:\codex_workspace\industrial-timeseries-agent-platform 代码与 Git 历史、docs/ACCEPTANCE.md 等验收文档、.pytest_cache 缓存核查（2026-11-18 只读调研）。
+</div>
+
+<script>
+function showView(name) {
+  const views = ['brief', 'report', 'newplat', 'vsours', 'trio'];
+  views.forEach(v => {
+    document.getElementById('view-' + v).style.display = v === name ? '' : 'none';
+    document.getElementById('btn-' + v).classList.toggle('active', v === name);
+  });
+  window.scrollTo({ top: 0 });
+}
+</script>
+</body>
+</html>
