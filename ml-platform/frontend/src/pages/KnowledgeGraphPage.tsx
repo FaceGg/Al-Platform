@@ -1126,7 +1126,7 @@ export default function KnowledgeGraphPage() {
                   option={option}
                   notMerge
                   lazyUpdate
-                  style={{ width: "100%", height: "100%" }}
+                  style={{ width: "100%", height: "100%", cursor: "grab" }}
                   onEvents={chartEvents}
                 />
                 <Tooltip title={graphText.resetView}>
