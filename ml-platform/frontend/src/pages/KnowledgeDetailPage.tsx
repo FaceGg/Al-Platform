@@ -312,18 +312,42 @@ export default function KnowledgeDetailPage() {
     }
     const keepIds = new Set(view.map((e) => e.id));
 
-    // —— 环形布局（用户指定 2026-11-19：全部节点均匀圆周分布 + 直线连线，
-    // 整洁不混乱；此前力导向迭代 220 轮在大库上聚簇混乱）——
+    // —— 向心多层圆布局（用户指定 2026-11-19：整体轮廓近似圆形——
+    // 高连接的 hub 自然聚在内圈、低连接叶子铺外圈，放射状连线；此前
+    // 力导向 220 轮在大库上聚簇混乱、纯圆环又只是圆周排队）——
     if (graphPosRef.current.kbId !== kbId) graphPosRef.current = { kbId: kbId ?? "", map: new Map() };
     const posCache = graphPosRef.current.map;
     const W = Math.max(dom.clientWidth, 320);
     const H = Math.max(dom.clientHeight, 240);
-    const R = Math.min(W, H) * 0.42;
+    const R = Math.min(W, H) * 0.46;
+    const RINGS = 5;
+    const maxDeg = Math.max(1, ...view.map((e) => degree.get(e.id) || 0));
+    const layerBuckets: Record<number, string[]> = {};
+    for (const e of view) {
+      const deg = degree.get(e.id) || 0;
+      // 对数分层：hub 高度数占内圈，度数 0 的叶子全在最外圈
+      const ratio = Math.log2(1 + deg) / Math.log2(1 + maxDeg);
+      const layer = Math.min(RINGS - 1, Math.floor(ratio * RINGS));
+      (layerBuckets[layer] ||= []).push(e.id);
+    }
     view.forEach((e, i) => {
-      if (!posCache.has(e.id)) {
-        const a = (i / Math.max(1, view.length)) * Math.PI * 2 - Math.PI / 2;
-        posCache.set(e.id, [W / 2 + R * Math.cos(a), H / 2 + R * Math.sin(a)]);
-      }
+      if (posCache.has(e.id)) return;
+      const deg = degree.get(e.id) || 0;
+      const ratio = Math.log2(1 + deg) / Math.log2(1 + maxDeg);
+      const layer = Math.min(RINGS - 1, Math.floor(ratio * RINGS));
+      const members = layerBuckets[layer];
+      const idxInLayer = members.indexOf(e.id);
+      // 层间角偏移避免同放射线堆叠；同层均匀铺开
+      const base = (idxInLayer / Math.max(1, members.length)) * Math.PI * 2 + layer * 0.9;
+      const radius = R * ((layer + 1) / RINGS);
+      // id 哈希微抖动（消除机械感，保持整体圆形轮廓）
+      let h = 0;
+      for (const ch of e.id) h = (h * 31 + ch.charCodeAt(0)) & 0xffff;
+      const jitterA = (h / 0xffff - 0.5) * (Math.PI * 2 / Math.max(8, members.length));
+      const jitterR = ((h >> 5) / 0xffff - 0.5) * R * 0.06;
+      const a = base + jitterA;
+      const r = Math.max(radius + jitterR, R * 0.08);
+      posCache.set(e.id, [W / 2 + r * Math.cos(a), H / 2 + r * Math.sin(a)]);
     });
     const pts: [number, number][] = view.map((e) => posCache.get(e.id)!);
 
@@ -335,12 +359,21 @@ export default function KnowledgeDetailPage() {
         type: "graph",
         layout: "none",
         roam: true, // 拖拽节点固定位置 / 滚轮缩放 / 空白处平移
-        data: view.map((e, i) => ({
-          id: e.id, name: e.name, category: e.entity_type,
-          x: pts[i][0], y: pts[i][1],
-          draggable: true,
-          symbolSize: 9 + Math.min(11, (degree.get(e.id) || 0) * 2.5),
-        })),
+        data: view.map((e, i) => {
+          const deg = degree.get(e.id) || 0;
+          // 节点尺寸两极化（用户指定 2026-11-19）：少数重要 hub 大圆、其余
+          // 统一小圆——阈值取最大度数的 12%，避免连续分布淹没层次感
+          const hubCut = maxDeg * 0.12;
+          const size = deg >= hubCut
+            ? 16 + Math.min(14, ((deg - hubCut) / Math.max(1, maxDeg - hubCut)) * 16)
+            : 5.5;
+          return {
+            id: e.id, name: e.name, category: e.entity_type,
+            x: pts[i][0], y: pts[i][1],
+            draggable: true,
+            symbolSize: size,
+          };
+        }),
         links: relations
           .filter((r) => keepIds.has(r.source_id) && keepIds.has(r.target_id))
           .map((r) => ({ source: r.source_id, target: r.target_id, name: r.relation_type })),
