@@ -686,8 +686,8 @@ fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失�
 
 - 背景：r18（2026-11-11）发布后主线累计 127 个提交——无监督异常检测一~三期全量（阈值规则/iforest/ocsvm/AE 按族混合、工况分片挂载与路由、M8-M10 机群规模化、门禁 falsy-zero 与 precision@k 证据，迁移 head 推进至 `20261114_101`）、智能体契约漂移修复回路（`_validate_with_repair`+骨架提示词，实测 AUC 0.974 一轮通过）、经验域软优先与状态中文化等；用户要求更新文档重新打包。
 - 打包完整性加固：`build-package.sh` 排除规则新增 `.trae`/`.trae-*` 目录与 `*竞品对比*` 文件——未跟踪文件本会经 overlay 进安装包，工作区 600KB IDE 包与竞品对比参考材料差点混入 r19（沿 wheelhouse 先例）；`.git/` 内 LF 镜像同步，`bash -n` 过。
-- 发布记录（2026-11-19）：安装包 `output/linkraft-ubuntu-20261119-r19.tar.gz`（13,772,454 字节），manifest 绑定 HEAD `4b13e1f8`（README r19 + 排除规则提交；= tag = 门禁分支 `release/r19` HEAD），SHA-256 `0b8981e2fec6615b5182893c197e2fbd1ce8939449455dfb33d42c7a6b48e513`，`sha256sum -c` 通过。归档核验：排除项干净（无 .trae/竞品/wheelhouse/node_modules/.env/secrets/.git/.db）；迁移 `20261112_98`+`20261114_101` 在包；无监督/机群模块 19 处在包；r19 文档引用 5 处；包内打包脚本自带新排除规则（下游重建同防护）；packaging 脚本 0 CR（WSL 复核）。迁移头常量坑已根治（`EXPECTED_HEAD = current_alembic_head()` 动态读，无需手工同步）。
-- 质量门禁：在门禁分支 `release/r19` 隔离并发组验证（git 存储凭据直调 API），终验 run 回填；绿后 tag `4b13e1f8` 发 GitHub Release `20261119-r19`（资产 = tar.gz + sha256）。
+- 发布记录（2026-11-19）：安装包 `output/linkraft-ubuntu-20261119-r19.tar.gz`（13,772,454 字节），manifest 绑定 HEAD `8c2bd412`（= tag = 门禁分支 `release/r19` HEAD；台账提交上重打保证三者零歧义），SHA-256 `817cbfa9c1b356243359ff9569de596cc656defee6b0bde3351205dfa52e2401`，`sha256sum -c` 通过。归档核验：排除项干净（无 .trae/竞品/wheelhouse/node_modules/.env/secrets/.git/.db）；迁移 `20261112_98`+`20261114_101` 在包；无监督/机群模块 19 处在包；r19 文档引用 5 处；包内打包脚本自带新排除规则（下游重建同防护）；packaging 脚本 0 CR（WSL 复核）。迁移头常量坑已根治（`EXPECTED_HEAD = current_alembic_head()` 动态读，无需手工同步）。
+- 质量门禁：在门禁分支 `release/r19` 隔离并发组验证（git 存储凭据直调 API），终验 run 回填；绿后 tag `8c2bd412` 发 GitHub Release `20261119-r19`（资产 = tar.gz + sha256）。
 
 ## 2026-11-11 重新打包 r18：纳入 r17 后智能体全链与治理安全批次
 
