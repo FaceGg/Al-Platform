@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
   Select, Button, Form, Input, List, Typography, message, Card, Space, Tag, Empty,
-  AutoComplete, Statistic, InputNumber, Tooltip, Segmented,
+  AutoComplete, InputNumber, Tooltip,
 } from "antd";
 import {
   PlusOutlined, DeleteOutlined, ReloadOutlined, ThunderboltOutlined, AimOutlined, ScanOutlined,
@@ -17,7 +17,7 @@ const { Text } = Typography;
 
 interface GraphNode {
   id: string; label: string; type?: string; source?: string; freq?: number;
-  docCount?: number; docIds?: string[];
+  docCount?: number;
 }
 interface GraphEdge {
   source: string; target: string; label?: string; type?: string; weight?: number;
@@ -25,11 +25,9 @@ interface GraphEdge {
 interface GraphData {
   nodes: GraphNode[]; edges: GraphEdge[];
 }
-interface DocItem {
-  id: string; filename: string; doc_type?: string; chunk_count?: number;
-}
 
-// 总览时的边预算：全量共现边会糊成一片并拖慢渲染
+// 总览时的边预算：Obsidian 观感是稀疏链接，全量共现边会糊成一片并拖慢渲染；
+// 聚焦邻域时不裁剪，保证高亮完整
 const MAX_VIEW_EDGES = 2500;
 
 // Obsidian 风格柔和分组色板：type 优先分色，来源兜底，按序轮转
@@ -38,10 +36,12 @@ const GROUP_PALETTE = [
   "#98c379", "#ff9f6a", "#6bcfff", "#d19cf5", "#e8a0a0",
 ];
 
-// 占比最高的类型用中性色（Obsidian 默认是中性灰点，彩色只用于少数分组）
+// 占比最高的类型用中性色（Obsidian 默认是中性灰点，彩色只用于少数分组），
+// 否则整片同色圆点会像「紫色海洋」
 const NEUTRAL_NODE_COLOR = "#7f8b9e";
 
-// 实体类型显示名：抽取层 type 是英文标识，中文界面翻译显示；未知类型显示原值
+// 实体类型显示名：抽取层 type 是英文标识（jieba 词性映射），中文界面翻译显示；
+// 未知类型显示原值
 const TYPE_DISPLAY_ZH: Record<string, string> = {
   concept: "概念", term: "术语", person: "人物", location: "地点",
   organization: "机构", standard: "标准", material: "材料", equipment: "设备",
@@ -53,8 +53,13 @@ function typeDisplayName(type: string, lang: string): string {
   return TYPE_DISPLAY_ZH[type] ?? type;
 }
 
-function truncate(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}…` : text;
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 export default function KnowledgeGraphPage() {
@@ -67,70 +72,40 @@ export default function KnowledgeGraphPage() {
     extractEmpty: "抽取完成：未发现满足阈值的实体（可检查文档内容或降低词频阈值）",
     extractFailed: "自动抽取失败",
     auto: "自动", manual: "手动", docCount: (n: number) => `出处文档 ${n} 篇`,
-    searchPh: "搜索实体，定位到其所属文档",
+    searchPh: "搜索实体，查看它的邻域",
     overview: "返回总览",
     inLibrary: "库内实体", viewOf: "当前视图",
+    viewCap: "视图上限",
+    viewCapHelp: "总览最多渲染的实体数量；库内超出时按连接数与词频优先采样（Top 枢纽 + 其关系），保证布局性能与可读性。聚焦邻域时不受此限制。",
     neighborhood: "邻域",
-    expandHint: "点击实体高亮其邻域 · 滚轮缩放 / 拖动平移 / 拖拽节点",
+    entityList: "实体列表",
     resetView: "重置视图",
     degreeLabel: "度数",
-    modeRadial: "放射关系图", modeEntity: "实体图谱",
-    centerDoc: "中心文档",
-    centerDocEmpty: "该文档未抽取到实体",
-    relatedDocs: "相关文档", centerEntities: "文档实体",
-    secondaryDocs: "二级相关文档",
-    sharedEntities: (n: number) => `共享实体 ${n} 个`,
-    docType: "文档类型", chunks: (n: number) => `${n} 个分块`,
-    pickEntity: "拖动节点可调整位置 · 点击外圈文档切换中心 · 点击实体高亮",
-    noDocs: "该知识库还没有文档",
   } : {
     extract: "Auto extract", extracting: "Extracting...",
     extractDone: (e: number, r: number) => `Extracted: ${e} entities, ${r} relations`,
     extractEmpty: "Extracted nothing above threshold (check document content or lower the frequency threshold)",
     extractFailed: "Auto extraction failed",
     auto: "Auto", manual: "Manual", docCount: (n: number) => `${n} source doc(s)`,
-    searchPh: "Search an entity to locate its document",
+    searchPh: "Search an entity to view its neighborhood",
     overview: "Back to overview",
     inLibrary: "In library", viewOf: "View",
+    viewCap: "View cap",
+    viewCapHelp: "Max entities rendered in the overview; beyond it, top-connected entities are sampled (top hubs + their edges) for layout performance and readability. Focus mode is not capped.",
     neighborhood: "Neighborhood",
-    expandHint: "Click an entity to highlight its links · scroll to zoom / drag to pan",
+    entityList: "Entities",
     resetView: "Reset view",
     degreeLabel: "Links",
-    modeRadial: "Radial map", modeEntity: "Entity graph",
-    centerDoc: "Center document",
-    centerDocEmpty: "No entity extracted from this document",
-    relatedDocs: "Related documents", centerEntities: "Document entities",
-    secondaryDocs: "Second-level documents",
-    sharedEntities: (n: number) => `${n} shared entities`,
-    docType: "Type", chunks: (n: number) => `${n} chunks`,
-    pickEntity: "Drag nodes to rearrange · click an outer document to recenter · click an entity to highlight",
-    noDocs: "This knowledge base has no document yet",
   };
   const chartRef = useRef<any>(null);
-  // 实体图谱容器（ResizeObserver：容器尺寸变化自动 echarts resize，
-  // canvas 不再锁死初始尺寸——2026-11-19 用户反馈画布外区域点击无效根因）
-  const entityWrapRef = useRef<HTMLDivElement>(null);
-  // 拖动联动（用户需求 2026-11-19：拖一个节点带动关联节点一起动）：
-  // coordsRef 存当前坐标（option 构建时写入），mouseup 读拖后新坐标算
-  // delta，直连邻居批量平移。
-  const coordsRef = useRef<Map<string, [number, number]>>(new Map());
-  const adjRef = useRef<Map<string, string[]>>(new Map());
-  const mapRef = useRef<HTMLDivElement>(null);
   const focusIdRef = useRef<string | null>(null);
   const [bases, setBases] = useState<any[]>([]);
   const [selectedKb, setSelectedKb] = useState<string | null>(null);
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [] });
-  const [docs, setDocs] = useState<DocItem[]>([]);
-  const [centerDocId, setCenterDocId] = useState<string | null>(null);
-  const [mode, setMode] = useState<"radial" | "entity">("radial");
-  const [hoverKey, setHoverKey] = useState<string | null>(null);
-  const [hoverInfo, setHoverInfo] = useState<{ x: number; y: number; lines: string[] } | null>(null);
-  const [highlightId, setHighlightId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [focusId, setFocusId] = useState<string | null>(null);
-  const [viewSize, setViewSize] = useState(400);
-  const [mapSize, setMapSize] = useState({ w: 900, h: 560 });
+  const [viewSize, setViewSize] = useState(300);
   const [form] = Form.useForm();
   const [edgeForm] = Form.useForm();
   focusIdRef.current = focusId;
@@ -139,13 +114,6 @@ export default function KnowledgeGraphPage() {
     apiClient.get("/knowledge/bases").then((res) => {
       setBases(res.data.items || res.data || []);
     }).catch(() => {});
-  }, []);
-
-  const loadDocs = useCallback((kbId: string) => {
-    apiClient.get("/knowledge/bases/" + kbId + "/documents").then((res) => {
-      const items = (res.data?.items || res.data || []) as DocItem[];
-      setDocs(items);
-    }).catch(() => setDocs([]));
   }, []);
 
   const loadGraph = useCallback(() => {
@@ -161,7 +129,6 @@ export default function KnowledgeGraphPage() {
           source: n.properties?.source,
           freq: n.properties?.freq ?? 0,
           docCount: Array.isArray(n.properties?.doc_ids) ? n.properties.doc_ids.length : undefined,
-          docIds: Array.isArray(n.properties?.doc_ids) ? n.properties.doc_ids : [],
         }));
         const edges = (data.edges || []).map((edge: any) => ({
           source: edge.source ?? edge.source_id,
@@ -172,28 +139,14 @@ export default function KnowledgeGraphPage() {
         }));
         setGraphData({ nodes, edges });
         setFocusId(null);
-        setHighlightId(null);
       })
       .catch(() => message.error(t.common.error))
       .finally(() => setLoading(false));
   }, [selectedKb, t]);
 
   useEffect(() => { loadGraph(); }, [selectedKb]);
-  useEffect(() => { if (selectedKb) loadDocs(selectedKb); }, [selectedKb, loadDocs]);
 
-  // 容器尺寸测量：放射图按像素排布，标签字号不随视口缩放
-  useEffect(() => {
-    const el = mapRef.current;
-    if (!el) return;
-    const observer = new ResizeObserver((entries) => {
-      const rect = entries[0].contentRect;
-      setMapSize({ w: Math.max(320, rect.width), h: Math.max(320, rect.height) });
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [mode, selectedKb]);
-
-  // 全库度数（节点大小按连接数，聚焦视图下仍按全库度数缩放）
+  // 全库度数（Obsidian 以链接数决定节点大小，聚焦视图下仍按全库度数缩放）
   const degree = useMemo(() => {
     const d = new Map<string, number>();
     for (const e of graphData.edges) {
@@ -203,209 +156,14 @@ export default function KnowledgeGraphPage() {
     return d;
   }, [graphData.edges]);
 
-  // 每个文档的实体数（用于挑选默认中心文档）
-  const docEntityCount = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const n of graphData.nodes) {
-      for (const d of n.docIds || []) counts.set(d, (counts.get(d) || 0) + 1);
-    }
-    return counts;
-  }, [graphData.nodes]);
-
-  // 文档两两之间共享的实体数（文档关系矩阵）
-  const sharedBetween = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const n of graphData.nodes) {
-      const ids = n.docIds || [];
-      for (let i = 0; i < ids.length; i++) {
-        for (let j = i + 1; j < ids.length; j++) {
-          const key = ids[i] < ids[j] ? `${ids[i]}|${ids[j]}` : `${ids[j]}|${ids[i]}`;
-          map.set(key, (map.get(key) || 0) + 1);
-        }
-      }
-    }
-    return map;
-  }, [graphData.nodes]);
-
-  // 放射图模型：中心文档（自动选取，点外圈可切换）+ 内圈实体 + 一级相关文档
-  // + 每篇一级文档自己的二级相关文档
-  const radial = useMemo(() => {
-    if (docs.length === 0 || graphData.nodes.length === 0) return null;
-    let center = docs.find((d) => d.id === centerDocId);
-    if (!center) {
-      center = [...docs].sort((a, b) => (docEntityCount.get(b.id) || 0) - (docEntityCount.get(a.id) || 0))[0];
-    }
-    if (!center) return null;
-
-    const relatedOf = (docId: string) => {
-      const out: Array<{ doc: DocItem; shared: number }> = [];
-      for (const d of docs) {
-        if (d.id === docId) continue;
-        const key = docId < d.id ? `${docId}|${d.id}` : `${d.id}|${docId}`;
-        const shared = sharedBetween.get(key) || 0;
-        if (shared > 0) out.push({ doc: d, shared });
-      }
-      return out.sort((a, b) => b.shared - a.shared);
-    };
-
-    const level1All = relatedOf(center.id);
-    // 一级只保留最相关的文档（最多 6 篇强相关直连中心），其余文档降为二级、
-    // 挂到与它共享实体最多的一级文档下——「强相关直连、弱相关桥接」的分层
-    const level1Cap = Math.min(level1All.length, 6);
-    const level1 = level1All.slice(0, level1Cap);
-    // 二级：每篇一级文档的相关文档（排除中心与已在一级的），归属共享最多的父文档
-    const used = new Set<string>([center.id, ...level1.map((x) => x.doc.id)]);
-    const level2Map = new Map<string, { doc: DocItem; shared: number; parentId: string }>();
-    for (const item of level1) {
-      for (const rel of relatedOf(item.doc.id)) {
-        if (used.has(rel.doc.id)) continue;
-        const prev = level2Map.get(rel.doc.id);
-        if (!prev || rel.shared > prev.shared) {
-          level2Map.set(rel.doc.id, { ...rel, parentId: item.doc.id });
-        }
-      }
-    }
-    const level2 = [...level2Map.values()];
-
-    const { w, h } = mapSize;
-    const cx = w / 2;
-    const cy = h / 2;
-    const base = Math.min(w, h);
-    // 三圈半径整体收紧（按短边比例），保证最外圈二级文档留在画布内
-    const r1 = base * 0.24;
-    const r2 = base * 0.34;
-    const r3 = base * 0.42;
-    // 内圈实体数量按圆周可用长度自动决定（标签不互相压盖）
-    const maxInner = Math.max(6, Math.floor((2 * Math.PI * r1) / 54));
-    const innerNodes = graphData.nodes
-      .filter((n) => (n.docIds || []).includes(center.id))
-      .sort((a, b) => (b.freq || 0) - (a.freq || 0) || (degree.get(b.id) || 0) - (degree.get(a.id) || 0))
-      .slice(0, maxInner);
-    const inner = innerNodes.map((node, i) => {
-      const angle = -Math.PI / 2 + i * (2 * Math.PI / Math.max(innerNodes.length, 1));
-      return { node, x: cx + Math.cos(angle) * r1, y: cy + Math.sin(angle) * r1 };
-    });
-
-    // 一级文档均布一圈；二级文档落在其父文档的扇区内
-    const perRing = 36;
-    const level1Placed = level1.map((item, i) => {
-      const ring = Math.floor(i / perRing);
-      const count = Math.min(perRing, level1.length - ring * perRing);
-      const idxInRing = i % perRing;
-      const angle = -Math.PI / 2 + (idxInRing + (ring % 2) * 0.5) * (2 * Math.PI / Math.max(count, 1));
-      const radius = r2 + ring * 56;
-      return { ...item, x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius, angle };
-    });
-    const parentAngle = new Map(level1Placed.map((item) => [item.doc.id, item.angle]));
-    const sector = (2 * Math.PI) / Math.max(level1Placed.length, 1);
-    const childrenOf = new Map<string, typeof level2>();
-    for (const child of level2) {
-      const list = childrenOf.get(child.parentId) || [];
-      list.push(child);
-      childrenOf.set(child.parentId, list);
-    }
-    const level2Placed = level2.map((child) => {
-      const siblings = childrenOf.get(child.parentId) || [];
-      const idx = siblings.findIndex((c) => c.doc.id === child.doc.id);
-      const baseAngle = parentAngle.get(child.parentId) ?? -Math.PI / 2;
-      const spread = Math.min(sector * 0.9, 0.9);
-      const angle = baseAngle + ((idx + 1) / (siblings.length + 1) - 0.5) * spread;
-      return { ...child, x: cx + Math.cos(angle) * r3, y: cy + Math.sin(angle) * r3, angle };
-    });
-
-    // 节点位置表 + 拖拽牵引关系表（拖一个节点会带动相关节点）
-    const positions: Record<string, { x: number; y: number }> = { center: { x: cx, y: cy } };
-    inner.forEach((item) => { positions[`e:${item.node.id}`] = { x: item.x, y: item.y }; });
-    level1Placed.forEach((item) => { positions[`d:${item.doc.id}`] = { x: item.x, y: item.y }; });
-    level2Placed.forEach((item) => { positions[`d:${item.doc.id}`] = { x: item.x, y: item.y }; });
-    const relations: Record<string, Array<{ key: string; factor: number }>> = {};
-    relations.center = [
-      ...level1Placed.map((item) => ({ key: `d:${item.doc.id}`, factor: 0.28 })),
-      ...level2Placed.map((item) => ({ key: `d:${item.doc.id}`, factor: 0.16 })),
-    ];
-    level1Placed.forEach((item) => {
-      relations[`d:${item.doc.id}`] = [
-        { key: "center", factor: 0.30 },
-        ...level2Placed
-          .filter((c) => c.parentId === item.doc.id)
-          .map((c) => ({ key: `d:${c.doc.id}`, factor: 0.22 })),
-      ];
-    });
-    level2Placed.forEach((item) => {
-      relations[`d:${item.doc.id}`] = [{ key: `d:${item.parentId}`, factor: 0.30 }];
-    });
-    inner.forEach((item) => { relations[`e:${item.node.id}`] = [{ key: "center", factor: 0.35 }]; });
-
-    return {
-      center,
-      inner,
-      outer: level1Placed,
-      outer2: level2Placed,
-      cx,
-      cy,
-      positions,
-      relations,
-    };
-  }, [docs, graphData.nodes, centerDocId, degree, docEntityCount, sharedBetween, mapSize]);
-
-  // 节点拖动：拖动后位置保持（不自动回位），并按关系表带动相关节点一起移动
-  const [dragNodes, setDragNodes] = useState<Record<string, { x: number; y: number }>>({});
-  const [draggingKey, setDraggingKey] = useState<string | null>(null);
-  const dragRef = useRef<{ key: string; lastX: number; lastY: number; startClientX: number; startClientY: number; originX: number; originY: number; moved: boolean } | null>(null);
-
-  const radialPosition = (key: string, autoX: number, autoY: number) => dragNodes[key] ?? { x: autoX, y: autoY };
-
-  const startNodeDrag = (e: React.PointerEvent<SVGGElement>, key: string, x: number, y: number) => {
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* 忽略捕获失败 */ }
-    dragRef.current = {
-      key, lastX: e.clientX, lastY: e.clientY,
-      startClientX: e.clientX, startClientY: e.clientY,
-      originX: x, originY: y, moved: false,
-    };
-    setDraggingKey(key);
-  };
-
-  const moveNodeDrag = (e: React.PointerEvent<SVGGElement>, key: string) => {
-    const drag = dragRef.current;
-    if (!drag || drag.key !== key) return;
-    const dx = e.clientX - drag.lastX;
-    const dy = e.clientY - drag.lastY;
-    if (dx === 0 && dy === 0) return;
-    drag.lastX = e.clientX;
-    drag.lastY = e.clientY;
-    // 4px 阈值内视为点击误触，不进入拖动
-    if (!drag.moved && Math.abs(e.clientX - drag.startClientX) + Math.abs(e.clientY - drag.startClientY) < 4) return;
-    drag.moved = true;
-    const related = radial?.relations[key] || [];
-    setDragNodes((prev) => {
-      const cur = prev[key] ?? { x: drag.originX, y: drag.originY };
-      const next = { ...prev, [key]: { x: cur.x + dx, y: cur.y + dy } };
-      // 相关节点按系数跟随同一增量（拖文档带动中心与二级子文档，拖中心带动整圈）
-      for (const rel of related) {
-        const base = next[rel.key] ?? radial?.positions[rel.key];
-        if (!base) continue;
-        next[rel.key] = { x: base.x + dx * rel.factor, y: base.y + dy * rel.factor };
-      }
-      return next;
-    });
-  };
-
-  const endNodeDrag = (e: React.PointerEvent<SVGGElement>, key: string, onClick?: () => void) => {
-    const drag = dragRef.current;
-    dragRef.current = null;
-    setDraggingKey(null);
-    if (drag && drag.moved) return;
-    onClick?.();
-  };
-
-  // 数据刷新后复位拖动位置（保留拖动手感，不残留旧坐标）
-  useEffect(() => { setDragNodes({}); }, [selectedKb, graphData]);
-
-  // 实体图谱视图模型：枢纽-卫星采样（少数大点 + 大量小点）
+  // 视图模型：枢纽-卫星采样（Obsidian 观感的关键）——按度数取少量枢纽作骨架，
+  // 再按边权重挂上低连接叶子实体，得到「少数大点 + 大量小点」的放射状结构；
+  // 全量渲染 5 千实体时 echarts O(n²) 力导向不可行，故按 viewSize 采样。
   const view = useMemo((): GraphData => {
     const all = graphData.nodes;
     if (all.length === 0) return graphData;
     if (all.length <= viewSize) return graphData;
+
     const ranked = [...all].sort(
       (a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0)
         || (b.freq || 0) - (a.freq || 0),
@@ -415,6 +173,7 @@ export default function KnowledgeGraphPage() {
     const keep = new Set(hubIds);
     const edges: GraphEdge[] = [];
     const sortedEdges = [...graphData.edges].sort((a, b) => (b.weight || 0) - (a.weight || 0));
+    // 第一遍：强边骨架（枢纽之间的主干连接）
     for (const e of sortedEdges) {
       const sHub = hubIds.has(e.source);
       const tHub = hubIds.has(e.target);
@@ -429,6 +188,7 @@ export default function KnowledgeGraphPage() {
       if (edges.length >= MAX_VIEW_EDGES) break;
       edges.push(e);
     }
+    // 第二遍：弱边挂低度数叶子实体（Obsidian 的「小点海」来源——连接稀疏的小实体）
     if (keep.size < viewSize) {
       const weakEdges = [...graphData.edges].sort((a, b) => (a.weight || 0) - (b.weight || 0));
       for (const e of weakEdges) {
@@ -451,7 +211,10 @@ export default function KnowledgeGraphPage() {
       }
     }
     const nodes = all.filter((n) => keep.has(n.id));
-    return { nodes, edges: edges.filter((e) => keep.has(e.source) && keep.has(e.target)) };
+    return {
+      nodes,
+      edges: edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
+    };
   }, [graphData, focusId, viewSize, degree]);
 
   // 分组维度：type 优先（≥2 种类型时按类型分色），否则退回 auto/manual 来源
@@ -512,103 +275,34 @@ export default function KnowledgeGraphPage() {
 
   const focusByLabel = (label: string) => {
     const node = graphData.nodes.find((n) => n.label === label);
-    if (!node) return;
-    setHighlightId(node.id);
-    // 定位到该实体所属文档作为中心
-    const docId = (node.docIds || [])[0];
-    if (docId) setCenterDocId(docId);
-    setMode("radial");
+    if (node) setFocusId(node.id);
   };
 
+  // Obsidian 风格力导向图配置：hover 邻居高亮 + 其余淡出，滚轮缩放、拖动平移、节点可拖拽
   const option = useMemo(() => {
     const nodeCount = view.nodes.length;
     if (nodeCount === 0) return {};
-
-    // —— 均匀云团 + 尺寸两极化（用户终版 2026-11-19：没有特殊中心节点——
-    // 重要节点是大圆、其余是小圆，全域均匀随机散布，无环无中心）——
-    const maxDeg = Math.max(1, ...view.nodes.map((n) => degree.get(n.id) || 0));
-    // hub 阈值改排名法：恰 12% 的节点是大圆——maxDeg×比例法在 top-N 视图
-    // 里会让绝大多数节点过线（全库度数最高的 400 个节点普遍远超均值，
-    // 2026-11-19 实测几乎全成大圆失去层次）
-    const degsSorted = view.nodes.map((n) => degree.get(n.id) || 0).sort((a, b) => b - a);
-    const hubCut = Math.max(4, degsSorted[Math.floor(degsSorted.length * 0.12)] ?? 4);
-
-    const hash01 = (id: string, salt: number) => {
-      let h = (salt * 0x9e3779b9) & 0x7fffffff;
-      for (const ch of id) h = (Math.imul(h ^ ch.charCodeAt(0), 0x85ebca6b) ^ (h >>> 7)) & 0x7fffffff;
-      h ^= h >>> 13;
-      h = Math.imul(h, 0xc2b2ae35) & 0x7fffffff;
-      return (h >>> 8) / 0x7fffff;
-    };
-    // graph layout:"none" 的 x/y 是像素坐标——归一化 0-1 曾致全节点挤在
-    // 左上原点（画布空白/中心黑团）。按窗口估算图区尺寸后转像素。
-    const VW = Math.max(420, window.innerWidth * 0.55);
-    const VH = 620;
-    const RR = Math.min(VW, VH) * 0.42;
-    const posMap = new Map<string, [number, number]>();
-    // 圆盘均匀撒点（sqrt 面密度）：全域随机，无环无中心
-    view.nodes.forEach((n) => {
-      const r = RR * Math.sqrt(hash01(n.id, 1));
-      const a = hash01(n.id, 7) * Math.PI * 2;
-      posMap.set(n.id, [VW / 2 + r * Math.cos(a), VH / 2 + r * Math.sin(a)]);
-    });
-
+    const repulsion = Math.min(600, 150 + nodeCount * 1.1);
     const nodes = view.nodes.map((n) => {
       const deg = degree.get(n.id) || 0;
-      const isHub = deg >= hubCut;
-      // 点击的节点（focusId）紫色高亮：节点本体+标签+关联连线全部变紫
-      const isFocus = focusId === n.id;
-      const size = isHub
-        ? 10 + Math.min(8, ((deg - hubCut) / Math.max(1, maxDeg - hubCut)) * 10)
-        : 4;
+      const size = Math.min(26, 3 + Math.sqrt(deg) * 1.35);
       return {
         id: n.id,
         name: n.label,
         category: groupIndexOf(n),
-        x: (posMap.get(n.id) ?? [0.5, 0.5])[0],
-        y: (posMap.get(n.id) ?? [0.5, 0.5])[1],
-        symbolSize: isFocus ? Math.max(size, 12) : size,
-        label: {
-          show: isHub || isFocus,
-          fontSize: isFocus ? 13 : isHub ? 12 : 10,
-          fontWeight: isFocus ? "bold" : "normal",
-          color: isFocus ? "#7b4fc0" : undefined,
-        },
+        // Obsidian 尺寸分布：绝大多数是小圆点，只有度数枢纽明显放大；
+        // 小节点隐藏标签（hover 才显示），避免满屏文字挤压
+        symbolSize: size,
+        label: { show: size >= 10 },
         itemStyle: {
-          // 大圆浅一档、小圆深一档（用户反馈 2026-11-19）；选中节点紫色
-          color: isFocus
-            ? "#8a5cc7"
-            : isHub
-              ? (isDark ? "#A8B4CB" : "#6e6e6e")
-              : (isDark ? "#48596f" : "#7a7a7a"),
-          opacity: isFocus ? 1 : isHub ? 0.9 : 0.6,
-          borderColor: isFocus ? "#7b4fc0" : "transparent",
-          borderWidth: isFocus ? 2 : 0,
+          color: groupColorOf(n),
+          // 小节点淡化：度数越低越透明，减轻低频实体「点海」的视觉压迫
+          opacity: 0.55 + Math.min(0.45, (deg / 16) * 0.45),
         },
         raw: n,
       };
     });
-    const links = view.edges.map((e) => ({
-      source: e.source,
-      target: e.target,
-      // 点击节点后其关联连线紫色高亮（用户需求 2026-11-19：点击高亮紫色）
-      lineStyle: focusId && (e.source === focusId || e.target === focusId)
-        ? { color: "rgba(138,92,199,0.9)", width: 2 }
-        : undefined,
-    }));
-    // 同步当前坐标与邻接表（拖动联动 effect 的数据源）
-    coordsRef.current = new Map(view.nodes.map((n, i) => {
-      const d = nodes[i];
-      return [n.id, [d.x, d.y] as [number, number]];
-    }));
-    const adj = new Map<string, string[]>();
-    for (const e of view.edges) {
-      if (!adj.has(e.source)) adj.set(e.source, []);
-      if (!adj.has(e.target)) adj.set(e.target, []);
-      adj.get(e.source)!.push(e.target);
-      adj.get(e.target)!.push(e.source);
-    }
-    adjRef.current = adj;
+    const links = view.edges.map((e) => ({ source: e.source, target: e.target }));
     return {
       backgroundColor: "transparent",
       tooltip: {
@@ -622,59 +316,51 @@ export default function KnowledgeGraphPage() {
           if (!raw) return escapeHtml(p.data?.name ?? "");
           const group = grouping?.items[groupIndexOf(raw)];
           const lines = [`<b>${escapeHtml(raw.label)}</b>`];
-          if (group) lines.push(`<span style="color:${group.color}">●</span> ${escapeHtml(group.name)}`);
+          if (group) {
+            lines.push(`<span style="color:${group.color}">●</span> ${escapeHtml(group.name)}`);
+          }
           lines.push(raw.source === "auto" ? graphText.auto : graphText.manual);
           lines.push(`${graphText.degreeLabel}: ${degree.get(raw.id) || 0}`);
           if (raw.docCount) lines.push(graphText.docCount(raw.docCount));
           return lines.join("<br/>");
         },
       },
-      legend: undefined,
       series: [{
         type: "graph",
-        layout: "none",
+        layout: "force",
         roam: true,
         draggable: true,
+        // 圆环初始布局 + 较强向心力：整体轮廓收敛成近似圆形团聚（Obsidian 观感）
+        initLayout: "circular",
+        force: {
+          repulsion,
+          edgeLength: [55, 85],
+          gravity: 0.38,
+          // 节点多时关闭布局动画（O(n²) 每帧计算会卡），直接呈现收敛结果
+          layoutAnimation: nodeCount <= 250,
+        },
         categories: grouping?.items.map((g) => ({ name: g.name })) || [],
         data: nodes,
         links,
         lineStyle: {
-          // 连线加深（用户反馈：关系连线颜色深一点）
-          color: isDark ? "rgba(216,226,240,0.32)" : "rgba(20,42,51,0.32)",
-          width: 0.9,
-          curveness: 0,
+          color: isDark ? "rgba(216,226,240,0.16)" : "rgba(20,42,51,0.18)",
+          width: 1,
+          curveness: 0.12,
         },
         label: {
           show: true,
-          position: "right",
+          position: "bottom",
           distance: 4,
           color: isDark ? "#8FA8C4" : "#57707B",
           fontSize: 11,
         },
         labelLayout: { hideOverlap: true },
         edgeLabel: { show: false },
-        // 点击节点：当前节点与关联节点持久高亮、节点与连线变紫（select 态）
-        select: {
-          mode: "single",
-          itemStyle: {
-            color: "#8a5cc7",
-            shadowBlur: 10,
-            shadowColor: "rgba(138,92,199,0.55)",
-          },
-          label: { show: true, fontWeight: "bold", color: "#7b4fc0" },
-        },
         emphasis: {
           focus: "adjacency",
-          label: { show: true, fontWeight: "bold", color: "#7b4fc0" },
-          // 高亮紫色 + 适度透明（用户指定：紫色高亮并增加透明度，移开恢复）
-          itemStyle: {
-            color: "rgba(138,92,199,0.85)",
-            borderColor: "#7b4fc0",
-            opacity: 0.85,
-            shadowBlur: 12,
-            shadowColor: "rgba(138,92,199,0.55)",
-          },
-          lineStyle: { width: 2, opacity: 0.9, color: "rgba(138,92,199,0.8)" },
+          label: { show: true },
+          itemStyle: { shadowBlur: 12, shadowColor: "rgba(0,0,0,0.35)" },
+          lineStyle: { width: 2, opacity: 0.9 },
         },
         blur: {
           itemStyle: { opacity: 0.06 },
@@ -685,6 +371,7 @@ export default function KnowledgeGraphPage() {
     };
   }, [view, grouping, degree, groupIndexOf, groupColorOf, isDark, graphText]);
 
+  // onEvents 需保持稳定引用（echarts-for-react 按引用重绑），最新 focusId 走 ref
   const chartEvents = useMemo(() => ({
     click: (p: any) => {
       if (p.dataType !== "node") return;
@@ -693,137 +380,19 @@ export default function KnowledgeGraphPage() {
     },
   }), []);
 
+  // 聚焦=邻域粘性高亮：dispatchAction 只改状态不改数据，option 深比较不变则
+  // setOption 被跳过，力导向不重算——点击后其他节点不会抖动
   useEffect(() => {
     const inst = chartRef.current?.getEchartsInstance?.();
     if (!inst) return;
-    // 调试桥：自动化验证/排障用（图坐标读取与交互模拟）
-    (window as any).__kgInst = inst;
     inst.dispatchAction({ type: "downplay", seriesIndex: 0 });
     if (focusId) {
       const idx = view.nodes.findIndex((n) => n.id === focusId);
-      if (idx >= 0) inst.dispatchAction({ type: "highlight", seriesIndex: 0, dataIndex: idx });
+      if (idx >= 0) {
+        inst.dispatchAction({ type: "highlight", seriesIndex: 0, dataIndex: idx });
+      }
     }
   }, [focusId, view]);
-
-  // 拖动联动（用户需求 2026-11-19）：拖动节点时直连邻居**实时跟随**相同
-  // 位移——整簇一起拖动。echarts 拖拽只更新被拖节点坐标，这里在 mousemove
-  // 读取该节点最新位置算 delta，实时平移邻居并回写（拖动过程跟随，而非
-  // 松手才跳过去——上一版 mouseup 联动被用户实测否定）。
-  useEffect(() => {
-    const inst = chartRef.current?.getEchartsInstance?.();
-    const zr = inst?.getZr?.();
-    if (!inst || !zr) return;
-    let downNode: string | null = null;
-    const hoverNodeRef: { current: string | null } = { current: null };
-    const onDown = (ev: any) => {
-      downNode = null;
-      const px = ev.offsetX;
-      const py = ev.offsetY;
-      let bestD = 16;
-      for (const [id, p] of coordsRef.current) {
-        const d = Math.hypot(p[0] - px, p[1] - py);
-        if (d < bestD) { bestD = d; downNode = id; }
-      }
-    };
-    const onMove = (ev: any) => {
-      // —— hover 紫色高亮（用户需求：鼠标放到节点上，节点+相连节点+连线
-      // 变紫并增加透明度，移开恢复）——**setOption 直接染色**（emphasis
-      // 机制在本页实测对节点本体不生效，弃用）——命中变化时才 setOption。
-      if (!downNode) {
-        const px = ev.offsetX;
-        const py = ev.offsetY;
-        let best: string | null = null;
-        let bestD = 14;
-        for (const [id, p] of coordsRef.current) {
-          const d = Math.hypot(p[0] - px, p[1] - py);
-          if (d < bestD) { bestD = d; best = id; }
-        }
-        if (best !== hoverNodeRef.current) {
-          hoverNodeRef.current = best;
-          const PURPLE = "rgba(138,92,199,0.85)";
-          const PURPLE_DIM = "rgba(138,92,199,0.45)";
-          const data = (inst.getOption()?.series?.[0]?.data ?? []) as Array<any>;
-          const links = (inst.getOption()?.series?.[0]?.links ?? []) as Array<any>;
-          const related = best != null ? new Set([best, ...(adjRef.current.get(best) || [])]) : null;
-          for (const d of data) {
-            // 首次缓存原始样式（恢复用）
-            if (!d.__orig) d.__orig = {
-              color: d.itemStyle?.color, opacity: d.itemStyle?.opacity,
-              borderColor: d.itemStyle?.borderColor, borderWidth: d.itemStyle?.borderWidth,
-            };
-            const o = d.__orig;
-            if (related && related.has(d.id)) {
-              // 关联节点（含命中节点本体）：紫色
-              d.itemStyle = {
-                ...d.itemStyle,
-                color: d.id === best ? "rgba(138,92,199,0.95)" : "rgba(138,92,199,0.65)",
-                opacity: 0.95,
-                borderColor: "#7b4fc0",
-                borderWidth: d.id === best ? 2 : 1,
-              };
-            } else if (related) {
-              // 非关联节点：淡化（透明度增加）
-              d.itemStyle = { ...d.itemStyle, color: o.color, opacity: 0.12 };
-            } else {
-              // 无 hover：恢复原始样式
-              d.itemStyle = { ...d.itemStyle, color: o.color, opacity: o.opacity, borderColor: o.borderColor, borderWidth: o.borderWidth };
-            }
-          }
-          for (const l of links) {
-            if (!l.__orig) l.__orig = { color: l.lineStyle?.color, width: l.lineStyle?.width };
-            const o = l.__orig;
-            const isRel = related && (l.source === best || l.target === best);
-            l.lineStyle = {
-              ...l.lineStyle,
-              color: isRel ? PURPLE : (related ? PURPLE_DIM : o.color),
-              width: isRel ? 1.6 : (related ? 0.6 : (o.width ?? 0.9)),
-            };
-          }
-          inst.setOption({ series: [{ data, links }] });
-        }
-        return;
-      }
-      // —— 拖动联动（按下节点后）：直连邻居实时跟随相同位移 ——
-      const data = (inst.getOption()?.series?.[0]?.data ?? []) as Array<{ id?: string; x?: number; y?: number }>;
-      const idx = data.findIndex((d) => d.id === downNode);
-      if (idx < 0) return;
-      const dragged = data[idx];
-      const orig = coordsRef.current.get(downNode);
-      if (!orig) return;
-      const dx = (dragged.x ?? 0) - orig[0];
-      const dy = (dragged.y ?? 0) - orig[1];
-      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
-      coordsRef.current.set(downNode, [dragged.x ?? 0, dragged.y ?? 0]);
-      const neighbors = adjRef.current.get(downNode) || [];
-      for (const nid of neighbors) {
-        const p = coordsRef.current.get(nid);
-        if (!p) continue;
-        const np: [number, number] = [p[0] + dx, p[1] + dy];
-        coordsRef.current.set(nid, np);
-        const ci = data.findIndex((d) => d.id === nid);
-        if (ci >= 0) { data[ci].x = np[0]; data[ci].y = np[1]; }
-      }
-      // 实时回写邻居位置（被拖节点坐标由 echarts 自己维护，不动它）
-      inst.setOption({ series: [{ data }] });
-    };
-    const onUp = () => { downNode = null; };
-    zr.on("mousedown", onDown);
-    zr.on("mousemove", onMove);
-    zr.on("mouseup", onUp);
-    return () => { zr.off("mousedown", onDown); zr.off("mousemove", onMove); zr.off("mouseup", onUp); };
-  }, [view]);
-
-  // 容器尺寸变化自动 echarts resize（画布不再锁死初始尺寸——canvas 外
-  // 区域点击无效的根因：容器变大后 canvas 未跟随，2026-11-19 用户实测）
-  useEffect(() => {
-    const el = entityWrapRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => {
-      chartRef.current?.getEchartsInstance?.()?.resize();
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [mode, selectedKb, view.nodes.length]);
 
   const resetView = () => {
     const inst = chartRef.current?.getEchartsInstance?.();
@@ -881,268 +450,6 @@ export default function KnowledgeGraphPage() {
     }
   };
 
-  // 放射图配色：中心深色、内圈浅灰、外圈更浅，射线极淡
-  const radialColors = {
-    center: isDark ? "#e8ecf3" : "#3d434d",
-    inner: isDark ? "#7d8590" : "#c3c8d0",
-    outer: isDark ? "#5e656f" : "#d7dbe2",
-    label: isDark ? "#c9d2e0" : "#2b3038",
-    labelSoft: isDark ? "#8b94a3" : "#5d646f",
-    spoke: isDark ? "rgba(216,226,240,0.16)" : "rgba(20,42,51,0.13)",
-    spokeOuter: isDark ? "rgba(216,226,240,0.10)" : "rgba(20,42,51,0.08)",
-    halo: isDark ? "#16223a" : "#ffffff",
-  };
-
-  const radialLabelAnchor = (x: number, cx: number): "start" | "end" | "middle" => {
-    const dx = x - cx;
-    if (dx > 12) return "start";
-    if (dx < -12) return "end";
-    return "middle";
-  };
-
-  // 标签按可用宽度裁剪，避免超出画布被裁切
-  const fitText = (text: string, x: number, cx: number, fontPx: number) => {
-    const anchor = radialLabelAnchor(x, cx);
-    const available = anchor === "start"
-      ? mapSize.w - x - 8
-      : anchor === "end"
-        ? x - 8
-        : mapSize.w;
-    if (available <= 44) return truncate(text, 6);
-    let width = 0;
-    let out = "";
-    for (const ch of text) {
-      const charWidth = /[\u4e00-\u9fa5]/.test(ch) ? fontPx : fontPx * 0.55;
-      if (width + charWidth > available) break;
-      width += charWidth;
-      out += ch;
-    }
-    return out.length < text.length ? `${out}…` : out;
-  };
-
-  const renderRadial = () => {
-    if (!radial) {
-      return <Empty description={docs.length ? graphText.centerDocEmpty : graphText.noDocs} style={{ marginTop: 180 }} />;
-    }
-    const { center, inner, outer, outer2, cx, cy } = radial;
-    const centerPos = radialPosition("center", cx, cy);
-    const innerPos = inner.map((item) => ({ ...item, ...radialPosition(`e:${item.node.id}`, item.x, item.y) }));
-    const outerPos = outer.map((item) => ({ ...item, ...radialPosition(`d:${item.doc.id}`, item.x, item.y) }));
-    const outer2Pos = outer2.map((item) => ({ ...item, ...radialPosition(`d:${item.doc.id}`, item.x, item.y) }));
-    const parentPos = new Map(outerPos.map((item) => [item.doc.id, item]));
-    const cursor = draggingKey ? "grabbing" : "grab";
-    return (
-      <div ref={mapRef} style={{ position: "relative", width: "100%", height: "100%" }}>
-        <style>{`
-          .kg-node:focus { outline: none; }
-          .kg-node:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
-        `}</style>
-        <svg width="100%" height="100%" viewBox={`0 0 ${mapSize.w} ${mapSize.h}`} style={{ display: "block" }}>
-          {/* 射线：中心 → 一级文档（虚线、更淡） */}
-          {outerPos.map((item) => (
-            <line
-              key={`outer-line-${item.doc.id}`}
-              x1={centerPos.x} y1={centerPos.y} x2={item.x} y2={item.y}
-              stroke={radialColors.spokeOuter} strokeWidth={1} strokeDasharray="3 4"
-            />
-          ))}
-          {/* 射线：一级文档 → 其二级相关文档 */}
-          {outer2Pos.map((item) => {
-            const parent = parentPos.get(item.parentId);
-            return (
-              <line
-                key={`outer2-line-${item.doc.id}`}
-                x1={parent?.x ?? centerPos.x} y1={parent?.y ?? centerPos.y} x2={item.x} y2={item.y}
-                stroke={radialColors.spokeOuter} strokeWidth={1} strokeDasharray="2 5"
-              />
-            );
-          })}
-          {/* 射线：中心 → 内圈实体 */}
-          {innerPos.map((item) => (
-            <line
-              key={`inner-line-${item.node.id}`}
-              x1={centerPos.x} y1={centerPos.y} x2={item.x} y2={item.y}
-              stroke={radialColors.spoke} strokeWidth={1}
-            />
-          ))}
-          {/* 中心节点（可拖动） */}
-          <g
-            className="kg-node"
-            role="button"
-            aria-label={center.filename}
-            tabIndex={0}
-            onPointerDown={(e) => startNodeDrag(e, "center", centerPos.x, centerPos.y)}
-            onPointerMove={(e) => moveNodeDrag(e, "center")}
-            onPointerUp={(e) => endNodeDrag(e, "center")}
-            style={{ cursor }}
-          >
-            <circle cx={centerPos.x} cy={centerPos.y} r={11} fill={radialColors.center} />
-            <text
-              x={centerPos.x} y={centerPos.y + 27} textAnchor="middle"
-              fill={radialColors.label} fontSize={13.5} fontWeight={600}
-              stroke={radialColors.halo} strokeWidth={3} paintOrder="stroke" strokeLinejoin="round"
-            >
-              {fitText(center.filename, centerPos.x, cx, 13.5)}
-            </text>
-          </g>
-          {/* 内圈实体（可拖动） */}
-          {innerPos.map((item) => {
-            const active = highlightId === item.node.id;
-            return (
-              <g
-                key={`inner-${item.node.id}`}
-                className="kg-node"
-                role="button"
-                aria-label={item.node.label}
-                tabIndex={0}
-                onPointerDown={(e) => startNodeDrag(e, `e:${item.node.id}`, item.x, item.y)}
-                onPointerMove={(e) => moveNodeDrag(e, `e:${item.node.id}`)}
-                onPointerUp={(e) => endNodeDrag(e, `e:${item.node.id}`, () => setHighlightId(active ? null : item.node.id))}
-                onMouseEnter={(e) => {
-                  setHoverKey(item.node.id);
-                  setHoverInfo({
-                    x: e.clientX, y: e.clientY,
-                    lines: [
-                      item.node.label,
-                      typeDisplayName(item.node.type || "entity", lang),
-                      item.node.source === "auto" ? graphText.auto : graphText.manual,
-                      `${graphText.degreeLabel}: ${degree.get(item.node.id) || 0}`,
-                    ],
-                  });
-                }}
-                onMouseMove={(e) => setHoverInfo((prev) => (prev ? { ...prev, x: e.clientX, y: e.clientY } : prev))}
-                onMouseLeave={() => { setHoverKey(null); setHoverInfo(null); }}
-                style={{ cursor }}
-              >
-                <circle
-                  cx={item.x} cy={item.y} r={active ? 6 : 4.5}
-                  fill={active ? radialColors.center : radialColors.inner}
-                />
-                <text
-                  x={item.x + (radialLabelAnchor(item.x, cx) === "end" ? -8 : radialLabelAnchor(item.x, cx) === "start" ? 8 : 0)}
-                  y={item.y + 4}
-                  textAnchor={radialLabelAnchor(item.x, cx)}
-                  fill={active ? radialColors.label : radialColors.labelSoft}
-                  fontSize={12.5}
-                  fontWeight={active || hoverKey === item.node.id ? 600 : 400}
-                  stroke={radialColors.halo} strokeWidth={3} paintOrder="stroke" strokeLinejoin="round"
-                >
-                  {fitText(item.node.label, item.x, cx, 12.5)}
-                </text>
-              </g>
-            );
-          })}
-          {/* 外圈相关文档（可拖动，点击换中心） */}
-          {outerPos.map((item) => (
-            <g
-              key={`outer-${item.doc.id}`}
-              className="kg-node"
-              role="button"
-              aria-label={item.doc.filename}
-              tabIndex={0}
-              onPointerDown={(e) => startNodeDrag(e, `d:${item.doc.id}`, item.x, item.y)}
-              onPointerMove={(e) => moveNodeDrag(e, `d:${item.doc.id}`)}
-              onPointerUp={(e) => endNodeDrag(e, `d:${item.doc.id}`, () => setCenterDocId(item.doc.id))}
-              onMouseEnter={(e) => {
-                setHoverKey(item.doc.id);
-                setHoverInfo({
-                  x: e.clientX, y: e.clientY,
-                  lines: [
-                    item.doc.filename,
-                    graphText.docType + ": " + (item.doc.doc_type || "-"),
-                    graphText.sharedEntities(item.shared),
-                  ],
-                });
-              }}
-              onMouseMove={(e) => setHoverInfo((prev) => (prev ? { ...prev, x: e.clientX, y: e.clientY } : prev))}
-              onMouseLeave={() => { setHoverKey(null); setHoverInfo(null); }}
-              style={{ cursor }}
-            >
-              <circle cx={item.x} cy={item.y} r={4} fill={radialColors.outer} />
-              <text
-                x={item.x + (radialLabelAnchor(item.x, cx) === "end" ? -7 : radialLabelAnchor(item.x, cx) === "start" ? 7 : 0)}
-                y={item.y + 4}
-                textAnchor={radialLabelAnchor(item.x, cx)}
-                fill={radialColors.labelSoft}
-                fontSize={11.5}
-                fontWeight={hoverKey === item.doc.id ? 600 : 400}
-                stroke={radialColors.halo} strokeWidth={3} paintOrder="stroke" strokeLinejoin="round"
-              >
-                {fitText(item.doc.filename, item.x, cx, 11.5)}
-              </text>
-            </g>
-          ))}
-          {/* 二级相关文档（每篇一级文档自己的相关文档，可拖动，点击换中心） */}
-          {outer2Pos.map((item) => (
-            <g
-              key={`outer2-${item.doc.id}`}
-              className="kg-node"
-              role="button"
-              aria-label={item.doc.filename}
-              tabIndex={0}
-              onPointerDown={(e) => startNodeDrag(e, `d:${item.doc.id}`, item.x, item.y)}
-              onPointerMove={(e) => moveNodeDrag(e, `d:${item.doc.id}`)}
-              onPointerUp={(e) => endNodeDrag(e, `d:${item.doc.id}`, () => setCenterDocId(item.doc.id))}
-              onMouseEnter={(e) => {
-                setHoverKey(item.doc.id);
-                setHoverInfo({
-                  x: e.clientX, y: e.clientY,
-                  lines: [
-                    item.doc.filename,
-                    graphText.docType + ": " + (item.doc.doc_type || "-"),
-                    graphText.sharedEntities(item.shared),
-                  ],
-                });
-              }}
-              onMouseMove={(e) => setHoverInfo((prev) => (prev ? { ...prev, x: e.clientX, y: e.clientY } : prev))}
-              onMouseLeave={() => { setHoverKey(null); setHoverInfo(null); }}
-              style={{ cursor }}
-            >
-              <circle cx={item.x} cy={item.y} r={3.5} fill={radialColors.outer} />
-              <text
-                x={item.x + (radialLabelAnchor(item.x, cx) === "end" ? -6 : radialLabelAnchor(item.x, cx) === "start" ? 6 : 0)}
-                y={item.y + 4}
-                textAnchor={radialLabelAnchor(item.x, cx)}
-                fill={radialColors.labelSoft}
-                fontSize={10.5}
-                fontWeight={hoverKey === item.doc.id ? 600 : 400}
-                stroke={radialColors.halo} strokeWidth={3} paintOrder="stroke" strokeLinejoin="round"
-              >
-                {fitText(item.doc.filename, item.x, cx, 10.5)}
-              </text>
-            </g>
-          ))}
-        </svg>
-        {hoverInfo && (
-          <div
-            style={{
-              position: "fixed", left: hoverInfo.x + 14, top: hoverInfo.y + 10,
-              background: isDark ? "#16223a" : "#ffffff",
-              border: `1px solid ${isDark ? "#24344f" : "#d9d9d9"}`,
-              borderRadius: 6, padding: "6px 10px", pointerEvents: "none",
-              boxShadow: "0 2px 8px rgba(0,0,0,0.15)", zIndex: 20, whiteSpace: "nowrap",
-            }}
-          >
-            {hoverInfo.lines.map((line, i) => (
-              <div
-                key={i}
-                style={{
-                  fontSize: i === 0 ? 13 : 12,
-                  fontWeight: i === 0 ? 600 : 400,
-                  color: i === 0
-                    ? (isDark ? "#D8E2F0" : "#142A33")
-                    : (isDark ? "#8FA8C4" : "#57707B"),
-                }}
-              >
-                {line}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  };
-
   return (
     <AppLayout>
       <PageHeading
@@ -1154,7 +461,7 @@ export default function KnowledgeGraphPage() {
               placeholder={t.knowledge.title}
               style={{ width: 200 }}
               value={selectedKb}
-              onChange={(v) => { setSelectedKb(v); setFocusId(null); setHighlightId(null); }}
+              onChange={(v) => { setSelectedKb(v); setFocusId(null); }}
               options={bases.map((b: any) => ({ value: b.id, label: b.name }))}
             />
             <Button icon={<ReloadOutlined />} onClick={loadGraph} loading={loading}>
@@ -1166,64 +473,66 @@ export default function KnowledgeGraphPage() {
           </>
         )}
       />
-      <div style={{ marginBottom: 12 }}>
-        <Space wrap>
-          <Segmented
-            value={mode}
-            onChange={(v) => setMode(v as "radial" | "entity")}
-            options={[
-              { label: graphText.modeRadial, value: "radial" },
-              { label: graphText.modeEntity, value: "entity" },
-            ]}
-          />
+      <div style={{
+        marginBottom: 12, display: "flex", alignItems: "center",
+        justifyContent: "space-between", flexWrap: "wrap", gap: 12,
+      }}>
+        <Space>
           <AutoComplete
             options={searchOptions}
-            style={{ width: 240 }}
+            style={{ width: 260 }}
             placeholder={graphText.searchPh}
             filterOption={(input, option) =>
               (option?.value || "").toLowerCase().includes(input.toLowerCase())}
             onSelect={(value: string | undefined) => { if (value) focusByLabel(value); }}
             value={undefined}
           />
-          {mode === "entity" && (
-            <>
-              {focusId && (
-                <Button icon={<AimOutlined />} onClick={() => setFocusId(null)}>
-                  {graphText.overview}
-                </Button>
-              )}
+          {focusId && (
+            <Button icon={<AimOutlined />} onClick={() => setFocusId(null)}>
+              {graphText.overview}
+            </Button>
+          )}
+        </Space>
+        <Space size={16}>
+          <Text type="secondary" style={{ fontSize: 13, whiteSpace: "nowrap" }}>
+            {graphText.inLibrary}{" "}
+            <Text strong style={{ fontSize: 16, fontVariantNumeric: "tabular-nums", color: isDark ? "#D8E2F0" : "#142A33" }}>
+              {graphData.nodes.length.toLocaleString()}
+            </Text>
+            {"　"}
+            {graphText.viewOf}{" "}
+            <Text strong style={{ fontSize: 16, fontVariantNumeric: "tabular-nums", color: isDark ? "#D8E2F0" : "#142A33" }}>
+              {view.nodes.length}
+            </Text>
+          </Text>
+          <Tooltip title={graphText.viewCapHelp}>
+            <Space size={6}>
+              <Text type="secondary" style={{ fontSize: 13 }}>{graphText.viewCap}</Text>
               <InputNumber
                 min={10} step={50} value={viewSize}
-                onChange={(v) => setViewSize(Number(v) || 400)}
+                onChange={(v) => setViewSize(Number(v) || 100)}
                 style={{ width: 90 }}
               />
-            </>
-          )}
-          <Statistic title={graphText.inLibrary} value={graphData.nodes.length} style={{ margin: 0 }} />
-          <Statistic title={t.knowledge.title} value={docs.length} style={{ margin: 0 }} />
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {mode === "radial" ? graphText.pickEntity : graphText.expandHint}
-          </Text>
+            </Space>
+          </Tooltip>
         </Space>
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
         <div style={{ flex: 1, minWidth: 460 }}>
           <Card
-            style={{ height: 560, padding: 0, overflow: "hidden" }}
+            style={{ height: 520, padding: 0, overflow: "hidden" }}
             styles={{ body: { height: "100%", padding: 0 } }}
           >
-            {mode === "radial" ? (
-              renderRadial()
-            ) : view.nodes.length === 0 && !loading ? (
+            {view.nodes.length === 0 && !loading ? (
               <Empty description={t.common.loading} style={{ marginTop: 200 }} />
             ) : (
-              <div ref={entityWrapRef} style={{ position: "relative", width: "100%", height: "100%" }}>
+              <div style={{ position: "relative", width: "100%", height: "100%" }}>
                 <ReactECharts
                   ref={chartRef}
                   option={option}
                   notMerge
                   lazyUpdate
-                  style={{ width: "100%", height: "100%", cursor: "grab" }}
+                  style={{ width: "100%", height: "100%" }}
                   onEvents={chartEvents}
                 />
                 <Tooltip title={graphText.resetView}>
@@ -1239,89 +548,6 @@ export default function KnowledgeGraphPage() {
           </Card>
         </div>
         <div style={{ width: 320, display: "flex", flexDirection: "column", gap: 12 }}>
-          {mode === "radial" && radial && (
-            <>
-              <Card size="small" title={graphText.centerDoc}>
-                <Space direction="vertical" size={4} style={{ width: "100%" }}>
-                  <Text strong style={{ wordBreak: "break-all" }}>{radial.center.filename}</Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {graphText.docType}: {radial.center.doc_type || "-"} · {graphText.chunks(radial.center.chunk_count || 0)}
-                  </Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {graphText.centerEntities}: {radial.inner.length}
-                  </Text>
-                </Space>
-              </Card>
-              <Card size="small" title={graphText.relatedDocs}>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  {graphText.secondaryDocs}: {radial.outer2.length}
-                </Text>
-                <List
-                  size="small"
-                  dataSource={radial.outer}
-                  locale={{ emptyText: <Empty description={graphText.noDocs} /> }}
-                  renderItem={(item) => (
-                    <List.Item
-                      style={{ cursor: "pointer" }}
-                      onClick={() => setCenterDocId(item.doc.id)}
-                    >
-                      <Text style={{ fontSize: 12 }}>{truncate(item.doc.filename, 26)}</Text>
-                      <Text type="secondary" style={{ fontSize: 11 }}>
-                        {graphText.sharedEntities(item.shared)}
-                      </Text>
-                    </List.Item>
-                  )}
-                />
-              </Card>
-              <Card size="small" title={graphText.centerEntities}>
-                <List
-                  size="small"
-                  dataSource={radial.inner}
-                  style={{ maxHeight: 220, overflowY: "auto" }}
-                  locale={{ emptyText: <Empty description={graphText.centerDocEmpty} /> }}
-                  renderItem={(item) => (
-                    <List.Item
-                      style={{ cursor: "pointer", background: highlightId === item.node.id ? "#fff7e6" : undefined }}
-                      onClick={() => setHighlightId(highlightId === item.node.id ? null : item.node.id)}
-                    >
-                      <Tag style={{ marginInlineEnd: 0 }}>{typeDisplayName(item.node.type || "entity", lang)}</Tag>
-                      <Text style={{ fontSize: 12 }}>{item.node.label}</Text>
-                    </List.Item>
-                  )}
-                />
-              </Card>
-            </>
-          )}
-          {mode === "entity" && (
-            <Card size="small" title={t.knowledge.entity + " " + t.nav.data}>
-              <List
-                size="small"
-                dataSource={view.nodes}
-                style={{ maxHeight: 300, overflowY: "auto" }}
-                locale={{ emptyText: <Empty description={t.common.loading} /> }}
-                renderItem={(node: GraphNode) => (
-                  <List.Item
-                    style={{ cursor: "pointer", background: node.id === focusId ? "#fff7e6" : undefined }}
-                    onClick={() => setFocusId(node.id === focusId ? null : node.id)}
-                    actions={[
-                      <Button type="link" danger size="small" icon={<DeleteOutlined />}
-                        onClick={(e) => { e.stopPropagation(); deleteEntity(node.id); }} />,
-                    ]}
-                  >
-                    <Space>
-                      <Tag style={{ marginInlineEnd: 0 }} color={groupColorOf(node)}>
-                        {typeDisplayName(node.type || "entity", lang)}
-                      </Tag>
-                      <Text>{node.label}</Text>
-                      {node.source === "auto"
-                        ? <Tag color="orange">{graphText.auto}</Tag>
-                        : <Tag>{graphText.manual}</Tag>}
-                    </Space>
-                  </List.Item>
-                )}
-              />
-            </Card>
-          )}
           <Card size="small" title={t.knowledge.add_entity}>
             <Form form={form} onFinish={addEntity} layout="vertical" size="small" autoComplete="off">
               <Form.Item name="name" label={t.knowledge.entity_name} rules={[{ required: true }]}>
@@ -1351,17 +577,37 @@ export default function KnowledgeGraphPage() {
               </Button>
             </Form>
           </Card>
+          <Card size="small" title={graphText.entityList}>
+            <List
+              size="small"
+              dataSource={view.nodes}
+              style={{ maxHeight: 260, overflowY: "auto" }}
+              locale={{ emptyText: <Empty description={t.common.loading} /> }}
+              renderItem={(node: GraphNode) => (
+                <List.Item
+                  style={{ cursor: "pointer", background: node.id === focusId ? "#fff7e6" : undefined }}
+                  onClick={() => setFocusId(node.id === focusId ? null : node.id)}
+                  actions={[
+                    <Button type="link" danger size="small" icon={<DeleteOutlined />}
+                      onClick={(e) => { e.stopPropagation(); deleteEntity(node.id); }} />,
+                  ]}
+                >
+                  <Space>
+                    <Tag style={{ marginInlineEnd: 0 }} color={groupColorOf(node)}>
+                      {typeDisplayName(node.type || "entity", lang)}
+                    </Tag>
+                    <Text>{node.label}</Text>
+                    {node.source === "auto"
+                      ? <Tag color="orange">{graphText.auto}</Tag>
+                      : <Tag>{graphText.manual}</Tag>}
+                    {node.docCount ? <Text type="secondary" style={{ fontSize: 11 }}>{graphText.docCount(node.docCount)}</Text> : null}
+                  </Space>
+                </List.Item>
+              )}
+            />
+          </Card>
         </div>
       </div>
     </AppLayout>
   );
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
