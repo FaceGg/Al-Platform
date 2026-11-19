@@ -312,44 +312,29 @@ export default function KnowledgeDetailPage() {
     }
     const keepIds = new Set(view.map((e) => e.id));
 
-    // —— 向心多层圆布局（用户指定 2026-11-19：整体轮廓近似圆形——
-    // 高连接的 hub 自然聚在内圈、低连接叶子铺外圈，放射状连线；此前
-    // 力导向 220 轮在大库上聚簇混乱、纯圆环又只是圆周排队）——
+    // —— 圆盘随机撒点（用户指定 2026-11-19 终版：不要任何环结构——
+    // 节点在圆形区域内按 id 哈希确定性伪随机自然散布，整体轮廓呈实心
+    // 圆形团，密度均匀；确定性保证同库每次进入布局一致，节点可拖拽微调）——
     if (graphPosRef.current.kbId !== kbId) graphPosRef.current = { kbId: kbId ?? "", map: new Map() };
     const posCache = graphPosRef.current.map;
     const W = Math.max(dom.clientWidth, 320);
     const H = Math.max(dom.clientHeight, 240);
     const R = Math.min(W, H) * 0.46;
-    const RINGS = 5;
-    const maxDeg = Math.max(1, ...view.map((e) => degree.get(e.id) || 0));
-    const layerBuckets: Record<number, string[]> = {};
-    for (const e of view) {
-      const deg = degree.get(e.id) || 0;
-      // 对数分层：hub 高度数占内圈，度数 0 的叶子全在最外圈
-      const ratio = Math.log2(1 + deg) / Math.log2(1 + maxDeg);
-      const layer = Math.min(RINGS - 1, Math.floor(ratio * RINGS));
-      (layerBuckets[layer] ||= []).push(e.id);
-    }
-    view.forEach((e, i) => {
+    const hash01 = (id: string, salt: number) => {
+      let h = (salt * 0x9e3779b9) & 0x7fffffff;
+      for (const ch of id) h = (Math.imul(h ^ ch.charCodeAt(0), 0x85ebca6b) ^ (h >>> 7)) & 0x7fffffff;
+      h ^= h >>> 13;
+      h = Math.imul(h, 0xc2b2ae35) & 0x7fffffff;
+      return (h >>> 8) / 0x7fffff;   // >>>8 后是 23 位，除数必须匹配（31 位除数曾致全塌缩≈0）
+    };
+    view.forEach((e) => {
       if (posCache.has(e.id)) return;
-      const deg = degree.get(e.id) || 0;
-      const ratio = Math.log2(1 + deg) / Math.log2(1 + maxDeg);
-      const layer = Math.min(RINGS - 1, Math.floor(ratio * RINGS));
-      const members = layerBuckets[layer];
-      const idxInLayer = members.indexOf(e.id);
-      // 层间角偏移避免同放射线堆叠；同层均匀铺开
-      const base = (idxInLayer / Math.max(1, members.length)) * Math.PI * 2 + layer * 0.9;
-      const radius = R * ((layer + 1) / RINGS);
-      // id 哈希微抖动（消除机械感，保持整体圆形轮廓）
-      let h = 0;
-      for (const ch of e.id) h = (h * 31 + ch.charCodeAt(0)) & 0xffff;
-      const jitterA = (h / 0xffff - 0.5) * (Math.PI * 2 / Math.max(8, members.length));
-      const jitterR = ((h >> 5) / 0xffff - 0.5) * R * 0.06;
-      const a = base + jitterA;
-      const r = Math.max(radius + jitterR, R * 0.08);
+      const r = R * Math.sqrt(hash01(e.id, 1));   // sqrt = 圆盘均匀面密度
+      const a = hash01(e.id, 2) * Math.PI * 2;
       posCache.set(e.id, [W / 2 + r * Math.cos(a), H / 2 + r * Math.sin(a)]);
     });
     const pts: [number, number][] = view.map((e) => posCache.get(e.id)!);
+    const maxDeg = Math.max(1, ...view.map((e) => degree.get(e.id) || 0));
 
     chart.setOption({
       tooltip: {},
