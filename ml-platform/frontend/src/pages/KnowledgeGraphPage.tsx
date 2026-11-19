@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
   Select, Button, Form, Input, List, Typography, message, Card, Space, Tag, Empty,
-  AutoComplete, Statistic, InputNumber, Tooltip,
+  AutoComplete, Statistic, InputNumber, Tooltip, Segmented,
 } from "antd";
 import {
   PlusOutlined, DeleteOutlined, ReloadOutlined, ThunderboltOutlined, AimOutlined, ScanOutlined,
@@ -17,7 +17,7 @@ const { Text } = Typography;
 
 interface GraphNode {
   id: string; label: string; type?: string; source?: string; freq?: number;
-  docCount?: number;
+  docCount?: number; docIds?: string[];
 }
 interface GraphEdge {
   source: string; target: string; label?: string; type?: string; weight?: number;
@@ -25,9 +25,11 @@ interface GraphEdge {
 interface GraphData {
   nodes: GraphNode[]; edges: GraphEdge[];
 }
+interface DocItem {
+  id: string; filename: string; doc_type?: string; chunk_count?: number;
+}
 
-// 总览时的边预算：Obsidian 观感是稀疏链接，全量共现边会糊成一片并拖慢渲染；
-// 聚焦邻域时不裁剪，保证高亮完整
+// 总览时的边预算：全量共现边会糊成一片并拖慢渲染
 const MAX_VIEW_EDGES = 2500;
 
 // Obsidian 风格柔和分组色板：type 优先分色，来源兜底，按序轮转
@@ -36,12 +38,10 @@ const GROUP_PALETTE = [
   "#98c379", "#ff9f6a", "#6bcfff", "#d19cf5", "#e8a0a0",
 ];
 
-// 占比最高的类型用中性色（Obsidian 默认是中性灰点，彩色只用于少数分组），
-// 否则整片同色圆点会像「紫色海洋」
+// 占比最高的类型用中性色（Obsidian 默认是中性灰点，彩色只用于少数分组）
 const NEUTRAL_NODE_COLOR = "#7f8b9e";
 
-// 实体类型显示名：抽取层 type 是英文标识（jieba 词性映射），中文界面翻译显示；
-// 未知类型显示原值
+// 实体类型显示名：抽取层 type 是英文标识，中文界面翻译显示；未知类型显示原值
 const TYPE_DISPLAY_ZH: Record<string, string> = {
   concept: "概念", term: "术语", person: "人物", location: "地点",
   organization: "机构", standard: "标准", material: "材料", equipment: "设备",
@@ -53,13 +53,8 @@ function typeDisplayName(type: string, lang: string): string {
   return TYPE_DISPLAY_ZH[type] ?? type;
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+function truncate(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
 export default function KnowledgeGraphPage() {
@@ -72,38 +67,62 @@ export default function KnowledgeGraphPage() {
     extractEmpty: "抽取完成：未发现满足阈值的实体（可检查文档内容或降低词频阈值）",
     extractFailed: "自动抽取失败",
     auto: "自动", manual: "手动", docCount: (n: number) => `出处文档 ${n} 篇`,
-    searchPh: "搜索实体，查看它的邻域",
+    searchPh: "搜索实体，定位到其所属文档",
     overview: "返回总览",
     inLibrary: "库内实体", viewOf: "当前视图",
-    viewHint: (lib: number, view: number) => `库内 ${lib} 实体 · 视图 ${view} 个${view < lib ? "（Top 高频 + 其关系）" : ""}`,
     neighborhood: "邻域",
     expandHint: "点击实体高亮其邻域 · 滚轮缩放 / 拖动平移 / 拖拽节点",
     resetView: "重置视图",
     degreeLabel: "度数",
+    modeRadial: "放射关系图", modeEntity: "实体图谱",
+    centerDoc: "中心文档", innerCount: "内圈", outerCount: "外圈",
+    centerDocEmpty: "该文档未抽取到实体",
+    relatedDocs: "相关文档", centerEntities: "文档实体",
+    sharedEntities: (n: number) => `共享实体 ${n} 个`,
+    docType: "文档类型", chunks: (n: number) => `${n} 个分块`,
+    pickEntity: "点击实体高亮其与中心文档的关系",
+    noDocs: "该知识库还没有文档",
   } : {
     extract: "Auto extract", extracting: "Extracting...",
     extractDone: (e: number, r: number) => `Extracted: ${e} entities, ${r} relations`,
     extractEmpty: "Extracted nothing above threshold (check document content or lower the frequency threshold)",
     extractFailed: "Auto extraction failed",
     auto: "Auto", manual: "Manual", docCount: (n: number) => `${n} source doc(s)`,
-    searchPh: "Search an entity to view its neighborhood",
+    searchPh: "Search an entity to locate its document",
     overview: "Back to overview",
     inLibrary: "In library", viewOf: "View",
-    viewHint: (lib: number, view: number) => `${lib} entities in library · ${view} in view${view < lib ? " (top hubs + their edges)" : ""}`,
     neighborhood: "Neighborhood",
-    expandHint: "Click an entity to highlight its links · scroll to zoom / drag to pan / drag nodes",
+    expandHint: "Click an entity to highlight its links · scroll to zoom / drag to pan",
     resetView: "Reset view",
     degreeLabel: "Links",
+    modeRadial: "Radial map", modeEntity: "Entity graph",
+    centerDoc: "Center document", innerCount: "Inner", outerCount: "Outer",
+    centerDocEmpty: "No entity extracted from this document",
+    relatedDocs: "Related documents", centerEntities: "Document entities",
+    sharedEntities: (n: number) => `${n} shared entities`,
+    docType: "Type", chunks: (n: number) => `${n} chunks`,
+    pickEntity: "Click an entity to highlight its link to the center",
+    noDocs: "This knowledge base has no document yet",
   };
   const chartRef = useRef<any>(null);
+  const mapRef = useRef<HTMLDivElement>(null);
   const focusIdRef = useRef<string | null>(null);
   const [bases, setBases] = useState<any[]>([]);
   const [selectedKb, setSelectedKb] = useState<string | null>(null);
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [] });
+  const [docs, setDocs] = useState<DocItem[]>([]);
+  const [centerDocId, setCenterDocId] = useState<string | null>(null);
+  const [mode, setMode] = useState<"radial" | "entity">("radial");
+  const [innerCount, setInnerCount] = useState(14);
+  const [outerCount, setOuterCount] = useState(10);
+  const [hoverKey, setHoverKey] = useState<string | null>(null);
+  const [hoverInfo, setHoverInfo] = useState<{ x: number; y: number; lines: string[] } | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [focusId, setFocusId] = useState<string | null>(null);
-  const [viewSize, setViewSize] = useState(300);
+  const [viewSize, setViewSize] = useState(400);
+  const [mapSize, setMapSize] = useState({ w: 900, h: 560 });
   const [form] = Form.useForm();
   const [edgeForm] = Form.useForm();
   focusIdRef.current = focusId;
@@ -112,6 +131,13 @@ export default function KnowledgeGraphPage() {
     apiClient.get("/knowledge/bases").then((res) => {
       setBases(res.data.items || res.data || []);
     }).catch(() => {});
+  }, []);
+
+  const loadDocs = useCallback((kbId: string) => {
+    apiClient.get("/knowledge/bases/" + kbId + "/documents").then((res) => {
+      const items = (res.data?.items || res.data || []) as DocItem[];
+      setDocs(items);
+    }).catch(() => setDocs([]));
   }, []);
 
   const loadGraph = useCallback(() => {
@@ -127,6 +153,7 @@ export default function KnowledgeGraphPage() {
           source: n.properties?.source,
           freq: n.properties?.freq ?? 0,
           docCount: Array.isArray(n.properties?.doc_ids) ? n.properties.doc_ids.length : undefined,
+          docIds: Array.isArray(n.properties?.doc_ids) ? n.properties.doc_ids : [],
         }));
         const edges = (data.edges || []).map((edge: any) => ({
           source: edge.source ?? edge.source_id,
@@ -137,14 +164,28 @@ export default function KnowledgeGraphPage() {
         }));
         setGraphData({ nodes, edges });
         setFocusId(null);
+        setHighlightId(null);
       })
       .catch(() => message.error(t.common.error))
       .finally(() => setLoading(false));
   }, [selectedKb, t]);
 
   useEffect(() => { loadGraph(); }, [selectedKb]);
+  useEffect(() => { if (selectedKb) loadDocs(selectedKb); }, [selectedKb, loadDocs]);
 
-  // 全库度数（Obsidian 以链接数决定节点大小，聚焦视图下仍按全库度数缩放）
+  // 容器尺寸测量：放射图按像素排布，标签字号不随视口缩放
+  useEffect(() => {
+    const el = mapRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0].contentRect;
+      setMapSize({ w: Math.max(320, rect.width), h: Math.max(320, rect.height) });
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [mode, selectedKb]);
+
+  // 全库度数（节点大小按连接数，聚焦视图下仍按全库度数缩放）
   const degree = useMemo(() => {
     const d = new Map<string, number>();
     for (const e of graphData.edges) {
@@ -154,14 +195,69 @@ export default function KnowledgeGraphPage() {
     return d;
   }, [graphData.edges]);
 
-  // 视图模型：枢纽-卫星采样（Obsidian 观感的关键）——按度数取少量枢纽作骨架，
-  // 再按边权重挂上低连接叶子实体，得到「少数大点 + 大量小点」的放射状结构；
-  // 全量渲染 5 千实体时 echarts O(n²) 力导向不可行，故按 viewSize 采样。
+  // 每个文档的实体数（用于挑选默认中心文档）
+  const docEntityCount = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const n of graphData.nodes) {
+      for (const d of n.docIds || []) counts.set(d, (counts.get(d) || 0) + 1);
+    }
+    return counts;
+  }, [graphData.nodes]);
+
+  // 放射图模型：中心文档 + 内圈实体（该文档抽出的实体）+ 外圈相关文档（共享实体最多的）
+  const radial = useMemo(() => {
+    if (docs.length === 0 || graphData.nodes.length === 0) return null;
+    let center = docs.find((d) => d.id === centerDocId);
+    if (!center) {
+      const best = [...docs].sort((a, b) => (docEntityCount.get(b.id) || 0) - (docEntityCount.get(a.id) || 0))[0];
+      center = best;
+    }
+    if (!center) return null;
+    const inner = graphData.nodes
+      .filter((n) => (n.docIds || []).includes(center!.id))
+      .sort((a, b) => (b.freq || 0) - (a.freq || 0) || (degree.get(b.id) || 0) - (degree.get(a.id) || 0))
+      .slice(0, innerCount);
+    const shared = new Map<string, number>();
+    for (const n of graphData.nodes) {
+      if (!(n.docIds || []).includes(center!.id)) continue;
+      for (const d of n.docIds || []) {
+        if (d === center!.id) continue;
+        shared.set(d, (shared.get(d) || 0) + 1);
+      }
+    }
+    const outer = docs
+      .filter((d) => d.id !== center!.id)
+      .map((d) => ({ doc: d, shared: shared.get(d.id) || 0 }))
+      .filter((x) => x.shared > 0)
+      .sort((a, b) => b.shared - a.shared)
+      .slice(0, outerCount);
+
+    const { w, h } = mapSize;
+    const cx = w / 2;
+    const cy = h / 2;
+    const base = Math.min(w, h);
+    const r1 = base * 0.33;
+    const r2 = base * 0.5;
+    const place = (count: number, radius: number, offset: number) => Array.from({ length: count }, (_, i) => {
+      const angle = -Math.PI / 2 + (offset + i) * (2 * Math.PI / Math.max(count, 1));
+      return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius, angle };
+    });
+    const innerPos = place(inner.length, r1, 0);
+    const outerPos = place(outer.length, r2, 0.5);
+    return {
+      center,
+      inner: inner.map((node, i) => ({ node, ...innerPos[i] })),
+      outer: outer.map((item, i) => ({ ...item, ...outerPos[i] })),
+      cx,
+      cy,
+    };
+  }, [docs, graphData.nodes, centerDocId, innerCount, outerCount, degree, docEntityCount, mapSize]);
+
+  // 实体图谱视图模型：枢纽-卫星采样（少数大点 + 大量小点）
   const view = useMemo((): GraphData => {
     const all = graphData.nodes;
     if (all.length === 0) return graphData;
     if (all.length <= viewSize) return graphData;
-
     const ranked = [...all].sort(
       (a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0)
         || (b.freq || 0) - (a.freq || 0),
@@ -171,7 +267,6 @@ export default function KnowledgeGraphPage() {
     const keep = new Set(hubIds);
     const edges: GraphEdge[] = [];
     const sortedEdges = [...graphData.edges].sort((a, b) => (b.weight || 0) - (a.weight || 0));
-    // 第一遍：强边骨架（枢纽之间的主干连接）
     for (const e of sortedEdges) {
       const sHub = hubIds.has(e.source);
       const tHub = hubIds.has(e.target);
@@ -186,7 +281,6 @@ export default function KnowledgeGraphPage() {
       if (edges.length >= MAX_VIEW_EDGES) break;
       edges.push(e);
     }
-    // 第二遍：弱边挂低度数叶子实体（Obsidian 的「小点海」来源——连接稀疏的小实体）
     if (keep.size < viewSize) {
       const weakEdges = [...graphData.edges].sort((a, b) => (a.weight || 0) - (b.weight || 0));
       for (const e of weakEdges) {
@@ -209,10 +303,7 @@ export default function KnowledgeGraphPage() {
       }
     }
     const nodes = all.filter((n) => keep.has(n.id));
-    return {
-      nodes,
-      edges: edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
-    };
+    return { nodes, edges: edges.filter((e) => keep.has(e.source) && keep.has(e.target)) };
   }, [graphData, focusId, viewSize, degree]);
 
   // 分组维度：type 优先（≥2 种类型时按类型分色），否则退回 auto/manual 来源
@@ -273,29 +364,82 @@ export default function KnowledgeGraphPage() {
 
   const focusByLabel = (label: string) => {
     const node = graphData.nodes.find((n) => n.label === label);
-    if (node) setFocusId(node.id);
+    if (!node) return;
+    setHighlightId(node.id);
+    // 定位到该实体所属文档作为中心
+    const docId = (node.docIds || [])[0];
+    if (docId) setCenterDocId(docId);
+    setMode("radial");
   };
 
-  // Obsidian 风格力导向图配置：hover 邻居高亮 + 其余淡出，滚轮缩放、拖动平移、节点可拖拽
   const option = useMemo(() => {
     const nodeCount = view.nodes.length;
     if (nodeCount === 0) return {};
+
+    // —— 星形放射布局（用户参考图 2026-11-19：中心 hub 大圆 + 一级邻居
+    // 内圈放射 + 二级外圈淡显，三级大小/颜色渐变）——此前 force 聚团混乱。
+    const centerId = focusId ?? view.nodes.reduce(
+      (best, n) => ((degree.get(n.id) || 0) > (degree.get(best) || 0) ? n.id : best),
+      view.nodes[0]?.id ?? "",
+    );
+    const levelMap = new Map<string, 0 | 1 | 2>();
+    levelMap.set(centerId, 0);
+    for (const e of view.edges) {
+      if (e.source === centerId && !levelMap.has(e.target)) levelMap.set(e.target, 1);
+      if (e.target === centerId && !levelMap.has(e.source)) levelMap.set(e.source, 1);
+    }
+    for (const e of view.edges) {
+      const s = levelMap.get(e.source);
+      const t = levelMap.get(e.target);
+      if (s != null && t == null) levelMap.set(e.target, 2);
+      if (t != null && s == null) levelMap.set(e.source, 2);
+    }
+    // 与中心无路径相连的孤立节点：归二级外圈
+    for (const n of view.nodes) if (!levelMap.has(n.id)) levelMap.set(n.id, 2);
+
+    const hash01 = (id: string, salt: number) => {
+      let h = (salt * 0x9e3779b9) & 0x7fffffff;
+      for (const ch of id) h = (Math.imul(h ^ ch.charCodeAt(0), 0x85ebca6b) ^ (h >>> 7)) & 0x7fffffff;
+      h ^= h >>> 13;
+      h = Math.imul(h, 0xc2b2ae35) & 0x7fffffff;
+      return (h >>> 8) / 0x7fffff;
+    };
+    const l1 = view.nodes.filter((n) => levelMap.get(n.id) === 1);
+    const l2 = view.nodes.filter((n) => levelMap.get(n.id) === 2);
+    const R1 = 0.30, R2 = 0.62; // 相对半宽的归一化半径
+    const posMap = new Map<string, [number, number]>();
+    posMap.set(centerId, [0.5, 0.5]);
+    l1.forEach((n, i) => {
+      const a = (i / Math.max(1, l1.length)) * Math.PI * 2 - Math.PI / 2
+        + (hash01(n.id, 3) - 0.5) * 0.5;
+      posMap.set(n.id, [0.5 + R1 * Math.cos(a), 0.5 + R1 * Math.sin(a)]);
+    });
+    l2.forEach((n, i) => {
+      const a = (i / Math.max(1, l2.length)) * Math.PI * 2 + 1.1
+        + (hash01(n.id, 4) - 0.5) * 0.3;
+      posMap.set(n.id, [0.5 + R2 * Math.cos(a), 0.5 + R2 * Math.sin(a)]);
+    });
+
     const repulsion = Math.min(600, 150 + nodeCount * 1.1);
+    const levelColor = (level: 0 | 1 | 2 | undefined) =>
+      level === 0 ? (isDark ? "#E8ECF4" : "#262626")
+        : level === 1 ? (isDark ? "#9AA8BF" : "#5c5c5c")
+          : (isDark ? "#5A6B84" : "#9a9a9a");
     const nodes = view.nodes.map((n) => {
       const deg = degree.get(n.id) || 0;
-      const size = Math.min(26, 3 + Math.sqrt(deg) * 1.35);
+      const level = levelMap.get(n.id);
+      const size = level === 0 ? 26 : level === 1 ? 11 : 6.5;
       return {
         id: n.id,
         name: n.label,
         category: groupIndexOf(n),
-        // Obsidian 尺寸分布：绝大多数是小圆点，只有度数枢纽明显放大；
-        // 小节点隐藏标签（hover 才显示），避免满屏文字挤压
+        x: (posMap.get(n.id) ?? [0.5, 0.5])[0],
+        y: (posMap.get(n.id) ?? [0.5, 0.5])[1],
         symbolSize: size,
-        label: { show: size >= 10 },
+        label: { show: true, fontSize: level === 0 ? 13 : level === 1 ? 11 : 10 },
         itemStyle: {
-          color: groupColorOf(n),
-          // 小节点淡化：度数越低越透明，减轻低频实体「点海」的视觉压迫
-          opacity: 0.55 + Math.min(0.45, (deg / 16) * 0.45),
+          color: levelColor(level as 0 | 1 | 2 | undefined),
+          opacity: level === 2 ? 0.65 : 0.9,
         },
         raw: n,
       };
@@ -314,49 +458,30 @@ export default function KnowledgeGraphPage() {
           if (!raw) return escapeHtml(p.data?.name ?? "");
           const group = grouping?.items[groupIndexOf(raw)];
           const lines = [`<b>${escapeHtml(raw.label)}</b>`];
-          if (group) {
-            lines.push(`<span style="color:${group.color}">●</span> ${escapeHtml(group.name)}`);
-          }
+          if (group) lines.push(`<span style="color:${group.color}">●</span> ${escapeHtml(group.name)}`);
           lines.push(raw.source === "auto" ? graphText.auto : graphText.manual);
           lines.push(`${graphText.degreeLabel}: ${degree.get(raw.id) || 0}`);
           if (raw.docCount) lines.push(graphText.docCount(raw.docCount));
           return lines.join("<br/>");
         },
       },
-      legend: grouping && grouping.items.length > 1 ? {
-        data: grouping.items.map((g) => g.name),
-        bottom: 8,
-        icon: "circle",
-        itemWidth: 10,
-        itemHeight: 10,
-        type: "scroll",
-        textStyle: { color: isDark ? "#8FA8C4" : "#57707B", fontSize: 11 },
-      } : undefined,
+      legend: undefined,
       series: [{
         type: "graph",
-        layout: "force",
+        layout: "none",
         roam: true,
         draggable: true,
-        // 圆环初始布局 + 较强向心力：整体轮廓收敛成近似圆形团聚（Obsidian 观感）
-        initLayout: "circular",
-        force: {
-          repulsion,
-          edgeLength: [55, 85],
-          gravity: 0.38,
-          // 节点多时关闭布局动画（O(n²) 每帧计算会卡），直接呈现收敛结果
-          layoutAnimation: nodeCount <= 250,
-        },
         categories: grouping?.items.map((g) => ({ name: g.name })) || [],
         data: nodes,
         links,
         lineStyle: {
-          color: isDark ? "rgba(216,226,240,0.16)" : "rgba(20,42,51,0.18)",
-          width: 1,
-          curveness: 0.12,
+          color: isDark ? "rgba(216,226,240,0.14)" : "rgba(20,42,51,0.16)",
+          width: 0.8,
+          curveness: 0,
         },
         label: {
           show: true,
-          position: "bottom",
+          position: "right",
           distance: 4,
           color: isDark ? "#8FA8C4" : "#57707B",
           fontSize: 11,
@@ -365,7 +490,7 @@ export default function KnowledgeGraphPage() {
         edgeLabel: { show: false },
         emphasis: {
           focus: "adjacency",
-          label: { show: true },
+          label: { show: true, fontWeight: "bold" },
           itemStyle: { shadowBlur: 12, shadowColor: "rgba(0,0,0,0.35)" },
           lineStyle: { width: 2, opacity: 0.9 },
         },
@@ -378,7 +503,6 @@ export default function KnowledgeGraphPage() {
     };
   }, [view, grouping, degree, groupIndexOf, groupColorOf, isDark, graphText]);
 
-  // onEvents 需保持稳定引用（echarts-for-react 按引用重绑），最新 focusId 走 ref
   const chartEvents = useMemo(() => ({
     click: (p: any) => {
       if (p.dataType !== "node") return;
@@ -387,17 +511,13 @@ export default function KnowledgeGraphPage() {
     },
   }), []);
 
-  // 聚焦=邻域粘性高亮：dispatchAction 只改状态不改数据，option 深比较不变则
-  // setOption 被跳过，力导向不重算——点击后其他节点不会抖动
   useEffect(() => {
     const inst = chartRef.current?.getEchartsInstance?.();
     if (!inst) return;
     inst.dispatchAction({ type: "downplay", seriesIndex: 0 });
     if (focusId) {
       const idx = view.nodes.findIndex((n) => n.id === focusId);
-      if (idx >= 0) {
-        inst.dispatchAction({ type: "highlight", seriesIndex: 0, dataIndex: idx });
-      }
+      if (idx >= 0) inst.dispatchAction({ type: "highlight", seriesIndex: 0, dataIndex: idx });
     }
   }, [focusId, view]);
 
@@ -457,6 +577,184 @@ export default function KnowledgeGraphPage() {
     }
   };
 
+  // 放射图配色：中心深色、内圈浅灰、外圈更浅，射线极淡
+  const radialColors = {
+    center: isDark ? "#e8ecf3" : "#3d434d",
+    inner: isDark ? "#7d8590" : "#c3c8d0",
+    outer: isDark ? "#5e656f" : "#d7dbe2",
+    label: isDark ? "#c9d2e0" : "#2b3038",
+    labelSoft: isDark ? "#8b94a3" : "#5d646f",
+    spoke: isDark ? "rgba(216,226,240,0.16)" : "rgba(20,42,51,0.13)",
+    spokeOuter: isDark ? "rgba(216,226,240,0.10)" : "rgba(20,42,51,0.08)",
+    halo: isDark ? "#16223a" : "#ffffff",
+  };
+
+  const radialLabelAnchor = (x: number, cx: number): "start" | "end" | "middle" => {
+    const dx = x - cx;
+    if (dx > 12) return "start";
+    if (dx < -12) return "end";
+    return "middle";
+  };
+
+  // 标签按可用宽度裁剪，避免超出画布被裁切
+  const fitText = (text: string, x: number, cx: number, fontPx: number) => {
+    const anchor = radialLabelAnchor(x, cx);
+    const available = anchor === "start"
+      ? mapSize.w - x - 8
+      : anchor === "end"
+        ? x - 8
+        : mapSize.w;
+    if (available <= 44) return truncate(text, 6);
+    let width = 0;
+    let out = "";
+    for (const ch of text) {
+      const charWidth = /[\u4e00-\u9fa5]/.test(ch) ? fontPx : fontPx * 0.55;
+      if (width + charWidth > available) break;
+      width += charWidth;
+      out += ch;
+    }
+    return out.length < text.length ? `${out}…` : out;
+  };
+
+  const renderRadial = () => {
+    if (!radial) {
+      return <Empty description={docs.length ? graphText.centerDocEmpty : graphText.noDocs} style={{ marginTop: 180 }} />;
+    }
+    const { center, inner, outer, cx, cy } = radial;
+    return (
+      <div ref={mapRef} style={{ position: "relative", width: "100%", height: "100%" }}>
+        <svg width="100%" height="100%" viewBox={`0 0 ${mapSize.w} ${mapSize.h}`} style={{ display: "block" }}>
+          {/* 射线：中心 → 外圈（虚线、更淡） */}
+          {outer.map((item) => (
+            <line
+              key={`outer-line-${item.doc.id}`}
+              x1={cx} y1={cy} x2={item.x} y2={item.y}
+              stroke={radialColors.spokeOuter} strokeWidth={1} strokeDasharray="3 4"
+            />
+          ))}
+          {/* 射线：中心 → 内圈实体 */}
+          {inner.map((item) => (
+            <line
+              key={`inner-line-${item.node.id}`}
+              x1={cx} y1={cy} x2={item.x} y2={item.y}
+              stroke={radialColors.spoke} strokeWidth={1}
+            />
+          ))}
+          {/* 中心节点 */}
+          <circle cx={cx} cy={cy} r={11} fill={radialColors.center} />
+          <text
+            x={cx} y={cy + 27} textAnchor="middle"
+            fill={radialColors.label} fontSize={13.5} fontWeight={600}
+            stroke={radialColors.halo} strokeWidth={3} paintOrder="stroke" strokeLinejoin="round"
+          >
+            {fitText(center.filename, cx, cx, 13.5)}
+          </text>
+          {/* 内圈实体 */}
+          {inner.map((item) => {
+            const active = highlightId === item.node.id;
+            return (
+              <g
+                key={`inner-${item.node.id}`}
+                onMouseEnter={(e) => {
+                  setHoverKey(item.node.id);
+                  setHoverInfo({
+                    x: e.clientX, y: e.clientY,
+                    lines: [
+                      item.node.label,
+                      typeDisplayName(item.node.type || "entity", lang),
+                      item.node.source === "auto" ? graphText.auto : graphText.manual,
+                      `${graphText.degreeLabel}: ${degree.get(item.node.id) || 0}`,
+                    ],
+                  });
+                }}
+                onMouseMove={(e) => setHoverInfo((prev) => (prev ? { ...prev, x: e.clientX, y: e.clientY } : prev))}
+                onMouseLeave={() => { setHoverKey(null); setHoverInfo(null); }}
+                onClick={() => setHighlightId(active ? null : item.node.id)}
+                style={{ cursor: "pointer" }}
+              >
+                <circle
+                  cx={item.x} cy={item.y} r={active ? 6 : 4.5}
+                  fill={active ? radialColors.center : radialColors.inner}
+                />
+                <text
+                  x={item.x + (radialLabelAnchor(item.x, cx) === "end" ? -8 : radialLabelAnchor(item.x, cx) === "start" ? 8 : 0)}
+                  y={item.y + 4}
+                  textAnchor={radialLabelAnchor(item.x, cx)}
+                  fill={active ? radialColors.label : radialColors.labelSoft}
+                  fontSize={12.5}
+                  fontWeight={active || hoverKey === item.node.id ? 600 : 400}
+                  stroke={radialColors.halo} strokeWidth={3} paintOrder="stroke" strokeLinejoin="round"
+                >
+                  {fitText(item.node.label, item.x, cx, 12.5)}
+                </text>
+              </g>
+            );
+          })}
+          {/* 外圈相关文档 */}
+          {outer.map((item) => (
+            <g
+              key={`outer-${item.doc.id}`}
+              onMouseEnter={(e) => {
+                setHoverKey(item.doc.id);
+                setHoverInfo({
+                  x: e.clientX, y: e.clientY,
+                  lines: [
+                    item.doc.filename,
+                    graphText.docType + ": " + (item.doc.doc_type || "-"),
+                    graphText.sharedEntities(item.shared),
+                  ],
+                });
+              }}
+              onMouseMove={(e) => setHoverInfo((prev) => (prev ? { ...prev, x: e.clientX, y: e.clientY } : prev))}
+              onMouseLeave={() => { setHoverKey(null); setHoverInfo(null); }}
+              onClick={() => setCenterDocId(item.doc.id)}
+              style={{ cursor: "pointer" }}
+            >
+              <circle cx={item.x} cy={item.y} r={4} fill={radialColors.outer} />
+              <text
+                x={item.x + (radialLabelAnchor(item.x, cx) === "end" ? -7 : radialLabelAnchor(item.x, cx) === "start" ? 7 : 0)}
+                y={item.y + 4}
+                textAnchor={radialLabelAnchor(item.x, cx)}
+                fill={radialColors.labelSoft}
+                fontSize={11.5}
+                fontWeight={hoverKey === item.doc.id ? 600 : 400}
+                stroke={radialColors.halo} strokeWidth={3} paintOrder="stroke" strokeLinejoin="round"
+              >
+                {fitText(item.doc.filename, item.x, cx, 11.5)}
+              </text>
+            </g>
+          ))}
+        </svg>
+        {hoverInfo && (
+          <div
+            style={{
+              position: "fixed", left: hoverInfo.x + 14, top: hoverInfo.y + 10,
+              background: isDark ? "#16223a" : "#ffffff",
+              border: `1px solid ${isDark ? "#24344f" : "#d9d9d9"}`,
+              borderRadius: 6, padding: "6px 10px", pointerEvents: "none",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.15)", zIndex: 20, whiteSpace: "nowrap",
+            }}
+          >
+            {hoverInfo.lines.map((line, i) => (
+              <div
+                key={i}
+                style={{
+                  fontSize: i === 0 ? 13 : 12,
+                  fontWeight: i === 0 ? 600 : 400,
+                  color: i === 0
+                    ? (isDark ? "#D8E2F0" : "#142A33")
+                    : (isDark ? "#8FA8C4" : "#57707B"),
+                }}
+              >
+                {line}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <AppLayout>
       <PageHeading
@@ -468,7 +766,7 @@ export default function KnowledgeGraphPage() {
               placeholder={t.knowledge.title}
               style={{ width: 200 }}
               value={selectedKb}
-              onChange={(v) => { setSelectedKb(v); setFocusId(null); }}
+              onChange={(v) => { setSelectedKb(v); setFocusId(null); setHighlightId(null); }}
               options={bases.map((b: any) => ({ value: b.id, label: b.name }))}
             />
             <Button icon={<ReloadOutlined />} onClick={loadGraph} loading={loading}>
@@ -482,37 +780,78 @@ export default function KnowledgeGraphPage() {
       />
       <div style={{ marginBottom: 12 }}>
         <Space wrap>
-          <AutoComplete
-            options={searchOptions}
-            style={{ width: 260 }}
-            placeholder={graphText.searchPh}
-            filterOption={(input, option) =>
-              (option?.value || "").toLowerCase().includes(input.toLowerCase())}
-            onSelect={(value: string | undefined) => { if (value) focusByLabel(value); }}
-            value={undefined}
+          <Segmented
+            value={mode}
+            onChange={(v) => setMode(v as "radial" | "entity")}
+            options={[
+              { label: graphText.modeRadial, value: "radial" },
+              { label: graphText.modeEntity, value: "entity" },
+            ]}
           />
-          {focusId && (
-            <Button icon={<AimOutlined />} onClick={() => setFocusId(null)}>
-              {graphText.overview}
-            </Button>
+          {mode === "radial" && (
+            <>
+              <Select
+                placeholder={graphText.centerDoc}
+                style={{ width: 260 }}
+                value={radial?.center.id}
+                onChange={(v) => setCenterDocId(v)}
+                options={docs.map((d) => ({ value: d.id, label: d.filename }))}
+                showSearch
+                optionFilterProp="label"
+              />
+              <InputNumber
+                min={4} max={40} step={2} value={innerCount}
+                onChange={(v) => setInnerCount(Number(v) || 14)}
+                style={{ width: 78 }}
+                addonBefore={graphText.innerCount}
+              />
+              <InputNumber
+                min={2} max={30} step={2} value={outerCount}
+                onChange={(v) => setOuterCount(Number(v) || 10)}
+                style={{ width: 78 }}
+                addonBefore={graphText.outerCount}
+              />
+            </>
+          )}
+          {mode === "entity" && (
+            <>
+              <AutoComplete
+                options={searchOptions}
+                style={{ width: 240 }}
+                placeholder={graphText.searchPh}
+                filterOption={(input, option) =>
+                  (option?.value || "").toLowerCase().includes(input.toLowerCase())}
+                onSelect={(value: string | undefined) => { if (value) focusByLabel(value); }}
+                value={undefined}
+              />
+              {focusId && (
+                <Button icon={<AimOutlined />} onClick={() => setFocusId(null)}>
+                  {graphText.overview}
+                </Button>
+              )}
+              <InputNumber
+                min={10} step={50} value={viewSize}
+                onChange={(v) => setViewSize(Number(v) || 400)}
+                style={{ width: 90 }}
+              />
+            </>
           )}
           <Statistic title={graphText.inLibrary} value={graphData.nodes.length} style={{ margin: 0 }} />
-          <Statistic title={graphText.viewOf} value={view.nodes.length} style={{ margin: 0 }} />
-          <InputNumber
-            min={10} step={50} value={viewSize}
-            onChange={(v) => setViewSize(Number(v) || 100)}
-            style={{ width: 90 }}
-          />
-          <Text type="secondary" style={{ fontSize: 12 }}>{graphText.expandHint}</Text>
+          <Statistic title={t.knowledge.title} value={docs.length} style={{ margin: 0 }} />
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {mode === "radial" ? graphText.pickEntity : graphText.expandHint}
+          </Text>
         </Space>
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
         <div style={{ flex: 1, minWidth: 460 }}>
           <Card
-            style={{ height: 520, padding: 0, overflow: "hidden" }}
+            style={{ height: 560, padding: 0, overflow: "hidden" }}
             styles={{ body: { height: "100%", padding: 0 } }}
           >
-            {view.nodes.length === 0 && !loading ? (
+            {mode === "radial" ? (
+              renderRadial()
+            ) : view.nodes.length === 0 && !loading ? (
               <Empty description={t.common.loading} style={{ marginTop: 200 }} />
             ) : (
               <div style={{ position: "relative", width: "100%", height: "100%" }}>
@@ -537,6 +876,86 @@ export default function KnowledgeGraphPage() {
           </Card>
         </div>
         <div style={{ width: 320, display: "flex", flexDirection: "column", gap: 12 }}>
+          {mode === "radial" && radial && (
+            <>
+              <Card size="small" title={graphText.centerDoc}>
+                <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                  <Text strong style={{ wordBreak: "break-all" }}>{radial.center.filename}</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {graphText.docType}: {radial.center.doc_type || "-"} · {graphText.chunks(radial.center.chunk_count || 0)}
+                  </Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {graphText.centerEntities}: {radial.inner.length}
+                  </Text>
+                </Space>
+              </Card>
+              <Card size="small" title={graphText.relatedDocs}>
+                <List
+                  size="small"
+                  dataSource={radial.outer}
+                  locale={{ emptyText: <Empty description={graphText.noDocs} /> }}
+                  renderItem={(item) => (
+                    <List.Item
+                      style={{ cursor: "pointer" }}
+                      onClick={() => setCenterDocId(item.doc.id)}
+                    >
+                      <Text style={{ fontSize: 12 }}>{truncate(item.doc.filename, 26)}</Text>
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        {graphText.sharedEntities(item.shared)}
+                      </Text>
+                    </List.Item>
+                  )}
+                />
+              </Card>
+              <Card size="small" title={graphText.centerEntities}>
+                <List
+                  size="small"
+                  dataSource={radial.inner}
+                  style={{ maxHeight: 220, overflowY: "auto" }}
+                  locale={{ emptyText: <Empty description={graphText.centerDocEmpty} /> }}
+                  renderItem={(item) => (
+                    <List.Item
+                      style={{ cursor: "pointer", background: highlightId === item.node.id ? "#fff7e6" : undefined }}
+                      onClick={() => setHighlightId(highlightId === item.node.id ? null : item.node.id)}
+                    >
+                      <Tag style={{ marginInlineEnd: 0 }}>{typeDisplayName(item.node.type || "entity", lang)}</Tag>
+                      <Text style={{ fontSize: 12 }}>{item.node.label}</Text>
+                    </List.Item>
+                  )}
+                />
+              </Card>
+            </>
+          )}
+          {mode === "entity" && (
+            <Card size="small" title={t.knowledge.entity + " " + t.nav.data}>
+              <List
+                size="small"
+                dataSource={view.nodes}
+                style={{ maxHeight: 300, overflowY: "auto" }}
+                locale={{ emptyText: <Empty description={t.common.loading} /> }}
+                renderItem={(node: GraphNode) => (
+                  <List.Item
+                    style={{ cursor: "pointer", background: node.id === focusId ? "#fff7e6" : undefined }}
+                    onClick={() => setFocusId(node.id === focusId ? null : node.id)}
+                    actions={[
+                      <Button type="link" danger size="small" icon={<DeleteOutlined />}
+                        onClick={(e) => { e.stopPropagation(); deleteEntity(node.id); }} />,
+                    ]}
+                  >
+                    <Space>
+                      <Tag style={{ marginInlineEnd: 0 }} color={groupColorOf(node)}>
+                        {typeDisplayName(node.type || "entity", lang)}
+                      </Tag>
+                      <Text>{node.label}</Text>
+                      {node.source === "auto"
+                        ? <Tag color="orange">{graphText.auto}</Tag>
+                        : <Tag>{graphText.manual}</Tag>}
+                    </Space>
+                  </List.Item>
+                )}
+              />
+            </Card>
+          )}
           <Card size="small" title={t.knowledge.add_entity}>
             <Form form={form} onFinish={addEntity} layout="vertical" size="small" autoComplete="off">
               <Form.Item name="name" label={t.knowledge.entity_name} rules={[{ required: true }]}>
@@ -566,37 +985,17 @@ export default function KnowledgeGraphPage() {
               </Button>
             </Form>
           </Card>
-          <Card size="small" title={t.knowledge.entity + " " + t.nav.data}>
-            <List
-              size="small"
-              dataSource={view.nodes}
-              style={{ maxHeight: 260, overflowY: "auto" }}
-              locale={{ emptyText: <Empty description={t.common.loading} /> }}
-              renderItem={(node: GraphNode) => (
-                <List.Item
-                  style={{ cursor: "pointer", background: node.id === focusId ? "#fff7e6" : undefined }}
-                  onClick={() => setFocusId(node.id === focusId ? null : node.id)}
-                  actions={[
-                    <Button type="link" danger size="small" icon={<DeleteOutlined />}
-                      onClick={(e) => { e.stopPropagation(); deleteEntity(node.id); }} />,
-                  ]}
-                >
-                  <Space>
-                    <Tag style={{ marginInlineEnd: 0 }} color={groupColorOf(node)}>
-                      {typeDisplayName(node.type || "entity", lang)}
-                    </Tag>
-                    <Text>{node.label}</Text>
-                    {node.source === "auto"
-                      ? <Tag color="orange">{graphText.auto}</Tag>
-                      : <Tag>{graphText.manual}</Tag>}
-                    {node.docCount ? <Text type="secondary" style={{ fontSize: 11 }}>{graphText.docCount(node.docCount)}</Text> : null}
-                  </Space>
-                </List.Item>
-              )}
-            />
-          </Card>
         </div>
       </div>
     </AppLayout>
   );
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
