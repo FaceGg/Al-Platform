@@ -20,17 +20,25 @@ interface GraphNode {
   docCount?: number;
 }
 interface GraphEdge {
-  source: string; target: string; label?: string; type?: string;
+  source: string; target: string; label?: string; type?: string; weight?: number;
 }
 interface GraphData {
   nodes: GraphNode[]; edges: GraphEdge[];
 }
+
+// 总览时的边预算：Obsidian 观感是稀疏链接，全量共现边会糊成一片并拖慢渲染；
+// 聚焦邻域时不裁剪，保证高亮完整
+const MAX_VIEW_EDGES = 2500;
 
 // Obsidian 风格柔和分组色板：type 优先分色，来源兜底，按序轮转
 const GROUP_PALETTE = [
   "#8a7dff", "#4ec9b0", "#f7c65d", "#e06c9f", "#61afef",
   "#98c379", "#ff9f6a", "#6bcfff", "#d19cf5", "#e8a0a0",
 ];
+
+// 占比最高的类型用中性色（Obsidian 默认是中性灰点，彩色只用于少数分组），
+// 否则整片同色圆点会像「紫色海洋」
+const NEUTRAL_NODE_COLOR = "#7f8b9e";
 
 // 实体类型显示名：抽取层 type 是英文标识（jieba 词性映射），中文界面翻译显示；
 // 未知类型显示原值
@@ -95,7 +103,7 @@ export default function KnowledgeGraphPage() {
   const [loading, setLoading] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [focusId, setFocusId] = useState<string | null>(null);
-  const [viewSize, setViewSize] = useState(100);
+  const [viewSize, setViewSize] = useState(300);
   const [form] = Form.useForm();
   const [edgeForm] = Form.useForm();
   focusIdRef.current = focusId;
@@ -125,6 +133,7 @@ export default function KnowledgeGraphPage() {
           target: edge.target ?? edge.target_id,
           label: edge.label ?? edge.relation_type,
           type: edge.type ?? edge.relation_type,
+          weight: Number(edge.properties?.weight ?? 1),
         }));
         setGraphData({ nodes, edges });
         setFocusId(null);
@@ -145,20 +154,52 @@ export default function KnowledgeGraphPage() {
     return d;
   }, [graphData.edges]);
 
-  // 视图模型：Top-N 总览；聚焦实体不在视图内时才并入其邻域（视图内容不变的
-  // 点击只做粘性高亮，echarts-for-react 深比较跳过 setOption，力导向不重算）
+  // 视图模型：枢纽-卫星采样（Obsidian 观感的关键）——按度数取少量枢纽作骨架，
+  // 再按边权重挂上低连接叶子实体，得到「少数大点 + 大量小点」的放射状结构；
+  // 全量渲染 5 千实体时 echarts O(n²) 力导向不可行，故按 viewSize 采样。
   const view = useMemo((): GraphData => {
     const all = graphData.nodes;
     if (all.length === 0) return graphData;
-    const keep = new Set<string>();
-    if (all.length > viewSize) {
-      const hubs = [...all]
-        .sort((a, b) => (b.freq || 0) - (a.freq || 0)
-          || (degree.get(b.id) || 0) - (degree.get(a.id) || 0))
-        .slice(0, viewSize);
-      for (const n of hubs) keep.add(n.id);
-    } else {
-      for (const n of all) keep.add(n.id);
+    if (all.length <= viewSize) return graphData;
+
+    const ranked = [...all].sort(
+      (a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0)
+        || (b.freq || 0) - (a.freq || 0),
+    );
+    const hubCount = Math.min(80, Math.max(12, Math.round(viewSize * 0.2)));
+    const hubIds = new Set(ranked.slice(0, hubCount).map((n) => n.id));
+    const keep = new Set(hubIds);
+    const edges: GraphEdge[] = [];
+    const sortedEdges = [...graphData.edges].sort((a, b) => (b.weight || 0) - (a.weight || 0));
+    // 第一遍：强边骨架（枢纽之间的主干连接）
+    for (const e of sortedEdges) {
+      const sHub = hubIds.has(e.source);
+      const tHub = hubIds.has(e.target);
+      if (!sHub && !tHub) continue;
+      if (!sHub || !tHub) {
+        const leaf = sHub ? e.target : e.source;
+        if (!keep.has(leaf)) {
+          if (keep.size >= viewSize) continue;
+          keep.add(leaf);
+        }
+      }
+      if (edges.length >= MAX_VIEW_EDGES) break;
+      edges.push(e);
+    }
+    // 第二遍：弱边挂低度数叶子实体（Obsidian 的「小点海」来源——连接稀疏的小实体）
+    if (keep.size < viewSize) {
+      const weakEdges = [...graphData.edges].sort((a, b) => (a.weight || 0) - (b.weight || 0));
+      for (const e of weakEdges) {
+        const sHub = hubIds.has(e.source);
+        const tHub = hubIds.has(e.target);
+        if (sHub === tHub) continue;
+        const leaf = sHub ? e.target : e.source;
+        if (keep.has(leaf)) continue;
+        if ((degree.get(leaf) || 0) > 12) continue;
+        if (keep.size >= viewSize) break;
+        keep.add(leaf);
+        if (edges.length < MAX_VIEW_EDGES) edges.push(e);
+      }
     }
     if (focusId && !keep.has(focusId)) {
       keep.add(focusId);
@@ -167,9 +208,10 @@ export default function KnowledgeGraphPage() {
         if (e.target === focusId) keep.add(e.source);
       }
     }
+    const nodes = all.filter((n) => keep.has(n.id));
     return {
-      nodes: all.filter((n) => keep.has(n.id)),
-      edges: graphData.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
+      nodes,
+      edges: edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
     };
   }, [graphData, focusId, viewSize, degree]);
 
@@ -179,11 +221,26 @@ export default function KnowledgeGraphPage() {
     if (nodes.length === 0) return null;
     const types = [...new Set(nodes.map((n) => n.type || "entity"))];
     if (types.length > 1) {
+      const counts = new Map<string, number>();
+      for (const n of nodes) {
+        const key = n.type || "entity";
+        counts.set(key, (counts.get(key) || 0) + 1);
+      }
+      let dominant = types[0];
+      for (const t of types) {
+        if ((counts.get(t) || 0) > (counts.get(dominant) || 0)) dominant = t;
+      }
+      let paletteIndex = 0;
       return {
         dim: "type" as const,
-        items: types.map((t, i) => ({
-          key: t, name: typeDisplayName(t, lang), color: GROUP_PALETTE[i % GROUP_PALETTE.length],
-        })),
+        items: types.map((t) => {
+          if (t === dominant) {
+            return { key: t, name: typeDisplayName(t, lang), color: NEUTRAL_NODE_COLOR };
+          }
+          const color = GROUP_PALETTE[paletteIndex % GROUP_PALETTE.length];
+          paletteIndex += 1;
+          return { key: t, name: typeDisplayName(t, lang), color };
+        }),
       };
     }
     const sources = [...new Set(nodes.map((n) => n.source || "manual"))];
@@ -223,10 +280,10 @@ export default function KnowledgeGraphPage() {
   const option = useMemo(() => {
     const nodeCount = view.nodes.length;
     if (nodeCount === 0) return {};
-    const repulsion = Math.min(500, 100 + nodeCount * 4);
+    const repulsion = Math.min(600, 150 + nodeCount * 1.1);
     const nodes = view.nodes.map((n) => {
       const deg = degree.get(n.id) || 0;
-      const size = Math.min(28, 4 + Math.sqrt(deg) * 1.5);
+      const size = Math.min(26, 3 + Math.sqrt(deg) * 1.35);
       return {
         id: n.id,
         name: n.label,
@@ -286,13 +343,14 @@ export default function KnowledgeGraphPage() {
           repulsion,
           edgeLength: [55, 85],
           gravity: 0.38,
-          layoutAnimation: nodeCount <= 300,
+          // 节点多时关闭布局动画（O(n²) 每帧计算会卡），直接呈现收敛结果
+          layoutAnimation: nodeCount <= 250,
         },
         categories: grouping?.items.map((g) => ({ name: g.name })) || [],
         data: nodes,
         links,
         lineStyle: {
-          color: isDark ? "rgba(216,226,240,0.22)" : "rgba(20,42,51,0.25)",
+          color: isDark ? "rgba(216,226,240,0.16)" : "rgba(20,42,51,0.18)",
           width: 1,
           curveness: 0.12,
         },
