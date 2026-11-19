@@ -524,7 +524,11 @@ export default function KnowledgeGraphPage() {
     // —— 均匀云团 + 尺寸两极化（用户终版 2026-11-19：没有特殊中心节点——
     // 重要节点是大圆、其余是小圆，全域均匀随机散布，无环无中心）——
     const maxDeg = Math.max(1, ...view.nodes.map((n) => degree.get(n.id) || 0));
-    const hubCut = maxDeg * 0.12;
+    // hub 阈值改排名法：恰 12% 的节点是大圆——maxDeg×比例法在 top-N 视图
+    // 里会让绝大多数节点过线（全库度数最高的 400 个节点普遍远超均值，
+    // 2026-11-19 实测几乎全成大圆失去层次）
+    const degsSorted = view.nodes.map((n) => degree.get(n.id) || 0).sort((a, b) => b - a);
+    const hubCut = Math.max(4, degsSorted[Math.floor(degsSorted.length * 0.12)] ?? 4);
 
     const hash01 = (id: string, salt: number) => {
       let h = (salt * 0x9e3779b9) & 0x7fffffff;
