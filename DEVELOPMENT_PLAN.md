@@ -1848,3 +1848,7 @@ PageHeading desc / 内嵌说明条删除：①智能体中心→知识中心 tab
 
 1. **集群总览加入左侧菜单**（用户拍板「需要单独出现」）：基础设施→集群组第一位加 `/infra` 菜单项（AppstoreOutlined，nav("infra_overview")）；三处同步——i18n nav zh（集群总览）/en（Cluster overview）+ PageHeading NAV_FALLBACK（parity 测试锁定的回退表）。浏览器实测菜单出现 ✓。
 2. **集群总览刷新按钮圈一直转**：load() 的 setLoading(true) 后**无人复位**（四个并行请求各自 then/catch，没有一个兜底 setLoading(false)）——修：Promise.allSettled 聚合全部请求（集群内节点子请求也 allSettled 收口）后 finally 复位。浏览器实测加载完成 spin 消失 ✓。
+
+## 2026-11-19 追加：知识库管理支持名称/描述行内编辑（用户需求）
+
+知识中心→知识库管理表格：名称/描述两列各加铅笔编辑按钮 → 编辑弹窗（名称 Input 必填 + 描述 TextArea 500 字计数）→ `PATCH /api/knowledge/bases/{id}`（新端点：双字段可选更新；空名 422；**系统分区名是定位常量改名 409**——按名创建/回收投影的定位键不可变）。浏览器实测：弹窗预填 → 改描述保存 → 列表刷新生效 → 还原原文无污染 ✓；后端 15 passed（双字段更新/空名 422/系统分区拒改名）。坑随批：build 链 `npm run build && wsl docker build` 中 npm 静默失败（cwd 漂移）会让 wsl 用旧 dist 出镜像——build 后必核 dist mtime/hash。

@@ -2,7 +2,7 @@
 
 import os
 import unittest
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 os.environ.setdefault("LLM_MASTER_KEY", __import__(
     "cryptography.fernet", fromlist=["Fernet"]
@@ -391,3 +391,59 @@ class TestKnowledgeCenterAPI(unittest.TestCase):
             headers=self.h,
         )
         self.assertEqual(response.status_code, 404)
+
+    def test_update_base_name_and_description(self):
+        """知识库名称/描述行内编辑（用户需求 2026-11-19）：普通 KB 双字段可改；
+        空名 422；系统分区名是定位常量，改名 409 拒绝。"""
+        from uuid import uuid4 as _uuid4
+
+        kb_id = None
+        with SessionLocal() as db:
+            admin = db.query(User).filter(User.username == "admin").one()
+            kb = KnowledgeBase(
+                name=f"edit-desc-{_uuid4().hex[:6]}",
+                description="旧描述",
+                owner_id=admin.id,
+            )
+            db.add(kb)
+            db.commit()
+            kb_id = str(kb.id)
+        try:
+            # 名称+描述双字段更新
+            r = client.patch(
+                f"/api/knowledge/bases/{kb_id}",
+                json={"name": "edit-desc-新名", "description": "新描述"},
+                headers=self.h,
+            )
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual(r.json()["name"], "edit-desc-新名")
+            self.assertEqual(r.json()["description"], "新描述")
+            # 空名 422
+            r = client.patch(
+                f"/api/knowledge/bases/{kb_id}", json={"name": "  "}, headers=self.h
+            )
+            self.assertEqual(r.status_code, 422)
+        finally:
+            with SessionLocal() as db:
+                kb = db.get(KnowledgeBase, UUID(kb_id))
+                if kb is not None:
+                    db.delete(kb)
+                    db.commit()
+
+    def test_system_partition_rename_rejected(self):
+        """系统分区名是定位常量（按名创建/回收投影）——改名 409。"""
+        with SessionLocal() as db:
+            get_system_partition(db, db.query(User).filter(User.username == "admin").one().id)
+            kb = (
+                db.query(KnowledgeBase)
+                .filter(KnowledgeBase.name == "平台经验（系统分区）")
+                .one()
+            )
+            kb_id = str(kb.id)
+        r = client.patch(
+            f"/api/knowledge/bases/{kb_id}", json={"name": "改名尝试"}, headers=self.h
+        )
+        self.assertEqual(r.status_code, 409)
+        with SessionLocal() as db:
+            kb = db.get(KnowledgeBase, UUID(kb_id))
+            self.assertEqual(kb.name, "平台经验（系统分区）")

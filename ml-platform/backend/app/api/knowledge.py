@@ -119,6 +119,45 @@ def create_base(
     }
 
 
+@router.patch("/bases/{kb_id}")
+def update_base(
+    kb_id: str,
+    name: str | None = Body(default=None),
+    description: str | None = Body(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """更新知识库名称/描述（知识库管理表格行内编辑，用户需求 2026-11-19）。
+
+    系统分区 KB 名称不可改（按名定位创建的定位键，409 拒绝）；普通 KB
+    名称必填非空。"""
+    kb = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id == uuid.UUID(kb_id),
+        KnowledgeBase.owner_id == current_user.id,
+    ).first()
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+    if name is not None:
+        new_name = name.strip()
+        if not new_name:
+            raise HTTPException(422, "Knowledge base name cannot be empty")
+        if kb.name == "平台经验（系统分区）" and new_name != kb.name:
+            raise HTTPException(
+                409,
+                "系统分区名称不可修改（系统按该名定位经验分区）",
+            )
+        kb.name = new_name
+    if description is not None:
+        kb.description = description.strip()
+    db.commit()
+    db.refresh(kb)
+    return {
+        "id": str(kb.id),
+        "name": kb.name,
+        "description": kb.description,
+    }
+
+
 @router.get("/bases/{kb_id}")
 def get_base(
     kb_id: str,

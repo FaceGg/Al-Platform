@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Table, Tag, Button, Input, message, Popconfirm, Space, Card, Switch, Form, Modal, Select, Drawer, InputNumber, Alert } from 'antd'
-import { ReloadOutlined, StopOutlined, PlusOutlined, DeleteOutlined, FileTextOutlined, EyeOutlined } from '@ant-design/icons'
+import { ReloadOutlined, StopOutlined, PlusOutlined, DeleteOutlined, EditOutlined, FileTextOutlined, EyeOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useI18n } from '../i18n'
 import apiClient from '../api/client'
@@ -29,6 +29,31 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
   const [loading, setLoading] = useState(false)
   const [noteTarget, setNoteTarget] = useState<string | null>(null)
   const [noteText, setNoteText] = useState('')
+  // 知识库名称/描述行内编辑（用户需求 2026-11-19；系统分区不在此表，不可改名）
+  const [kbEdit, setKbEdit] = useState<{ id: string; name: string; text: string } | null>(null)
+  const [kbSaving, setKbSaving] = useState(false)
+
+  const saveKb = async () => {
+    if (!kbEdit) return
+    if (!kbEdit.name.trim()) {
+      message.error(text.kbEditNameRequired)
+      return
+    }
+    setKbSaving(true)
+    try {
+      await apiClient.patch(`/knowledge/bases/${kbEdit.id}`, {
+        name: kbEdit.name.trim(),
+        description: kbEdit.text,
+      })
+      message.success(text.kbEditOk)
+      setKbEdit(null)
+      load()
+    } catch (error) {
+      message.error(formatApiError(error, text.updateFailed))
+    } finally {
+      setKbSaving(false)
+    }
+  }
   const [kbModalOpen, setKbModalOpen] = useState(false)
   const [bindModalOpen, setBindModalOpen] = useState(false)
   const [kbForm] = Form.useForm()
@@ -355,9 +380,31 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
             {
               title: text.colName,
               dataIndex: 'name',
-              render: (value: string) => <span className="tt">{value}</span>,
+              render: (value: string, record: Record<string, unknown>) => (
+                <Space size={4}>
+                  <span className="tt">{value}</span>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<EditOutlined />}
+                    title={text.kbEditTitle}
+                    onClick={() => setKbEdit({ id: String(record.id), name: String(value ?? ''), text: String(record.description ?? '') })}
+                  />
+                </Space>
+              ),
             },
-            { title: text.col_desc, dataIndex: 'description', ellipsis: true, render: (v: string) => v || '—' },
+            { title: text.col_desc, dataIndex: 'description', ellipsis: true, render: (v: string, record: Record<string, unknown>) => (
+              <Space size={4}>
+                <span>{v || '—'}</span>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<EditOutlined />}
+                  title={text.kbEditTitle}
+                  onClick={() => setKbEdit({ id: String(record.id), name: String(record.name ?? ''), text: String(v ?? '') })}
+                />
+              </Space>
+            ) },
             { title: text.col_doc_count, dataIndex: 'document_count', width: 80, render: (v: number) => v ?? 0 },
             {
               title: text.colActions,
@@ -476,6 +523,39 @@ export default function KnowledgeCenterContent({ t }: { t: any }) {
           onChange={(event) => setNoteText(event.target.value)}
           placeholder={text.notePlaceholder}
         />
+      </Modal>
+      {/* 知识库名称/描述行内编辑弹窗 */}
+      <Modal
+        title={text.kbEditTitle}
+        open={kbEdit != null}
+        onCancel={() => setKbEdit(null)}
+        onOk={() => void saveKb()}
+        okText={text.noteSave}
+        cancelText={text.noteCancel}
+        confirmLoading={kbSaving}
+        destroyOnHidden
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 12, color: 'var(--v2-sub)', marginBottom: 4 }}>{text.colName}</div>
+            <Input
+              value={kbEdit?.name ?? ''}
+              onChange={(event) => setKbEdit((cur) => (cur ? { ...cur, name: event.target.value } : cur))}
+              maxLength={128}
+            />
+          </div>
+          <div>
+            <div style={{ fontSize: 12, color: 'var(--v2-sub)', marginBottom: 4 }}>{text.col_desc}</div>
+            <Input.TextArea
+              value={kbEdit?.text ?? ''}
+              onChange={(event) => setKbEdit((cur) => (cur ? { ...cur, text: event.target.value } : cur))}
+              placeholder={text.descEditPlaceholder}
+              rows={3}
+              maxLength={500}
+              showCount
+            />
+          </div>
+        </div>
       </Modal>
       <Modal
         title={text.kb_modal_title}
