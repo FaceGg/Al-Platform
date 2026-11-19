@@ -107,6 +107,9 @@ export default function KnowledgeGraphPage() {
     noDocs: "This knowledge base has no document yet",
   };
   const chartRef = useRef<any>(null);
+  // 实体图谱容器（ResizeObserver：容器尺寸变化自动 echarts resize，
+  // canvas 不再锁死初始尺寸——2026-11-19 用户反馈画布外区域点击无效根因）
+  const entityWrapRef = useRef<HTMLDivElement>(null);
   // 拖动联动（用户需求 2026-11-19：拖一个节点带动关联节点一起动）：
   // coordsRef 存当前坐标（option 构建时写入），mouseup 读拖后新坐标算
   // delta，直连邻居批量平移。
@@ -663,14 +666,15 @@ export default function KnowledgeGraphPage() {
         emphasis: {
           focus: "adjacency",
           label: { show: true, fontWeight: "bold", color: "#7b4fc0" },
-          // 高亮紫色（用户指定 2026-11-19）：当前节点+关联节点+连线全部变紫
+          // 高亮紫色 + 适度透明（用户指定：紫色高亮并增加透明度，移开恢复）
           itemStyle: {
-            color: "#8a5cc7",
+            color: "rgba(138,92,199,0.85)",
             borderColor: "#7b4fc0",
+            opacity: 0.85,
             shadowBlur: 12,
             shadowColor: "rgba(138,92,199,0.55)",
           },
-          lineStyle: { width: 2, opacity: 0.95, color: "rgba(138,92,199,0.85)" },
+          lineStyle: { width: 2, opacity: 0.9, color: "rgba(138,92,199,0.8)" },
         },
         blur: {
           itemStyle: { opacity: 0.06 },
@@ -701,9 +705,10 @@ export default function KnowledgeGraphPage() {
     }
   }, [focusId, view]);
 
-  // 拖动联动（用户需求 2026-11-19）：拖动节点结束后，直连邻居跟随相同
-  // 位移——整簇一起拖动。echarts 拖拽只更新被拖节点坐标，这里在 mouseup
-  // 读取新坐标算 delta，批量平移邻居并回写。
+  // 拖动联动（用户需求 2026-11-19）：拖动节点时直连邻居**实时跟随**相同
+  // 位移——整簇一起拖动。echarts 拖拽只更新被拖节点坐标，这里在 mousemove
+  // 读取该节点最新位置算 delta，实时平移邻居并回写（拖动过程跟随，而非
+  // 松手才跳过去——上一版 mouseup 联动被用户实测否定）。
   useEffect(() => {
     const inst = chartRef.current?.getEchartsInstance?.();
     const zr = inst?.getZr?.();
@@ -719,20 +724,19 @@ export default function KnowledgeGraphPage() {
         if (d < bestD) { bestD = d; downNode = id; }
       }
     };
-    const onUp = () => {
+    const onMove = () => {
       if (!downNode) return;
-      const dragged = downNode;
-      downNode = null;
       const data = (inst.getOption()?.series?.[0]?.data ?? []) as Array<{ id?: string; x?: number; y?: number }>;
-      const idx = data.findIndex((d) => d.id === dragged);
+      const idx = data.findIndex((d) => d.id === downNode);
       if (idx < 0) return;
-      const orig = coordsRef.current.get(dragged);
+      const dragged = data[idx];
+      const orig = coordsRef.current.get(downNode);
       if (!orig) return;
-      const dx = (data[idx].x ?? 0) - orig[0];
-      const dy = (data[idx].y ?? 0) - orig[1];
+      const dx = (dragged.x ?? 0) - orig[0];
+      const dy = (dragged.y ?? 0) - orig[1];
       if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
-      coordsRef.current.set(dragged, [data[idx].x ?? 0, data[idx].y ?? 0]);
-      const neighbors = adjRef.current.get(dragged) || [];
+      coordsRef.current.set(downNode, [dragged.x ?? 0, dragged.y ?? 0]);
+      const neighbors = adjRef.current.get(downNode) || [];
       for (const nid of neighbors) {
         const p = coordsRef.current.get(nid);
         if (!p) continue;
@@ -741,13 +745,27 @@ export default function KnowledgeGraphPage() {
         const ci = data.findIndex((d) => d.id === nid);
         if (ci >= 0) { data[ci].x = np[0]; data[ci].y = np[1]; }
       }
-      // 完整 data 合并回写（echarts data 合并按 index）
+      // 实时回写邻居位置（被拖节点坐标由 echarts 自己维护，不动它）
       inst.setOption({ series: [{ data }] });
     };
+    const onUp = () => { downNode = null; };
     zr.on("mousedown", onDown);
+    zr.on("mousemove", onMove);
     zr.on("mouseup", onUp);
-    return () => { zr.off("mousedown", onDown); zr.off("mouseup", onUp); };
+    return () => { zr.off("mousedown", onDown); zr.off("mousemove", onMove); zr.off("mouseup", onUp); };
   }, [view]);
+
+  // 容器尺寸变化自动 echarts resize（画布不再锁死初始尺寸——canvas 外
+  // 区域点击无效的根因：容器变大后 canvas 未跟随，2026-11-19 用户实测）
+  useEffect(() => {
+    const el = entityWrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      chartRef.current?.getEchartsInstance?.()?.resize();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [mode, selectedKb, view.nodes.length]);
 
   const resetView = () => {
     const inst = chartRef.current?.getEchartsInstance?.();
@@ -1141,7 +1159,7 @@ export default function KnowledgeGraphPage() {
             ) : view.nodes.length === 0 && !loading ? (
               <Empty description={t.common.loading} style={{ marginTop: 200 }} />
             ) : (
-              <div style={{ position: "relative", width: "100%", height: "100%" }}>
+              <div ref={entityWrapRef} style={{ position: "relative", width: "100%", height: "100%" }}>
                 <ReactECharts
                   ref={chartRef}
                   option={option}

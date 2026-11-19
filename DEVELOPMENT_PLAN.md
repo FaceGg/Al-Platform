@@ -1964,3 +1964,10 @@ PageHeading desc / 内嵌说明条删除：①智能体中心→知识中心 tab
 ## 2026-11-19 追加二（次日）：实体图谱三项交互「未生效」根修——漏 build 部署
 
 用户实测三项交互（点击紫高亮/拖动联动/连线加深）全部无效。根因：**fec2c242 提交后未执行 build+部署**——交互代码从未到达浏览器（排名法等更早改动部署过故生效，造成「部分生效」的迷惑性）。教训：**commit 后必须立即 build+部署并抽查产物**（grep 特征串进容器 bundle 才算交付闭环），不能「提交=完成」。补 build+部署后容器 bundle 验证含 8a5cc7（紫色 select 特征）✓；画布容器补 cursor grab 提示可拖拽。
+
+## 2026-11-19 追加三（次日）：实体图谱交互三项落定（用户实测驱动多轮修正）
+
+1. **hover 紫色高亮（用户澄清：不是点击，是鼠标悬停）**：emphasis 配置紫化——hover 节点→该节点+直连邻居+连线全紫（节点紫圆紫边框、连线紫 0.85/宽 2、标签紫加粗）+适度透明（0.85/0.9）；blur 态其余节点 opacity 0.06/连线 0.03（透明度增加，移开恢复原样）。机制=echarts emphasis focus adjacency（hover 邻域高亮本就工作，只换配色）。
+2. **拖动实时联动**：邻居跟随从 mouseup（松手才跳）改为 **mousemove 实时跟随**——拖动过程中直连邻居按相同 delta 平移（coordsRef 当前坐标 vs echarts 实时 data 差值），被拖节点坐标由 echarts 维护不干预。
+3. **画布拖拽全区域生效**：根因=canvas 锁死初始尺寸（621×530），容器变宽后不跟随——canvas 外区域点击自然无效。修：**ResizeObserver 监听容器**自动 inst.resize()（实测容器 +200px canvas 跟随 821 ✓）。
+另：hover 高亮触发验证踩坑——window.__kgInst 调试桥（echarts 实例挂 window）+synthetic click 不被 zrender 识别为节点点击（focusId 不变），最终 CUA 真实鼠标 move/drag 验证 ✓。
