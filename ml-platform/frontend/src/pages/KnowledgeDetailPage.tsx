@@ -169,7 +169,19 @@ export default function KnowledgeDetailPage() {
     setVectorizing(true);
     try {
       const res = await apiClient.post("/knowledge/bases/" + kbId + "/vectorize", { chunk_size: 500 });
-      message.success(zh ? `已向量化 ${(res.data.count || 0)} 个分块` : `Vectorized ${res.data.count || 0} chunks`);
+      // 端点返回 vectorized（本次新增）/already_vectorized（此前已完成数）
+      // ——count 字段不存在，此前恒显示 0（用户误以为向量化没生效）
+      const fresh = Number(res.data.vectorized ?? 0);
+      const already = Number(res.data.already_vectorized ?? 0);
+      message.success(
+        zh
+          ? fresh > 0
+            ? `已向量化 ${fresh} 个分块${already ? `（另有 ${already} 个此前已完成）` : ""}`
+            : `全部 ${already} 个分块此前已向量化，无需重复处理`
+          : fresh > 0
+            ? `Vectorized ${fresh} chunks${already ? ` (${already} previously done)` : ""}`
+            : `All ${already} chunks were already vectorized`,
+      );
       loadVectorStats(); loadDocs();
     } catch (e: any) { message.error(e.response?.data?.detail || t.common.error); }
     finally { setVectorizing(false); }
@@ -291,66 +303,29 @@ export default function KnowledgeDetailPage() {
       view = entities.filter((e) => keep.has(e.id));
       // 兜底：过滤结果为空（如键不一致或实体被清理）时不白屏，退回全量视图
       if (view.length === 0) view = entities;
-    } else if (entities.length > 60) {
+    } else if (entities.length > 150) {
+      // Obsidian 风格：默认展示度数 top-N 的有机网络（全库 7927 实体一次性
+      // 渲染不可行；点击实体聚焦时展开其邻域）
       view = [...entities]
         .sort((a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0))
-        .slice(0, 60);
+        .slice(0, 150);
     }
     const keepIds = new Set(view.map((e) => e.id));
 
-    // —— 一次性静态力导向布局 ——
-    // 不用 echarts 的 force（其模拟会持续步进、图永远在动），改为自行计算
-    // 最终坐标后以 layout:"none" 渲染：静止、确定，节点仍可拖拽（data[].draggable）。
+    // —— 环形布局（用户指定 2026-11-19：全部节点均匀圆周分布 + 直线连线，
+    // 整洁不混乱；此前力导向迭代 220 轮在大库上聚簇混乱）——
     if (graphPosRef.current.kbId !== kbId) graphPosRef.current = { kbId: kbId ?? "", map: new Map() };
     const posCache = graphPosRef.current.map;
     const W = Math.max(dom.clientWidth, 320);
     const H = Math.max(dom.clientHeight, 240);
-    const fresh = view.filter((e) => !posCache.has(e.id));
-    const R0 = Math.min(W, H) * 0.4;
-    fresh.forEach((e, i) => {
-      const a = (i / Math.max(1, fresh.length)) * Math.PI * 2 - Math.PI / 2;
-      posCache.set(e.id, [W / 2 + R0 * Math.cos(a), H / 2 + R0 * Math.sin(a)]);
+    const R = Math.min(W, H) * 0.42;
+    view.forEach((e, i) => {
+      if (!posCache.has(e.id)) {
+        const a = (i / Math.max(1, view.length)) * Math.PI * 2 - Math.PI / 2;
+        posCache.set(e.id, [W / 2 + R * Math.cos(a), H / 2 + R * Math.sin(a)]);
+      }
     });
-    const idx = new Map(view.map((e, i) => [e.id, i]));
     const pts: [number, number][] = view.map((e) => posCache.get(e.id)!);
-    const simEdges: [number, number][] = [];
-    for (const r of relations) {
-      const s = idx.get(r.source_id);
-      const t = idx.get(r.target_id);
-      if (s != null && t != null) simEdges.push([s, t]);
-    }
-    const LINK_LEN = 95, REPULSE = 4200, ITERATIONS = 220;
-    for (let it = 0; it < ITERATIONS; it++) {
-      for (let i = 0; i < pts.length; i++) {
-        for (let j = i + 1; j < pts.length; j++) {
-          let dx = pts[i][0] - pts[j][0];
-          let dy = pts[i][1] - pts[j][1];
-          let d2 = dx * dx + dy * dy;
-          if (d2 < 1) { dx = 0.05; dy = 0.05; d2 = 1; }
-          const d = Math.sqrt(d2);
-          const f = REPULSE / d2 / d;
-          pts[i][0] += dx * f; pts[i][1] += dy * f;
-          pts[j][0] -= dx * f; pts[j][1] -= dy * f;
-        }
-      }
-      for (const [s, t] of simEdges) {
-        const dx = pts[t][0] - pts[s][0];
-        const dy = pts[t][1] - pts[s][1];
-        const d = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-        const f = ((d - LINK_LEN) / d) * 0.08;
-        pts[s][0] += dx * f; pts[s][1] += dy * f;
-        pts[t][0] -= dx * f; pts[t][1] -= dy * f;
-      }
-      for (const p of pts) {
-        p[0] += (W / 2 - p[0]) * 0.01;
-        p[1] += (H / 2 - p[1]) * 0.01;
-      }
-    }
-    for (let i = 0; i < view.length; i++) {
-      pts[i][0] = Math.min(Math.max(pts[i][0], 24), W - 24);
-      pts[i][1] = Math.min(Math.max(pts[i][1], 24), H - 24);
-      posCache.set(view[i].id, [pts[i][0], pts[i][1]]);
-    }
 
     chart.setOption({
       tooltip: {},
@@ -369,16 +344,27 @@ export default function KnowledgeDetailPage() {
         links: relations
           .filter((r) => keepIds.has(r.source_id) && keepIds.has(r.target_id))
           .map((r) => ({ source: r.source_id, target: r.target_id, name: r.relation_type })),
-        categories: [...new Set(view.map((e) => e.entity_type))].map((name) => ({ name })),
-        label: { show: true, fontSize: 10 },
+        categories: (() => {
+          // Obsidian 风格柔和色板：按实体词性分类着色（灰紫/蓝/青/琥珀/玫红）
+          const palette = ["#8a7fb8", "#5b8bd4", "#4fa8a0", "#d4a04a", "#c47a8a", "#7aa86c"];
+          const names = [...new Set(view.map((e) => e.entity_type))];
+          return names.map((name, i) => ({ name, itemStyle: { color: palette[i % palette.length] } }));
+        })(),
+        label: {
+          show: true, fontSize: 9,
+          color: "rgba(150,158,175,0.85)",
+          position: "right", distance: 3,
+        },
         // 悬停高亮邻域（其余节点淡出），聚焦/恢复切换带缓动过渡
         emphasis: {
           focus: "adjacency",
-          itemStyle: { shadowBlur: 12, shadowColor: "rgba(56,132,255,0.45)" },
-          label: { fontWeight: "bold" },
+          itemStyle: { shadowBlur: 10, shadowColor: "rgba(120,140,220,0.5)" },
+          label: { fontWeight: "bold", color: "rgba(230,235,245,0.95)" },
         },
-        blur: { itemStyle: { opacity: 0.15 }, lineStyle: { opacity: 0.04 } },
-        lineStyle: { color: "rgba(140,150,170,0.35)", width: 1, curveness: 0.12 },
+        blur: { itemStyle: { opacity: 0.08 }, lineStyle: { opacity: 0.02 } },
+        // Obsidian 质感：极细半透明直线（无弧度）、无描边小圆点
+        lineStyle: { color: "rgba(150,158,175,0.18)", width: 0.6, curveness: 0 },
+        itemStyle: { borderColor: "transparent", opacity: 0.92 },
       }],
     });
     // 拖拽节点与点击聚焦区分：位移超过阈值视为拖拽，不切换聚焦。
@@ -567,7 +553,7 @@ export default function KnowledgeDetailPage() {
       ),
     },
     {
-      key: "graph", label: <><ApartmentOutlined /> {zh ? "知识图谱" : "Graph"}</>,
+      key: "graph", label: <><ApartmentOutlined /> {zh ? "知识图谱预览" : "Graph Preview"}</>,
       children: (
         <>
         <div style={{ display: "flex", gap: 12 }}>

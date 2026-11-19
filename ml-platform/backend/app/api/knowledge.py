@@ -335,11 +335,13 @@ async def upload_document(
     if not file_text.strip():
         raise HTTPException(400, "No content provided")
 
-    # Chunk by paragraphs; extracted office/pdf content is repacked to a
-    # retrieval-friendly granularity, plain text keeps its own blank lines.
+    # Chunk by paragraphs, then greedy-pack to retrieval-friendly granularity
+    # for ALL text types（2026-11-19 用户实测：markdown 无双换行的整篇文档
+    # split("\n\n") 得 1 块 41 万字符——TF-IDF 一个向量代表 41 万字，检索
+    # 粒度完全失效）。此前仅 pdf/docx/xlsx 走打包；现在全部文本类型统一
+    # 打包到 ~600 字符块（超长段按句硬切），语义不变。
     paragraphs = [p.strip() for p in file_text.split("\n\n") if p.strip()]
-    if doc_type in ("pdf", "docx", "xlsx", "xlsm"):
-        paragraphs = _pack_chunks(paragraphs)
+    paragraphs = _pack_chunks(paragraphs)
     if not paragraphs:
         paragraphs = [file_text.strip()]
 
@@ -358,6 +360,8 @@ async def upload_document(
     db.flush()
 
     # Save chunks
+    chunk_ids: list[str] = []
+    chunk_texts: list[str] = []
     for i, (para, emb_str) in enumerate(zip(paragraphs, embedding_strs)):
         chunk = Chunk(
             doc_id=doc.id,
@@ -366,9 +370,34 @@ async def upload_document(
             embedding=emb_str,
         )
         db.add(chunk)
+        chunk_ids.append(str(chunk.id))
+        chunk_texts.append(para)
 
     db.commit()
     db.refresh(doc)
+
+    # 上传即同步向量库（2026-11-19 用户问「上传自动分块了还要点全部向量化吗」
+    # ——此前检索用的向量索引要靠手动按钮灌入，上传的新文档查不到）。失败
+    # 留痕不阻断：按钮仍是兜底修复通道。
+    try:
+        import numpy as np
+
+        vstore = get_vector_store()
+        vectors = np.array([json.loads(e) for e in embedding_strs], dtype=np.float32)
+        vstore.add(
+            chunk_ids,
+            vectors,
+            [{"doc_id": str(doc.id), "kb_id": kb_id, "filename": filename, "chunk_index": i}
+             for i in range(len(chunk_ids))],
+        )
+        vstore.save(os.path.join(os.path.dirname(__file__), "..", "..", "data", f"vs_{kb_id}.pkl"))
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "kb %s doc %s: upload-time vector store sync failed; "
+            "manual vectorize still works", kb_id, doc.id, exc_info=True,
+        )
     return {
         "id": str(doc.id),
         "filename": doc.filename,

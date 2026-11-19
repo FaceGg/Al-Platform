@@ -220,7 +220,10 @@ class Settings(BaseSettings):
     knowledge_graph_max_relations: int = 0
     knowledge_graph_min_entity_freq: int = 2
     knowledge_graph_time_budget_seconds: float = 30
-    knowledge_graph_max_extract_chars: int = 200000
+    # 字符预算是极端防线（防止超大库长时间占用），真实超时保护是上面的
+    # time_budget（内部截断+truncated 标记）。此前 200000 过于保守——
+    # 5 文档 1.15M 字符的普通库直接 422（2026-11-19 用户实测「开发计划」库）
+    knowledge_graph_max_extract_chars: int = 2000000
 
     # Retrieval tokenization: switch off to fall back to the legacy
     # TfidfVectorizer word splitting (also requires a reembed afterwards).
