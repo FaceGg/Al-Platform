@@ -19,8 +19,10 @@ trap cleanup EXIT
 exclude_path() {
   case "$1" in
     .env|.env.*|*/.env|*/.env.*|secrets/*|*/secrets/*|output/*|*/output/*|temp_test/*|*/temp_test/*|tmp/*|*/tmp/*|.worktrees/*|*/.worktrees/*|.git/*|*/.git/*|\
+    .trae|.trae/*|.trae-*/*|*/.trae|*/.trae/*|*/.trae-*/[!x]*/[!x]*|\
     ml_platform.db|*.db|*.db-shm|*.db-wal|*.tar.gz|*.log|*.err|\
     node_modules/*|*/node_modules/*|__pycache__/*|*/__pycache__/*|\
+    *竞品对比*|\
     spot_weld_quality_experiment_1875.csv|spot_weld_quality_experiment_60.csv) return 0 ;;
   esac
   return 1
@@ -32,12 +34,13 @@ prune_excluded_stage_paths() {
   find "$stage_root" -type d \( \
     -name .git -o -name .worktrees -o -name node_modules -o -name __pycache__ \
     -o -name secrets -o -name output -o -name temp_test -o -name tmp \
-    -o -name wheelhouse \
+    -o -name wheelhouse -o -name .trae -o -name '.trae-*' \
   \) -prune -exec rm -rf -- {} +
 
   find "$stage_root" -type f \( \
     -name .env -o -name '.env.*' -o -name '*.db' -o -name '*.db-shm' \
     -o -name '*.db-wal' -o -name '*.tar.gz' -o -name '*.log' -o -name '*.err' \
+    -o -name '*竞品对比*' \
   \) ! -name .env.example -delete
 }
 
