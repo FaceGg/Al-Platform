@@ -639,8 +639,17 @@ def rag_query(
     # Step 2: Build context
     context = "\n\n".join([r["content"] for r in search_results])
 
-    # Step 3: Build prompt
-    prompt = f"Based on the following materials, answer the question:\n{context}\n\nQuestion: {query}"
+    # Step 3: Build prompt（图谱三元组上下文并入；无命中静默跳过）
+    from app.services.kg_projection import graph_triples_context
+
+    graph_block = graph_triples_context(db, kb, query)
+    if graph_block:
+        prompt = (
+            f"Based on the following materials, answer the question:\n{context}\n\n"
+            f"{graph_block}\n\nQuestion: {query}"
+        )
+    else:
+        prompt = f"Based on the following materials, answer the question:\n{context}\n\nQuestion: {query}"
 
     # Step 4: Call LLM API through the gateway
     config = resolve_llm_profile(db, purpose="knowledge_rag")
@@ -785,6 +794,17 @@ def chat(
     }
 
     llm_messages = [system_msg] + messages
+
+    # 图谱上下文（阶段5·知识应用）：问题命中实体名/别名时，把相关三元组并进
+    # system 提示词；无命中/图存储不可用时静默跳过。
+    from app.services.kg_projection import graph_triples_context
+
+    graph_block = graph_triples_context(db, kb, last_user_msg)
+    if graph_block:
+        llm_messages[0] = {
+            "role": "system",
+            "content": system_msg["content"] + "\n\n" + graph_block,
+        }
 
     # Step 4: Save user message
     user_msg = ChatMessage(
@@ -1027,10 +1047,40 @@ def create_entity(
     ).first()
     if not kb:
         raise HTTPException(404, "Knowledge base not found")
+    # 实体链接（消歧基础层）：同库归一化同名/别名命中时不再新建节点（同名唯一
+    # 索引会拒绝），改为把该名字并进既有实体的别名并返回既有实体。
+    from app.services.kg_fusion import resolve_merged
+    from app.services.kg_names import existing_entity_index, normalize_name
+
+    existing_id = existing_entity_index(db, kb.id).get(normalize_name(name))
+    if existing_id is not None:
+        existing = resolve_merged(db, existing_id)
+        if existing is not None:
+            new_alias = normalize_name(name)
+            if new_alias != existing.name and new_alias not in (existing.aliases or []):
+                existing.aliases = list(existing.aliases or []) + [new_alias]
+            props = dict(existing.properties or {})
+            props["freq"] = int(props.get("freq") or 0) + 1
+            existing.properties = props
+            db.commit()
+            return {
+                "id": str(existing.id),
+                "name": existing.name,
+                "entity_type": existing.entity_type,
+                "properties": existing.properties,
+                "created_at": existing.created_at.isoformat() if existing.created_at else None,
+                "linked": True,
+            }
     entity = GraphEntity(kb_id=kb.id, name=name, entity_type=entity_type, properties=properties)
     db.add(entity)
     db.commit()
     db.refresh(entity)
+    try:
+        from app.services.kg_projection import get_projection
+
+        get_projection().upsert_entity(entity)
+    except Exception:  # noqa: BLE001 - 投影尽力而为，PG 是主源
+        pass
     return {
         "id": str(entity.id),
         "name": entity.name,
@@ -1058,6 +1108,12 @@ def delete_entity(
         raise HTTPException(403, "Forbidden")
     db.delete(entity)
     db.commit()
+    try:
+        from app.services.kg_projection import get_projection
+
+        get_projection().delete_entity(entity_id)
+    except Exception:  # noqa: BLE001 - 投影尽力而为，PG 是主源
+        pass
     return {"message": "Entity deleted"}
 
 
@@ -1132,6 +1188,15 @@ def create_relation(
     db.add(relation)
     db.commit()
     db.refresh(relation)
+    try:
+        from app.services.kg_projection import get_projection
+
+        projection = get_projection()
+        projection.upsert_entity(src)
+        projection.upsert_entity(tgt)
+        projection.upsert_relation(relation)
+    except Exception:  # noqa: BLE001 - 投影尽力而为，PG 是主源
+        pass
     return {
         "id": str(relation.id),
         "source_id": str(relation.source_id),
@@ -1159,6 +1224,12 @@ def delete_relation(
         raise HTTPException(403, "Forbidden")
     db.delete(relation)
     db.commit()
+    try:
+        from app.services.kg_projection import get_projection
+
+        get_projection().delete_relation(relation)
+    except Exception:  # noqa: BLE001 - 投影尽力而为，PG 是主源
+        pass
     return {"message": "Relation deleted"}
 
 
@@ -1166,15 +1237,19 @@ def delete_relation(
 def extract_kb_graph_endpoint(
     kb_id: str,
     doc_ids: Optional[list[str]] = Body(default=None),
+    mode: str = Body(default="rules"),
+    max_chunks: Optional[int] = Body(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Rebuild the auto knowledge-graph layer from document content.
 
-    Deterministic rules + statistics (jieba noun phrases, co-occurrence,
-    is_a/part_of patterns). Entities/relations created by the user manually
-    are never modified or deleted; only rows tagged properties.source="auto"
-    are replaced. Without doc_ids every document of the KB is used.
+    mode="rules"（默认，兼容）：确定性规则+统计（jieba 词性粗分、共现、
+    is_a/part_of 模式），同步返回 report。
+    mode="llm"：大模型深度抽取（按库本体约束类型、实体别名+属性+关系证据），
+    创建异步任务立即返回 {mode, job_id}；进度走
+    GET /bases/{kb_id}/graph/extract/jobs/{job_id}，取消走 POST .../cancel。
+    手工行（无 properties.source 标记）永不修改；auto 层按 method 分别重建。
     """
     kb = db.query(KnowledgeBase).filter(
         KnowledgeBase.id == uuid.UUID(kb_id),
@@ -1193,6 +1268,30 @@ def extract_kb_graph_endpoint(
     documents = doc_query.all()
     if not documents:
         raise HTTPException(422, "No documents to extract from")
+
+    if mode == "llm":
+        from app.models.knowledge import KgExtractionJob
+        from app.tasks.kg_tasks import dispatch_kg_extraction
+
+        has_chunks = (
+            db.query(Chunk)
+            .join(Document, Chunk.document)
+            .filter(Document.kb_id == kb.id)
+            .first()
+            is not None
+        )
+        if not has_chunks:
+            raise HTTPException(422, "No chunks available for LLM extraction")
+        params: dict = {}
+        if doc_ids:
+            params["doc_ids"] = [str(x) for x in doc_ids]
+        if max_chunks:
+            params["max_chunks"] = int(max_chunks)
+        job = KgExtractionJob(kb_id=kb.id, mode="llm", status="pending", params=params)
+        db.add(job)
+        db.commit()
+        channel = dispatch_kg_extraction(str(job.id))
+        return {"mode": "llm", "job_id": str(job.id), "channel": channel}
 
     # Oversized selections must be split by the caller instead of silently
     # degrading inside the time budget.
@@ -1520,14 +1619,26 @@ def get_full_graph(
     if not kb:
         raise HTTPException(404, "Knowledge base not found")
 
-    entities = db.query(GraphEntity).filter(GraphEntity.kb_id == kb.id).all()
+    entities = db.query(GraphEntity).filter(
+        GraphEntity.kb_id == kb.id,
+        # 融合合并后的实体不再出现在图中（别名已并入存活节点）
+        GraphEntity.merged_into.is_(None),
+    ).all()
+    live_ids = {str(e.id) for e in entities}
     relations = db.query(GraphRelation).filter(GraphRelation.kb_id == kb.id).all()
+    # 悬挂边过滤：端点已被合并（merged_into 非空）的边不再渲染——重指 normally
+    # 由融合层完成，这里是防御（历史数据/中断任务可能残留端点指向 merged 行）
+    relations = [
+        r for r in relations
+        if str(r.source_id) in live_ids and str(r.target_id) in live_ids
+    ]
 
     nodes = [
         {
             "id": str(e.id),
             "name": e.name,
             "entity_type": e.entity_type,
+            "aliases": e.aliases or [],
             "properties": e.properties,
         }
         for e in entities
@@ -1543,6 +1654,368 @@ def get_full_graph(
         for r in relations
     ]
     return {"nodes": nodes, "edges": edges}
+
+
+# -------------------------------------------------------------------------------
+#  KG pipeline: ontology / async extraction jobs / fusion / graph queries (stage 2-5)
+# -------------------------------------------------------------------------------
+
+def _owned_kb(db: Session, kb_id: str, current_user: User) -> KnowledgeBase:
+    kb = db.query(KnowledgeBase).filter(
+        KnowledgeBase.id == uuid.UUID(kb_id),
+        KnowledgeBase.owner_id == current_user.id,
+    ).first()
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+    return kb
+
+
+@router.get("/bases/{kb_id}/graph/ontology")
+def get_ontology(
+    kb_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    kb = _owned_kb(db, kb_id, current_user)
+    from app.services.kg_ontology import resolve_ontology
+
+    return {"ontology": resolve_ontology(kb), "custom": bool(kb.kg_ontology)}
+
+
+@router.put("/bases/{kb_id}/graph/ontology")
+def put_ontology(
+    kb_id: str,
+    ontology: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    kb = _owned_kb(db, kb_id, current_user)
+    from app.services.kg_ontology import normalize_ontology
+
+    try:
+        kb.kg_ontology = normalize_ontology(ontology)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    db.commit()
+    return {"ontology": kb.kg_ontology}
+
+
+@router.get("/bases/{kb_id}/graph/extract/jobs/{job_id}")
+def get_kg_job(
+    kb_id: str,
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models.knowledge import KgExtractionJob
+
+    kb = _owned_kb(db, kb_id, current_user)
+    job = db.query(KgExtractionJob).filter(
+        KgExtractionJob.id == uuid.UUID(job_id),
+        KgExtractionJob.kb_id == kb.id,
+    ).first()
+    if not job:
+        raise HTTPException(404, "Job not found")
+    total = job.total_units or 0
+    done = job.done_units or 0
+    return {
+        "id": str(job.id),
+        "status": job.status,
+        "mode": job.mode,
+        "total_units": total,
+        "done_units": done,
+        "progress": round(done / total * 100, 1) if total else 0.0,
+        "entities_found": job.entities_found,
+        "relations_found": job.relations_found,
+        "llm_calls": job.llm_calls,
+        "llm_errors": job.llm_errors,
+        "error": job.error,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+    }
+
+
+@router.post("/bases/{kb_id}/graph/extract/jobs/{job_id}/cancel")
+def cancel_kg_job(
+    kb_id: str,
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models.knowledge import KgExtractionJob
+
+    kb = _owned_kb(db, kb_id, current_user)
+    job = db.query(KgExtractionJob).filter(
+        KgExtractionJob.id == uuid.UUID(job_id),
+        KgExtractionJob.kb_id == kb.id,
+    ).first()
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.status in ("pending", "running"):
+        job.cancel_requested = True
+        db.commit()
+    return {"status": job.status, "cancel_requested": True}
+
+
+@router.get("/bases/{kb_id}/graph/fusion/suggestions")
+def list_fusion_suggestions(
+    kb_id: str,
+    status: str = "pending",
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models.knowledge import KgMergeSuggestion
+
+    kb = _owned_kb(db, kb_id, current_user)
+    query = db.query(KgMergeSuggestion).filter(KgMergeSuggestion.kb_id == kb.id)
+    if status != "all":
+        query = query.filter(KgMergeSuggestion.status == status)
+    suggestions = query.order_by(KgMergeSuggestion.created_at.desc()).limit(limit).all()
+    by_id = {
+        str(e.id): e
+        for e in db.query(GraphEntity)
+        .filter(GraphEntity.kb_id == kb.id).all()
+    }
+
+    def _name(entity_id):
+        entity = by_id.get(str(entity_id)) if entity_id else None
+        return {"id": str(entity_id), "name": entity.name,
+                "type": entity.entity_type} if entity else None
+
+    return [
+        {
+            "id": str(s.id),
+            "type": s.type,
+            "status": s.status,
+            "method": s.method,
+            "similarity": s.similarity,
+            "canonical_name": s.canonical_name,
+            "entity_a": _name(s.entity_a_id),
+            "entity_b": _name(s.entity_b_id),
+            "payload": s.payload,
+            "apply_record": s.apply_record,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        }
+        for s in suggestions
+    ]
+
+
+@router.post("/bases/{kb_id}/graph/fusion/suggestions/{suggestion_id}/accept")
+def accept_fusion_suggestion(
+    kb_id: str,
+    suggestion_id: str,
+    resolved: Optional[dict] = Body(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models.knowledge import KgMergeSuggestion
+    from app.services.kg_fusion import accept_suggestion
+    from app.services.kg_projection import get_projection
+
+    kb = _owned_kb(db, kb_id, current_user)
+    suggestion = db.query(KgMergeSuggestion).filter(
+        KgMergeSuggestion.id == uuid.UUID(suggestion_id),
+        KgMergeSuggestion.kb_id == kb.id,
+    ).first()
+    if not suggestion:
+        raise HTTPException(404, "Suggestion not found")
+    if suggestion.status != "pending":
+        raise HTTPException(409, f"Suggestion already {suggestion.status}")
+    if resolved:
+        payload = dict(suggestion.payload or {})
+        payload["resolved"] = resolved
+        suggestion.payload = payload
+    result = accept_suggestion(db, kb, suggestion, decided_by=current_user.id)
+    try:
+        get_projection().resync_kb(db, kb.id)
+    except Exception:  # noqa: BLE001 - 投影失败不阻断审核
+        pass
+    return result
+
+
+@router.post("/bases/{kb_id}/graph/fusion/suggestions/{suggestion_id}/reject")
+def reject_fusion_suggestion(
+    kb_id: str,
+    suggestion_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models.knowledge import KgMergeSuggestion
+    from app.services.kg_fusion import reject_suggestion
+
+    kb = _owned_kb(db, kb_id, current_user)
+    suggestion = db.query(KgMergeSuggestion).filter(
+        KgMergeSuggestion.id == uuid.UUID(suggestion_id),
+        KgMergeSuggestion.kb_id == kb.id,
+    ).first()
+    if not suggestion:
+        raise HTTPException(404, "Suggestion not found")
+    if suggestion.status != "pending":
+        raise HTTPException(409, f"Suggestion already {suggestion.status}")
+    reject_suggestion(db, suggestion, decided_by=current_user.id)
+    return {"status": "rejected"}
+
+
+@router.post("/bases/{kb_id}/graph/fusion/merge")
+def manual_merge_entities(
+    kb_id: str,
+    source_id: str = Body(...),
+    target_id: str = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """手动合并两个实体：source 并入 target（target 存活）。"""
+    from app.services.kg_fusion import merge_entities
+    from app.services.kg_projection import get_projection
+
+    kb = _owned_kb(db, kb_id, current_user)
+    source = db.query(GraphEntity).filter(
+        GraphEntity.id == uuid.UUID(source_id), GraphEntity.kb_id == kb.id,
+    ).first()
+    target = db.query(GraphEntity).filter(
+        GraphEntity.id == uuid.UUID(target_id), GraphEntity.kb_id == kb.id,
+    ).first()
+    if not source or not target:
+        raise HTTPException(404, "Entity not found")
+    suggestion = merge_entities(db, kb, target, source,
+                                method="manual", reason="手动合并")
+    try:
+        get_projection().resync_kb(db, kb.id)
+    except Exception:  # noqa: BLE001
+        pass
+    return {
+        "suggestion_id": str(suggestion.id),
+        "apply_record": suggestion.apply_record,
+    }
+
+
+@router.get("/bases/{kb_id}/graph/entities/{entity_id}")
+def get_entity_detail(
+    kb_id: str,
+    entity_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.kg_fusion import resolve_merged
+    from app.services.kg_projection import get_projection
+
+    kb = _owned_kb(db, kb_id, current_user)
+    entity = db.query(GraphEntity).filter(
+        GraphEntity.id == uuid.UUID(entity_id), GraphEntity.kb_id == kb.id,
+    ).first()
+    if not entity:
+        raise HTTPException(404, "Entity not found")
+    entity = resolve_merged(db, entity.id) or entity
+    related = []
+    try:
+        projection = get_projection()
+        if projection.available():
+            related = projection.related_topk(kb.id, str(entity.id), k=10)
+        else:
+            from app.services.kg_projection import related_topk_pg
+
+            related = related_topk_pg(db, kb.id, entity.id, k=10)
+    except Exception:  # noqa: BLE001
+        pass
+    props = entity.properties or {}
+    return {
+        "id": str(entity.id),
+        "name": entity.name,
+        "entity_type": entity.entity_type,
+        "aliases": entity.aliases or [],
+        "merged": entity.merged_into is not None,
+        "properties": props,
+        "attributes": props.get("attributes") or [],
+        "doc_ids": props.get("doc_ids") or [],
+        "method": props.get("method") or "manual",
+        "related": related,
+    }
+
+
+@router.get("/bases/{kb_id}/graph/query/path")
+def graph_query_path(
+    kb_id: str,
+    from_id: str = Query(...),
+    to_id: str = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    kb = _owned_kb(db, kb_id, current_user)
+    try:
+        from app.services.kg_projection import get_projection
+
+        projection = get_projection()
+        if projection.available():
+            return projection.shortest_path(kb.id, from_id, to_id)
+    except Exception:  # noqa: BLE001
+        pass
+    from app.services.kg_projection import shortest_path_pg
+
+    return shortest_path_pg(db, kb.id, uuid.UUID(from_id), uuid.UUID(to_id))
+
+
+@router.get("/bases/{kb_id}/graph/query/neighbors/{entity_id}")
+def graph_query_neighbors(
+    kb_id: str,
+    entity_id: str,
+    hops: int = 1,
+    limit: int = 60,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    kb = _owned_kb(db, kb_id, current_user)
+    try:
+        from app.services.kg_projection import get_projection
+
+        projection = get_projection()
+        if projection.available():
+            return projection.neighbors(kb.id, entity_id, hops=hops, limit=limit)
+    except Exception:  # noqa: BLE001
+        pass
+    from app.services.kg_projection import neighbors_pg
+
+    return neighbors_pg(db, kb.id, uuid.UUID(entity_id), hops=hops, limit=limit)
+
+
+@router.post("/bases/{kb_id}/graph/resync")
+def graph_resync(
+    kb_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.kg_projection import get_projection
+
+    kb = _owned_kb(db, kb_id, current_user)
+    try:
+        counts = get_projection().resync_kb(db, kb.id)
+    except Exception as error:  # noqa: BLE001
+        raise HTTPException(503, f"neo4j projection unavailable: {error}") from error
+    return counts
+
+
+@router.get("/bases/{kb_id}/graph/neo4j/status")
+def graph_neo4j_status(
+    kb_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.kg_projection import get_projection
+
+    kb = _owned_kb(db, kb_id, current_user)
+    projection = get_projection()
+    if not projection.available():
+        pg_entities = db.query(GraphEntity).filter(
+            GraphEntity.kb_id == kb.id, GraphEntity.merged_into.is_(None),
+        ).count()
+        pg_relations = db.query(GraphRelation).filter(
+            GraphRelation.kb_id == kb.id,
+        ).count()
+        return {
+            "available": False,
+            "pg": {"entities": pg_entities, "relations": pg_relations},
+        }
+    return projection.status(db, kb.id)
 
 # -------------------------------------------------------------------------------
 #  Hybrid Search endpoint

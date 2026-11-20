@@ -114,6 +114,12 @@ services:
       TENSORBOARD_LOG_ROOT: /var/lib/tensorboard/runs
       INFERENCE_RUNTIME_URL: ${INFERENCE_RUNTIME_URL:-http://inference-runtime:7000}
       INFERENCE_INTERNAL_SECRET: ${INFERENCE_INTERNAL_SECRET:?set INFERENCE_INTERNAL_SECRET}
+      # Neo4j 图存储投影（五阶段 KG 流水线）：backend/worker 同 env（查询端点
+      # 与任务内投影都要连）。未起 neo4j 服务时投影自动降级（available=False，
+      # 图查询走 PG 兜底），缺这几个变量不炸服务。
+      NEO4J_URI: ${NEO4J_URI:-bolt://neo4j:7687}
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-kgdevpass123}
       LOGIN_IP_RATE_LIMIT_CAPACITY: ${LOGIN_IP_RATE_LIMIT_CAPACITY:-5}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5173}
       FRONTEND_ORIGIN_ALIASES: ${FRONTEND_ORIGIN_ALIASES:-}
@@ -256,6 +262,27 @@ services:
       retries: 20
     restart: unless-stopped
     logging: *default-logging
+
+  neo4j:
+    # 五阶段 KG 流水线的图存储投影（PG 仍是事务主源）。heap/pagecache 限死
+    # 防 WSL 内存挤爆；仅内网，不暴露宿主端口（查询走 backend API）。
+    image: ${NEO4J_IMAGE:-neo4j:5-community}
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-kgdevpass123}
+      # WSL 总内存 7.9GB 的宿主上全栈共存：heap/pagecache 再压一档
+      # （2026-11-20 实测默认档曾把 WSL 挤到崩溃重启）
+      NEO4J_server_memory_heap_initial__size: 128m
+      NEO4J_server_memory_heap_max__size: 256m
+      NEO4J_server_memory_pagecache_size: 128m
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   backend:
     build:
@@ -413,6 +440,7 @@ volumes:
   tensorboard-events:
   inference-cache:
   python-script-venv:
+  neo4j-data:
 
 secrets:
   notification_master_key:

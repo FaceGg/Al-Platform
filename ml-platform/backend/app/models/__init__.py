@@ -7,7 +7,16 @@ from app.models.run import WorkflowRun, NodeRun
 from app.models.workflow_version import WorkflowVersion
 from app.models.artifact import Artifact
 from app.models.operation import DurableOperation
-from app.models.knowledge import KnowledgeBase, Document, Chunk, GraphEntity, GraphRelation
+from app.models.knowledge import (
+    KnowledgeBase,
+    Document,
+    Chunk,
+    GraphEntity,
+    GraphRelation,
+    KgExtractionJob,
+    KgUnitResult,
+    KgMergeSuggestion,
+)
 from app.models.training import TrainingJob
 from app.models.experiment import Experiment, ExperimentAutoMLBinding
 from app.models.schedule import PipelineSchedule, PipelineScheduleRun
@@ -109,6 +118,9 @@ __all__ = [
     "Chunk",
     "GraphEntity",
     "GraphRelation",
+    "KgExtractionJob",
+    "KgUnitResult",
+    "KgMergeSuggestion",
     "TrainingJob",
     "Experiment",
     "ExperimentAutoMLBinding",

@@ -69,6 +69,7 @@ const weekTestFiles: Record<number | string, string[]> = {
     "./pages/DataAnnotationPage.test.tsx",
     "./pages/KnowledgeBasePage.test.tsx",
     "./pages/KnowledgeGraphPage.test.tsx",
+    "./components/kg/kg.test.tsx",
     "./pages/AutoMLTaskPage.test.tsx",
     "./pages/LoginPage.test.tsx",
     "./pages/MonitorPage.test.tsx",

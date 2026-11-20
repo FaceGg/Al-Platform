@@ -4,12 +4,18 @@ import {
   AutoComplete, InputNumber, Tooltip,
 } from "antd";
 import {
-  PlusOutlined, DeleteOutlined, ReloadOutlined, ThunderboltOutlined, AimOutlined, ScanOutlined,
+  PlusOutlined, DeleteOutlined, ReloadOutlined, AimOutlined, ScanOutlined,
+  ApartmentOutlined, NodeIndexOutlined,
 } from "@ant-design/icons";
 import ReactECharts from "echarts-for-react";
 import apiClient from "../api/client";
 import AppLayout from "../components/AppLayout";
 import PageHeading from "../components/PageHeading";
+import ExtractionControl from "../components/kg/ExtractionControl";
+import OntologyModal from "../components/kg/OntologyModal";
+import FusionPanel from "../components/kg/FusionPanel";
+import EntityDetailDrawer from "../components/kg/EntityDetailDrawer";
+import PathQueryModal from "../components/kg/PathQueryModal";
 import { useI18n } from "../i18n";
 import { useTheme } from "../stores/themeContext";
 
@@ -67,10 +73,6 @@ export default function KnowledgeGraphPage() {
   const { theme } = useTheme();
   const isDark = theme === "dark";
   const graphText = lang === "zh" ? {
-    extract: "自动抽取", extracting: "抽取中...",
-    extractDone: (e: number, r: number) => `抽取完成：新增实体 ${e} 个、关系 ${r} 条`,
-    extractEmpty: "抽取完成：未发现满足阈值的实体（可检查文档内容或降低词频阈值）",
-    extractFailed: "自动抽取失败",
     auto: "自动", manual: "手动", docCount: (n: number) => `出处文档 ${n} 篇`,
     searchPh: "搜索实体，查看它的邻域",
     overview: "返回总览",
@@ -79,13 +81,11 @@ export default function KnowledgeGraphPage() {
     viewCapHelp: "总览最多渲染的实体数量；库内超出时按连接数与词频优先采样（Top 枢纽 + 其关系），保证布局性能与可读性。聚焦邻域时不受此限制。",
     neighborhood: "邻域",
     entityList: "实体列表",
+    ontology: "本体设置",
+    pathQuery: "路径查询",
     resetView: "重置视图",
     degreeLabel: "度数",
   } : {
-    extract: "Auto extract", extracting: "Extracting...",
-    extractDone: (e: number, r: number) => `Extracted: ${e} entities, ${r} relations`,
-    extractEmpty: "Extracted nothing above threshold (check document content or lower the frequency threshold)",
-    extractFailed: "Auto extraction failed",
     auto: "Auto", manual: "Manual", docCount: (n: number) => `${n} source doc(s)`,
     searchPh: "Search an entity to view its neighborhood",
     overview: "Back to overview",
@@ -94,6 +94,8 @@ export default function KnowledgeGraphPage() {
     viewCapHelp: "Max entities rendered in the overview; beyond it, top-connected entities are sampled (top hubs + their edges) for layout performance and readability. Focus mode is not capped.",
     neighborhood: "Neighborhood",
     entityList: "Entities",
+    ontology: "Ontology",
+    pathQuery: "Path query",
     resetView: "Reset view",
     degreeLabel: "Links",
   };
@@ -103,9 +105,12 @@ export default function KnowledgeGraphPage() {
   const [selectedKb, setSelectedKb] = useState<string | null>(null);
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [] });
   const [loading, setLoading] = useState(false);
-  const [extracting, setExtracting] = useState(false);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [viewSize, setViewSize] = useState(300);
+  const [ontologyOpen, setOntologyOpen] = useState(false);
+  const [pathOpen, setPathOpen] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [form] = Form.useForm();
   const [edgeForm] = Form.useForm();
   focusIdRef.current = focusId;
@@ -421,25 +426,6 @@ export default function KnowledgeGraphPage() {
     }
   };
 
-  const extractGraph = async () => {
-    if (!selectedKb || extracting) return;
-    setExtracting(true);
-    try {
-      const res = await apiClient.post("/knowledge/bases/" + selectedKb + "/graph/extract");
-      const report = res.data || {};
-      if ((report.entities_created || 0) === 0 && (report.relations_created || 0) === 0) {
-        message.info(graphText.extractEmpty);
-      } else {
-        message.success(graphText.extractDone(report.entities_created || 0, report.relations_created || 0));
-      }
-      loadGraph();
-    } catch (e: any) {
-      message.error(e.response?.data?.detail || graphText.extractFailed);
-    } finally {
-      setExtracting(false);
-    }
-  };
-
   const deleteEntity = async (id: string) => {
     try {
       await apiClient.delete("/knowledge/graph/entities/" + id);
@@ -467,8 +453,12 @@ export default function KnowledgeGraphPage() {
             <Button icon={<ReloadOutlined />} onClick={loadGraph} loading={loading}>
               {t.monitor.refresh}
             </Button>
-            <Button icon={<ThunderboltOutlined />} onClick={extractGraph} disabled={!selectedKb} loading={extracting}>
-              {graphText.extract}
+            <Button
+              icon={<ApartmentOutlined />}
+              onClick={() => setOntologyOpen(true)}
+              disabled={!selectedKb}
+            >
+              {graphText.ontology}
             </Button>
           </>
         )}
@@ -494,6 +484,14 @@ export default function KnowledgeGraphPage() {
           )}
         </Space>
         <Space size={16}>
+          <ExtractionControl kbId={selectedKb} onExtracted={loadGraph} />
+          <Button
+            icon={<NodeIndexOutlined />}
+            onClick={() => setPathOpen(true)}
+            disabled={!selectedKb || view.nodes.length === 0}
+          >
+            {graphText.pathQuery}
+          </Button>
           <Text type="secondary" style={{ fontSize: 13, whiteSpace: "nowrap" }}>
             {graphText.inLibrary}{" "}
             <Text strong style={{ fontSize: 16, fontVariantNumeric: "tabular-nums", color: isDark ? "#D8E2F0" : "#142A33" }}>
@@ -588,6 +586,11 @@ export default function KnowledgeGraphPage() {
                   style={{ cursor: "pointer", background: node.id === focusId ? "#fff7e6" : undefined }}
                   onClick={() => setFocusId(node.id === focusId ? null : node.id)}
                   actions={[
+                    <Button type="link" size="small"
+                      onClick={(e) => { e.stopPropagation(); setDetailId(node.id); setDetailOpen(true); }}
+                    >
+                      {lang === "zh" ? "详情" : "Info"}
+                    </Button>,
                     <Button type="link" danger size="small" icon={<DeleteOutlined />}
                       onClick={(e) => { e.stopPropagation(); deleteEntity(node.id); }} />,
                   ]}
@@ -606,8 +609,30 @@ export default function KnowledgeGraphPage() {
               )}
             />
           </Card>
+          {selectedKb && (
+            <FusionPanel kbId={selectedKb} onChanged={loadGraph} />
+          )}
         </div>
       </div>
+      <OntologyModal
+        kbId={selectedKb}
+        open={ontologyOpen}
+        onClose={() => setOntologyOpen(false)}
+      />
+      <PathQueryModal
+        kbId={selectedKb}
+        nodes={graphData.nodes.map((n) => ({ id: n.id, label: n.label }))}
+        open={pathOpen}
+        onClose={() => setPathOpen(false)}
+        onLocate={(id) => { setFocusId(id); setPathOpen(false); }}
+      />
+      <EntityDetailDrawer
+        kbId={selectedKb}
+        entityId={detailId}
+        open={detailOpen}
+        onClose={() => setDetailOpen(false)}
+        onLocate={(id) => { setFocusId(id); setDetailOpen(false); }}
+      />
     </AppLayout>
   );
 }

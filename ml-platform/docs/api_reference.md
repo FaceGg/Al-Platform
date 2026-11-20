@@ -177,7 +177,25 @@ Authorization: Bearer <access_token>
 | GET | `/api/knowledge/bases/{kb_id}/graph/relations` | 获取关系列表 |
 | POST | `/api/knowledge/bases/{kb_id}/graph/relations` | 创建关系 |
 | DELETE | `/api/knowledge/graph/relations/{rel_id}` | 删除关系 |
-| GET | `/api/knowledge/bases/{kb_id}/graph` | 获取完整图谱（nodes+edges） |
+| GET | `/api/knowledge/bases/{kb_id}/graph` | 获取完整图谱（nodes+edges，已过滤合并实体） |
+
+五阶段流水线新增（20261120_103，详见 docs/技术方案-知识图谱五阶段流水线.md）：
+
+| 方法 | 端点 | 说明 |
+|------|------|------|
+| POST | `/api/knowledge/bases/{kb_id}/graph/extract` | 抽取（`mode=rules` 同步兼容 / `mode=llm` 异步任务，返回 job_id；可带 doc_ids/max_chunks） |
+| GET | `/api/knowledge/bases/{kb_id}/graph/extract/jobs/{job_id}` | 深度抽取任务进度（done/total/实体/关系/错误） |
+| POST | `/api/knowledge/bases/{kb_id}/graph/extract/jobs/{job_id}/cancel` | 取消深度抽取（已完成单元保留，可续抽） |
+| GET/PUT | `/api/knowledge/bases/{kb_id}/graph/ontology` | 按库实体/关系类型本体（空=默认工业本体） |
+| GET | `/api/knowledge/bases/{kb_id}/graph/fusion/suggestions?status=` | 融合建议队列（merge_entity / attribute_conflict） |
+| POST | `/api/knowledge/bases/{kb_id}/graph/fusion/suggestions/{id}/accept` | 采纳（合并执行/冲突裁决，body 可带 resolved） |
+| POST | `/api/knowledge/bases/{kb_id}/graph/fusion/suggestions/{id}/reject` | 驳回 |
+| POST | `/api/knowledge/bases/{kb_id}/graph/fusion/merge` | 手动合并（source_id 并入 target_id） |
+| GET | `/api/knowledge/bases/{kb_id}/graph/entities/{entity_id}` | 实体详情（别名/属性/来源徽标/关联 top-k） |
+| GET | `/api/knowledge/bases/{kb_id}/graph/query/path?from_id&to_id` | 最短路径（Neo4j 优先，PG 兜底，≤6 跳） |
+| GET | `/api/knowledge/bases/{kb_id}/graph/query/neighbors/{entity_id}?hops=` | 邻域查询 |
+| POST | `/api/knowledge/bases/{kb_id}/graph/resync` | 全量重建 Neo4j 投影 |
+| GET | `/api/knowledge/bases/{kb_id}/graph/neo4j/status` | 投影状态（可用性/计数；不可用时给 PG 计数） |
 
 ---
 

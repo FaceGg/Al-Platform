@@ -225,6 +225,21 @@ class Settings(BaseSettings):
     # 5 文档 1.15M 字符的普通库直接 422（2026-11-19 用户实测「开发计划」库）
     knowledge_graph_max_extract_chars: int = 2000000
 
+    # 五阶段 KG 流水线：LLM 深度抽取与图存储投影。llm 通道复用平台 LLM
+    # 网关（resolve_profile(purpose="kg_extraction")），未配档案/Key 时任务
+    # fail-closed 报错而不是静默退回规则层。max_chunks 是成本护栏：超出部分
+    # 按 chunk 顺序延后到下一次任务（断点续抽天然分批）。
+    kg_llm_max_chunks: int = 120
+    kg_llm_time_budget_seconds: int = 1800
+    kg_llm_max_tokens: int = 3000
+    kg_llm_batch_chars: int = 2400
+    # 融合模糊候选的相似度阈值（difflib SequenceMatcher ratio）
+    kg_fusion_fuzzy_threshold: float = 0.92
+    # Neo4j 图存储投影：空 URI = 投影层禁用（图查询走 PG 兜底，功能不缺只慢）
+    neo4j_uri: str | None = None
+    neo4j_user: str = "neo4j"
+    neo4j_password: SecretStr | None = Field(default=None, exclude=True)
+
     # Retrieval tokenization: switch off to fall back to the legacy
     # TfidfVectorizer word splitting (also requires a reembed afterwards).
     retrieval_use_jieba: bool = True

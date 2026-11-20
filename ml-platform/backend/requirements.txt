@@ -54,3 +54,8 @@ psutil==7.1.*
 # Weak-supervision density clustering route (UMAP+HDBSCAN).
 umap-learn==0.5.*
 hdbscan==0.8.*
+
+# Neo4j graph-storage projection for the five-stage KG pipeline (20261120_103).
+# PG remains the transactional source; projection degrades gracefully when the
+# driver/server are unavailable (graph queries fall back to PG BFS).
+neo4j==5.28.*

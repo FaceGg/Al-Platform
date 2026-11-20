@@ -70,11 +70,14 @@ describe("KnowledgeGraphPage", () => {
     // KB 选择器在 DOM 序中最前（搜索框在其后）
     fireEvent.mouseDown((await screen.findAllByRole("combobox"))[0]);
     fireEvent.click(await screen.findByText("Weld KB"));
-    const extract = await screen.findByRole("button", { name: /Auto extract/ });
+    const extract = await screen.findByRole("button", { name: /Quick extract/ });
     fireEvent.click(extract);
 
     await waitFor(() => {
-      expect(post).toHaveBeenCalledWith("/knowledge/bases/kb-1/graph/extract");
+      expect(post).toHaveBeenCalledWith(
+        "/knowledge/bases/kb-1/graph/extract",
+        { mode: "rules" },
+      );
     });
     // The graph is reloaded after extraction.
     await waitFor(() => {

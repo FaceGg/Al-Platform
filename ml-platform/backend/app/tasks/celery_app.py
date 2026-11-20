@@ -22,6 +22,7 @@ celery_app = Celery(
         "app.tasks.dataset_import_tasks",
         "app.tasks.annotation_return_tasks",
         "app.tasks.kubernetes_tasks",
+        "app.tasks.kg_tasks",
         "app.tasks.recovery",
     ],
     broker=(settings.celery_broker_url.get_secret_value() if settings.celery_broker_url else None),

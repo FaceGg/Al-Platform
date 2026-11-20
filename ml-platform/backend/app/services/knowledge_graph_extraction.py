@@ -21,6 +21,7 @@ from sqlalchemy import insert
 
 from app.config import settings
 from app.models.knowledge import GraphEntity, GraphRelation
+from app.services.kg_names import existing_entity_index, normalize_name
 from app.services.knowledge_retrieval import extract_pos_pairs
 
 # Ambiguous high-frequency words that drown out real domain concepts.
@@ -55,8 +56,9 @@ POS_ENTITY_TYPE = {"nr": "person", "ns": "location", "nt": "organization", "eng"
 def _normalize_name(name: str) -> str:
     # NFKC folds full-width forms to half-width; whitespace collapsed; ASCII
     # names are casefolded so "Steel"/"steel" merge while Han text is intact.
-    name = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", name)).strip()
-    return name.casefold() if ASCII_NAME.match(name) else name
+    # 规范化语义统一由 kg_names 提供（ASCII 词含大写一律 casefold），规则层
+    # 与 LLM 层/融合层共享同一套归一，避免跨层同名判异。
+    return normalize_name(name)
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -142,9 +144,19 @@ def extract_kb_graph(db, kb, doc_contents: list[tuple[str, str]]) -> dict:
     # db.add() emits 88k+ single INSERTs, which on bloated tables degrades a
     # re-extract into minutes-long stalls (observed 2026-11-19).
     _clear_auto_layer(db, kb.id)
+    # 实体链接（基础层）：与存活实体（manual/llm/旧规则层）归一化同名/别名
+    # 命中时复用其 id 不新建节点——同名唯一索引不允许重复，这也是消歧的正确
+    # 语义；链接命中数计入 entities_merged。
+    existing_index = existing_entity_index(db, kb.id)
     entity_rows: list[dict] = []
     entity_ids: dict[str, uuid.UUID] = {}
+    entities_linked = 0
     for name, count in (ranked if not max_entities else ranked[:max_entities]):
+        reused = existing_index.get(_normalize_name(name))
+        if reused is not None:
+            entity_ids[name] = reused
+            entities_linked += 1
+            continue
         entity_ids[name] = uuid.uuid4()
         pos_counter = entity_pos.get(name)
         entity_type = "concept"
@@ -168,6 +180,7 @@ def extract_kb_graph(db, kb, doc_contents: list[tuple[str, str]]) -> dict:
             "properties": {"source": "auto", "method": "rules", "weight": weight},
         }
         for (source, target, relation_type), weight in relation_counter.most_common()
+        if source in entity_ids and target in entity_ids
     ]
     relations_created = len(relations_rows)
     if 0 < max_relations < relations_created:
@@ -180,6 +193,8 @@ def extract_kb_graph(db, kb, doc_contents: list[tuple[str, str]]) -> dict:
         db.execute(insert(GraphRelation).values(relations_rows[start:start + 5000]))
     db.commit()
 
+    # 实体链接命中计入合并口径（entities_merged=抽取候选+链接复用）
+    candidates = candidates + entities_linked
     return _report(len(entity_rows), relations_created, candidates, started, truncated)
 
 
@@ -193,17 +208,20 @@ def _report(entities: int, relations: int, candidates: int, started: float, trun
     }
 
 
-def _clear_auto_layer(db, kb_id) -> int:
-    """Delete this KB's auto entities and their relations; manual rows survive.
+def _clear_auto_layer(db, kb_id, method: str = "rules") -> int:
+    """Delete this KB's auto entities of the given method; manual rows survive.
 
     Both deletes are bulk SQL: per-entity ORM deletes fire an FK existence
     check against ~88k relation rows each, which after repeated re-extraction
-    bloats into minutes-long stalls (observed 2026-11-19).
+    bloats into minutes-long stalls (observed 2026-11-19). method="rules" /
+    "llm" 双通道并存：重建各自方法层互不触碰（手工行两个标记都没有，天然豁免）。
     """
-    auto_entities = db.query(GraphEntity).filter(
+    filters = [
         GraphEntity.kb_id == kb_id,
         GraphEntity.properties["source"].as_string() == "auto",
-    ).all()
+        GraphEntity.properties["method"].as_string() == method,
+    ]
+    auto_entities = db.query(GraphEntity).filter(*filters).all()
     if not auto_entities:
         return 0
     auto_ids = [e.id for e in auto_entities]
