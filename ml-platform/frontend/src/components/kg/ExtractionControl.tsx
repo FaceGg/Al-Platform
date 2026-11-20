@@ -30,6 +30,8 @@ export default function ExtractionControl({
   const [job, setJob] = useState<JobStatus | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastDoneRef = useRef(-1);
+  const lastRefreshRef = useRef(0);
 
   const stopPolling = () => {
     if (pollRef.current) {
@@ -80,6 +82,16 @@ export default function ExtractionControl({
         );
         const data: JobStatus = res.data;
         setJob(data);
+        // 实时成长：分片完成数变化时刷新画布（后端流式落库，图随抽取生长）；
+        // ≥4s 节流避免大库全量拉图过频
+        if (
+          data.done_units !== lastDoneRef.current &&
+          Date.now() - lastRefreshRef.current > 4000
+        ) {
+          lastDoneRef.current = data.done_units;
+          lastRefreshRef.current = Date.now();
+          onExtracted();
+        }
         if (["succeeded", "failed", "cancelled"].includes(data.status)) {
           stopPolling();
           setCancelling(false);

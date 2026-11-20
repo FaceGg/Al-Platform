@@ -266,6 +266,10 @@ def run_kg_extraction_job(job_id: str) -> None:
 
         deadline = time.monotonic() + settings.kg_llm_time_budget_seconds
         cancelled = False
+        # 流式构建的实体链接索引：norm 名/别名 → 实体 id，跨分片累积
+        from app.services.kg_names import existing_entity_index
+
+        entity_index = existing_entity_index(db, kb.id)
 
         # 线程池 worker 复用任务级独立 engine（函数开头创建的 job_engine）：
         # 与全局 SessionLocal 的 fork 池彻底隔离，pool 层加锁多线程安全
@@ -315,25 +319,35 @@ def run_kg_extraction_job(job_id: str) -> None:
                 for future in done_set:
                     chunk_id, content, status, unit, error, calls = future.result()
                     job.llm_calls += calls
+                    content_hash = _content_hash(content)
+                    # upsert：failed 分片续抽重做时旧行还在（唯一约束），更新
+                    # 原行而不是插入——重试成功会把 failed 行转 ok
+                    unit_row = (
+                        db.query(KgUnitResult)
+                        .filter(
+                            KgUnitResult.kb_id == kb.id,
+                            KgUnitResult.chunk_id == chunk_id,
+                            KgUnitResult.content_hash == content_hash,
+                        )
+                        .first()
+                    )
+                    if unit_row is None:
+                        unit_row = KgUnitResult(
+                            kb_id=kb.id, chunk_id=chunk_id,
+                            content_hash=content_hash, status=status,
+                        )
+                        db.add(unit_row)
+                    unit_row.status = status
+                    unit_row.error = (error or "")[:2000] if status == "failed" else None
                     if status == "failed":
                         job.llm_errors += 1
-                        db.add(KgUnitResult(
-                            kb_id=kb.id, chunk_id=chunk_id,
-                            content_hash=_content_hash(content),
-                            status="failed", error=(error or "")[:2000],
-                        ))
-                    elif status == "empty":
-                        db.add(KgUnitResult(
-                            kb_id=kb.id, chunk_id=chunk_id,
-                            content_hash=_content_hash(content),
-                            status="empty",
-                        ))
-                    else:
-                        db.add(KgUnitResult(
-                            kb_id=kb.id, chunk_id=chunk_id,
-                            content_hash=_content_hash(content),
-                            status="ok", result=unit.model_dump(),
-                        ))
+                    elif status == "ok":
+                        unit_row.result = unit.model_dump()
+                        # 流式构建：分片结果即时并入图（画布随抽取实时成长）
+                        _merge_unit_into_graph(
+                            db, kb, ontology, unit.model_dump(),
+                            chunk_id=chunk_id, entity_index=entity_index,
+                        )
                         job.entities_found += len(unit.entities)
                         job.relations_found += len(unit.relations)
                     job.done_units += 1
@@ -345,13 +359,12 @@ def run_kg_extraction_job(job_id: str) -> None:
                 pool.shutdown(wait=True)
             job_engine.dispose()
 
-        fused = _aggregate_and_persist(db, kb, ontology)
+        # 流式构建：分片结果已即时并入图（_merge_unit_into_graph），无需最后
+        # 统一聚合。融合自动归并收口一次 + 投影全量重建。
         auto_fuse_after_extraction(db, kb, method="llm")
         _project_to_neo4j(db, kb)
 
         db.refresh(job)
-        job.entities_found = fused["entities"]
-        job.relations_found = fused["relations"]
         if cancelled:
             job.status = "cancelled"
         elif job.status == "running":
@@ -399,6 +412,8 @@ def _project_to_neo4j(db, kb) -> None:
         pass
 
 
+# DEPRECATED：已被流式构建 _merge_unit_into_graph 取代（分片完成即时并入图，
+# 画布实时成长）；保留仅供回溯，无调用方。
 def _aggregate_and_persist(db, kb, ontology: dict[str, list[str]]) -> dict:
     """聚合全部 ok 单元结果 → 清 method=llm 层 → 批量落实体与关系。
 
@@ -533,3 +548,122 @@ def _aggregate_and_persist(db, kb, ontology: dict[str, list[str]]) -> dict:
     db.add_all(relation_objects)
     db.commit()
     return {"entities": len(entity_objects), "relations": len(relation_objects)}
+
+
+def _merge_unit_into_graph(
+    db, kb, ontology: dict[str, list[str]], unit_data: dict, *,
+    chunk_id, entity_index: dict,
+) -> None:
+    """单个分片结果即时并入图（流式成长）。
+
+    - 实体链接：norm 名/别名命中 entity_index 时复用既有实体（freq+1、别名/
+      属性并集），否则新建（紫色以外默认类型着色由前端分组处理）；
+    - 关系 MERGE 式：同 (source,target,type) 已存在则 weight+1，否则插入；
+    - entity_index 跨分片累积（调用方持有），保证后续分片的引用落到同一节点。
+    """
+    from app.services.kg_names import normalize_name
+
+    resolved: dict[str, "uuid.UUID"] = {}
+    chunk_doc_id = None
+    if chunk_id is not None:
+        chunk_row = db.get(Chunk, chunk_id)
+        if chunk_row is not None:
+            chunk_doc_id = str(chunk_row.doc_id)
+
+    for ent in unit_data.get("entities", []):
+        name = normalize_name(str(ent.get("name", "")))
+        if not name:
+            continue
+        eid = entity_index.get(name)
+        if eid is None:
+            eid = uuid.uuid4()
+            entity_index[name] = eid
+            db.add(GraphEntity(
+                id=eid, kb_id=kb.id, name=name,
+                entity_type=coerce_entity_type(str(ent.get("type", "")), ontology),
+                aliases=[
+                    a for a in (
+                        normalize_name(str(x)) for x in (ent.get("aliases") or [])
+                    ) if a and a != name
+                ][:8],
+                properties={
+                    "source": "auto", "method": "llm", "freq": 1,
+                    "doc_ids": [chunk_doc_id] if chunk_doc_id else [],
+                    "attributes": [
+                        {
+                            "name": str(a.get("name", ""))[:32],
+                            "value": str(a.get("value", ""))[:128],
+                            "evidence": str(a.get("evidence") or "")[:200],
+                            "doc_id": chunk_doc_id,
+                        }
+                        for a in (ent.get("attributes") or [])[:MAX_ATTRIBUTES_PER_ENTITY]
+                        if str(a.get("name", "")).strip() and str(a.get("value", "")).strip()
+                    ],
+                },
+            ))
+        else:
+            row = db.get(GraphEntity, eid)
+            if row is None:
+                continue
+            aliases = list(row.aliases or [])
+            for alias in (normalize_name(str(x)) for x in (ent.get("aliases") or [])):
+                if alias and alias != row.name and alias not in aliases:
+                    aliases.append(alias)
+            props = dict(row.properties or {})
+            props["freq"] = int(props.get("freq") or 0) + 1
+            doc_ids = set(props.get("doc_ids") or [])
+            if chunk_doc_id:
+                doc_ids.add(chunk_doc_id)
+            props["doc_ids"] = sorted(doc_ids)
+            attrs = list(props.get("attributes") or [])
+            have = {(a.get("name"), a.get("value")) for a in attrs}
+            for a in (ent.get("attributes") or [])[:MAX_ATTRIBUTES_PER_ENTITY]:
+                key = (str(a.get("name", ""))[:32], str(a.get("value", ""))[:128])
+                if key[0] and key[1] and key not in have:
+                    attrs.append({
+                        "name": key[0], "value": key[1],
+                        "evidence": str(a.get("evidence") or "")[:200],
+                        "doc_id": chunk_doc_id,
+                    })
+                    have.add(key)
+            props["attributes"] = attrs[:12]
+            row.properties = props
+            row.aliases = aliases[:8]
+        resolved[name] = eid
+
+    for rel in unit_data.get("relations", []):
+        src = normalize_name(str(rel.get("source", "")))
+        dst = normalize_name(str(rel.get("target", "")))
+        if not src or not dst or src == dst:
+            continue
+        if src not in resolved or dst not in resolved:
+            continue
+        rtype = coerce_relation_type(str(rel.get("type", "")), ontology)
+        s_id, t_id = resolved[src], resolved[dst]
+        existing = (
+            db.query(GraphRelation)
+            .filter(
+                GraphRelation.kb_id == kb.id,
+                GraphRelation.source_id == s_id,
+                GraphRelation.target_id == t_id,
+                GraphRelation.relation_type == rtype,
+            )
+            .first()
+        )
+        evidence = str(rel.get("evidence") or "")[:MAX_EVIDENCE_LEN]
+        if existing is not None:
+            props = dict(existing.properties or {})
+            props["weight"] = int(props.get("weight") or 0) + 1
+            if not props.get("evidence"):
+                props["evidence"] = evidence
+            existing.properties = props
+        else:
+            db.add(GraphRelation(
+                kb_id=kb.id, source_id=s_id, target_id=t_id,
+                relation_type=rtype,
+                properties={
+                    "source": "auto", "method": "llm",
+                    "weight": 1, "evidence": evidence,
+                },
+            ))
+    db.commit()
