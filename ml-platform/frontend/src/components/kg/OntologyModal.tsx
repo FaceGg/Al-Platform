@@ -22,6 +22,8 @@ export default function OntologyModal({
   const [relationTypes, setRelationTypes] = useState<string[]>([]);
   const [custom, setCustom] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [profiles, setProfiles] = useState<{ id: string; name: string; model_id: string }[]>([]);
+  const [profileId, setProfileId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     if (!open || !kbId) return;
@@ -31,8 +33,13 @@ export default function OntologyModal({
         setEntityTypes(res.data?.ontology?.entity_types || []);
         setRelationTypes(res.data?.ontology?.relation_types || []);
         setCustom(!!res.data?.custom);
+        setProfileId(res.data?.kg_llm_profile_id || undefined);
       })
       .catch(() => message.error(zh ? "本体加载失败" : "Failed to load ontology"));
+    apiClient
+      .get(`/knowledge/bases/${kbId}/graph/llm-profiles`)
+      .then((res) => setProfiles(Array.isArray(res.data) ? res.data : []))
+      .catch(() => setProfiles([]));
   }, [open, kbId, zh]);
 
   const save = async () => {
@@ -42,8 +49,11 @@ export default function OntologyModal({
       await apiClient.put(`/knowledge/bases/${kbId}/graph/ontology`, {
         entity_types: entityTypes,
         relation_types: relationTypes,
+        kg_llm_profile_id: profileId || null,
       });
-      message.success(zh ? "本体已保存，下一次深度抽取生效" : "Ontology saved");
+      message.success(
+        zh ? "已保存，下一次深度抽取生效" : "Saved; applies to next deep extraction",
+      );
       setCustom(true);
       onSaved?.();
       onClose();
@@ -96,6 +106,21 @@ export default function OntologyModal({
             placeholder={zh ? "输入后回车添加" : "Type and press enter"}
             open={false}
             data-testid="kg-ontology-relation-types"
+          />
+        </div>
+        <div>
+          <Text>{zh ? "抽取模型（深度抽取用；空 = 跟随平台默认档案）" : "Extraction model (blank = platform default)"}</Text>
+          <Select
+            style={{ width: "100%", marginTop: 4 }}
+            allowClear
+            value={profileId}
+            onChange={(v) => setProfileId(v || undefined)}
+            placeholder={zh ? "跟随平台默认档案" : "Follow platform default"}
+            data-testid="kg-ontology-llm-profile"
+            options={profiles.map((p) => ({
+              value: p.id,
+              label: `${p.name} · ${p.model_id}`,
+            }))}
           />
         </div>
       </Space>

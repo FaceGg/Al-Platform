@@ -359,7 +359,11 @@ def _llm_arbitrate(db, kb, pairs: list[tuple[str, str]]) -> list[dict] | None:
             f"共 {len(pairs)} 对实体：\n{listing}\n"
             "index 从 1 开始且必须覆盖全部条目。"
         )
-        config = resolve_profile(db, purpose="kg_fusion")
+        config = resolve_profile(
+            db,
+            profile_id=getattr(kb, "kg_llm_profile_id", None),
+            purpose="kg_fusion",
+        )
         reply, _usage, error = chat_completion_with_retry(
             db, config=config,
             messages=[{"role": "system", "content": system},

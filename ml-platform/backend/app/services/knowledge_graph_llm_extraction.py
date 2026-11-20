@@ -237,7 +237,12 @@ def run_kg_extraction_job(job_id: str) -> None:
         ontology = resolve_ontology(kb)
         from app.services.llm_gateway import resolve_profile
 
-        config = resolve_profile(db, purpose="kg_extraction")
+        # 按库指定的抽取档案优先；未配置跟随平台默认档案
+        config = resolve_profile(
+            db,
+            profile_id=getattr(kb, "kg_llm_profile_id", None),
+            purpose="kg_extraction",
+        )
 
         chunks = _select_chunks(db, kb, job.params or {})
         done_hashes = {

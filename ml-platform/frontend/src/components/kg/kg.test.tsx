@@ -138,6 +138,7 @@ describe("OntologyModal", () => {
       expect(put).toHaveBeenCalledWith("/knowledge/bases/kb-1/graph/ontology", {
         entity_types: ["工艺", "缺陷"],
         relation_types: ["导致缺陷"],
+        kg_llm_profile_id: null,
       });
     });
   });

@@ -21,6 +21,8 @@ class KnowledgeBase(Base):
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     # 按库覆盖的实体/关系类型本体（kg_ontology.py）；空 = 用默认工业本体
     kg_ontology = Column(JSON, nullable=True)
+    # 按库指定的深度抽取用 LLM 档案；空 = 跟随平台默认档案
+    kg_llm_profile_id = Column(UUID(as_uuid=True), ForeignKey("llm_profiles.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, server_default=func.now())
 
     owner = relationship("User", back_populates="knowledge_bases")

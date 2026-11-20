@@ -1702,9 +1702,36 @@ def get_ontology(
     current_user: User = Depends(get_current_user),
 ):
     kb = _owned_kb(db, kb_id, current_user)
+    from app.models.llm_profile import LLMProfile
     from app.services.kg_ontology import resolve_ontology
 
-    return {"ontology": resolve_ontology(kb), "custom": bool(kb.kg_ontology)}
+    profile = (
+        db.query(LLMProfile).filter(LLMProfile.id == kb.kg_llm_profile_id).first()
+        if kb.kg_llm_profile_id else None
+    )
+    return {
+        "ontology": resolve_ontology(kb),
+        "custom": bool(kb.kg_ontology),
+        "kg_llm_profile_id": str(kb.kg_llm_profile_id) if kb.kg_llm_profile_id else None,
+        "kg_llm_profile_name": profile.name if profile else None,
+    }
+
+
+@router.get("/bases/{kb_id}/graph/llm-profiles")
+def list_llm_profiles_for_kg(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """启用中的 LLM 档案清单（本体设置弹窗的「抽取模型」下拉数据源）。"""
+    from app.models.llm_profile import LLMProfile
+
+    rows = db.query(LLMProfile).filter(
+        LLMProfile.enabled.is_not(False),
+    ).order_by(LLMProfile.is_default.desc(), LLMProfile.created_at.asc()).all()
+    return [
+        {"id": str(p.id), "name": p.name, "model_id": p.model_id}
+        for p in rows
+    ]
 
 
 @router.put("/bases/{kb_id}/graph/ontology")
@@ -1715,14 +1742,30 @@ def put_ontology(
     current_user: User = Depends(get_current_user),
 ):
     kb = _owned_kb(db, kb_id, current_user)
+    from app.models.llm_profile import LLMProfile
     from app.services.kg_ontology import normalize_ontology
 
     try:
         kb.kg_ontology = normalize_ontology(ontology)
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
+    # 抽取专用档案：null/空 = 跟随平台默认档案；指定 id 时校验存在且启用
+    profile_id = ontology.get("kg_llm_profile_id")
+    if profile_id:
+        try:
+            pid = uuid.UUID(str(profile_id))
+        except (TypeError, ValueError) as error:
+            raise HTTPException(422, "kg_llm_profile_id must be a valid UUID") from error
+        profile = db.query(LLMProfile).filter(
+            LLMProfile.id == pid, LLMProfile.enabled.is_not(False),
+        ).first()
+        if not profile:
+            raise HTTPException(422, "指定的抽取模型档案不存在或已停用")
+        kb.kg_llm_profile_id = pid
+    else:
+        kb.kg_llm_profile_id = None
     db.commit()
-    return {"ontology": kb.kg_ontology}
+    return {"ontology": kb.kg_ontology, "kg_llm_profile_id": profile_id or None}
 
 
 @router.get("/bases/{kb_id}/graph/extract/jobs")
