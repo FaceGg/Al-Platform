@@ -200,7 +200,24 @@ def run_kg_extraction_job(job_id: str) -> None:
 
     from app.services.kg_fusion import auto_fuse_after_extraction
 
-    db = SessionLocal()
+    # 任务全程使用任务级独立 engine：全局 SessionLocal 的连接池来自 celery
+    # fork 前的进程，fork 后首次 checkout 会卡死在 provisioning（InvalidRequest
+    # Error 实证 2026-11-20），任务行永远停在 running。独立池干净且线程安全，
+    # 主流程与线程池 worker 共用它（pool 层加锁）。
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    db_url = settings.database_url
+    if hasattr(db_url, "get_secret_value"):
+        db_url = db_url.get_secret_value()
+    job_engine = create_engine(
+        str(db_url),
+        pool_size=max(3, int(getattr(settings, "kg_llm_concurrency", 2)) + 2),
+        max_overflow=4,
+        pool_pre_ping=True,
+    )
+    WorkerSession = sessionmaker(bind=job_engine)
+    db = WorkerSession()
     job = None
     try:
         job = db.get(KgExtractionJob, uuid.UUID(job_id))
@@ -235,7 +252,14 @@ def run_kg_extraction_job(job_id: str) -> None:
                 .all()
             )
         }
-        todo = [c for c in chunks if _content_hash(c.content or "") not in done_hashes]
+        # 分片任务物化为纯值（id+content）：ORM 对象传入线程后，属性访问会因
+        # commit 过期触发「用主线程会话在工作线程里重载」→ Session 跨线程并发
+        # （InvalidRequestError 实证 2026-11-20）。线程池只收普通值。
+        todo = [
+            (c.id, c.content or "")
+            for c in chunks
+            if _content_hash(c.content or "") not in done_hashes
+        ]
         job.total_units = len(todo)
         job.done_units = 0
         db.commit()
@@ -243,35 +267,21 @@ def run_kg_extraction_job(job_id: str) -> None:
         deadline = time.monotonic() + settings.kg_llm_time_budget_seconds
         cancelled = False
 
-        # 线程池 worker 用独立 engine：全局 engine 的池来自 celery fork 前的
-        # 进程，多线程并发 checkout 会触发 Session 级并发错误
-        # （InvalidRequestError: provisioning a new connection...实证 2026-11-20）
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
+        # 线程池 worker 复用任务级独立 engine（函数开头创建的 job_engine）：
+        # 与全局 SessionLocal 的 fork 池彻底隔离，pool 层加锁多线程安全
 
-        db_url = settings.database_url
-        if hasattr(db_url, "get_secret_value"):
-            db_url = db_url.get_secret_value()
-        worker_engine = create_engine(
-            str(db_url),
-            pool_size=max(2, int(getattr(settings, "kg_llm_concurrency", 2)) + 1),
-            max_overflow=4,
-            pool_pre_ping=True,
-        )
-        WorkerSession = sessionmaker(bind=worker_engine)
-
-        def _work(chunk: Chunk):
-            """线程池 worker：LLM 调用（含网关审计写库）走独立 engine 的 Session。"""
-            content = chunk.content or ""
+        def _work(unit_chunk):
+            """线程池 worker：入参为纯值 (chunk_id, content)，零 ORM 访问。"""
+            chunk_id, content = unit_chunk
             if not content.strip():
-                return chunk, "empty", None, None, 0
+                return chunk_id, content, "empty", None, None, 0
             with WorkerSession() as worker_db:
                 unit, usage, error = extract_unit(worker_db, config, content, ontology)
             if unit is None:
-                return chunk, "failed", None, error, 1
+                return chunk_id, content, "failed", None, error, 1
             if not unit.entities and not unit.relations:
-                return chunk, "empty", None, None, 1
-            return chunk, "ok", unit, None, 1
+                return chunk_id, content, "empty", None, None, 1
+            return chunk_id, content, "ok", unit, None, 1
 
         from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
@@ -303,25 +313,25 @@ def run_kg_extraction_job(job_id: str) -> None:
                     )
                     break
                 for future in done_set:
-                    chunk, status, unit, error, calls = future.result()
+                    chunk_id, content, status, unit, error, calls = future.result()
                     job.llm_calls += calls
                     if status == "failed":
                         job.llm_errors += 1
                         db.add(KgUnitResult(
-                            kb_id=kb.id, chunk_id=chunk.id,
-                            content_hash=_content_hash(chunk.content or ""),
+                            kb_id=kb.id, chunk_id=chunk_id,
+                            content_hash=_content_hash(content),
                             status="failed", error=(error or "")[:2000],
                         ))
                     elif status == "empty":
                         db.add(KgUnitResult(
-                            kb_id=kb.id, chunk_id=chunk.id,
-                            content_hash=_content_hash(chunk.content or ""),
+                            kb_id=kb.id, chunk_id=chunk_id,
+                            content_hash=_content_hash(content),
                             status="empty",
                         ))
                     else:
                         db.add(KgUnitResult(
-                            kb_id=kb.id, chunk_id=chunk.id,
-                            content_hash=_content_hash(chunk.content or ""),
+                            kb_id=kb.id, chunk_id=chunk_id,
+                            content_hash=_content_hash(content),
                             status="ok", result=unit.model_dump(),
                         ))
                         job.entities_found += len(unit.entities)
@@ -333,7 +343,7 @@ def run_kg_extraction_job(job_id: str) -> None:
                 pool.shutdown(wait=False, cancel_futures=True)
             else:
                 pool.shutdown(wait=True)
-            worker_engine.dispose()
+            job_engine.dispose()
 
         fused = _aggregate_and_persist(db, kb, ontology)
         auto_fuse_after_extraction(db, kb, method="llm")
