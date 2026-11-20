@@ -243,14 +243,29 @@ def run_kg_extraction_job(job_id: str) -> None:
         deadline = time.monotonic() + settings.kg_llm_time_budget_seconds
         cancelled = False
 
+        # 线程池 worker 用独立 engine：全局 engine 的池来自 celery fork 前的
+        # 进程，多线程并发 checkout 会触发 Session 级并发错误
+        # （InvalidRequestError: provisioning a new connection...实证 2026-11-20）
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        db_url = settings.database_url
+        if hasattr(db_url, "get_secret_value"):
+            db_url = db_url.get_secret_value()
+        worker_engine = create_engine(
+            str(db_url),
+            pool_size=max(2, int(getattr(settings, "kg_llm_concurrency", 2)) + 1),
+            max_overflow=4,
+            pool_pre_ping=True,
+        )
+        WorkerSession = sessionmaker(bind=worker_engine)
+
         def _work(chunk: Chunk):
-            """线程池 worker：LLM 调用（含网关审计写库）走独立 Session。"""
+            """线程池 worker：LLM 调用（含网关审计写库）走独立 engine 的 Session。"""
             content = chunk.content or ""
             if not content.strip():
                 return chunk, "empty", None, None, 0
-            from app.database import SessionLocal as _SessionLocal
-
-            with _SessionLocal() as worker_db:
+            with WorkerSession() as worker_db:
                 unit, usage, error = extract_unit(worker_db, config, content, ontology)
             if unit is None:
                 return chunk, "failed", None, error, 1
@@ -258,15 +273,16 @@ def run_kg_extraction_job(job_id: str) -> None:
                 return chunk, "empty", None, None, 1
             return chunk, "ok", unit, None, 1
 
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
         pool = ThreadPoolExecutor(
-            max_workers=max(1, int(getattr(settings, "kg_llm_concurrency", 3))),
+            max_workers=max(1, int(getattr(settings, "kg_llm_concurrency", 2))),
             thread_name_prefix="kg-extract",
         )
         try:
             futures = {pool.submit(_work, c): c for c in todo}
-            for future in as_completed(futures):
+            pending = set(futures)
+            while pending:
                 db.refresh(job)
                 if job.cancel_requested or time.monotonic() > deadline:
                     cancelled = job.cancel_requested
@@ -275,36 +291,49 @@ def run_kg_extraction_job(job_id: str) -> None:
                             "time budget exceeded; re-run to continue remaining chunks"
                         )
                     break
-                chunk, status, unit, error, calls = future.result()
-                job.llm_calls += calls
-                if status == "failed":
-                    job.llm_errors += 1
-                    db.add(KgUnitResult(
-                        kb_id=kb.id, chunk_id=chunk.id,
-                        content_hash=_content_hash(chunk.content or ""),
-                        status="failed", error=(error or "")[:2000],
-                    ))
-                elif status == "empty":
-                    db.add(KgUnitResult(
-                        kb_id=kb.id, chunk_id=chunk.id,
-                        content_hash=_content_hash(chunk.content or ""),
-                        status="empty",
-                    ))
-                else:
-                    db.add(KgUnitResult(
-                        kb_id=kb.id, chunk_id=chunk.id,
-                        content_hash=_content_hash(chunk.content or ""),
-                        status="ok", result=unit.model_dump(),
-                    ))
-                    job.entities_found += len(unit.entities)
-                    job.relations_found += len(unit.relations)
-                job.done_units += 1
-                db.commit()
+                # 150s 看门狗：整批无任何分片落地=LLM 出口卡死——放弃本批剩余
+                # 分片（failed/未完成的靠断点续抽重做），避免任务无限挂死
+                done_set, pending = wait(
+                    pending, timeout=150, return_when=FIRST_COMPLETED,
+                )
+                if not done_set:
+                    job.error = (
+                        "LLM calls stalled (>150s with no chunk completed); "
+                        "re-run to retry unfinished chunks"
+                    )
+                    break
+                for future in done_set:
+                    chunk, status, unit, error, calls = future.result()
+                    job.llm_calls += calls
+                    if status == "failed":
+                        job.llm_errors += 1
+                        db.add(KgUnitResult(
+                            kb_id=kb.id, chunk_id=chunk.id,
+                            content_hash=_content_hash(chunk.content or ""),
+                            status="failed", error=(error or "")[:2000],
+                        ))
+                    elif status == "empty":
+                        db.add(KgUnitResult(
+                            kb_id=kb.id, chunk_id=chunk.id,
+                            content_hash=_content_hash(chunk.content or ""),
+                            status="empty",
+                        ))
+                    else:
+                        db.add(KgUnitResult(
+                            kb_id=kb.id, chunk_id=chunk.id,
+                            content_hash=_content_hash(chunk.content or ""),
+                            status="ok", result=unit.model_dump(),
+                        ))
+                        job.entities_found += len(unit.entities)
+                        job.relations_found += len(unit.relations)
+                    job.done_units += 1
+                    db.commit()
         finally:
             if cancelled:
                 pool.shutdown(wait=False, cancel_futures=True)
             else:
                 pool.shutdown(wait=True)
+            worker_engine.dispose()
 
         fused = _aggregate_and_persist(db, kb, ontology)
         auto_fuse_after_extraction(db, kb, method="llm")
@@ -323,9 +352,28 @@ def run_kg_extraction_job(job_id: str) -> None:
         if job is not None:
             import datetime
 
-            job.status = "failed"
-            job.error = f"{type(error).__name__}: {error}"[:2000]
-            job.finished_at = datetime.datetime.utcnow()
+            job_id = job.id
+            # 原 db 会话可能已损坏（并发错误/连接中断）——用全新会话兜底写
+            # 失败状态，否则任务行会永远停在 running（2026-11-20 实证）
+            try:
+                db.rollback()
+                job.status = "failed"
+                job.error = f"{type(error).__name__}: {error}"[:2000]
+                job.finished_at = datetime.datetime.utcnow()
+                db.commit()
+            except Exception:  # noqa: BLE001 - 双保险：换新会话再写一次
+                try:
+                    from app.database import SessionLocal as _SL
+
+                    with _SL() as fresh:
+                        row = fresh.get(KgExtractionJob, job_id)
+                        if row is not None:
+                            row.status = "failed"
+                            row.error = f"{type(error).__name__}: {error}"[:2000]
+                            row.finished_at = datetime.datetime.utcnow()
+                            fresh.commit()
+                except Exception:  # noqa: BLE001
+                    pass
         raise
     finally:
         db.close()
