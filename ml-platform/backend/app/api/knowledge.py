@@ -1273,6 +1273,19 @@ def extract_kb_graph_endpoint(
         from app.models.knowledge import KgExtractionJob
         from app.tasks.kg_tasks import dispatch_kg_extraction
 
+        # 防重入：同库已有进行中的抽取任务时拒绝再派（避免多任务互抢 LLM
+        # 出口、交错清写同层）；前端刷新后仍可能重复点击，服务端兜底
+        active = db.query(KgExtractionJob).filter(
+            KgExtractionJob.kb_id == kb.id,
+            KgExtractionJob.status.in_(("pending", "running")),
+        ).first()
+        if active:
+            raise HTTPException(
+                409,
+                f"An extraction job is already running for this knowledge base "
+                f"(job {active.id}, {active.done_units}/{active.total_units} units done); "
+                f"wait for it to finish or cancel it first",
+            )
         has_chunks = (
             db.query(Chunk)
             .join(Document, Chunk.document)

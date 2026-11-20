@@ -46,9 +46,9 @@ from app.services.knowledge_graph_extraction import (
     _normalize_name,
 )
 
-MAX_ENTITIES_PER_UNIT = 20
-MAX_RELATIONS_PER_UNIT = 15
-MAX_ATTRIBUTES_PER_ENTITY = 8
+MAX_ENTITIES_PER_UNIT = 10
+MAX_RELATIONS_PER_UNIT = 8
+MAX_ATTRIBUTES_PER_ENTITY = 4
 MAX_EVIDENCE_LEN = 120
 
 _OUTPUT_SKELETON = (
@@ -99,8 +99,9 @@ def build_messages(chunk_text: str, ontology: dict[str, list[str]]) -> list[dict
         f"- 实体最多 {MAX_ENTITIES_PER_UNIT} 个，关系最多 {MAX_RELATIONS_PER_UNIT} 个；"
         "实体 name 用文中原词（不含代词/虚词），source/target 必须引用 entities 里的 name；"
         "不在 entities 里的 name 一律丢弃\n"
+        "- 只抽明确出现的实体，不要推断补全；输出务必精简（输出越长越慢）\n"
         "- aliases 是同一实体的其他叫法（英文/缩写/全称），没有就给空数组\n"
-        "- attributes 只收文中明确出现的属性（参数/规格/数值），逐条给 evidence 原文短句\n"
+        "- attributes 只收文中明确出现的数值/规格/参数，最多 4 条，逐条给 evidence 原文短句\n"
         "- 字段名必须与下面的骨架逐字一致，漏字段或改字段名会被拒收：\n"
         f"{_OUTPUT_SKELETON}"
     )

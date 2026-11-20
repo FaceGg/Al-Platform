@@ -233,11 +233,11 @@ class Settings(BaseSettings):
     kg_llm_time_budget_seconds: int = 7200
     kg_llm_max_tokens: int = 3000
     kg_llm_batch_chars: int = 2400
-    # 单任务内 LLM 抽取并发度：默认 1（串行）。实测本环境（Mirror 网络+代理
-    # 出口）下 anthropic 流式调用并发 ≥3 会把 SSE body 吊死（200 头到达、
-    # body 迟迟不结束，STREAM_ATTEMPT_WALL 600s 才超时）——小库串行一直稳定。
-    # 出口修复后可调高，网关流槽 LLM_STREAM_CONCURRENCY 是硬顶。
-    kg_llm_concurrency: int = 1
+    # 单任务内 LLM 抽取并发度：默认 2。实测并发≥3 时 anthropic SSE 流被出口
+    # 吊死（200 头到达、body 迟迟不结束）——2 为保守值，网关流槽
+    # LLM_STREAM_CONCURRENCY 是硬顶；输出压缩（每片实体≤10）已将单 chunk
+    # 时间压到约 1/3，再遇卡流回退 1。
+    kg_llm_concurrency: int = 2
     # 融合模糊候选的相似度阈值（difflib SequenceMatcher ratio）
     kg_fusion_fuzzy_threshold: float = 0.92
     # Neo4j 图存储投影：空 URI = 投影层禁用（图查询走 PG 兜底，功能不缺只慢）

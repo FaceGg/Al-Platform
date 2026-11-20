@@ -127,7 +127,7 @@ export default function EntityDetailDrawer({
                   <Space>
                     <Text>{item.name}</Text>
                     <Text type="secondary" style={{ fontSize: 11 }}>
-                      {item.type} · w{item.weight}
+                      {item.type} · {zh ? "权重" : "w"}{item.weight}
                     </Text>
                   </Space>
                 </List.Item>

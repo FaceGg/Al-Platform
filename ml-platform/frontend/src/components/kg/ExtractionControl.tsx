@@ -14,6 +14,7 @@ interface JobStatus {
   relations_found: number;
   llm_errors: number;
   error?: string | null;
+  created_at?: string | null;
 }
 
 export default function ExtractionControl({
@@ -27,6 +28,7 @@ export default function ExtractionControl({
   const zh = lang === "zh";
   const [rulesLoading, setRulesLoading] = useState(false);
   const [job, setJob] = useState<JobStatus | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopPolling = () => {
@@ -38,19 +40,27 @@ export default function ExtractionControl({
 
   useEffect(() => stopPolling, []);
   useEffect(() => {
-    // 切库时终止旧轮询
+    // 切库时终止旧轮询并清空进度（进度条严格按库隔离）
     stopPolling();
     setJob(null);
+    setCancelling(false);
   }, [kbId]);
   useEffect(() => {
-    // 页面刷新后恢复跟踪：该库最近若仍有进行中任务则接续轮询
+    // 页面刷新后恢复跟踪：只接续「最近 30 分钟内创建」的进行中任务——
+    // 更早的 running 多为异常残留（worker 重启/取消未落地），恢复它们只会
+    // 让切库时永远看到进度条
     if (!kbId) return;
     apiClient
       .get(`/knowledge/bases/${kbId}/graph/extract/jobs`, { params: { limit: 5 } })
       .then((res) => {
         const list = Array.isArray(res.data) ? res.data : [];
-        const active = list.find((j: JobStatus) =>
-          ["pending", "running"].includes(j.status),
+        const fresh = (item: JobStatus) => {
+          if (!item.created_at) return false;
+          const age = Date.now() - new Date(item.created_at).getTime();
+          return age < 30 * 60 * 1000;
+        };
+        const active = list.find(
+          (j: JobStatus) => ["pending", "running"].includes(j.status) && fresh(j),
         );
         if (active) {
           setJob(active);
@@ -72,6 +82,7 @@ export default function ExtractionControl({
         setJob(data);
         if (["succeeded", "failed", "cancelled"].includes(data.status)) {
           stopPolling();
+          setCancelling(false);
           if (data.status === "succeeded") {
             message.success(
               zh
@@ -131,18 +142,26 @@ export default function ExtractionControl({
   };
 
   const cancel = async () => {
-    if (!kbId || !job) return;
+    if (!kbId || !job || cancelling) return;
+    setCancelling(true);
     try {
       await apiClient.post(
         `/knowledge/bases/${kbId}/graph/extract/jobs/${job.id}/cancel`,
       );
-      message.info(zh ? "取消请求已发送" : "Cancel requested");
+      message.info(
+        zh
+          ? "已请求取消：当前分片完成后停止（长分片约需数分钟），已完成分片保留"
+          : "Cancel requested: stops after the current chunk finishes",
+      );
     } catch {
-      /* 轮询会兜底收尾 */
+      setCancelling(false);
+      message.error(zh ? "取消请求失败，请重试" : "Cancel failed");
     }
   };
 
-  const running = job && ["pending", "running"].includes(job.status);
+  const running =
+    !!job && ["pending", "running"].includes(job.status) && !cancelling;
+  const waitingCancel = !!job && cancelling;
 
   return (
     <div data-testid="kg-extraction-control">
@@ -177,17 +196,22 @@ export default function ExtractionControl({
             {zh ? "取消" : "Cancel"}
           </Button>
         )}
+        {waitingCancel && (
+          <Button icon={<StopOutlined />} danger disabled>
+            {zh ? "取消中…" : "Cancelling…"}
+          </Button>
+        )}
       </Space>
-      {running && (
+      {(running || waitingCancel) && job && (
         <div style={{ marginTop: 4, width: 260 }}>
           <Progress
-            percent={job!.progress}
+            percent={job.progress}
             size="small"
-            status="active"
+            status={waitingCancel ? "normal" : "active"}
             format={() =>
               zh
-                ? `${job!.done_units}/${job!.total_units} 片 · 实体 ${job!.entities_found} · 关系 ${job!.relations_found}`
-                : `${job!.done_units}/${job!.total_units} · ${job!.entities_found}E/${job!.relations_found}R`
+                ? `${job.done_units}/${job.total_units} 片 · 实体 ${job.entities_found} · 关系 ${job.relations_found}`
+                : `${job.done_units}/${job.total_units} · ${job.entities_found}E/${job.relations_found}R`
             }
           />
         </div>

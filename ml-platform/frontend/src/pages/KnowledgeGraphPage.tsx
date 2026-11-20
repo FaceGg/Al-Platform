@@ -85,6 +85,10 @@ export default function KnowledgeGraphPage() {
     pathQuery: "路径查询",
     labelsOn: "隐藏文字",
     labelsOff: "显示文字",
+    relSource: "来源实体",
+    relTarget: "目标实体",
+    relSourcePh: "来源实体 ID",
+    relTargetPh: "目标实体 ID",
     resetView: "重置视图",
     degreeLabel: "度数",
   } : {
@@ -100,6 +104,10 @@ export default function KnowledgeGraphPage() {
     pathQuery: "Path query",
     labelsOn: "Hide labels",
     labelsOff: "Show labels",
+    relSource: "Source entity",
+    relTarget: "Target entity",
+    relSourcePh: "source entity id",
+    relTargetPh: "target entity id",
     resetView: "Reset view",
     degreeLabel: "Links",
   };
@@ -110,7 +118,7 @@ export default function KnowledgeGraphPage() {
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [] });
   const [loading, setLoading] = useState(false);
   const [focusId, setFocusId] = useState<string | null>(null);
-  const [viewSize, setViewSize] = useState(300);
+  const [viewSize, setViewSize] = useState(100);
   const [ontologyOpen, setOntologyOpen] = useState(false);
   const [pathOpen, setPathOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -296,20 +304,22 @@ export default function KnowledgeGraphPage() {
     const nodes = view.nodes.map((n) => {
       const deg = degree.get(n.id) || 0;
       const size = Math.min(26, 3 + Math.sqrt(deg) * 1.35);
+      // 搜索/点击选中的目标节点显著化：紫色放大+标签强制显示——
+      // focusId 不在采样视图时由 view 注入逻辑把它拉进图，这里保证肉眼可见
+      const isFocus = n.id === focusId;
       return {
         id: n.id,
         name: n.label,
         category: groupIndexOf(n),
-        // Obsidian 尺寸分布：绝大多数是小圆点，只有度数枢纽明显放大；
-        // 小节点隐藏标签（hover 才显示），避免满屏文字挤压；
-        // 「显示/隐藏文字」按钮整体控制画布文字显隐（hover 浮窗不受影响）
-        symbolSize: size,
-        label: { show: labelsVisible && size >= 10 },
-        itemStyle: {
-          color: groupColorOf(n),
-          // 小节点淡化：度数越低越透明，减轻低频实体「点海」的视觉压迫
-          opacity: 0.55 + Math.min(0.45, (deg / 16) * 0.45),
-        },
+        symbolSize: isFocus ? Math.max(size, 22) : size,
+        label: { show: labelsVisible && (isFocus || size >= 10) },
+        itemStyle: isFocus
+          ? { color: "#8a7dff", opacity: 1, borderColor: "#6a5acd", borderWidth: 2 }
+          : {
+              color: groupColorOf(n),
+              // 小节点淡化：度数越低越透明，减轻低频实体「点海」的视觉压迫
+              opacity: 0.55 + Math.min(0.45, (deg / 16) * 0.45),
+            },
         raw: n,
       };
     });
@@ -380,7 +390,7 @@ export default function KnowledgeGraphPage() {
         },
       }],
     };
-  }, [view, grouping, degree, groupIndexOf, groupColorOf, isDark, graphText, labelsVisible]);
+  }, [view, grouping, degree, groupIndexOf, groupColorOf, isDark, graphText, labelsVisible, focusId]);
 
   // onEvents 需保持稳定引用（echarts-for-react 按引用重绑），最新 focusId 走 ref
   const chartEvents = useMemo(() => ({
@@ -533,7 +543,12 @@ export default function KnowledgeGraphPage() {
       <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
         <div style={{ flex: 1, minWidth: 460 }}>
           <Card
-            style={{ height: 520, padding: 0, overflow: "hidden" }}
+            style={{
+              height: "calc(100vh - 230px)",
+              minHeight: 560,
+              padding: 0,
+              overflow: "hidden",
+            }}
             styles={{ body: { height: "100%", padding: 0 } }}
           >
             {view.nodes.length === 0 && !loading ? (
@@ -560,7 +575,16 @@ export default function KnowledgeGraphPage() {
             )}
           </Card>
         </div>
-        <div style={{ width: 320, display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{
+          width: 320,
+          height: "calc(100vh - 230px)",
+          minHeight: 560,
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+          overflowY: "auto",
+          overflowX: "hidden",
+        }}>
           <Card size="small" title={t.knowledge.add_entity}>
             <Form form={form} onFinish={addEntity} layout="vertical" size="small" autoComplete="off">
               <Form.Item name="name" label={t.knowledge.entity_name} rules={[{ required: true }]}>
@@ -576,11 +600,11 @@ export default function KnowledgeGraphPage() {
           </Card>
           <Card size="small" title={t.knowledge.relation}>
             <Form form={edgeForm} onFinish={addRelation} layout="vertical" size="small" autoComplete="off">
-              <Form.Item name="source_id" label="Source ID" rules={[{ required: true }]}>
-                <Input placeholder="source entity id" />
+              <Form.Item name="source_id" label={graphText.relSource} rules={[{ required: true }]}>
+                <Input placeholder={graphText.relSourcePh} />
               </Form.Item>
-              <Form.Item name="target_id" label="Target ID" rules={[{ required: true }]}>
-                <Input placeholder="target entity id" />
+              <Form.Item name="target_id" label={graphText.relTarget} rules={[{ required: true }]}>
+                <Input placeholder={graphText.relTargetPh} />
               </Form.Item>
               <Form.Item name="relation_type" label={t.knowledge.relation_type}>
                 <Input />
