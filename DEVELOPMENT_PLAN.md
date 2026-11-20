@@ -2005,3 +2005,9 @@ PageHeading desc / 内嵌说明条删除：①智能体中心→知识中心 tab
 **部署**：wheelhouse 补 neo4j-5.28.8+pytz linux 轮子；全标签重建（migrate/backend/worker/scheduler/frontend）+neo4j up；端到端浏览器实测（小库上传→本体→深度抽取→融合审核→路径查询→图问答）见验收文档。
 
 **验证与部署（2026-11-20 同日）**：迁移 26 绿 + KG 流水线 17 绿 + 前端 7 绿/全量 573 绿 + tsc 通过；栈内部署=migrate `Running upgrade →20261120_103`（真实 PG）+ neo4j healthy + worker 注册 execute_kg_extract；端到端实测（点焊工艺测试库 2 chunks）=深度抽取 succeeded（2 LLM 调用 84s，25 实体+23 关系）/领域类型+属性+关系证据全对（工艺5/指标8/缺陷4/设备2/部件2/材料1/标准1）/Neo4j 投影 24+23 对账/path+neighbors 通/详情抽屉大模型徽标+别名（截图）。**过程修复**：①合并环（celery acks_late 于 WSL OOM 重启后重投任务，二次 fuse 交错写出 A↔B 互指+悬挂边）→merge_entities 环保护+GET /graph 悬挂边过滤；②RouteOutlined 不存在→NodeIndexOutlined；③归一化语义统一（ASCII 含大写 casefold）。**环境**：WSL 8GB 全栈+neo4j OOM 崩溃循环→.wslconfig memory 8→14GB（宿主 32GB）后稳定。**遗留**：开发计划库 2312 chunks 全量深度抽取未跑（120 chunks/次护栏需分批）；融合 LLM 仲裁真实调用未触发（干净语料无高相似候选，契约已 mock 覆盖）；CI 六 job 待推送后跑。验收证据 docs/验收-知识图谱五阶段流水线.md。
+
+## 2026-11-20 追加：KG 五阶段补充审核轮（四缺口修复）+「开发计划」全量抽取实测中止 + 文字显隐按钮
+
+用户「再审核一遍」对照方案承诺复查出 4 缺口并同批修复：①rules 快速抽取后漏跑融合+投影（端点 rules 分支补 auto_fuse+resync）；②平台 AI 对话 chat.py 两端点漏注入图谱上下文（方案承诺遗漏）；③抽取任务列表端点缺失/页面刷新丢跟踪（GET /graph/extract/jobs + 前端挂载恢复轮询）；④抽取并发化（kg_llm_concurrency 线程池+独立 Session）。UI 新增画布「显示文字/隐藏文字」按钮（labelsVisible 联动 echarts label）。
+
+**并发实测结论（重要）**：并发≥3 时 anthropic SSE 流被出口吊死（200 头到达 body 不结束，STREAM_ATTEMPT_WALL 600s 才超时，done 恒 0；小库串行一直 42s/chunk 稳定）→ **默认回退串行 1**（可配置，网关流槽 LLM_STREAM_CONCURRENCY 为硬顶）；时间预算 1800→7200s。「开发计划」库全量抽取实测：串行单 chunk >10 分钟（该库实体密度高输出量大），全量 2312 chunks 上百小时不可行——**用户决策中止**（5 任务全部 cancelled；过程发现 celery acks_late 重投交错+页面重复派发叠加，DB 层强制 cancelled 处置）。**登记待修**：深度抽取防重入（running 跨刷新仍可再派发）。遗留优化方向：单 chunk 慢根因（输出量 7 倍于小库/时段性能/出口代理）、输出压缩换速度、低峰跑批。测试：后端 35 passed + 前端 7 passed + tsc；已部署。

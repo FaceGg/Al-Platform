@@ -230,9 +230,14 @@ class Settings(BaseSettings):
     # fail-closed 报错而不是静默退回规则层。max_chunks 是成本护栏：超出部分
     # 按 chunk 顺序延后到下一次任务（断点续抽天然分批）。
     kg_llm_max_chunks: int = 120
-    kg_llm_time_budget_seconds: int = 1800
+    kg_llm_time_budget_seconds: int = 7200
     kg_llm_max_tokens: int = 3000
     kg_llm_batch_chars: int = 2400
+    # 单任务内 LLM 抽取并发度：默认 1（串行）。实测本环境（Mirror 网络+代理
+    # 出口）下 anthropic 流式调用并发 ≥3 会把 SSE body 吊死（200 头到达、
+    # body 迟迟不结束，STREAM_ATTEMPT_WALL 600s 才超时）——小库串行一直稳定。
+    # 出口修复后可调高，网关流槽 LLM_STREAM_CONCURRENCY 是硬顶。
+    kg_llm_concurrency: int = 1
     # 融合模糊候选的相似度阈值（difflib SequenceMatcher ratio）
     kg_fusion_fuzzy_threshold: float = 0.92
     # Neo4j 图存储投影：空 URI = 投影层禁用（图查询走 PG 兜底，功能不缺只慢）

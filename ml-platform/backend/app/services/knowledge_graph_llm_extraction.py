@@ -236,48 +236,69 @@ def run_kg_extraction_job(job_id: str) -> None:
 
         deadline = time.monotonic() + settings.kg_llm_time_budget_seconds
         cancelled = False
-        for chunk in todo:
-            db.refresh(job)
-            if job.cancel_requested:
-                cancelled = True
-                break
-            if time.monotonic() > deadline:
-                job.error = "time budget exceeded; re-run to continue remaining chunks"
-                break
+
+        def _work(chunk: Chunk):
+            """线程池 worker：LLM 调用（含网关审计写库）走独立 Session。"""
             content = chunk.content or ""
             if not content.strip():
-                db.add(KgUnitResult(
-                    kb_id=kb.id, chunk_id=chunk.id,
-                    content_hash=_content_hash(content), status="empty",
-                ))
-                job.done_units += 1
-                db.commit()
-                continue
-            unit, usage, error = extract_unit(db, config, content, ontology)
-            job.llm_calls += 1
+                return chunk, "empty", None, None, 0
+            from app.database import SessionLocal as _SessionLocal
+
+            with _SessionLocal() as worker_db:
+                unit, usage, error = extract_unit(worker_db, config, content, ontology)
             if unit is None:
-                job.llm_errors += 1
-                db.add(KgUnitResult(
-                    kb_id=kb.id, chunk_id=chunk.id,
-                    content_hash=_content_hash(content), status="failed",
-                    error=(error or "")[:2000],
-                ))
-            else:
-                if not unit.entities and not unit.relations:
+                return chunk, "failed", None, error, 1
+            if not unit.entities and not unit.relations:
+                return chunk, "empty", None, None, 1
+            return chunk, "ok", unit, None, 1
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        pool = ThreadPoolExecutor(
+            max_workers=max(1, int(getattr(settings, "kg_llm_concurrency", 3))),
+            thread_name_prefix="kg-extract",
+        )
+        try:
+            futures = {pool.submit(_work, c): c for c in todo}
+            for future in as_completed(futures):
+                db.refresh(job)
+                if job.cancel_requested or time.monotonic() > deadline:
+                    cancelled = job.cancel_requested
+                    if not job.cancel_requested:
+                        job.error = (
+                            "time budget exceeded; re-run to continue remaining chunks"
+                        )
+                    break
+                chunk, status, unit, error, calls = future.result()
+                job.llm_calls += calls
+                if status == "failed":
+                    job.llm_errors += 1
                     db.add(KgUnitResult(
                         kb_id=kb.id, chunk_id=chunk.id,
-                        content_hash=_content_hash(content), status="empty",
+                        content_hash=_content_hash(chunk.content or ""),
+                        status="failed", error=(error or "")[:2000],
+                    ))
+                elif status == "empty":
+                    db.add(KgUnitResult(
+                        kb_id=kb.id, chunk_id=chunk.id,
+                        content_hash=_content_hash(chunk.content or ""),
+                        status="empty",
                     ))
                 else:
                     db.add(KgUnitResult(
                         kb_id=kb.id, chunk_id=chunk.id,
-                        content_hash=_content_hash(content), status="ok",
-                        result=unit.model_dump(),
+                        content_hash=_content_hash(chunk.content or ""),
+                        status="ok", result=unit.model_dump(),
                     ))
-                job.entities_found += len(unit.entities)
-                job.relations_found += len(unit.relations)
-            job.done_units += 1
-            db.commit()
+                    job.entities_found += len(unit.entities)
+                    job.relations_found += len(unit.relations)
+                job.done_units += 1
+                db.commit()
+        finally:
+            if cancelled:
+                pool.shutdown(wait=False, cancel_futures=True)
+            else:
+                pool.shutdown(wait=True)
 
         fused = _aggregate_and_persist(db, kb, ontology)
         auto_fuse_after_extraction(db, kb, method="llm")

@@ -1309,6 +1309,18 @@ def extract_kb_graph_endpoint(
         db, kb,
         [(str(d.id), d.content or "") for d in documents],
     )
+    # 规则通道与 LLM 通道同权：抽取后跑融合自动归并 + Neo4j 投影（尽力而为）
+    try:
+        from app.services.kg_fusion import auto_fuse_after_extraction
+        from app.services.kg_projection import get_projection
+
+        auto_fuse_after_extraction(db, kb, method="rules")
+        try:
+            get_projection().resync_kb(db, kb.id)
+        except Exception:  # noqa: BLE001
+            pass
+    except Exception:  # noqa: BLE001
+        pass
     return report
 
 
@@ -1698,6 +1710,40 @@ def put_ontology(
         raise HTTPException(422, str(error)) from error
     db.commit()
     return {"ontology": kb.kg_ontology}
+
+
+@router.get("/bases/{kb_id}/graph/extract/jobs")
+def list_kg_jobs(
+    kb_id: str,
+    limit: int = 5,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """该库最近的抽取任务（前端刷新页面后恢复进度跟踪用）。"""
+    from app.models.knowledge import KgExtractionJob
+
+    kb = _owned_kb(db, kb_id, current_user)
+    jobs = (
+        db.query(KgExtractionJob)
+        .filter(KgExtractionJob.kb_id == kb.id)
+        .order_by(KgExtractionJob.created_at.desc())
+        .limit(max(1, min(limit, 20)))
+        .all()
+    )
+    return [
+        {
+            "id": str(j.id),
+            "status": j.status,
+            "mode": j.mode,
+            "total_units": j.total_units,
+            "done_units": j.done_units,
+            "entities_found": j.entities_found,
+            "relations_found": j.relations_found,
+            "error": j.error,
+            "created_at": j.created_at.isoformat() if j.created_at else None,
+        }
+        for j in jobs
+    ]
 
 
 @router.get("/bases/{kb_id}/graph/extract/jobs/{job_id}")

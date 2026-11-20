@@ -42,6 +42,24 @@ export default function ExtractionControl({
     stopPolling();
     setJob(null);
   }, [kbId]);
+  useEffect(() => {
+    // 页面刷新后恢复跟踪：该库最近若仍有进行中任务则接续轮询
+    if (!kbId) return;
+    apiClient
+      .get(`/knowledge/bases/${kbId}/graph/extract/jobs`, { params: { limit: 5 } })
+      .then((res) => {
+        const list = Array.isArray(res.data) ? res.data : [];
+        const active = list.find((j: JobStatus) =>
+          ["pending", "running"].includes(j.status),
+        );
+        if (active) {
+          setJob(active);
+          poll(kbId, active.id);
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kbId]);
 
   const poll = (kb: string, jobId: string) => {
     stopPolling();

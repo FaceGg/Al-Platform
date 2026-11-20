@@ -16,6 +16,8 @@ describe("ExtractionControl", () => {
   beforeEach(() => {
     get.mockReset();
     post.mockReset();
+    // 挂载恢复跟踪会查最近任务列表；默认空列表
+    get.mockResolvedValue({ data: [] });
   });
 
   it("quick extract posts rules mode and reports the result", async () => {

@@ -203,6 +203,15 @@ def chat(
         kb_info = {"id": str(kb.id), "name": kb.name}
         results = _retrieve_for_chat(db, kb, message, top_k)
         context, sources = build_rag_context(results)
+        # 图谱三元组上下文（阶段5·知识应用）：问题命中实体名/别名时并入提示词
+        try:
+            from app.services.kg_projection import graph_triples_context
+
+            graph_block = graph_triples_context(db, kb, message)
+            if graph_block:
+                context = (context + "\n\n" + graph_block) if context else graph_block
+        except Exception:  # noqa: BLE001 - 图上下文尽力而为
+            pass
         if not sources:
             kb_warning = "知识库中没有检索到相关内容，已按通用助手回答"
 
@@ -353,6 +362,15 @@ def chat_stream(
     if kb is not None:
         results = _retrieve_for_chat(db, kb, message, top_k)
         context, sources = build_rag_context(results)
+        # 图谱三元组上下文（阶段5·知识应用）：尽力而为
+        try:
+            from app.services.kg_projection import graph_triples_context
+
+            graph_block = graph_triples_context(db, kb, message)
+            if graph_block:
+                context = (context + "\n\n" + graph_block) if context else graph_block
+        except Exception:  # noqa: BLE001
+            pass
 
     config = resolve_profile(db, purpose="chat_stream")
 

@@ -5,7 +5,7 @@ import {
 } from "antd";
 import {
   PlusOutlined, DeleteOutlined, ReloadOutlined, AimOutlined, ScanOutlined,
-  ApartmentOutlined, NodeIndexOutlined,
+  ApartmentOutlined, NodeIndexOutlined, EyeOutlined, EyeInvisibleOutlined,
 } from "@ant-design/icons";
 import ReactECharts from "echarts-for-react";
 import apiClient from "../api/client";
@@ -83,6 +83,8 @@ export default function KnowledgeGraphPage() {
     entityList: "实体列表",
     ontology: "本体设置",
     pathQuery: "路径查询",
+    labelsOn: "隐藏文字",
+    labelsOff: "显示文字",
     resetView: "重置视图",
     degreeLabel: "度数",
   } : {
@@ -96,6 +98,8 @@ export default function KnowledgeGraphPage() {
     entityList: "Entities",
     ontology: "Ontology",
     pathQuery: "Path query",
+    labelsOn: "Hide labels",
+    labelsOff: "Show labels",
     resetView: "Reset view",
     degreeLabel: "Links",
   };
@@ -111,6 +115,7 @@ export default function KnowledgeGraphPage() {
   const [pathOpen, setPathOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [labelsVisible, setLabelsVisible] = useState(true);
   const [form] = Form.useForm();
   const [edgeForm] = Form.useForm();
   focusIdRef.current = focusId;
@@ -296,9 +301,10 @@ export default function KnowledgeGraphPage() {
         name: n.label,
         category: groupIndexOf(n),
         // Obsidian 尺寸分布：绝大多数是小圆点，只有度数枢纽明显放大；
-        // 小节点隐藏标签（hover 才显示），避免满屏文字挤压
+        // 小节点隐藏标签（hover 才显示），避免满屏文字挤压；
+        // 「显示/隐藏文字」按钮整体控制画布文字显隐（hover 浮窗不受影响）
         symbolSize: size,
-        label: { show: size >= 10 },
+        label: { show: labelsVisible && size >= 10 },
         itemStyle: {
           color: groupColorOf(n),
           // 小节点淡化：度数越低越透明，减轻低频实体「点海」的视觉压迫
@@ -353,7 +359,7 @@ export default function KnowledgeGraphPage() {
           curveness: 0.12,
         },
         label: {
-          show: true,
+          show: labelsVisible,
           position: "bottom",
           distance: 4,
           color: isDark ? "#8FA8C4" : "#57707B",
@@ -374,7 +380,7 @@ export default function KnowledgeGraphPage() {
         },
       }],
     };
-  }, [view, grouping, degree, groupIndexOf, groupColorOf, isDark, graphText]);
+  }, [view, grouping, degree, groupIndexOf, groupColorOf, isDark, graphText, labelsVisible]);
 
   // onEvents 需保持稳定引用（echarts-for-react 按引用重绑），最新 focusId 走 ref
   const chartEvents = useMemo(() => ({
@@ -492,6 +498,15 @@ export default function KnowledgeGraphPage() {
           >
             {graphText.pathQuery}
           </Button>
+          <Tooltip title={labelsVisible ? graphText.labelsOn : graphText.labelsOff}>
+            <Button
+              icon={labelsVisible ? <EyeOutlined /> : <EyeInvisibleOutlined />}
+              onClick={() => setLabelsVisible((v) => !v)}
+              disabled={view.nodes.length === 0}
+            >
+              {labelsVisible ? graphText.labelsOn : graphText.labelsOff}
+            </Button>
+          </Tooltip>
           <Text type="secondary" style={{ fontSize: 13, whiteSpace: "nowrap" }}>
             {graphText.inLibrary}{" "}
             <Text strong style={{ fontSize: 16, fontVariantNumeric: "tabular-nums", color: isDark ? "#D8E2F0" : "#142A33" }}>
