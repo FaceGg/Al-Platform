@@ -135,6 +135,30 @@ export default function ExtractionControl({
         }
       }
     } catch (e: any) {
+      // 防重入 409：同库已有进行中任务——自动接手跟踪它（显示进度+可取消），
+      // 而不是给用户一条裸错误
+      if (e?.response?.status === 409) {
+        try {
+          const list = await apiClient.get(
+            `/knowledge/bases/${kbId}/graph/extract/jobs`,
+            { params: { limit: 5 } },
+          );
+          const jobs: JobStatus[] = Array.isArray(list.data) ? list.data : [];
+          const active = jobs.find((j) => ["pending", "running"].includes(j.status));
+          if (active) {
+            setJob(active);
+            poll(kbId, active.id);
+            message.info(
+              zh
+                ? "该知识库已有进行中的抽取任务，已为您接续显示进度（可取消后重新抽取）"
+                : "A job is already running; tracking it now (cancel it to re-extract)",
+            );
+            return;
+          }
+        } catch {
+          /* 落到下面的通用错误提示 */
+        }
+      }
       message.error(e.response?.data?.detail || (zh ? "抽取失败" : "Extraction failed"));
     } finally {
       setRulesLoading(false);

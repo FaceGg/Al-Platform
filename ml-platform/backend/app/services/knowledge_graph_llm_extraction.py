@@ -129,12 +129,17 @@ def extract_unit(
     *,
     purpose: str = "kg_extraction",
 ) -> tuple[KgUnitExtraction | None, dict, str | None]:
-    """单 chunk 抽取：契约校验失败带坏输出与错误喂回修复一次，仍败则留档报错。"""
+    """单 chunk 抽取：契约校验失败带坏输出与错误喂回修复一次，仍败则留档报错。
+
+    attempts=1 + max_wall=120 的硬超时：出口卡流时单次尝试最长被网关流护栏
+    拖到数分钟——任务循环靠「failed 单元 + 断点续抽」兜底重做，比长时间挂死
+    更可控（取消请求也能在 ~2 分钟内落地）。
+    """
     messages = build_messages(chunk_text, ontology)
     reply, usage, error = chat_completion_with_retry(
         db, config=config, messages=messages, temperature=0.1,
         max_tokens=settings.kg_llm_max_tokens,
-        purpose=purpose, attempts=2, interval_seconds=2, max_wall_seconds=180,
+        purpose=purpose, attempts=1, interval_seconds=2, max_wall_seconds=120,
     )
     if error:
         return None, usage, error
@@ -155,7 +160,7 @@ def extract_unit(
         reply2, usage2, error2 = chat_completion_with_retry(
             db, config=config, messages=repair_messages, temperature=0.2,
             max_tokens=settings.kg_llm_max_tokens,
-            purpose=purpose, attempts=2, interval_seconds=2, max_wall_seconds=180,
+            purpose=purpose, attempts=1, interval_seconds=2, max_wall_seconds=120,
         )
         if error2:
             return None, {**(usage or {}), **(usage2 or {})}, error2
