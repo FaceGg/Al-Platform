@@ -346,6 +346,17 @@ export default function KnowledgeGraphPage() {
           return lines.join("<br/>");
         },
       },
+      // 底部类型图例：按当前库实际分组维度（实体类型优先）渲染——
+      // LLM 深度抽取的类型（工艺/缺陷/设备…）有领域语义，图例恢复有意义
+      legend: grouping && grouping.items.length > 1 ? {
+        data: grouping.items.map((g) => g.name),
+        bottom: 8,
+        icon: "circle",
+        itemWidth: 10,
+        itemHeight: 10,
+        type: "scroll",
+        textStyle: { color: isDark ? "#8FA8C4" : "#57707B", fontSize: 11 },
+      } : undefined,
       series: [{
         type: "graph",
         layout: "force",
