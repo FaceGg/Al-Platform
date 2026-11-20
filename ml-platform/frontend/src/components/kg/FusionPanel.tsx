@@ -106,7 +106,7 @@ export default function FusionPanel({
           style={{ margin: "12px 0" }}
         />
       ) : (
-        <div style={{ maxHeight: 260, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ maxHeight: 170, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
           {items.map((s) => (
             <div
               key={s.id}

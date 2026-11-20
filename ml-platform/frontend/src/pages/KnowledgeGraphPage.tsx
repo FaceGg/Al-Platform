@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
-  Select, Button, Form, Input, List, Typography, message, Card, Space, Tag, Empty,
+  Select, Button, Form, Input, List, Typography, message, Card, Space, Tag, Empty, Tabs,
   AutoComplete, InputNumber, Tooltip,
 } from "antd";
 import {
@@ -124,6 +124,8 @@ export default function KnowledgeGraphPage() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [labelsVisible, setLabelsVisible] = useState(true);
+  // 搜索聚焦模式：搜索选中后只显示目标节点及其直接邻居
+  const [searchFocus, setSearchFocus] = useState(false);
   const [form] = Form.useForm();
   const [edgeForm] = Form.useForm();
   focusIdRef.current = focusId;
@@ -180,6 +182,20 @@ export default function KnowledgeGraphPage() {
   const view = useMemo((): GraphData => {
     const all = graphData.nodes;
     if (all.length === 0) return graphData;
+    // 搜索聚焦模式（用户期望：搜索后只显示目标节点及其直接相连节点，
+    // Obsidian 式聚焦视图；其余节点隐藏）。点击节点/返回总览退出该模式。
+    if (searchFocus && focusId) {
+      const keep = new Set<string>([focusId]);
+      for (const e of graphData.edges) {
+        if (e.source === focusId) keep.add(e.target);
+        if (e.target === focusId) keep.add(e.source);
+      }
+      const nodes = all.filter((n) => keep.has(n.id));
+      const edges = graphData.edges.filter(
+        (e) => keep.has(e.source) && keep.has(e.target),
+      );
+      return { nodes, edges };
+    }
     if (all.length <= viewSize) return graphData;
 
     const ranked = [...all].sort(
@@ -233,7 +249,7 @@ export default function KnowledgeGraphPage() {
       nodes,
       edges: edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
     };
-  }, [graphData, focusId, viewSize, degree]);
+  }, [graphData, focusId, viewSize, degree, searchFocus]);
 
   // 分组维度：type 优先（≥2 种类型时按类型分色），否则退回 auto/manual 来源
   const grouping = useMemo(() => {
@@ -293,7 +309,10 @@ export default function KnowledgeGraphPage() {
 
   const focusByLabel = (label: string) => {
     const node = graphData.nodes.find((n) => n.label === label);
-    if (node) setFocusId(node.id);
+    if (node) {
+      setSearchFocus(true);
+      setFocusId(node.id);
+    }
   };
 
   // Obsidian 风格力导向图配置：hover 邻居高亮 + 其余淡出，滚轮缩放、拖动平移、节点可拖拽
@@ -408,7 +427,10 @@ export default function KnowledgeGraphPage() {
     click: (p: any) => {
       if (p.dataType !== "node") return;
       const id = p.data?.id;
-      if (id) setFocusId(focusIdRef.current === id ? null : id);
+      if (id) {
+        setSearchFocus(false); // 手动点节点退出搜索聚焦，回到普通高亮
+        setFocusId(focusIdRef.current === id ? null : id);
+      }
     },
   }), []);
 
@@ -505,7 +527,10 @@ export default function KnowledgeGraphPage() {
             value={undefined}
           />
           {focusId && (
-            <Button icon={<AimOutlined />} onClick={() => setFocusId(null)}>
+            <Button
+              icon={<AimOutlined />}
+              onClick={() => { setSearchFocus(false); setFocusId(null); }}
+            >
               {graphText.overview}
             </Button>
           )}
@@ -590,78 +615,99 @@ export default function KnowledgeGraphPage() {
           width: 320,
           height: "calc(100vh - 230px)",
           minHeight: 560,
-          display: "flex",
-          flexDirection: "column",
-          gap: 12,
-          overflowY: "auto",
-          overflowX: "hidden",
         }}>
-          <Card size="small" title={t.knowledge.add_entity}>
-            <Form form={form} onFinish={addEntity} layout="vertical" size="small" autoComplete="off">
-              <Form.Item name="name" label={t.knowledge.entity_name} rules={[{ required: true }]}>
-                <Input />
-              </Form.Item>
-              <Form.Item name="entity_type" label={t.knowledge.entity_type}>
-                <Input />
-              </Form.Item>
-              <Button type="primary" htmlType="submit" icon={<PlusOutlined />} block>
-                {t.knowledge.add_entity}
-              </Button>
-            </Form>
-          </Card>
-          <Card size="small" title={t.knowledge.relation}>
-            <Form form={edgeForm} onFinish={addRelation} layout="vertical" size="small" autoComplete="off">
-              <Form.Item name="source_id" label={graphText.relSource} rules={[{ required: true }]}>
-                <Input placeholder={graphText.relSourcePh} />
-              </Form.Item>
-              <Form.Item name="target_id" label={graphText.relTarget} rules={[{ required: true }]}>
-                <Input placeholder={graphText.relTargetPh} />
-              </Form.Item>
-              <Form.Item name="relation_type" label={t.knowledge.relation_type}>
-                <Input />
-              </Form.Item>
-              <Button type="primary" htmlType="submit" icon={<PlusOutlined />} block>
-                {t.knowledge.relation}
-              </Button>
-            </Form>
-          </Card>
-          <Card size="small" title={graphText.entityList}>
-            <List
-              size="small"
-              dataSource={view.nodes}
-              style={{ maxHeight: 260, overflowY: "auto" }}
-              locale={{ emptyText: <Empty description={t.common.loading} /> }}
-              renderItem={(node: GraphNode) => (
-                <List.Item
-                  style={{ cursor: "pointer", background: node.id === focusId ? "#fff7e6" : undefined }}
-                  onClick={() => setFocusId(node.id === focusId ? null : node.id)}
-                  actions={[
-                    <Button type="link" size="small"
-                      onClick={(e) => { e.stopPropagation(); setDetailId(node.id); setDetailOpen(true); }}
-                    >
-                      {lang === "zh" ? "详情" : "Info"}
-                    </Button>,
-                    <Button type="link" danger size="small" icon={<DeleteOutlined />}
-                      onClick={(e) => { e.stopPropagation(); deleteEntity(node.id); }} />,
-                  ]}
-                >
-                  <Space>
-                    <Tag style={{ marginInlineEnd: 0 }} color={groupColorOf(node)}>
-                      {typeDisplayName(node.type || "entity", lang)}
-                    </Tag>
-                    <Text>{node.label}</Text>
-                    {node.source === "auto"
-                      ? <Tag color="orange">{graphText.auto}</Tag>
-                      : <Tag>{graphText.manual}</Tag>}
-                    {node.docCount ? <Text type="secondary" style={{ fontSize: 11 }}>{graphText.docCount(node.docCount)}</Text> : null}
-                  </Space>
-                </List.Item>
-              )}
-            />
-          </Card>
-          {selectedKb && (
-            <FusionPanel kbId={selectedKb} onChanged={loadGraph} />
-          )}
+          <Tabs
+            size="small"
+            style={{ height: "100%" }}
+            items={[
+              {
+                key: "edit",
+                label: lang === "zh" ? "编辑" : "Edit",
+                children: (
+                  <div style={{ maxHeight: "calc(100vh - 290px)", overflowY: "auto" }}>
+                    <Space direction="vertical" style={{ width: "100%" }} size={10}>
+                      <Card size="small" title={t.knowledge.add_entity}>
+                        <Form form={form} onFinish={addEntity} layout="vertical" size="small" autoComplete="off">
+                          <Form.Item name="name" label={t.knowledge.entity_name} rules={[{ required: true }]}>
+                            <Input />
+                          </Form.Item>
+                          <Form.Item name="entity_type" label={t.knowledge.entity_type}>
+                            <Input />
+                          </Form.Item>
+                          <Button type="primary" htmlType="submit" icon={<PlusOutlined />} block>
+                            {t.knowledge.add_entity}
+                          </Button>
+                        </Form>
+                      </Card>
+                      <Card size="small" title={t.knowledge.relation}>
+                        <Form form={edgeForm} onFinish={addRelation} layout="vertical" size="small" autoComplete="off">
+                          <Form.Item name="source_id" label={graphText.relSource} rules={[{ required: true }]}>
+                            <Input placeholder={graphText.relSourcePh} />
+                          </Form.Item>
+                          <Form.Item name="target_id" label={graphText.relTarget} rules={[{ required: true }]}>
+                            <Input placeholder={graphText.relTargetPh} />
+                          </Form.Item>
+                          <Form.Item name="relation_type" label={t.knowledge.relation_type}>
+                            <Input />
+                          </Form.Item>
+                          <Button type="primary" htmlType="submit" icon={<PlusOutlined />} block>
+                            {t.knowledge.relation}
+                          </Button>
+                        </Form>
+                      </Card>
+                    </Space>
+                  </div>
+                ),
+              },
+              {
+                key: "entities",
+                label: graphText.entityList,
+                children: (
+                  <Card size="small">
+                    <List
+                      size="small"
+                      dataSource={view.nodes}
+                      style={{ maxHeight: "calc(100vh - 320px)", overflowY: "auto" }}
+                      locale={{ emptyText: <Empty description={t.common.loading} /> }}
+                      renderItem={(node: GraphNode) => (
+                        <List.Item
+                          style={{ cursor: "pointer", background: node.id === focusId ? "#fff7e6" : undefined }}
+                          onClick={() => { setSearchFocus(false); setFocusId(node.id === focusId ? null : node.id); }}
+                          actions={[
+                            <Button type="link" size="small"
+                              onClick={(e) => { e.stopPropagation(); setDetailId(node.id); setDetailOpen(true); }}
+                            >
+                              {lang === "zh" ? "详情" : "Info"}
+                            </Button>,
+                            <Button type="link" danger size="small" icon={<DeleteOutlined />}
+                              onClick={(e) => { e.stopPropagation(); deleteEntity(node.id); }} />,
+                          ]}
+                        >
+                          <Space>
+                            <Tag style={{ marginInlineEnd: 0 }} color={groupColorOf(node)}>
+                              {typeDisplayName(node.type || "entity", lang)}
+                            </Tag>
+                            <Text>{node.label}</Text>
+                            {node.source === "auto"
+                              ? <Tag color="orange">{graphText.auto}</Tag>
+                              : <Tag>{graphText.manual}</Tag>}
+                            {node.docCount ? <Text type="secondary" style={{ fontSize: 11 }}>{graphText.docCount(node.docCount)}</Text> : null}
+                          </Space>
+                        </List.Item>
+                      )}
+                    />
+                  </Card>
+                ),
+              },
+              {
+                key: "fusion",
+                label: lang === "zh" ? "融合审核" : "Fusion review",
+                children: selectedKb
+                  ? <FusionPanel kbId={selectedKb} onChanged={loadGraph} />
+                  : <Empty description={t.knowledge.title} />,
+              },
+            ]}
+          />
         </div>
       </div>
       <OntologyModal
