@@ -113,9 +113,6 @@ export default function KnowledgeGraphPage() {
   };
   const chartRef = useRef<any>(null);
   const focusIdRef = useRef<string | null>(null);
-  // 布局坐标缓存（按库持久化到 localStorage，归一化 0-1 坐标）：刷新页面/轮询
-  // 刷新时节点从原位置微调而不是从头力导向模拟——根治「每次刷新剧烈抖动」
-  const layoutCacheRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const [bases, setBases] = useState<any[]>([]);
   const [selectedKb, setSelectedKb] = useState<string | null>(null);
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [] });
@@ -168,18 +165,6 @@ export default function KnowledgeGraphPage() {
   }, [selectedKb, t]);
 
   useEffect(() => { loadGraph(); }, [selectedKb]);
-
-  // 切库时载入该库的布局缓存（localStorage）
-  useEffect(() => {
-    layoutCacheRef.current = new Map();
-    if (!selectedKb) return;
-    try {
-      const raw = localStorage.getItem(`kg_layout_${selectedKb}`);
-      if (raw) layoutCacheRef.current = new Map(JSON.parse(raw) as [string, { x: number; y: number }][]);
-    } catch {
-      /* 损坏缓存静默忽略 */
-    }
-  }, [selectedKb]);
 
   // 全库度数（Obsidian 以链接数决定节点大小，聚焦视图下仍按全库度数缩放）
   const degree = useMemo(() => {
@@ -266,38 +251,6 @@ export default function KnowledgeGraphPage() {
     };
   }, [graphData, focusId, viewSize, degree, searchFocus]);
 
-  // 布局收敛后从实例读出节点坐标持久化（归一化），供下次刷新平滑复用。
-  // 力导向的运行时坐标不在 getOption().data 里，须走 getModel 的 getItemLayout
-  useEffect(() => {
-    if (!selectedKb) return;
-    const t = setTimeout(() => {
-      const inst = chartRef.current?.getEchartsInstance?.();
-      const seriesModel = inst?.getModel?.()?.getSeriesByIndex?.(0);
-      const data = seriesModel?.getData?.();
-      const w = inst?.getWidth?.();
-      const h = inst?.getHeight?.();
-      if (!data || !w || !h) return;
-      const next = new Map<string, { x: number; y: number }>();
-      const count = data.count();
-      for (let i = 0; i < count; i++) {
-        const name = data.getName(i);
-        const layout = data.getItemLayout(i);
-        if (name && Array.isArray(layout) && layout.length >= 2 && isFinite(layout[0]) && isFinite(layout[1])) {
-          next.set(name, { x: +(layout[0] / w).toFixed(4), y: +(layout[1] / h).toFixed(4) });
-        }
-      }
-      if (next.size >= 5) {
-        layoutCacheRef.current = next;
-        try {
-          localStorage.setItem(`kg_layout_${selectedKb}`, JSON.stringify(Array.from(next)));
-        } catch {
-          /* 存储满静默忽略 */
-        }
-      }
-    }, 3000);
-    return () => clearTimeout(t);
-  }, [view, selectedKb]);
-
   // 分组维度：type 优先（≥2 种类型时按类型分色），否则退回 auto/manual 来源
   const grouping = useMemo(() => {
     const nodes = graphData.nodes;
@@ -367,26 +320,16 @@ export default function KnowledgeGraphPage() {
     const nodeCount = view.nodes.length;
     if (nodeCount === 0) return {};
     const repulsion = Math.min(600, 150 + nodeCount * 1.1);
-    // 布局坐标复用：缓存命中过半时节点从原位置起步且关闭布局动画——
-    // 刷新页面/轮询刷新不再从头力导向模拟（根治剧烈抖动）
-    const estW = Math.max(600, Math.min(window.innerWidth - 620, 1500));
-    const estH = Math.max(400, window.innerHeight - 260);
-    const cache = layoutCacheRef.current;
-    let cachedCount = 0;
     const nodes = view.nodes.map((n) => {
       const deg = degree.get(n.id) || 0;
       const size = Math.min(26, 3 + Math.sqrt(deg) * 1.35);
       // 搜索/点击选中的目标节点显著化：紫色放大+标签强制显示——
       // focusId 不在采样视图时由 view 注入逻辑把它拉进图，这里保证肉眼可见
       const isFocus = n.id === focusId;
-      // 缓存 key=节点名（与持久化侧 getName 一致）
-      const pos = cache.get(n.label);
-      if (pos) cachedCount += 1;
       return {
         id: n.id,
         name: n.label,
         category: groupIndexOf(n),
-        ...(pos ? { x: +(pos.x * estW).toFixed(1), y: +(pos.y * estH).toFixed(1) } : {}),
         symbolSize: isFocus ? Math.max(size, 22) : size,
         label: { show: labelsVisible && (isFocus || size >= 10) },
         itemStyle: isFocus
@@ -439,15 +382,13 @@ export default function KnowledgeGraphPage() {
         roam: true,
         draggable: true,
         // 圆环初始布局 + 较强向心力：整体轮廓收敛成近似圆形团聚（Obsidian 观感）
-        // 缓存命中过半：节点带坐标起步，布局动画关闭（完全不抖）；
-        // 首次打开（无缓存）保留圆环初值+动画收敛一次
         initLayout: "circular",
         force: {
           repulsion,
           edgeLength: [55, 85],
           gravity: 0.38,
           // 节点多时关闭布局动画（O(n²) 每帧计算会卡），直接呈现收敛结果
-          layoutAnimation: nodeCount <= 250 && cachedCount < nodeCount * 0.5,
+          layoutAnimation: nodeCount <= 250,
         },
         categories: grouping?.items.map((g) => ({ name: g.name })) || [],
         data: nodes,
