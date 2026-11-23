@@ -36,39 +36,11 @@ interface GraphData {
 // 聚焦邻域时不裁剪，保证高亮完整
 const MAX_VIEW_EDGES = 2500;
 
-// Obsidian 风格柔和分组色板：来源分组的轮转色板
+// Obsidian 风格柔和分组色板：type 优先分色，来源兜底，按序轮转
 const GROUP_PALETTE = [
   "#8a7dff", "#4ec9b0", "#f7c65d", "#e06c9f", "#61afef",
   "#98c379", "#ff9f6a", "#6bcfff", "#d19cf5", "#e8a0a0",
 ];
-
-// 实体类型固定色映射：跨知识库一致（同一类型永远同一颜色），
-// 未登记类型/占比最高类型统一中性灰
-const TYPE_COLORS: Record<string, string> = {
-  工艺: "#8a7dff",
-  缺陷: "#e06c75",
-  设备: "#61afef",
-  材料: "#98c379",
-  指标: "#f7c65d",
-  标准: "#56b6c2",
-  部件: "#ff9f6a",
-  组织: "#d19cf5",
-  人员: "#e8a0a0",
-  术语: "#6bcfff",
-  concept: "#7f8b9e",
-  term: "#6bcfff",
-  person: "#e8a0a0",
-  location: "#d19cf5",
-  organization: "#ff9f6a",
-  standard: "#56b6c2",
-  material: "#98c379",
-  equipment: "#61afef",
-  process: "#8a7dff",
-};
-
-function typeColor(type: string): string {
-  return TYPE_COLORS[type] ?? NEUTRAL_NODE_COLOR;
-}
 
 // 占比最高的类型用中性色（Obsidian 默认是中性灰点，彩色只用于少数分组），
 // 否则整片同色圆点会像「紫色海洋」
@@ -292,15 +264,12 @@ export default function KnowledgeGraphPage() {
       nodes,
       edges: edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
     };
-  // deps 用条件化的 focusKey：普通点击（非搜索聚焦）focusId 变化不重建 view，
-  // 避免布局重排；搜索聚焦需要 view 随 focusId 重建（子图过滤）
-  }, [graphData, viewSize, degree, searchFocus, searchFocus ? focusId : null]);
+  }, [graphData, focusId, viewSize, degree, searchFocus]);
 
   // 布局收敛后从实例读出节点坐标持久化（归一化），供下次刷新平滑复用。
-  // 力导向的运行时坐标不在 getOption().data 里，须走 getModel 的 getItemLayout。
-  // 只在总览态写入：搜索聚焦/选中态的子图坐标会污染全图缓存
+  // 力导向的运行时坐标不在 getOption().data 里，须走 getModel 的 getItemLayout
   useEffect(() => {
-    if (!selectedKb || searchFocus || focusId) return;
+    if (!selectedKb) return;
     const t = setTimeout(() => {
       const inst = chartRef.current?.getEchartsInstance?.();
       const seriesModel = inst?.getModel?.()?.getSeriesByIndex?.(0);
@@ -335,14 +304,26 @@ export default function KnowledgeGraphPage() {
     if (nodes.length === 0) return null;
     const types = [...new Set(nodes.map((n) => n.type || "entity"))];
     if (types.length > 1) {
-      // 类型固定色映射：同一类型跨库永远同一颜色（style 统一）
+      const counts = new Map<string, number>();
+      for (const n of nodes) {
+        const key = n.type || "entity";
+        counts.set(key, (counts.get(key) || 0) + 1);
+      }
+      let dominant = types[0];
+      for (const t of types) {
+        if ((counts.get(t) || 0) > (counts.get(dominant) || 0)) dominant = t;
+      }
+      let paletteIndex = 0;
       return {
         dim: "type" as const,
-        items: types.map((t) => ({
-          key: t,
-          name: typeDisplayName(t, lang),
-          color: typeColor(t),
-        })),
+        items: types.map((t) => {
+          if (t === dominant) {
+            return { key: t, name: typeDisplayName(t, lang), color: NEUTRAL_NODE_COLOR };
+          }
+          const color = GROUP_PALETTE[paletteIndex % GROUP_PALETTE.length];
+          paletteIndex += 1;
+          return { key: t, name: typeDisplayName(t, lang), color };
+        }),
       };
     }
     const sources = [...new Set(nodes.map((n) => n.source || "manual"))];
@@ -386,9 +367,6 @@ export default function KnowledgeGraphPage() {
     const nodeCount = view.nodes.length;
     if (nodeCount === 0) return {};
     const repulsion = Math.min(600, 150 + nodeCount * 1.1);
-    // 节点大小库内归一：按「度数/库内最大度数」比例映射到固定区间（5-20px），
-    // 不同库呈现同构的大小分布（少量大 hub + 大量小点），跨库风格一致
-    const maxDeg = Math.max(1, ...Array.from(degree.values()));
     // 布局坐标复用：缓存命中过半时节点从原位置起步且关闭布局动画——
     // 刷新页面/轮询刷新不再从头力导向模拟（根治剧烈抖动）
     const estW = Math.max(600, Math.min(window.innerWidth - 620, 1500));
@@ -397,7 +375,7 @@ export default function KnowledgeGraphPage() {
     let cachedCount = 0;
     const nodes = view.nodes.map((n) => {
       const deg = degree.get(n.id) || 0;
-      const size = 5 + 15 * Math.sqrt(deg / maxDeg);
+      const size = Math.min(26, 3 + Math.sqrt(deg) * 1.35);
       // 搜索/点击选中的目标节点显著化：紫色放大+标签强制显示——
       // focusId 不在采样视图时由 view 注入逻辑把它拉进图，这里保证肉眼可见
       const isFocus = n.id === focusId;
@@ -501,8 +479,6 @@ export default function KnowledgeGraphPage() {
         },
       }],
     };
-  // focusId 在 deps 里：点击重建 option 时 data 全量携带持久化坐标 +
-  // 命中过半即关动画 → 从缓存位置直接落位不抖。紫色选中放大在此处渲染。
   }, [view, grouping, degree, groupIndexOf, groupColorOf, isDark, graphText, labelsVisible, focusId]);
 
   // onEvents 需保持稳定引用（echarts-for-react 按引用重绑），最新 focusId 走 ref
