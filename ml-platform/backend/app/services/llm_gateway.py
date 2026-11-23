@@ -619,13 +619,18 @@ def _build_llm_request(
     # - structured_output「结构化输出」+ response_json 调用标志：openai 系
     #   格式注入 response_format json_object（智能体 JSON 合同调用启用）
     capabilities = model_cfg.get("capabilities") if isinstance(model_cfg.get("capabilities"), list) else []
-    # web_search 默认按档案 capabilities；调用方可显式禁用（KG 深度抽取等
-    # 结构化批任务注入联网工具会让模型行为飘忽/输出空——2026-11-23 实测）
-    wants_web_search = (
-        ("web_search" in capabilities and provider in ("anthropic", "responses"))
-        if web_search is not None
-        else (web_search and provider in ("anthropic", "responses"))
-    )
+    # web_search 三态：None=按档案 capabilities（默认，调用方不传时行为不变）；
+    # True=强制注入；False=强制不注入（KG 深度抽取等结构化批任务——注入联网
+    # 工具会让模型行为飘忽/输出空，2026-11-23 实测）。仅 anthropic/responses
+    # 格式有官方 server tool，其余格式不注入。
+    if web_search is False:
+        wants_web_search = False
+    elif web_search is True:
+        wants_web_search = provider in ("anthropic", "responses")
+    else:
+        wants_web_search = (
+            "web_search" in capabilities and provider in ("anthropic", "responses")
+        )
     wants_json = response_json and "structured_output" in capabilities and provider in ("openai_compatible", "responses")
     if provider == "anthropic":
         system_text = "\n\n".join(
