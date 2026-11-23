@@ -342,22 +342,20 @@ export default function KnowledgeGraphPage() {
     const nodes = view.nodes.map((n) => {
       const deg = degree.get(n.id) || 0;
       const size = 5 + 15 * Math.sqrt(deg / maxDeg);
-      // 搜索/点击选中的目标节点显著化：紫色放大+标签强制显示——
-      // focusId 不在采样视图时由 view 注入逻辑把它拉进图，这里保证肉眼可见
-      const isFocus = n.id === focusId;
+      // 选中节点的高亮不在此处渲染（focusId 不进 option deps）——进 deps 会让
+      // 每次点击全量重建 option → 力导向从头模拟 → 其它节点疯狂抖动。
+      // 高亮由下方增量 effect 以「锁定当前坐标的全量 data」更新，零重排。
       return {
         id: n.id,
         name: n.label,
         category: groupIndexOf(n),
-        symbolSize: isFocus ? Math.max(size, 22) : size,
-        label: { show: labelsVisible && (isFocus || size >= 10) },
-        itemStyle: isFocus
-          ? { color: "#8a7dff", opacity: 1, borderColor: "#6a5acd", borderWidth: 2 }
-          : {
-              color: groupColorOf(n),
-              // 小节点淡化：度数越低越透明，减轻低频实体「点海」的视觉压迫
-              opacity: 0.55 + Math.min(0.45, (deg / 16) * 0.45),
-            },
+        symbolSize: size,
+        label: { show: labelsVisible && size >= 10 },
+        itemStyle: {
+          color: groupColorOf(n),
+          // 小节点淡化：度数越低越透明，减轻低频实体「点海」的视觉压迫
+          opacity: 0.55 + Math.min(0.45, (deg / 16) * 0.45),
+        },
         raw: n,
       };
     });
@@ -439,7 +437,51 @@ export default function KnowledgeGraphPage() {
         },
       }],
     };
-  }, [view, grouping, degree, groupIndexOf, groupColorOf, isDark, graphText, labelsVisible, focusId]);
+  }, [view, grouping, degree, groupIndexOf, groupColorOf, isDark, graphText, labelsVisible]);
+
+  // 选中节点高亮：增量更新（focusId 不进 option deps——进 deps 会让每次点击
+  // 全量重建 option → 力导向从头模拟 → 其它节点疯狂抖动）。
+  // 关键：全量 data 每项带「当前显示坐标」（getItemLayout），位置零重排；
+  // 选中节点紫色放大+标签强制，其余节点还原基础样式。
+  const prevFocusRef = useRef<string | null>(null);
+  useEffect(() => {
+    const inst = chartRef.current?.getEchartsInstance?.();
+    const seriesModel = inst?.getModel?.()?.getSeriesByIndex?.(0);
+    const seriesData = seriesModel?.getData?.();
+    if (!inst || !seriesData) return;
+    const count = seriesData.count();
+    if (count === 0) return;
+    const full: Record<string, unknown>[] = [];
+    const degreeMax = Math.max(1, ...Array.from(degree.values()));
+    for (let i = 0; i < count; i++) {
+      const name = seriesData.getName(i);
+      const layout = seriesData.getItemLayout(i);
+      const rawItem = (seriesData.getRawDataItem(i) ?? {}) as Record<string, any>;
+      const deg = degree.get(rawItem?.raw?.id ?? "") || 0;
+      const size = 5 + 15 * Math.sqrt(deg / degreeMax);
+      const isTarget = !!focusId && rawItem?.raw?.id === focusId;
+      const base = {
+        id: rawItem?.id ?? name,
+        name,
+        x: Array.isArray(layout) ? layout[0] : undefined,
+        y: Array.isArray(layout) ? layout[1] : undefined,
+        symbolSize: isTarget ? Math.max(size, 22) : size,
+        label: { show: labelsVisible && (isTarget || size >= 10) },
+        itemStyle: isTarget
+          ? { color: "#8a7dff", opacity: 1, borderColor: "#6a5acd", borderWidth: 2 }
+          : {
+              color: groupColorOf(rawItem?.raw as GraphNode),
+              opacity: 0.55 + Math.min(0.45, (deg / 16) * 0.45),
+            },
+      };
+      full.push(base);
+    }
+    inst.setOption(
+      { series: [{ data: full, force: { layoutAnimation: false } }] },
+      { lazyUpdate: true },
+    );
+    prevFocusRef.current = focusId;
+  }, [focusId, view, labelsVisible, degree, groupColorOf]);
 
   // onEvents 需保持稳定引用（echarts-for-react 按引用重绑），最新 focusId 走 ref
   const chartEvents = useMemo(() => ({

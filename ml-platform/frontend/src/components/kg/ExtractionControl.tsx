@@ -95,7 +95,15 @@ export default function ExtractionControl({
         if (["succeeded", "failed", "cancelled"].includes(data.status)) {
           stopPolling();
           setCancelling(false);
-          if (data.status === "succeeded") {
+          if (data.status === "succeeded" && data.total_units === 0 && (lastDoneRef.current <= 0)) {
+            // 全部缓存命中（空跑）：该库所有分片此前均已抽取完成
+            message.info(
+              zh
+                ? "该知识库的所有分片均已抽取完成，本次无新增内容可抽取；如需重建图谱请先增补/修改文档后重试"
+                : "All chunks are already extracted; add or update documents to re-extract",
+            );
+            onExtracted();
+          } else if (data.status === "succeeded") {
             message.success(
               zh
                 ? `深度抽取完成：实体 ${data.entities_found}、关系 ${data.relations_found}`
