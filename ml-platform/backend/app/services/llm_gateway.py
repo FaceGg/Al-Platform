@@ -12,6 +12,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import threading
 import time
 import urllib.parse
 from contextlib import contextmanager
@@ -38,6 +39,27 @@ logger = logging.getLogger(__name__)
 _HTTP_CLIENT = httpx.Client(
     limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
 )
+
+_CLIENT_LOCK = threading.Lock()
+
+
+def reset_http_client() -> None:
+    """关闭并重建共享出网 client（celery prefork 子进程初始化时调用）。
+
+    httpx.Client 不是 fork 安全的：MainProcess 建立的连接池被 fork 出的
+    worker 子进程继承后，父子进程共用同一批底层 socket，请求会静默返回
+    空响应/卡死（2026-11-23 KG 深度抽取全量 empty_completion 实证）。
+    子进程初始化时强制重建连接池即可根治。
+    """
+    global _HTTP_CLIENT
+    with _CLIENT_LOCK:
+        try:
+            _HTTP_CLIENT.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _HTTP_CLIENT = httpx.Client(
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
+        )
 
 # 流式调用并发上限：多个长流式 SSE 下载（每个持续数分钟、数 MB）同时在
 # 途时互相挤占出网带宽，单连接被摊薄成涓流直至断流（2026-11-17 实测：
@@ -565,6 +587,7 @@ def _strip_system_messages(messages: list[dict]) -> list[dict]:
 def _build_llm_request(
     config, messages: list[dict], temperature: float, max_tokens: int,
     thinking_level: str | None = None, response_json: bool = False,
+    web_search: bool | None = None,
 ) -> tuple[str, dict, dict]:
     """按 API 格式构造请求（url/headers/body）。三格式均走 SSE 流式。
 
@@ -596,7 +619,13 @@ def _build_llm_request(
     # - structured_output「结构化输出」+ response_json 调用标志：openai 系
     #   格式注入 response_format json_object（智能体 JSON 合同调用启用）
     capabilities = model_cfg.get("capabilities") if isinstance(model_cfg.get("capabilities"), list) else []
-    wants_web_search = "web_search" in capabilities and provider in ("anthropic", "responses")
+    # web_search 默认按档案 capabilities；调用方可显式禁用（KG 深度抽取等
+    # 结构化批任务注入联网工具会让模型行为飘忽/输出空——2026-11-23 实测）
+    wants_web_search = (
+        ("web_search" in capabilities and provider in ("anthropic", "responses"))
+        if web_search is not None
+        else (web_search and provider in ("anthropic", "responses"))
+    )
     wants_json = response_json and "structured_output" in capabilities and provider in ("openai_compatible", "responses")
     if provider == "anthropic":
         system_text = "\n\n".join(
@@ -1076,6 +1105,8 @@ def chat_completion(
     timeout_floor: float | None = None,
     thinking_level: str | None = None,
     response_json: bool = False,
+    stream: bool = True,
+    web_search: bool | None = None,
 ) -> tuple[str | None, dict, str | None]:
     """Synchronous completion through the resolved config, with egress audit.
 
@@ -1128,16 +1159,79 @@ def chat_completion(
     url, headers, body = _build_llm_request(
         config, messages, resolved_temperature, amplified_max_tokens, thinking_level,
         response_json=response_json,
+        web_search=web_search,
     )
     reply_parts: list[str] = []
     reasoning_parts: list[str] = []
     usage: dict = {}
     status_code: int = 0
+    data: dict = {}
+    # 非流式通道（stream=False）：一次性 POST 等完整 JSON。当网络出口对
+    # SSE 流式连接干扰严重（200 头到达后 body 卡死，LLMStreamStalled 大面积
+    # 出现——2026-11-23 KG 深度抽取实测）时，批处理类调用方（KG 深度抽取等）
+    # 可传 stream=False 走本通道。非流式等待整响应，超时保底 240s（推理型
+    # 思考+生成超过档案默认 60s）。三格式响应归一为 choices/usage 形态后
+    # 复用下方既有审计与解析收尾。
+    if not stream:
+        body = {**body, "stream": False}
+        nonstream_timeout = max(effective_timeout, 240)
     try:
         # 进入流式槽位前按平台选项刷新并发容量（多进程各自生效；主键查询
         # 微秒级，相对分钟级流式调用可忽略）
         refresh_stream_gate(db)
-        with _stream_slot(), _HTTP_CLIENT.stream(
+        if not stream:
+            with _stream_slot():
+                response = _HTTP_CLIENT.post(
+                    url,
+                    headers=headers,
+                    json=body,
+                    timeout=nonstream_timeout,
+                )
+                status_code = response.status_code
+                if status_code != 200:
+                    data = {"raw": response.text[:500]}
+                else:
+                    raw = response.json()
+                    if config.provider == "anthropic":
+                        blocks = raw.get("content") or []
+                        content_text = "".join(
+                            b.get("text", "") for b in blocks if b.get("type") == "text"
+                        )
+                        reasoning_text = "".join(
+                            b.get("thinking", "") for b in blocks if b.get("type") == "thinking"
+                        )
+                        if not content_text and reasoning_text:
+                            # 推理型模型（deepseek anthropic 实测）可能把最终答案
+                            # 写进 thinking 且 text 块为空——用 thinking 全文兜底，
+                            # 调用方的 JSON 解析自带裸 {...} 截取
+                            content_text = reasoning_text
+                        raw_usage = raw.get("usage") or {}
+                        usage = {
+                            "prompt_tokens": raw_usage.get("input_tokens"),
+                            "completion_tokens": raw_usage.get("output_tokens"),
+                        }
+                        data = {
+                            "choices": [{
+                                "message": {
+                                    "content": content_text,
+                                    "reasoning_content": reasoning_text or None,
+                                },
+                            }],
+                            "usage": usage,
+                        }
+                    elif config.provider == "responses":
+                        output_text = raw.get("output_text") or ""
+                        usage = raw.get("usage") or {}
+                        data = {
+                            "choices": [{"message": {"content": output_text}}],
+                            "usage": usage,
+                        }
+                    else:
+                        choice = (raw.get("choices") or [{}])[0]
+                        message = choice.get("message") or {}
+                        data = {"choices": [{"message": message}], "usage": raw.get("usage") or {}}
+        else:
+          with _stream_slot(), _HTTP_CLIENT.stream(
             "POST",
             url,
             headers=headers,
@@ -1226,13 +1320,16 @@ def chat_completion(
                 int(usage.get("prompt_tokens") or 0)
                 + int(usage.get("completion_tokens") or 0)
             )
-        message_content: dict = {"content": "".join(reply_parts)}
-        # 思考文本随响应带出（截断留档 8k 字符——审计/任务档案可见推理过程；
-        # 调用方不读不影响，S1/S2/S4 由 llm_client 写入 run memory）
-        reasoning_text = "".join(reasoning_parts)
-        if reasoning_text:
-            message_content["reasoning_content"] = reasoning_text[:8000]
-        data = {
+        # 流式模式：从 SSE delta 缓冲重建响应；非流式模式：data 已由
+        # 非流式分支直接构造（reply_parts 为空缓冲，覆盖会丢内容）
+        if stream:
+            message_content: dict = {"content": "".join(reply_parts)}
+            # 思考文本随响应带出（截断留档 8k 字符——审计/任务档案可见推理过程；
+            # 调用方不读不影响，S1/S2/S4 由 llm_client 写入 run memory）
+            reasoning_text = "".join(reasoning_parts)
+            if reasoning_text:
+                message_content["reasoning_content"] = reasoning_text[:8000]
+            data = {
             "choices": [{"message": message_content}],
             "usage": usage,
         }

@@ -140,6 +140,12 @@ def extract_unit(
         db, config=config, messages=messages, temperature=0.1,
         max_tokens=settings.kg_llm_max_tokens,
         purpose=purpose, attempts=1, interval_seconds=2, max_wall_seconds=120,
+        # 出口对 SSE 流式干扰严重时（LLMStreamStalled 大面积出现）改走
+        # 非流式通道：一次性 POST 等完整 JSON（网关 stream=False 分支）；
+        # 并禁用 web_search 工具注入（结构化批任务注入联网工具会让模型
+        # 行为飘忽/输出空——2026-11-23 实测）
+        stream=False,
+        web_search=False,
     )
     if error:
         return None, usage, error
@@ -161,6 +167,8 @@ def extract_unit(
             db, config=config, messages=repair_messages, temperature=0.2,
             max_tokens=settings.kg_llm_max_tokens,
             purpose=purpose, attempts=1, interval_seconds=2, max_wall_seconds=120,
+            stream=False,
+            web_search=False,
         )
         if error2:
             return None, {**(usage or {}), **(usage2 or {})}, error2
@@ -277,6 +285,8 @@ def run_kg_extraction_job(job_id: str) -> None:
 
         deadline = time.monotonic() + settings.kg_llm_time_budget_seconds
         cancelled = False
+        # 失败分片重试队列（主循环收集，收尾统一重试一轮）
+        retry_chunks: list = []
         # 流式构建的实体链接索引：norm 名/别名 → 实体 id，跨分片累积
         from app.services.kg_names import existing_entity_index
 
@@ -352,6 +362,7 @@ def run_kg_extraction_job(job_id: str) -> None:
                     unit_row.error = (error or "")[:2000] if status == "failed" else None
                     if status == "failed":
                         job.llm_errors += 1
+                        retry_chunks.append((chunk_id, content))
                     elif status == "ok":
                         unit_row.result = unit.model_dump()
                         # 流式构建：分片结果即时并入图（画布随抽取实时成长）
@@ -369,6 +380,58 @@ def run_kg_extraction_job(job_id: str) -> None:
             else:
                 pool.shutdown(wait=True)
             job_engine.dispose()
+
+        # 失败分片自动重试一轮：出口故障呈间歇性（同一分片隔几分钟重跑即可
+        # 成功），跨时间重试一轮能熬过多数故障窗口；仍失败的留给断点续抽。
+        # 池已在 finally 收尾——重试轮用临时池。
+        if retry_chunks and not cancelled and time.monotonic() < deadline:
+            from concurrent.futures import ThreadPoolExecutor as _TPE
+
+            retry_pool = _TPE(max_workers=1, thread_name_prefix="kg-retry")
+            try:
+                retry_futures = {retry_pool.submit(_work, c): c for c in retry_chunks}
+                retry_pending = set(retry_futures)
+                while retry_pending:
+                    db.refresh(job)
+                    if job.cancel_requested or time.monotonic() > deadline:
+                        break
+                    done_set, retry_pending = wait(
+                        retry_pending, timeout=150, return_when=FIRST_COMPLETED,
+                    )
+                    for future in done_set:
+                        chunk_id, content, status, unit, error, calls = future.result()
+                        job.llm_calls += calls
+                        unit_row = (
+                            db.query(KgUnitResult)
+                            .filter(
+                                KgUnitResult.kb_id == kb.id,
+                                KgUnitResult.chunk_id == chunk_id,
+                                KgUnitResult.content_hash == _content_hash(content),
+                            )
+                            .first()
+                        )
+                        if unit_row is None:
+                            unit_row = KgUnitResult(
+                                kb_id=kb.id, chunk_id=chunk_id,
+                                content_hash=_content_hash(content), status=status,
+                            )
+                            db.add(unit_row)
+                        unit_row.status = status
+                        unit_row.error = (error or "")[:2000] if status == "failed" else None
+                        if status == "failed":
+                            job.llm_errors += 1
+                        elif status == "ok":
+                            unit_row.result = unit.model_dump()
+                            _merge_unit_into_graph(
+                                db, kb, ontology, unit.model_dump(),
+                                chunk_id=chunk_id, entity_index=entity_index,
+                            )
+                            job.entities_found += len(unit.entities)
+                            job.relations_found += len(unit.relations)
+                        job.done_units += 1
+                        db.commit()
+            finally:
+                retry_pool.shutdown(wait=True)
 
         # 流式构建：分片结果已即时并入图（_merge_unit_into_graph），无需最后
         # 统一聚合。融合自动归并收口一次 + 投影全量重建。

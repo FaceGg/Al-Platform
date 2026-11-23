@@ -118,3 +118,18 @@ from app.tasks import dataset_import_tasks  # noqa: E402,F401
 from app.tasks import annotation_return_tasks  # noqa: E402,F401
 from app.tasks import kubernetes_tasks  # noqa: E402,F401
 from app.tasks import recovery  # noqa: E402,F401
+
+# prefork 子进程初始化时重建网关出网 client：httpx.Client 不是 fork 安全的，
+# MainProcess 建立的连接池被 worker 子进程继承后父子共用底层 socket，请求会
+# 静默返回空响应（2026-11-23 KG 深度抽取全量 empty_completion 实证）
+from celery.signals import worker_process_init  # noqa: E402
+
+
+@worker_process_init.connect
+def _reset_llm_http_client(**kwargs):
+    try:
+        from app.services.llm_gateway import reset_http_client
+
+        reset_http_client()
+    except Exception:  # noqa: BLE001
+        pass

@@ -2039,3 +2039,15 @@ PageHeading desc / 内嵌说明条删除：①智能体中心→知识中心 tab
 **2026-11-23 追加二**：用户两反馈修复。①点击节点其它节点疯狂抖动（回退后必然存在）——focusId 移出 option deps，**高亮改「锁定当前坐标的全量 data」增量更新**（每项带 getItemLayout 当前坐标+基础样式，选中节点紫色放大；setOption 不触发布局重排）；注意 echarts graph setOption data 数组是全量替换语义，不能传部分项（上轮证伪）。②0/0 片 UX——全部缓存命中（空跑任务）轮询终态时提示「所有分片均已抽取完成，增补/修改文档后可重抽」，不再显示空进度条。测试：前端 7 passed+tsc，已部署。
 
 **2026-11-23 追加三**：用户需求「页面上标注已完成状态 + 新增重新提取」落地。①**终态状态标注**：抽取任务终态（succeeded/failed/cancelled）不再 4 秒后清空——工具条持续显示「✓ 已完成 · 实体 N · 关系 M（无新增分片）」绿标 / 「上次抽取失败（N 片失败）+续抽按钮」/「已取消」；页面刷新后由挂载恢复逻辑回填最近任务标注。②**重新提取**：深度抽取旁新增「重新提取」按钮（Popconfirm 确认「忽略已完成分片缓存，用当前模型与词表重做全部文档分片，图谱 LLM 层将重建」）→ 后端 force 参数：忽略 done_hashes 缓存+任务开始清 llm 层重建（与断点续抽互补：默认续抽只补失败/新增，force 全量重建）。③0/0 空跑提示（上一追加）延续：succeeded+total=0 时标注「（无新增分片）」。实测：点焊工艺库 force 重建 succeeded（17/18 片，1 片卡流失败可续抽），llm 层 35 实体（v4-pro 档案产物）+rules 389 共存，Neo4j 424/6057 同步。测试：KG 18（+force 单测）+前端 7 全绿。
+
+## 2026-11-23 追加三：KG 深度抽取出口故障全链根修（fork 连接池损坏 + web_search 注入 + thinking 兜底）
+
+用户连续报「抽取无进度/实体 0/画布不生长」。五层根因逐层剥离（每层都有实证）：
+
+1. **celery prefork 连接池损坏（主根因）**：`httpx.Client` 不是 fork 安全的——MainProcess 建立的网关共享出网 client（_HTTP_CLIENT 连接池）被 fork 出的 worker 子进程继承，父子共用底层 socket，**请求静默返回空响应**（200 但无内容→llm_empty_completion）。修复=`worker_process_init` 信号里 `reset_http_client()` 强制重建（llm_gateway 新增公开函数+celery_app 挂接）。**此根因影响全平台所有 celery 内 LLM 调用**（智能体 S1-S4/抽取/仲裁——历史「间歇性断连」高度疑似同根因）。
+2. **deepseek anthropic web_search 工具注入**：档案 capabilities 含 web_search 时网关给 anthropic 请求注入联网工具——结构化抽取任务注入联网工具让模型行为飘忽/输出空。修复=`chat_completion`/`_build_llm_request`/`with_retry` 加 `web_search` per-call 开关，KG 抽取与仲裁显式 `web_search=False`。
+3. **推理型 thinking 兜底**：deepseek anthropic 非流式响应可能只有 thinking 块（text 空）——thinking 全文兜底为 reply（parse_llm_json 自带裸 {...} 截取）。
+4. **出口间歇性故障补偿**：失败分片收尾自动重试一轮（retry_chunks 收集+临时池重跑）。
+5. **并发实证修正**：非流式并发 2 也全空——**出口对同一来源的并发 LLM 请求直接拒绝**（不限流式），`kg_llm_concurrency` 默认回退 1（串行唯一稳定，单分片靠输出压缩加速）。
+
+**实测闭环**：fork 修复部署后 force 重建 **succeeded 18/18 全部成功**（此前同库同参数全量失败），177 实体+136 关系入 llm 层，画布 468 节点，Neo4j 424/6057 同步。点击抖动修复（a6803e33 坐标锁定增量更新）与样式统一（0e66485a）保持有效。测试：KG 18+前端 7 全绿。

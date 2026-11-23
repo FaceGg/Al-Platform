@@ -370,6 +370,7 @@ def _llm_arbitrate(db, kb, pairs: list[tuple[str, str]]) -> list[dict] | None:
                       {"role": "user", "content": user}],
             temperature=0.1, max_tokens=2000,
             purpose="kg_fusion", attempts=2, interval_seconds=2, max_wall_seconds=120,
+            stream=False,
         )
         if error:
             return None

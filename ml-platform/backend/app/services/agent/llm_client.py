@@ -190,6 +190,8 @@ def chat_completion_with_retry(
     attempts: int = RECONNECT_MAX_ATTEMPTS,
     interval_seconds: int = RECONNECT_INTERVAL_SECONDS,
     max_wall_seconds: int = RECONNECT_MAX_WALL_SECONDS,
+    stream: bool = True,
+    web_search: bool | None = None,
 ) -> tuple[str | None, dict, str | None]:
     """带断线重连的网关调用，返回 (reply, usage, error)。
 
@@ -220,6 +222,8 @@ def chat_completion_with_retry(
                 # 自动注入 response_format（openai 系格式；anthropic 无标准
                 # 参数则忽略，仍靠提示词约束）
                 response_json=True,
+                stream=stream,
+                web_search=web_search,
             )
             # 思考文本透传（挂 usage dict 上，不改三层返回签名）：调用方
             # 可选写入 run memory 留档；非推理型为缺省。
