@@ -196,14 +196,21 @@ def retrieve_chunks(db, kb, query, top_k=5, metric="cosine", use_vector_store=Tr
                         chunk = db.query(Chunk).filter(Chunk.id == uuid_mod.UUID(chunk_id)).first()
                     except (ValueError, AttributeError):
                         chunk = None
+                    # DB 行内容优先（全量未截断）；metadata 缺 content 或
+                    # 索引键坏（"None"）时兜底——2026-11-23 chat sources 恒空实证。
+                    content = (chunk.content if chunk else "") or r["metadata"].get("content", "")
+                    if not content:
+                        continue
                     results.append({
                         "chunk_id": chunk_id,
                         "doc_id": str(chunk.doc_id) if chunk else "",
-                        "content": r["metadata"].get("content", ""),
+                        "content": content,
                         "score": round(r["score"], 4),
                         "source": "vector_store",
                     })
-                return _attach_filenames(db, results)
+                if results:
+                    return _attach_filenames(db, results)
+                # 快路径全部无效（陈年坏条目）→ 落 DB 全量路径
 
     chunks_query = db.query(Chunk).join(Document).filter(
         Document.kb_id == kb.id,

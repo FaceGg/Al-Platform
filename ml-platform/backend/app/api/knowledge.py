@@ -360,7 +360,7 @@ async def upload_document(
     db.flush()
 
     # Save chunks
-    chunk_ids: list[str] = []
+    chunk_objs: list[Chunk] = []
     chunk_texts: list[str] = []
     for i, (para, emb_str) in enumerate(zip(paragraphs, embedding_strs)):
         chunk = Chunk(
@@ -370,8 +370,13 @@ async def upload_document(
             embedding=emb_str,
         )
         db.add(chunk)
-        chunk_ids.append(str(chunk.id))
+        chunk_objs.append(chunk)
         chunk_texts.append(para)
+
+    # 先 flush 再收主键——2026-11-23 CI 首跑实证：commit 前 chunk.id 全为
+    # None，向量库索引键全变字面 "None"，检索快路径永远反查不到 chunk。
+    db.flush()
+    chunk_ids = [str(c.id) for c in chunk_objs]
 
     db.commit()
     db.refresh(doc)
@@ -387,7 +392,10 @@ async def upload_document(
         vstore.add(
             chunk_ids,
             vectors,
-            [{"doc_id": str(doc.id), "kb_id": kb_id, "filename": filename, "chunk_index": i}
+            # metadata 必须带 content（手动向量化路径一直带）——快路径直读
+            # metadata.content，缺了则 chat sources 恒空（2026-11-23 实证）。
+            [{"content": chunk_texts[i][:200], "doc_id": str(doc.id), "kb_id": kb_id,
+              "filename": filename, "chunk_index": i}
              for i in range(len(chunk_ids))],
         )
         vstore.save(os.path.join(os.path.dirname(__file__), "..", "..", "data", f"vs_{kb_id}.pkl"))

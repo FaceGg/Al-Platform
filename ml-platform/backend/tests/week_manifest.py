@@ -17,6 +17,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_engine_vector_store",
         "test_vector_store_deserialization_guard",
         "test_knowledge",
+        # 知识图谱五阶段流水线（2026-11-20 批次）：抽取/融合/投影/图查询
+        "test_kg_pipeline",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",

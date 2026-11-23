@@ -23,6 +23,15 @@ if config.config_file_name is not None:
 config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 target_metadata = Base.metadata
 
+
+def include_object(obj, name, type_, reflected, compare_to):
+    # PG 表达式索引（properties->>'source'，迁移 20261120_103 建立）无法用
+    # ORM 元数据等价表达：autogenerate 比较会恒判 remove 导致 check 门禁
+    # 永远漂移——按名排除（PG 专用，SQLite 上本就不存在该索引）。
+    if type_ == "index" and name == "ix_graph_entities_source_prop":
+        return False
+    return True
+
 for foreign_key_constraint in target_metadata.tables["model_library"].foreign_key_constraints:
     if foreign_key_constraint.referred_table.name == "training_jobs":
         foreign_key_constraint.name = "fk_model_library_training_job_id_training_jobs"
@@ -51,6 +60,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=connection.dialect.name != "sqlite",
+            include_object=include_object,
         )
         with context.begin_transaction():
             context.run_migrations()

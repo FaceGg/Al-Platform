@@ -189,7 +189,10 @@ def downgrade() -> None:
     if op.get_bind().dialect.name == "postgresql":
         op.drop_index("ix_graph_entities_source_prop", table_name="graph_entities")
     op.drop_index("ix_graph_entities_merged_into", table_name="graph_entities")
-    op.drop_constraint("fk_graph_entities_merged_into", "graph_entities", type_="foreignkey")
+    # SQLite 不支持裸 ALTER 约束——与 upgrade 的 batch 形态对称（CI 首跑
+    # 2026-11-23：裸 drop_constraint 使所有降级扫描用例在 SQLite 全灭）。
+    with op.batch_alter_table("graph_entities") as batch:
+        batch.drop_constraint("fk_graph_entities_merged_into", type_="foreignkey")
     op.drop_column("graph_entities", "aliases")
     op.drop_column("graph_entities", "merged_into")
     op.drop_column("knowledge_bases", "kg_ontology")
