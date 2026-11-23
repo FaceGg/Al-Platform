@@ -238,6 +238,9 @@ class Settings(BaseSettings):
     # （200 头到达 body 不结束）、非流式并发 2 秒回空响应，只有串行稳定。
     # 单分片加速靠输出压缩（每片实体≤10）；出口修复后可再评估并发。
     kg_llm_concurrency: int = 1
+    # 非流式通道开关：出口对 SSE 流式干扰严重时（LLMStreamStalled 大面积出现）
+    # 走一次性 POST 等完整 JSON 的非流式通道（2026-11-23 实测可用）；False=流式
+    kg_llm_use_nonstream: bool = True
     # 融合模糊候选的相似度阈值（difflib SequenceMatcher ratio）
     kg_fusion_fuzzy_threshold: float = 0.92
     # Neo4j 图存储投影：空 URI = 投影层禁用（图查询走 PG 兜底，功能不缺只慢）

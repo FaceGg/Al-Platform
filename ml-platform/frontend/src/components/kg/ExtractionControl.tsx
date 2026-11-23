@@ -20,9 +20,12 @@ interface JobStatus {
 export default function ExtractionControl({
   kbId,
   onExtracted,
+  onJobGraph,
 }: {
   kbId: string | null;
   onExtracted: () => void;
+  /** 抽取期间把「本次抽取结果」子图上报给页面（画布实时成长的数据源） */
+  onJobGraph?: (payload: unknown) => void;
 }) {
   const { t, lang } = useI18n();
   const zh = lang === "zh";
@@ -46,6 +49,8 @@ export default function ExtractionControl({
     stopPolling();
     setJob(null);
     setCancelling(false);
+    onJobGraph?.(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kbId]);
   useEffect(() => {
     // 页面刷新后恢复跟踪：只接续「最近 30 分钟内创建」的进行中任务——
@@ -89,7 +94,8 @@ export default function ExtractionControl({
         const data: JobStatus = res.data;
         setJob(data);
         // 实时成长：分片完成数变化时刷新画布（后端流式落库，图随抽取生长）；
-        // ≥4s 节流避免大库全量拉图过频
+        // ≥4s 节流避免大库全量拉图过频。抽取期间顺带把「本次抽取结果」子图
+        // 上报给页面（画布在抽取视图下展示的就是它，与进度条数字同源）
         if (
           data.done_units !== lastDoneRef.current &&
           Date.now() - lastRefreshRef.current > 4000
@@ -97,6 +103,12 @@ export default function ExtractionControl({
           lastDoneRef.current = data.done_units;
           lastRefreshRef.current = Date.now();
           onExtracted();
+          if (onJobGraph) {
+            apiClient
+              .get(`/knowledge/bases/${kb}/graph/extract/jobs/${jobId}/graph`)
+              .then((r) => onJobGraph(r.data))
+              .catch(() => {});
+          }
         }
         if (["succeeded", "failed", "cancelled"].includes(data.status)) {
           stopPolling();

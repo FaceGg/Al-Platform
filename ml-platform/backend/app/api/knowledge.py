@@ -1848,6 +1848,69 @@ def get_kg_job(
     }
 
 
+@router.get("/bases/{kb_id}/graph/extract/jobs/{job_id}/graph")
+def get_kg_job_graph(
+    kb_id: str,
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """本次抽取在图中产出的子图（节点/边形态同 GET /bases/{id}/graph）。
+
+    数据源是并入图时打的 properties.job_id 标签：与任务进度里的
+    「实体 N · 关系 M」同源，抽取期间画布展示的就是这份数据。
+    """
+    from app.models.knowledge import KgExtractionJob
+
+    kb = _owned_kb(db, kb_id, current_user)
+    job = db.query(KgExtractionJob).filter(
+        KgExtractionJob.id == uuid.UUID(job_id),
+        KgExtractionJob.kb_id == kb.id,
+    ).first()
+    if not job:
+        raise HTTPException(404, "Job not found")
+    job_key = str(job.id)
+    entities = db.query(GraphEntity).filter(
+        GraphEntity.kb_id == kb.id,
+        GraphEntity.merged_into.is_(None),
+        GraphEntity.properties["job_id"].as_string() == job_key,
+    ).all()
+    entity_ids = {e.id for e in entities}
+    # 关系先按起点走索引收窄到本次抽取的实体，再按标签过滤（避免全库关系表扫描）
+    relations = (
+        db.query(GraphRelation).filter(
+            GraphRelation.kb_id == kb.id,
+            GraphRelation.source_id.in_(entity_ids),
+            GraphRelation.properties["job_id"].as_string() == job_key,
+        ).all()
+        if entity_ids
+        else []
+    )
+    return {
+        "nodes": [
+            {
+                "id": str(e.id),
+                "name": e.name,
+                "entity_type": e.entity_type,
+                "aliases": e.aliases or [],
+                "properties": e.properties,
+            }
+            for e in entities
+        ],
+        "edges": [
+            {
+                "id": str(r.id),
+                "source": str(r.source_id),
+                "target": str(r.target_id),
+                "relation_type": r.relation_type,
+                "properties": r.properties,
+            }
+            for r in relations
+            if r.source_id in entity_ids and r.target_id in entity_ids
+        ],
+    }
+
+
 @router.post("/bases/{kb_id}/graph/extract/jobs/{job_id}/cancel")
 def cancel_kg_job(
     kb_id: str,

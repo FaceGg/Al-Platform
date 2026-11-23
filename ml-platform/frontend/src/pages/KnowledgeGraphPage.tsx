@@ -105,6 +105,8 @@ export default function KnowledgeGraphPage() {
     searchPh: "搜索实体，查看它的邻域",
     overview: "返回总览",
     inLibrary: "库内实体", viewOf: "当前视图",
+    // 抽取视图的工具条统计（与进度条数字同源）
+    jobExtracted: "本次抽取", relationsLabel: "关系",
     viewCap: "视图上限",
     viewCapHelp: "总览最多渲染的实体数量；库内超出时按连接数与词频优先采样（Top 枢纽 + 其关系），保证布局性能与可读性。聚焦邻域时不受此限制。",
     neighborhood: "邻域",
@@ -124,6 +126,7 @@ export default function KnowledgeGraphPage() {
     searchPh: "Search an entity to view its neighborhood",
     overview: "Back to overview",
     inLibrary: "In library", viewOf: "View",
+    jobExtracted: "This job", relationsLabel: "relations",
     viewCap: "View cap",
     viewCapHelp: "Max entities rendered in the overview; beyond it, top-connected entities are sampled (top hubs + their edges) for layout performance and readability. Focus mode is not capped.",
     neighborhood: "Neighborhood",
@@ -141,9 +144,14 @@ export default function KnowledgeGraphPage() {
   };
   const chartRef = useRef<any>(null);
   const focusIdRef = useRef<string | null>(null);
+  // 全图请求序号：只有最新一次请求的响应可以落到画布（见 loadGraph）
+  const loadSeqRef = useRef(0);
   const [bases, setBases] = useState<any[]>([]);
   const [selectedKb, setSelectedKb] = useState<string | null>(null);
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [] });
+  // 抽取中的「本次抽取结果」子图：非空时画布改画它（与进度条的数字同源），
+  // 任务结束或切回全图时清空
+  const [jobGraph, setJobGraph] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(false);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [viewSize, setViewSize] = useState(100);
@@ -164,77 +172,102 @@ export default function KnowledgeGraphPage() {
     }).catch(() => {});
   }, []);
 
+  // 后端图载荷（全图 / 本次抽取子图共用形态）→ 画布数据模型
+  const toGraphData = useCallback((data: any): GraphData => {
+    const nodes = (data?.nodes || []).map((n: any) => ({
+      id: n.id,
+      label: n.label ?? n.name ?? n.id,
+      type: n.type ?? n.entity_type ?? "entity",
+      source: n.properties?.source,
+      freq: n.properties?.freq ?? 0,
+      docCount: Array.isArray(n.properties?.doc_ids) ? n.properties.doc_ids.length : undefined,
+    }));
+    const edges = (data?.edges || []).map((edge: any) => ({
+      source: edge.source ?? edge.source_id,
+      target: edge.target ?? edge.target_id,
+      label: edge.label ?? edge.relation_type,
+      type: edge.type ?? edge.relation_type,
+      weight: Number(edge.properties?.weight ?? 1),
+    }));
+    return { nodes, edges };
+  }, []);
+
+  const handleJobGraph = useCallback(
+    (payload: unknown) => setJobGraph(payload ? toGraphData(payload as any) : null),
+    [toGraphData],
+  );
+
   const loadGraph = useCallback(() => {
     if (!selectedKb) return;
+    // 请求序号守卫：大库的全图响应可能比后来发起的小库请求晚到（「开发计划」
+    // 7,915 实体/66 万关系要数十秒）。过期的响应必须丢弃，否则会把当前选中库
+    // 的图覆盖成别的库——实测选「点焊工艺」画布却显示「开发计划」（2026-11-23）
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     apiClient.get("/knowledge/bases/" + selectedKb + "/graph")
       .then((res) => {
-        const data = res.data;
-        const nodes = (data.nodes || []).map((n: any) => ({
-          id: n.id,
-          label: n.label ?? n.name ?? n.id,
-          type: n.type ?? n.entity_type ?? "entity",
-          source: n.properties?.source,
-          freq: n.properties?.freq ?? 0,
-          docCount: Array.isArray(n.properties?.doc_ids) ? n.properties.doc_ids.length : undefined,
-        }));
-        const edges = (data.edges || []).map((edge: any) => ({
-          source: edge.source ?? edge.source_id,
-          target: edge.target ?? edge.target_id,
-          label: edge.label ?? edge.relation_type,
-          type: edge.type ?? edge.relation_type,
-          weight: Number(edge.properties?.weight ?? 1),
-        }));
-        setGraphData({ nodes, edges });
+        if (seq !== loadSeqRef.current) return;
+        setGraphData(toGraphData(res.data));
         setFocusId(null);
       })
-      .catch(() => message.error(t.common.error))
-      .finally(() => setLoading(false));
-  }, [selectedKb, t]);
+      .catch(() => { if (seq === loadSeqRef.current) message.error(t.common.error); })
+      .finally(() => { if (seq === loadSeqRef.current) setLoading(false); });
+  }, [selectedKb, t, toGraphData]);
 
-  useEffect(() => { loadGraph(); }, [selectedKb]);
+  useEffect(() => {
+    // 切库立即清掉上一个库的图与抽取视图（不残留成「下拉是 A、画布是 B」）；
+    // 同库刷新（loadGraph 被 refresh/抽取/编辑触发）不走这里，画布不闪空
+    setGraphData({ nodes: [], edges: [] });
+    setJobGraph(null);
+    loadGraph();
+  }, [selectedKb]);
+
+  // 画布数据源：抽取视图（本次抽取子图）优先，否则全图
+  const canvasData = jobGraph ?? graphData;
+  // 抽取视图节点少且都是刚抽出来的，放宽采样上限（尽量把本次结果画全）
+  const viewCap = jobGraph ? Math.max(viewSize, 400) : viewSize;
 
   // 全库度数（Obsidian 以链接数决定节点大小，聚焦视图下仍按全库度数缩放）
   const degree = useMemo(() => {
     const d = new Map<string, number>();
-    for (const e of graphData.edges) {
+    for (const e of canvasData.edges) {
       d.set(e.source, (d.get(e.source) || 0) + 1);
       d.set(e.target, (d.get(e.target) || 0) + 1);
     }
     return d;
-  }, [graphData.edges]);
+  }, [canvasData.edges]);
 
   // 视图模型：枢纽-卫星采样（Obsidian 观感的关键）——按度数取少量枢纽作骨架，
   // 再按边权重挂上低连接叶子实体，得到「少数大点 + 大量小点」的放射状结构；
   // 全量渲染 5 千实体时 echarts O(n²) 力导向不可行，故按 viewSize 采样。
   const view = useMemo((): GraphData => {
-    const all = graphData.nodes;
-    if (all.length === 0) return graphData;
+    const all = canvasData.nodes;
+    if (all.length === 0) return canvasData;
     // 搜索聚焦模式（用户期望：搜索后只显示目标节点及其直接相连节点，
     // Obsidian 式聚焦视图；其余节点隐藏）。点击节点/返回总览退出该模式。
     if (searchFocus && focusId) {
       const keep = new Set<string>([focusId]);
-      for (const e of graphData.edges) {
+      for (const e of canvasData.edges) {
         if (e.source === focusId) keep.add(e.target);
         if (e.target === focusId) keep.add(e.source);
       }
       const nodes = all.filter((n) => keep.has(n.id));
-      const edges = graphData.edges.filter(
+      const edges = canvasData.edges.filter(
         (e) => keep.has(e.source) && keep.has(e.target),
       );
       return { nodes, edges };
     }
-    if (all.length <= viewSize) return graphData;
+    if (all.length <= viewCap) return canvasData;
 
     const ranked = [...all].sort(
       (a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0)
         || (b.freq || 0) - (a.freq || 0),
     );
-    const hubCount = Math.min(80, Math.max(12, Math.round(viewSize * 0.2)));
+    const hubCount = Math.min(80, Math.max(12, Math.round(viewCap * 0.2)));
     const hubIds = new Set(ranked.slice(0, hubCount).map((n) => n.id));
     const keep = new Set(hubIds);
     const edges: GraphEdge[] = [];
-    const sortedEdges = [...graphData.edges].sort((a, b) => (b.weight || 0) - (a.weight || 0));
+    const sortedEdges = [...canvasData.edges].sort((a, b) => (b.weight || 0) - (a.weight || 0));
     // 第一遍：强边骨架（枢纽之间的主干连接）
     for (const e of sortedEdges) {
       const sHub = hubIds.has(e.source);
@@ -243,7 +276,7 @@ export default function KnowledgeGraphPage() {
       if (!sHub || !tHub) {
         const leaf = sHub ? e.target : e.source;
         if (!keep.has(leaf)) {
-          if (keep.size >= viewSize) continue;
+          if (keep.size >= viewCap) continue;
           keep.add(leaf);
         }
       }
@@ -251,8 +284,8 @@ export default function KnowledgeGraphPage() {
       edges.push(e);
     }
     // 第二遍：弱边挂低度数叶子实体（Obsidian 的「小点海」来源——连接稀疏的小实体）
-    if (keep.size < viewSize) {
-      const weakEdges = [...graphData.edges].sort((a, b) => (a.weight || 0) - (b.weight || 0));
+    if (keep.size < viewCap) {
+      const weakEdges = [...canvasData.edges].sort((a, b) => (a.weight || 0) - (b.weight || 0));
       for (const e of weakEdges) {
         const sHub = hubIds.has(e.source);
         const tHub = hubIds.has(e.target);
@@ -260,14 +293,14 @@ export default function KnowledgeGraphPage() {
         const leaf = sHub ? e.target : e.source;
         if (keep.has(leaf)) continue;
         if ((degree.get(leaf) || 0) > 12) continue;
-        if (keep.size >= viewSize) break;
+        if (keep.size >= viewCap) break;
         keep.add(leaf);
         if (edges.length < MAX_VIEW_EDGES) edges.push(e);
       }
     }
     if (focusId && !keep.has(focusId)) {
       keep.add(focusId);
-      for (const e of graphData.edges) {
+      for (const e of canvasData.edges) {
         if (e.source === focusId) keep.add(e.target);
         if (e.target === focusId) keep.add(e.source);
       }
@@ -277,11 +310,11 @@ export default function KnowledgeGraphPage() {
       nodes,
       edges: edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
     };
-  }, [graphData, focusId, viewSize, degree, searchFocus]);
+  }, [canvasData, focusId, viewCap, degree, searchFocus]);
 
   // 分组维度：type 优先（≥2 种类型时按类型分色），否则退回 auto/manual 来源
   const grouping = useMemo(() => {
-    const nodes = graphData.nodes;
+    const nodes = canvasData.nodes;
     if (nodes.length === 0) return null;
     const types = [...new Set(nodes.map((n) => n.type || "entity"))];
     if (types.length > 1) {
@@ -304,7 +337,7 @@ export default function KnowledgeGraphPage() {
         color: GROUP_PALETTE[i % GROUP_PALETTE.length],
       })),
     };
-  }, [graphData.nodes, graphText, lang]);
+  }, [canvasData.nodes, graphText, lang]);
 
   const groupIndexOf = useCallback((node: GraphNode): number => {
     if (!grouping) return 0;
@@ -319,12 +352,12 @@ export default function KnowledgeGraphPage() {
   }, [grouping, groupIndexOf]);
 
   const searchOptions = useMemo(
-    () => graphData.nodes.map((n) => ({ value: n.label, id: n.id })),
-    [graphData.nodes],
+    () => canvasData.nodes.map((n) => ({ value: n.label, id: n.id })),
+    [canvasData.nodes],
   );
 
   const focusByLabel = (label: string) => {
-    const node = graphData.nodes.find((n) => n.label === label);
+    const node = canvasData.nodes.find((n) => n.label === label);
     if (node) {
       setSearchFocus(true);
       setFocusId(node.id);
@@ -339,6 +372,9 @@ export default function KnowledgeGraphPage() {
     // 节点大小库内归一：按「度数/库内最大度数」比例映射到固定区间（5-20px），
     // 不同库呈现同构的大小分布（少量大 hub + 大量小点），跨库风格一致
     const maxDeg = Math.max(1, ...Array.from(degree.values()));
+    // 抽取视图节点少且都是刚抽出来的：全部显示名称（受「隐藏文字」开关约束），
+    // 不按大小隐藏
+    const showAllLabels = !!jobGraph;
     const nodes = view.nodes.map((n) => {
       const deg = degree.get(n.id) || 0;
       const size = 5 + 15 * Math.sqrt(deg / maxDeg);
@@ -350,7 +386,7 @@ export default function KnowledgeGraphPage() {
         name: n.label,
         category: groupIndexOf(n),
         symbolSize: size,
-        label: { show: labelsVisible && size >= 10 },
+        label: { show: labelsVisible && (showAllLabels || size >= 10) },
         itemStyle: {
           color: groupColorOf(n),
           // 小节点淡化：度数越低越透明，减轻低频实体「点海」的视觉压迫
@@ -437,7 +473,7 @@ export default function KnowledgeGraphPage() {
         },
       }],
     };
-  }, [view, grouping, degree, groupIndexOf, groupColorOf, isDark, graphText, labelsVisible]);
+  }, [view, grouping, degree, groupIndexOf, groupColorOf, isDark, graphText, labelsVisible, !!jobGraph]);
 
   // 选中节点高亮：增量更新（focusId 不进 option deps——进 deps 会让每次点击
   // 全量重建 option → 力导向从头模拟 → 其它节点疯狂抖动）。
@@ -445,6 +481,9 @@ export default function KnowledgeGraphPage() {
   // 选中节点紫色放大+标签强制，其余节点还原基础样式。
   const prevFocusRef = useRef<string | null>(null);
   useEffect(() => {
+    // 没有选中、也没有「刚取消的选中」可还原时不动图表：否则每次数据更新
+    // （如抽取视图长出新节点）都会把所有节点钉在当前坐标并关掉布局动画
+    if (!focusId && !prevFocusRef.current) return;
     const inst = chartRef.current?.getEchartsInstance?.();
     const seriesModel = inst?.getModel?.()?.getSeriesByIndex?.(0);
     const seriesData = seriesModel?.getData?.();
@@ -466,7 +505,7 @@ export default function KnowledgeGraphPage() {
         x: Array.isArray(layout) ? layout[0] : undefined,
         y: Array.isArray(layout) ? layout[1] : undefined,
         symbolSize: isTarget ? Math.max(size, 22) : size,
-        label: { show: labelsVisible && (isTarget || size >= 10) },
+        label: { show: labelsVisible && (isTarget || !!jobGraph || size >= 10) },
         itemStyle: isTarget
           ? { color: "#8a7dff", opacity: 1, borderColor: "#6a5acd", borderWidth: 2 }
           : {
@@ -597,7 +636,7 @@ export default function KnowledgeGraphPage() {
           )}
         </Space>
         <Space size={16}>
-          <ExtractionControl kbId={selectedKb} onExtracted={loadGraph} />
+          <ExtractionControl kbId={selectedKb} onExtracted={loadGraph} onJobGraph={handleJobGraph} />
           <Button
             icon={<NodeIndexOutlined />}
             onClick={() => setPathOpen(true)}
@@ -615,10 +654,20 @@ export default function KnowledgeGraphPage() {
             </Button>
           </Tooltip>
           <Text type="secondary" style={{ fontSize: 13, whiteSpace: "nowrap" }}>
-            {graphText.inLibrary}{" "}
+            {/* 抽取视图：「本次抽取 N · 关系 M」与进度条数字同源；平时显示库内实体数 */}
+            {jobGraph ? graphText.jobExtracted : graphText.inLibrary}{" "}
             <Text strong style={{ fontSize: 16, fontVariantNumeric: "tabular-nums", color: isDark ? "#D8E2F0" : "#142A33" }}>
-              {graphData.nodes.length.toLocaleString()}
+              {canvasData.nodes.length.toLocaleString()}
             </Text>
+            {jobGraph && (
+              <>
+                {" · "}
+                {graphText.relationsLabel}{" "}
+                <Text strong style={{ fontSize: 16, fontVariantNumeric: "tabular-nums", color: isDark ? "#D8E2F0" : "#142A33" }}>
+                  {jobGraph.edges.length}
+                </Text>
+              </>
+            )}
             {"　"}
             {graphText.viewOf}{" "}
             <Text strong style={{ fontSize: 16, fontVariantNumeric: "tabular-nums", color: isDark ? "#D8E2F0" : "#142A33" }}>
@@ -653,9 +702,13 @@ export default function KnowledgeGraphPage() {
             ) : (
               <div style={{ position: "relative", width: "100%", height: "100%" }}>
                 <ReactECharts
+                  // key 随「全图 / 本次抽取」视图切换：切换时重建图表（全新布局）；
+                  // 抽取视图内的数据更新走合并模式（notMerge=false）——已有节点
+                  // 保持原位、新抽出的节点长进来，而不是每片都整图重新模拟
+                  key={`${selectedKb ?? "none"}:${jobGraph ? "job" : "full"}`}
                   ref={chartRef}
                   option={option}
-                  notMerge
+                  notMerge={!jobGraph}
                   lazyUpdate
                   style={{ width: "100%", height: "100%" }}
                   onEvents={chartEvents}

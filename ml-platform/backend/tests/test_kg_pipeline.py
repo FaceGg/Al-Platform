@@ -281,9 +281,72 @@ class TestKgExtractionJob(unittest.TestCase):
             names = [e.name for e in entities]
             self.assertEqual(len(names), len(set(names)))
 
-    def test_job_failure_records_error(self):
-        kb_id = _seed_kb("kg-job-fail")
-        _seed_doc(kb_id, "a.txt", ["内容一句。"])
+    def test_job_counts_are_distinct_and_expose_job_graph(self):
+        # 进度里的「实体 N · 关系 M」是去重后的图中实体/关系数，不是各分片结果
+        # 的累加；「本次抽取结果」子图端点与之同源（properties.job_id 标签）
+        kb_id = _seed_kb("kg-job-distinct")
+        _seed_doc(kb_id, "a.txt", ["点焊电流8kA会引起飞溅。", "点焊电流过大会导致飞溅。"])
+        with SessionLocal() as db:
+            # 规则层已有「飞溅」（jieba 词性桶类型）及一条规则层关系
+            splash = GraphEntity(
+                kb_id=uuid.UUID(kb_id), name="飞溅", entity_type="concept",
+                properties={"source": "auto", "method": "rules", "freq": 5},
+            )
+            db.add(splash)
+            db.flush()
+            other = GraphEntity(
+                kb_id=uuid.UUID(kb_id), name="规则层独有实体", entity_type="concept",
+                properties={"source": "auto", "method": "rules", "freq": 3},
+            )
+            db.add(other)
+            db.flush()
+            db.add(GraphRelation(
+                kb_id=uuid.UUID(kb_id), source_id=splash.id, target_id=other.id,
+                relation_type="co_occurs_with",
+                properties={"source": "auto", "method": "rules", "weight": 2},
+            ))
+            job = KgExtractionJob(kb_id=uuid.UUID(kb_id), mode="llm", status="pending", params={})
+            db.add(job)
+            db.commit()
+            job_id = str(job.id)
+            splash_id = splash.id
+
+        from app.services import knowledge_graph_llm_extraction as module
+
+        with patch.object(module, "chat_completion_with_retry", return_value=(_GOOD_UNIT, {}, None)):
+            module.run_kg_extraction_job(job_id)
+
+        h = login_headers()
+        with SessionLocal() as db:
+            job = db.get(KgExtractionJob, uuid.UUID(job_id))
+            self.assertEqual(job.status, "succeeded")
+            # 2 片 × (2 实体/1 关系) 的相同结果 → 去重后仍是 2/1，不是 4/2
+            self.assertEqual(job.entities_found, 2)
+            self.assertEqual(job.relations_found, 1)
+            # 规则层「飞溅」被实体链接复用（同 id），并采纳 LLM 的领域类型
+            splash = db.get(GraphEntity, splash_id)
+            self.assertEqual(splash.entity_type, "缺陷")
+            self.assertEqual(splash.properties["method"], "rules")
+            self.assertEqual(splash.properties["job_id"], job_id)
+
+        r = client.get(
+            f"/api/knowledge/bases/{kb_id}/graph/extract/jobs/{job_id}/graph", headers=h,
+        )
+        self.assertEqual(r.status_code, 200)
+        graph = r.json()
+        self.assertEqual(sorted(n["name"] for n in graph["nodes"]), ["点焊", "飞溅"])
+        self.assertEqual(len(graph["edges"]), 1)
+        self.assertEqual(graph["edges"][0]["relation_type"], "导致缺陷")
+        # 子图端点与进度数字逐项相等
+        status = client.get(
+            f"/api/knowledge/bases/{kb_id}/graph/extract/jobs/{job_id}", headers=h,
+        ).json()
+        self.assertEqual(len(graph["nodes"]), status["entities_found"])
+        self.assertEqual(len(graph["edges"]), status["relations_found"])
+
+    def test_job_with_every_chunk_failed_is_marked_failed(self):
+        kb_id = _seed_kb("kg-job-all-failed")
+        _seed_doc(kb_id, "a.txt", ["内容一句。", "内容两句。"])
         with SessionLocal() as db:
             job = KgExtractionJob(kb_id=uuid.UUID(kb_id), mode="llm", status="pending", params={})
             db.add(job)
@@ -293,14 +356,74 @@ class TestKgExtractionJob(unittest.TestCase):
         from app.services import knowledge_graph_llm_extraction as module
 
         with patch.object(module, "chat_completion_with_retry") as fake_llm:
-            fake_llm.return_value = (None, {}, "llm_empty_completion")
+            fake_llm.return_value = (None, {}, "llm_call_failed: LLMStreamStalled")
             module.run_kg_extraction_job(job_id)
 
         with SessionLocal() as db:
             job = db.get(KgExtractionJob, uuid.UUID(job_id))
-            # 单元失败不炸任务：llm_errors 记账，聚合仍可能为空层
-            self.assertIn(job.status, ("succeeded", "failed"))
-            self.assertGreaterEqual(job.llm_errors, 1)
+            # 一个分片都没抽出来不能标「已完成」（否则界面是绿色完成标签+实体 0）
+            self.assertEqual(job.status, "failed")
+            self.assertIn("failed to extract", job.error)
+            # 重试片计入总数（不出 4/2）；失败片数按最终仍失败的分片计（不因重试翻倍）
+            self.assertEqual((job.total_units, job.done_units), (4, 4))
+            self.assertEqual(job.llm_errors, 2)
+            self.assertEqual((job.entities_found, job.relations_found), (0, 0))
+
+    def test_job_partial_failure_stays_succeeded_with_note(self):
+        kb_id = _seed_kb("kg-job-partial")
+        _seed_doc(kb_id, "a.txt", ["内容一句。", "内容两句。"])
+        with SessionLocal() as db:
+            job = KgExtractionJob(kb_id=uuid.UUID(kb_id), mode="llm", status="pending", params={})
+            db.add(job)
+            db.commit()
+            job_id = str(job.id)
+
+        from app.services import knowledge_graph_llm_extraction as module
+
+        # 串行：片1 成功、片2 失败、片2 重试仍失败
+        outcomes = [
+            (_GOOD_UNIT, {}, None),
+            (None, {}, "llm_call_failed: LLMStreamStalled"),
+            (None, {}, "llm_call_failed: LLMStreamStalled"),
+        ]
+        with patch.object(module, "chat_completion_with_retry", side_effect=outcomes):
+            module.run_kg_extraction_job(job_id)
+
+        with SessionLocal() as db:
+            job = db.get(KgExtractionJob, uuid.UUID(job_id))
+            self.assertEqual(job.status, "succeeded")
+            self.assertIn("1 chunk(s) failed", job.error)
+            self.assertEqual((job.total_units, job.done_units), (3, 3))
+            self.assertEqual(job.llm_errors, 1)
+            self.assertEqual(job.entities_found, 2)
+
+
+class TestWebSearchOverride(unittest.TestCase):
+    def test_default_follows_profile_and_explicit_flag_wins(self):
+        from app.services.llm_gateway import GatewayLLMConfig, _build_llm_request
+
+        def config(provider: str, capabilities: list[str]):
+            return GatewayLLMConfig(
+                api_url="https://example.invalid/v1/messages", api_key="k",
+                model_id="m", temperature=0.1, timeout_seconds=30,
+                profile_id=None, profile_name="p", provider=provider,
+                model_config={"capabilities": capabilities},
+            )
+
+        messages = [{"role": "user", "content": "hi"}]
+
+        def body_for(cfg, **kwargs):
+            return _build_llm_request(cfg, messages, 0.1, 100, **kwargs)[2]
+
+        # 调用方不传（None）：按档案能力决定（既有行为不变）
+        self.assertIn("tools", body_for(config("anthropic", ["web_search"])))
+        self.assertNotIn("tools", body_for(config("anthropic", [])))
+        # 显式关闭优先于档案能力（KG 深度抽取等结构化批任务）
+        self.assertNotIn(
+            "tools", body_for(config("anthropic", ["web_search"]), web_search=False),
+        )
+        # 显式开启优先于档案未勾选
+        self.assertIn("tools", body_for(config("anthropic", []), web_search=True))
 
 
 class TestKgFusion(unittest.TestCase):
