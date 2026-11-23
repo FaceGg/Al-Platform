@@ -46,6 +46,34 @@ const GROUP_PALETTE = [
 // 否则整片同色圆点会像「紫色海洋」
 const NEUTRAL_NODE_COLOR = "#7f8b9e";
 
+// 实体类型固定色映射：跨知识库一致（同一类型永远同一颜色），
+// 未登记类型统一中性灰（与「概念」同色系）
+const TYPE_COLORS: Record<string, string> = {
+  工艺: "#8a7dff",
+  缺陷: "#e06c75",
+  设备: "#61afef",
+  材料: "#98c379",
+  指标: "#f7c65d",
+  标准: "#56b6c2",
+  部件: "#ff9f6a",
+  组织: "#d19cf5",
+  人员: "#e8a0a0",
+  术语: "#6bcfff",
+  concept: "#7f8b9e",
+  term: "#6bcfff",
+  person: "#e8a0a0",
+  location: "#d19cf5",
+  organization: "#ff9f6a",
+  standard: "#56b6c2",
+  material: "#98c379",
+  equipment: "#61afef",
+  process: "#8a7dff",
+};
+
+function typeColor(type: string): string {
+  return TYPE_COLORS[type] ?? NEUTRAL_NODE_COLOR;
+}
+
 // 实体类型显示名：抽取层 type 是英文标识（jieba 词性映射），中文界面翻译显示；
 // 未知类型显示原值
 const TYPE_DISPLAY_ZH: Record<string, string> = {
@@ -257,26 +285,14 @@ export default function KnowledgeGraphPage() {
     if (nodes.length === 0) return null;
     const types = [...new Set(nodes.map((n) => n.type || "entity"))];
     if (types.length > 1) {
-      const counts = new Map<string, number>();
-      for (const n of nodes) {
-        const key = n.type || "entity";
-        counts.set(key, (counts.get(key) || 0) + 1);
-      }
-      let dominant = types[0];
-      for (const t of types) {
-        if ((counts.get(t) || 0) > (counts.get(dominant) || 0)) dominant = t;
-      }
-      let paletteIndex = 0;
+      // 类型固定色映射：同一类型跨库永远同一颜色（样式统一）
       return {
         dim: "type" as const,
-        items: types.map((t) => {
-          if (t === dominant) {
-            return { key: t, name: typeDisplayName(t, lang), color: NEUTRAL_NODE_COLOR };
-          }
-          const color = GROUP_PALETTE[paletteIndex % GROUP_PALETTE.length];
-          paletteIndex += 1;
-          return { key: t, name: typeDisplayName(t, lang), color };
-        }),
+        items: types.map((t) => ({
+          key: t,
+          name: typeDisplayName(t, lang),
+          color: typeColor(t),
+        })),
       };
     }
     const sources = [...new Set(nodes.map((n) => n.source || "manual"))];
@@ -320,9 +336,12 @@ export default function KnowledgeGraphPage() {
     const nodeCount = view.nodes.length;
     if (nodeCount === 0) return {};
     const repulsion = Math.min(600, 150 + nodeCount * 1.1);
+    // 节点大小库内归一：按「度数/库内最大度数」比例映射到固定区间（5-20px），
+    // 不同库呈现同构的大小分布（少量大 hub + 大量小点），跨库风格一致
+    const maxDeg = Math.max(1, ...Array.from(degree.values()));
     const nodes = view.nodes.map((n) => {
       const deg = degree.get(n.id) || 0;
-      const size = Math.min(26, 3 + Math.sqrt(deg) * 1.35);
+      const size = 5 + 15 * Math.sqrt(deg / maxDeg);
       // 搜索/点击选中的目标节点显著化：紫色放大+标签强制显示——
       // focusId 不在采样视图时由 view 注入逻辑把它拉进图，这里保证肉眼可见
       const isFocus = n.id === focusId;

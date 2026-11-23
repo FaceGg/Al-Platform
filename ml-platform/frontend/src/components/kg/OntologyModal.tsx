@@ -5,6 +5,22 @@ import { useI18n } from "../../i18n";
 
 const { Text } = Typography;
 
+// 领域词表模板：填充到输入框后可再手动调整（只作填充辅助，保存仍走 PUT）
+const TEMPLATES: Record<string, { entity_types: string[]; relation_types: string[] }> = {
+  general: {
+    entity_types: ["工艺", "缺陷", "设备", "材料", "指标", "标准", "部件", "组织", "人员", "概念"],
+    relation_types: ["用于工艺", "导致缺陷", "属于设备", "包含部件", "依据标准", "参数为", "前置工序", "后置工序", "相关"],
+  },
+  tightening: {
+    entity_types: ["拧紧工艺", "紧固件", "工具", "工件", "扭矩参数", "角度参数", "质量指标", "缺陷", "标准", "概念"],
+    relation_types: ["用于工艺", "拧紧", "属于工件", "参数为", "依据标准", "导致缺陷", "前置工序", "后置工序", "相关"],
+  },
+  welding: {
+    entity_types: ["焊接工艺", "焊缝", "缺陷", "设备", "材料", "指标", "标准", "部件", "概念"],
+    relation_types: ["用于工艺", "导致缺陷", "属于设备", "包含部件", "依据标准", "参数为", "前置工序", "后置工序", "相关"],
+  },
+};
+
 export default function OntologyModal({
   kbId,
   open,
@@ -82,6 +98,27 @@ export default function OntologyModal({
             : "LLM deep extraction maps entities/relations onto this vocabulary; unmapped ones fall back."}
           {custom ? (zh ? "（当前库：自定义）" : " (customized)") : zh ? "（当前库：默认）" : " (default)"}
         </Text>
+        <div>
+          <Text>{zh ? "按领域模板快速填充" : "Fill from domain template"}</Text>
+          <Select
+            style={{ width: "100%", marginTop: 4 }}
+            value={undefined}
+            onChange={(key: string) => {
+              const tpl = TEMPLATES[key];
+              if (tpl) {
+                setEntityTypes([...tpl.entity_types]);
+                setRelationTypes([...tpl.relation_types]);
+              }
+            }}
+            placeholder={zh ? "选择领域后自动填充词表（可再手动调整）" : "Pick a template to fill"}
+            data-testid="kg-ontology-template"
+            options={[
+              { value: "general", label: zh ? "通用工业（默认）" : "General industrial (default)" },
+              { value: "tightening", label: zh ? "拧紧装配" : "Tightening assembly" },
+              { value: "welding", label: zh ? "焊接工艺" : "Welding process" },
+            ]}
+          />
+        </div>
         <div>
           <Text>{zh ? "实体类型" : "Entity types"}</Text>
           <Select
