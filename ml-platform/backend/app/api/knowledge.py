@@ -1239,6 +1239,7 @@ def extract_kb_graph_endpoint(
     doc_ids: Optional[list[str]] = Body(default=None),
     mode: str = Body(default="rules"),
     max_chunks: Optional[int] = Body(default=None),
+    force: Optional[bool] = Body(default=False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1300,6 +1301,8 @@ def extract_kb_graph_endpoint(
             params["doc_ids"] = [str(x) for x in doc_ids]
         if max_chunks:
             params["max_chunks"] = int(max_chunks)
+        if force:
+            params["force"] = True
         job = KgExtractionJob(kb_id=kb.id, mode="llm", status="pending", params=params)
         db.add(job)
         db.commit()

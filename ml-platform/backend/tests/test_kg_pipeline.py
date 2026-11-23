@@ -230,6 +230,57 @@ class TestKgExtractionJob(unittest.TestCase):
             self.assertEqual(job2.status, "succeeded")
             self.assertEqual(job2.total_units, 0)
 
+    def test_force_reextract_ignores_cache_and_rebuilds(self):
+        kb_id = _seed_kb("kg-job-force")
+        _seed_doc(kb_id, "a.txt", ["点焊电流8kA会引起飞溅。"])
+        with SessionLocal() as db:
+            job = KgExtractionJob(
+                kb_id=uuid.UUID(kb_id), mode="llm", status="pending",
+                params={"force": True},
+            )
+            db.add(job)
+            db.commit()
+            job_id = str(job.id)
+
+        from app.services import knowledge_graph_llm_extraction as module
+
+        calls = {"n": 0}
+
+        def fake_llm(db, *, config, messages, temperature, max_tokens,
+                     purpose, attempts, interval_seconds, max_wall_seconds, **kwargs):
+            calls["n"] += 1
+            return _GOOD_UNIT, {}, None
+
+        with patch.object(module, "chat_completion_with_retry", side_effect=fake_llm):
+            module.run_kg_extraction_job(job_id)
+
+        # 首次抽取：1 次调用成功
+        self.assertEqual(calls["n"], 1)
+        # force 续跑：忽略缓存重做（调用次数再次增加），实体走链接复用不重复
+        with patch.object(module, "chat_completion_with_retry", side_effect=fake_llm):
+            with SessionLocal() as db:
+                job2 = KgExtractionJob(
+                    kb_id=uuid.UUID(kb_id), mode="llm", status="pending",
+                    params={"force": True},
+                )
+                db.add(job2)
+                db.commit()
+                job2_id = str(job2.id)
+        calls["n"] = 0
+        with patch.object(module, "chat_completion_with_retry", side_effect=fake_llm):
+            module.run_kg_extraction_job(job2_id)
+        self.assertEqual(calls["n"], 1)  # force 忽略缓存重做
+        with SessionLocal() as db:
+            job2 = db.get(KgExtractionJob, uuid.UUID(job2_id))
+            self.assertEqual(job2.status, "succeeded")
+            # 同名实体走链接复用，不产生重复节点
+            entities = db.query(GraphEntity).filter(
+                GraphEntity.kb_id == uuid.UUID(kb_id),
+                GraphEntity.merged_into.is_(None),
+            ).all()
+            names = [e.name for e in entities]
+            self.assertEqual(len(names), len(set(names)))
+
     def test_job_failure_records_error(self):
         kb_id = _seed_kb("kg-job-fail")
         _seed_doc(kb_id, "a.txt", ["内容一句。"])

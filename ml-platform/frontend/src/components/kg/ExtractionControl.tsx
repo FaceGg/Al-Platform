@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Progress, Space, Tooltip, message } from "antd";
-import { ThunderboltOutlined, RobotOutlined, StopOutlined } from "@ant-design/icons";
+import { Button, Popconfirm, Progress, Space, Tag, Tooltip, message } from "antd";
+import { ThunderboltOutlined, RobotOutlined, StopOutlined, RedoOutlined } from "@ant-design/icons";
 import apiClient from "../../api/client";
 import { useI18n } from "../../i18n";
 
@@ -67,6 +67,12 @@ export default function ExtractionControl({
         if (active) {
           setJob(active);
           poll(kbId, active.id);
+          return;
+        }
+        // 无进行中任务：展示最近一次抽取的结果标注（已完成/失败持续可见）
+        const [latest] = list;
+        if (latest && ["succeeded", "failed"].includes(latest.status)) {
+          setJob(latest);
         }
       })
       .catch(() => {});
@@ -116,7 +122,7 @@ export default function ExtractionControl({
           } else {
             message.error(data.error || (zh ? "深度抽取失败" : "Deep extraction failed"));
           }
-          setTimeout(() => setJob(null), 4000);
+          // 终态不清 job：状态标注（已完成/失败/取消）持续显示在工具条
         }
       } catch {
         stopPolling();
@@ -124,13 +130,13 @@ export default function ExtractionControl({
     }, 2000);
   };
 
-  const extract = async (mode: "rules" | "llm") => {
+  const extract = async (mode: "rules" | "llm", force = false) => {
     if (!kbId || rulesLoading) return;
     setRulesLoading(true);
     try {
-      const res = await apiClient.post(`/knowledge/bases/${kbId}/graph/extract`, {
-        mode,
-      });
+      const body: Record<string, unknown> = { mode };
+      if (force) body.force = true;
+      const res = await apiClient.post(`/knowledge/bases/${kbId}/graph/extract`, body);
       if (mode === "rules") {
         const report = res.data || {};
         if ((report.entities_created || 0) === 0 && (report.relations_created || 0) === 0) {
@@ -235,6 +241,25 @@ export default function ExtractionControl({
             {zh ? "深度抽取" : "Deep extract"}
           </Button>
         </Tooltip>
+        <Popconfirm
+          title={
+            zh
+              ? "重新提取将忽略已完成的分片缓存，用当前模型与词表重做全部文档分片，图谱 LLM 层将重建。确认？"
+              : "Re-extract ignores the finished-chunk cache and rebuilds the LLM layer with the current model & ontology. Confirm?"
+          }
+          onConfirm={() => extract("llm", true)}
+          okText={zh ? "重新提取" : "Re-extract"}
+          cancelText={zh ? "取消" : "Cancel"}
+          disabled={!kbId || !!running}
+        >
+          <Button
+            icon={<RedoOutlined />}
+            disabled={!kbId || !!running}
+            data-testid="kg-reextract"
+          >
+            {zh ? "重新提取" : "Re-extract"}
+          </Button>
+        </Popconfirm>
         {running && (
           <Button icon={<StopOutlined />} onClick={cancel} danger>
             {zh ? "取消" : "Cancel"}
@@ -258,6 +283,31 @@ export default function ExtractionControl({
                 : `${job.done_units}/${job.total_units} · ${job.entities_found}E/${job.relations_found}R`
             }
           />
+        </div>
+      )}
+      {/* 终态标注（持续显示，直到下一次抽取）：已完成/失败/取消 */}
+      {job && !running && !waitingCancel && (
+        <div style={{ marginTop: 4 }}>
+          {job.status === "succeeded" && (
+            <Tag color="success" style={{ marginInlineEnd: 0 }} data-testid="kg-extract-done">
+              {zh
+                ? `✓ 已完成 · 实体 ${job.entities_found} · 关系 ${job.relations_found}${job.total_units === 0 ? "（无新增分片）" : ""}`
+                : `✓ Done · ${job.entities_found}E/${job.relations_found}R${job.total_units === 0 ? " (nothing new)" : ""}`}
+            </Tag>
+          )}
+          {job.status === "failed" && (
+            <Space size={6}>
+              <Tag color="error" style={{ marginInlineEnd: 0 }}>
+                {zh ? `上次抽取失败${job.llm_errors ? `（${job.llm_errors} 片失败）` : ""}` : "Failed"}
+              </Tag>
+              <Button size="small" type="link" onClick={() => extract("llm")}>
+                {zh ? "续抽失败分片" : "Retry failed"}
+              </Button>
+            </Space>
+          )}
+          {job.status === "cancelled" && (
+            <Tag>{zh ? "上次抽取已取消（已完成分片保留）" : "Cancelled"}</Tag>
+          )}
         </div>
       )}
     </div>

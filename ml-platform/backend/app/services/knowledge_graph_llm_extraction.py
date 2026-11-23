@@ -245,7 +245,13 @@ def run_kg_extraction_job(job_id: str) -> None:
         )
 
         chunks = _select_chunks(db, kb, job.params or {})
-        done_hashes = {
+        # force（重新提取）：忽略单元缓存重做全部分片，并清空 llm 层重建——
+        # 语义=「用当前模型/词表重新生成图谱」，与断点续抽（跳过已完成）互补
+        force = bool((job.params or {}).get("force"))
+        if force:
+            _clear_auto_layer(db, kb.id, method="llm")
+            db.commit()
+        done_hashes = set() if force else {
             row[0]
             for row in (
                 db.query(KgUnitResult.content_hash)
