@@ -20,6 +20,9 @@ exclude_path() {
   case "$1" in
     .env|.env.*|*/.env|*/.env.*|secrets/*|*/secrets/*|output/*|*/output/*|temp_test/*|*/temp_test/*|tmp/*|*/tmp/*|.worktrees/*|*/.worktrees/*|.git/*|*/.git/*|\
     .trae|.trae/*|.trae-*/*|*/.trae|*/.trae/*|*/.trae-*/[!x]*/[!x]*|\
+    .zcode|.zcode/*|*/.zcode|*/.zcode/*|\
+    ml-platform/backend/data/*|\
+    */temp_login.*|*/temp_token.*|temp_login.*|temp_token.*|\
     ml_platform.db|*.db|*.db-shm|*.db-wal|*.tar.gz|*.log|*.err|\
     node_modules/*|*/node_modules/*|__pycache__/*|*/__pycache__/*|\
     *竞品对比*|\
@@ -35,12 +38,13 @@ prune_excluded_stage_paths() {
     -name .git -o -name .worktrees -o -name node_modules -o -name __pycache__ \
     -o -name secrets -o -name output -o -name temp_test -o -name tmp \
     -o -name wheelhouse -o -name .trae -o -name '.trae-*' \
+    -o -name .zcode -o -path '*/ml-platform/backend/data' \
   \) -prune -exec rm -rf -- {} +
 
   find "$stage_root" -type f \( \
     -name .env -o -name '.env.*' -o -name '*.db' -o -name '*.db-shm' \
     -o -name '*.db-wal' -o -name '*.tar.gz' -o -name '*.log' -o -name '*.err' \
-    -o -name '*竞品对比*' \
+    -o -name '*竞品对比*' -o -name 'temp_login.*' -o -name 'temp_token.*' \
   \) ! -name .env.example -delete
 }
 

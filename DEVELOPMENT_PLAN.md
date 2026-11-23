@@ -691,6 +691,15 @@ fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失�
 - 质量门禁：在门禁分支 `release/r19` 隔离并发组验证（git 存储凭据直调 API）。首跑（run 44427276803）五 job 后挂 Chromium acceptance 的 automl-multioutput 用例——预览路由 mock 无查询容错（条件列批次给 AutoMLPage 预览请求加了 `?limit=N`）回落真实后端 404 → 目标列下拉 No data → 120s 超时；路由模式补查询容错（`preview*`，本地 31s 过，`5148e5f5`）。二跑终验：run [44436170286](https://github.com/FaceGg/Al-Platform/actions/runs/44436170286) **六 job 全绿**（含第七个 Security & release verification job）；tag `20261119-r19` 打在 `5148e5f5`，发布 [GitHub Release 20261119-r19](https://github.com/FaceGg/Al-Platform/releases/tag/20261119-r19)（Latest，资产 = tar.gz 13,798,975 字节 + sha256）。
 - **基线固化（2026-11-19 用户决策）**：后续将有大版本更新，r19 固化为更新前最后稳定基线——版本 tag `20261119-r19` 之外加打语义标签 `baseline-pre-major-2026-11`（同一提交），大更新后的功能对比、回归验证与必要时的问题回退均以此为锚点；生产环境更新前建议停留本版。
 
+## 2026-11-23 重打包 r19：纳入 r19 后知识图谱五阶段流水线批次
+
+- 背景：r19（2026-11-19）发布后主线累计 41 个提交——知识图谱五阶段流水线一次交付（LLM 深度抽取 kg_ontology/kg_unit_results 断点续抽+自动融合 kg_fusion 同名/别名归并与冲突仲裁+Neo4j 投影镜像 PG 兜底+图查询 API 与前端 kg 五件套，迁移 `20261119_102`/`20261120_103`/`20261120_104`，head 推进至 `20261120_104`）、深度抽取链稳定化七连修（并发 worker 独立 engine/LLM 硬超时/celery fork 连接池根修/流式构建/按库专用模型/画布抖动根治/出口故障全链根修）、知识中心 UI 批（行内编辑/检索绑定文案/实体图谱交互布局多轮优化）；`docker-compose.yml` 新增 neo4j 服务（heap/pagecache 限死、仅内网、backend 不依赖——未启动时投影自动降级 PG）；用户指示重打同版本 r19。
+- 打包完整性加固（第二轮）：`build-package.sh` 排除规则再补 `.zcode/` 目录、`ml-platform/backend/data/`（本地向量库 pkl 运行产物）、`*/temp_login.*`/`*/temp_token.*`（浏览器实测 token 产物）——工作区新出现的未跟踪项本会经 overlay 进安装包（沿 .trae/竞品先例）；**已核验 11-19 发布的旧 r19 包不含上述任何文件**（新未跟踪项均产生于打包之后），无发布资产污染。`.git/` 内 LF 镜像同步，`bash -n` 过。
+- 发布记录（2026-11-23）：安装包 `output/linkraft-ubuntu-20261119-r19.tar.gz`（同版本名重打，字节数/SHA-256 构建后回填：`【SHA-PENDING】`），manifest 绑定构建 HEAD `【HEAD-PENDING】`；旧 r19 资产 SHA `b7b2584f…05f732`（manifest `5148e5f5`）作废，以本条新值为权威。归档核验清单构建后回填。
+- 质量门禁：门禁分支 `release/r19` 重新指向构建 HEAD，全量 CI（mode=full）派发后回填 run id 与结论：`【CI-PENDING】`。
+- 发布与基线语义（2026-11-23）：GitHub Release `20261119-r19` 原位替换双资产（tar.gz + sha256，同名）并更新正文；tag `20261119-r19` 移指构建 HEAD；**补打语义标签 `baseline-pre-major-2026-11` 于 `5148e5f5`**（= 重打前原 r19 内容锚点，2026-11-19 基线固化的实际落地）——大更新前的功能对比/回归/回退以此为锚，重打后的 r19 则是包含 KG 批次的最新安装包。
+- README 同步：迁移头 `20261114_101`→`20261120_104`；升级重建命令补 `neo4j`；新增 neo4j 服务说明（拉取镜像/默认密码/降级行为）；r19 变更条目补 ⑤ 知识图谱五阶段流水线（2026-11-23 重打新增）。
+
 ## 2026-11-11 重新打包 r18：纳入 r17 后智能体全链与治理安全批次
 
 - 背景：r17（2026-10-20）发布后主线累计 498 个提交（智能体全链、治理安全批次九~十四、知识中心大修、trivy 豁免合同化、复验日修复等，迁移 head 推进至 `20261107_97`）；用户要求更新文档重新打包。

@@ -77,21 +77,21 @@ r13 起门户会话 cookie（`portal_session`/`admin_portal_session`）的 `path
 tar -xzf /path/to/linkraft-ubuntu-20261119-r19.tar.gz \
   --strip-components=1 -C ~/linkraft-ubuntu-20260924-r4
 cd ~/linkraft-ubuntu-20260924-r4
-./packaging/compose-ubuntu.sh up -d --build --force-recreate backend worker scheduler frontend annotator annotator-frontend
+./packaging/compose-ubuntu.sh up -d --build --force-recreate backend worker scheduler frontend annotator annotator-frontend neo4j
 ./packaging/compose-ubuntu.sh ps
 ```
 
-从 r9-r18 升级到 r19 使用同样的流程（覆盖源码后执行上面的重建命令）。r19 相比 r12 的主要变更：
+从 r9-r18 升级到 r19 使用同样的流程（覆盖源码后执行上面的重建命令）。r19 重打包（2026-11-23）起 compose 新增 `neo4j` 服务（知识图谱五阶段流水线的图存储投影，迁移 3 个新版本）；上面的升级命令已包含 `neo4j`，首次执行会从 Docker Hub 拉取 `neo4j:5-community` 镜像（约 500MB）。Neo4j 仅内网运行、不暴露宿主端口，密码经 `.env` 的 `NEO4J_PASSWORD` 配置（默认 `kgdevpass123`，建议生产环境显式设置）；堆与页缓存已限死（128m/256m/128m）。**不启动 neo4j 也不影响平台运行**——知识图谱的图存储投影会自动降级到 PostgreSQL（事务主源），查询 API 与画布仍可用，仅图存储镜像能力（Neo4j 直连查询）缺席。r19 相比 r12 的主要变更：
 
 - **新增平台功能**：Kubernetes 集群管理/作业运行/Notebook 会话/镜像目录/多集群治理（Week 14-16，集群在平台内登记与连通性检查，无需为本包额外配置环境变量）、闭环演示（推理→错误数据回流→阈值告警→自动重训换模型）、编排服务图工作台、资源监控页；主平台/门户时间显示统一按 UTC 解析修复（此前 UTC+8 环境统一慢 8 小时）。
-- **数据库迁移**：alembic head 由 `20260926_61` 推进到 `20261114_101`（新增 `20260928_62`–`20261114_101`，含 demo_loop、compute 心跳、developer_resources、resource_governance、工作流全局模板、编排大屏计数、闭环复核收集、特征工程方式、智能体运行档案/经验/知识源、LLM 网关供应商分组、公告系统、集成学习重训开关、闭环 PSI 漂移、部署目标条件值与权重归一、无监督工况分片等）；升级时 `migrate` 容器自动执行，完成后请在 `./packaging/compose-ubuntu.sh logs migrate` 确认无错再验收业务。
+- **数据库迁移**：alembic head 由 `20260926_61` 推进到 `20261120_104`（新增 `20260928_62`–`20261120_104`，含 demo_loop、compute 心跳、developer_resources、resource_governance、工作流全局模板、编排大屏计数、闭环复核收集、特征工程方式、智能体运行档案/经验/知识源、LLM 网关供应商分组、公告系统、集成学习重训开关、闭环 PSI 漂移、部署目标条件值与权重归一、无监督工况分片、知识图谱图 FK 索引与五阶段流水线、按库抽取模型等）；升级时 `migrate` 容器自动执行，完成后请在 `./packaging/compose-ubuntu.sh logs migrate` 确认无错再验收业务。
 - **门户 cookie path 收紧**：见上一节，升级后需一次性清除旧门户 cookie。
 - **r14 修复 r13 安装脚本缺陷**：r13 的 `install-ubuntu.sh` 在校验前会把 `PUBLIC_ORIGIN` 的第一个字符误删（`http://` 变 `ttp://`），导致所有合法 origin 都被 `[ERROR] PUBLIC_ORIGIN must be an origin ...` 拒绝。r14 已修复（前导空白修剪改用纯空白前缀剥离写法）。若已解压 r13，可在其目录执行 `sed -i '133s|.*|PUBLIC_ORIGIN="${PUBLIC_ORIGIN#"${PUBLIC_ORIGIN%%[![:space:]]*}"}"|' packaging/install-ubuntu.sh` 就地修复，或直接改用 r14 安装包。
 - **r15 模型运维修复与体验改进**：①删除已注册模型不再报 500——护栏只拦"活"引用（部署主版本与 stable/candidate/draft 发布目标），自动换模残留的 superseded/failed 历史目标随删除自动清理；模型库直接删除同样安全（级联清理引用版本与变空注册模型）；②发布运维抽屉修复 `INFERENCE_QUERY_INVALID`（分页参数校验缺陷）；③注册版本「来源训练模型」改为下拉选择（本项目已完成条目），不再需要手填 ID；④推理部署行新增「部署信息」查看抽屉；⑤API 市场全类型上线/下线按钮、predict 调用计入统计、响应字段解释；⑥界面默认中文与明亮主题（手动切换过的浏览器沿用其选择）。
 - **r16 大数据集与稳定性修复**：①工作流节点完成载荷截断至前 20 行（修复大 CSV 运行十几分钟的根因）、节点默认超时 300→1800 秒（大 CSV 导入不再被节点超时杀死）、CSV 导出流式化 + 数据集预览截断 500 行（修复大数据集预览/下载 OOM 崩溃）；②终止按钮落库终态 + 修复跨工作流运行状态泄漏，支持活动运行恢复；③数据集下载使用原始文件名（支持中文文件名）、CSV 导出前置 UTF-8 BOM（修复 Excel 打开中文乱码）；④拧紧特征工程兼容中文注释表头、python_script venv 卷引导与 pandas 版本漂移修复；⑤闭环复核标签全输出可选与保存修复、正确数据按比例收集。
 - **r17 工作台与拧紧算子增强**：①评估结果可视化预览——刷新/恢复后可查看历史节点结果，评估节点可开结果抽屉，指标中文化；②拧紧特征工程默认剔除泄漏判定列 + 缺失填充策略（单轴行保留）。
 - **r18 智能体全链与治理安全批次**：①智能体（Agent Loop）全链——知识源多选注入、逐步确认默认化、评审升级轮内续训、轮数耗尽实况采纳、注入档案持久化、S1 超时 240s + 重试×3 + escalation 详情持久化、S4 沙箱最小环境修复、LLM 网关重试与多会话；②集成学习双层（训练器 Top-K soft-voting + 引擎终选层）与闭环/编排重训集成；③治理安全批次九~十四——算子执行面安全（AST 校验/SSRF 防护/fail-closed）、认证边界、并发幂等、部署加固、登录限流容量可配、admin 口令 env fail-closed、Mimosa 三缺口修复；④知识中心大修——检索绑定补全、经验分区隐藏防污染、图谱纯展示页签、详情中文化、预览导出；⑤安全 CVE 清零——trivy 豁免合同化、setuptools/vite/wolfi/postgresql-client 升级；⑥复验日九项缺陷根修 + 换模链四修 + 流看门狗/涓流上限（5000 行实测闭环重训换模准确率 93.46%）；⑦NUMBA_CACHE_DIR 容器修复（UMAP numba 缓存定位）。
-- **r19 无监督异常检测与智能体契约加固**：①无监督异常检测一~三期全量——阈值规则/iforest/ocsvm/AutoEncoder 按族混合、工况分片挂载与路由（PSI per-shard/交叉注入/AE 早停）、机群规模化（设备级重标定 unfit 不硬迁、跨设备迁移、机群监控视图与 per-device FPR）、门禁 falsy-zero 与 precision@k 证据；②智能体契约漂移修复回路——`_validate_with_repair` 自动修复 + 失败 raw 证据留存 + 骨架提示词（实测 AUC 0.974 一轮通过）；③经验域软优先（方案 B）+ 注入档案来源域、经验/配方状态中文化（试用期/生效中）、配方库 updated_at 排序、无监督强度每算法口径；④部署目标条件值与权重归一（迁移 `_99`/`_101`）。
+- **r19 无监督异常检测与智能体契约加固**：①无监督异常检测一~三期全量——阈值规则/iforest/ocsvm/AutoEncoder 按族混合、工况分片挂载与路由（PSI per-shard/交叉注入/AE 早停）、机群规模化（设备级重标定 unfit 不硬迁、跨设备迁移、机群监控视图与 per-device FPR）、门禁 falsy-zero 与 precision@k 证据；②智能体契约漂移修复回路——`_validate_with_repair` 自动修复 + 失败 raw 证据留存 + 骨架提示词（实测 AUC 0.974 一轮通过）；③经验域软优先（方案 B）+ 注入档案来源域、经验/配方状态中文化（试用期/生效中）、配方库 updated_at 排序、无监督强度每算法口径；④部署目标条件值与权重归一（迁移 `_99`/`_101`）；⑤**2026-11-23 重打新增——知识图谱五阶段流水线**：LLM 深度抽取（本体按库词表+契约修复回路+断点续抽+按库专用模型）、自动融合与人工审核（同名/别名归并留痕+属性冲突仲裁队列）、Neo4j 图存储投影（PG 事务主源，未启动时自动降级 PG 查询）、图查询 API 与画布交互（路径查询/邻居/实体详情/聚焦搜索/类型图例），以及深度抽取链稳定化（celery fork 连接池根修、LLM 硬超时、并发根修、失败自动重试、web_search 注入开关）；另含知识中心实体图谱交互与布局多轮优化、知识库行内编辑（迁移 `_102`–`_104`）。
 
 ## CPU 兼容性
 
