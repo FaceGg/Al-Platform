@@ -1,0 +1,382 @@
+{
+  "title": "知识图谱：快速/深度抽取不并存（以最后一次为主）+ 重新抽取并入主按钮 + 工具栏重排",
+  "date": "2026-11-24",
+  "base_commit": "ee7e08f0",
+  "environment": {
+    "stack": "本机 WSL Docker Compose（agent_spot_welding-*，backend/worker/frontend 镜像均为本批代码重建）",
+    "browser": "Playwright 无头 Chromium（仓库前端依赖自带），脚本为仓库外临时文件",
+    "frontend_origin": "http://localhost:5173 = frontend 容器（镜像内 vite build 产物，无开发服务器热更新）",
+    "knowledge_base": "点焊工艺（18 个分片）"
+  },
+  "tests": {
+    "backend": "tests/test_kg_pipeline.py + tests/test_knowledge.py + tests/test_llm_provider_formats.py：99 passed",
+    "frontend_kg": "src/components/kg/kg.test.tsx + src/pages/KnowledgeGraphPage.test.tsx：22 passed",
+    "frontend_full": "95 files，588 passed / 19 skipped",
+    "typecheck": "tsc --noEmit 通过"
+  },
+  "browser": {
+    "A_切换与真实大模型任务（verify.mjs）": [
+      {
+        "step": "1-initial",
+        "quick": null,
+        "deep": "当前图谱 · 实体 106 · 关系 127",
+        "incomplete": null,
+        "progress": null,
+        "totals": "实体 106 · 关系 127",
+        "nodes": 82,
+        "sameSeries": null,
+        "message": "",
+        "modal": null
+      },
+      {
+        "step": "2-quick-confirm",
+        "modal": {
+          "title": "改用快速抽取？",
+          "body": "当前图谱由深度抽取生成（实体 106、关系 127）。快速抽取与深度抽取不并存，以最后一次抽取为主：本次快速抽取将替换现有图谱。是否继续？",
+          "buttons": [
+            "取 消",
+            "改用快速抽取"
+          ]
+        }
+      },
+      {
+        "step": "3-quick-current",
+        "state": {
+          "quick": "当前图谱 · 实体 399",
+          "deep": null,
+          "incomplete": null,
+          "progress": null,
+          "totals": "实体 399 · 关系 6,230",
+          "nodes": 100,
+          "sameSeries": null,
+          "message": "快速抽取完成：当前图谱实体 399 个、关系 6230 条",
+          "modal": null
+        },
+        "api": {
+          "current": "rules",
+          "graph": {
+            "entities": 399,
+            "relations": 6230
+          },
+          "cached_chunks": 18
+        },
+        "equal": false
+      },
+      {
+        "step": "4-deep-confirm",
+        "modal": {
+          "title": "改用深度抽取？",
+          "body": "当前图谱由快速抽取生成（实体 399、关系 6230）。快速抽取与深度抽取不并存，以最后一次抽取为主：本次深度抽取将替换现有图谱。此前抽取过的 18 个分片将直接恢复，不再调用大模型。全部重新抽取",
+          "buttons": [
+            "取 消",
+            "改用深度抽取"
+          ]
+        }
+      },
+      {
+        "step": "5-deep-restored",
+        "state": {
+          "quick": null,
+          "deep": "当前图谱 · 实体 106 · 关系 127",
+          "incomplete": null,
+          "progress": null,
+          "totals": "实体 106 · 关系 127",
+          "nodes": 82,
+          "sameSeries": null,
+          "message": "深度抽取完成：当前图谱实体 106 个、关系 127 条",
+          "modal": null
+        },
+        "api": {
+          "current": "llm",
+          "graph": {
+            "entities": 106,
+            "relations": 127
+          },
+          "job": {
+            "id": "72dc5325-81c2-4a7c-b2f9-fe39115c70e1",
+            "status": "succeeded",
+            "units": [
+              18,
+              18
+            ],
+            "llm_calls": 0
+          }
+        }
+      },
+      {
+        "step": "6-rerun-confirm",
+        "modal": {
+          "title": "该知识库已深度抽取过",
+          "body": "当前图谱由深度抽取生成（实体 106、关系 127），全部 18 个分片都已抽取。重新抽取会用当前模型与词表重做全部分片并重建图谱，是否继续？",
+          "buttons": [
+            "取 消",
+            "重新抽取"
+          ]
+        }
+      },
+      {
+        "step": "7-rerun-done",
+        "final": {
+          "quick": null,
+          "deep": "当前图谱 · 实体 108 · 关系 126",
+          "incomplete": null,
+          "progress": null,
+          "totals": "实体 108 · 关系 126",
+          "nodes": 80,
+          "sameSeries": false,
+          "message": "",
+          "modal": null
+        },
+        "equal": true,
+        "samples": 96,
+        "mismatches": 0,
+        "seriesKept": 0,
+        "seriesReplaced": 96,
+        "growthSteps": 13,
+        "nodesFirstLast": [
+          null,
+          78
+        ],
+        "doneFirstLast": [
+          1,
+          18
+        ],
+        "api": {
+          "current": "llm",
+          "graph": {
+            "entities": 108,
+            "relations": 126
+          },
+          "job": {
+            "status": "succeeded",
+            "units": [
+              19,
+              19
+            ],
+            "llm_calls": 19,
+            "llm_errors": 0
+          }
+        },
+        "sampleTail": [
+          {
+            "t": "04:32:01",
+            "done": 6,
+            "total": 18,
+            "progressNums": [
+              41,
+              41
+            ],
+            "headerNums": [
+              41,
+              41
+            ],
+            "nodes": 41,
+            "sameSeries": false
+          },
+          {
+            "t": "04:32:12",
+            "done": 6,
+            "total": 18,
+            "progressNums": [
+              41,
+              41
+            ],
+            "headerNums": [
+              41,
+              41
+            ],
+            "nodes": 41,
+            "sameSeries": false
+          },
+          {
+            "t": "04:32:22",
+            "done": 7,
+            "total": 18,
+            "progressNums": [
+              41,
+              41
+            ],
+            "headerNums": [
+              41,
+              41
+            ],
+            "nodes": 41,
+            "sameSeries": false
+          },
+          {
+            "t": "04:32:33",
+            "done": 9,
+            "total": 18,
+            "progressNums": [
+              52,
+              56
+            ],
+            "headerNums": [
+              52,
+              56
+            ],
+            "nodes": 52,
+            "sameSeries": false
+          },
+          {
+            "t": "04:32:43",
+            "done": 10,
+            "total": 18,
+            "progressNums": [
+              57,
+              63
+            ],
+            "headerNums": [
+              57,
+              63
+            ],
+            "nodes": 57,
+            "sameSeries": false
+          },
+          {
+            "t": "04:32:54",
+            "done": 13,
+            "total": 18,
+            "progressNums": [
+              76,
+              86
+            ],
+            "headerNums": [
+              76,
+              86
+            ],
+            "nodes": 71,
+            "sameSeries": false
+          },
+          {
+            "t": "04:33:04",
+            "done": 15,
+            "total": 18,
+            "progressNums": [
+              87,
+              98
+            ],
+            "headerNums": [
+              87,
+              98
+            ],
+            "nodes": 82,
+            "sameSeries": false
+          },
+          {
+            "t": "04:33:15",
+            "done": 17,
+            "total": 18,
+            "progressNums": [
+              100,
+              114
+            ],
+            "headerNums": [
+              100,
+              114
+            ],
+            "nodes": 100,
+            "sameSeries": false
+          }
+        ]
+      },
+      {
+        "step": "8-reset-view",
+        "sameSeriesAfterReset": false
+      }
+    ],
+    "B_画布合并模式与手工改动同步（merge_check2.mjs，最终构建）": [
+      {
+        "step": "1-initial",
+        "graphEntities": 108,
+        "drawn": 108
+      },
+      {
+        "step": "2-after-add-entity",
+        "drawn": [
+          108,
+          109
+        ],
+        "relationCreated": 200,
+        "sameSeriesModel": true,
+        "movedSinceBeforeRefresh": {
+          "compared": 108,
+          "maxPx": 60,
+          "meanPx": 23
+        },
+        "baselineDriftOver1_2s": {
+          "compared": 108,
+          "maxPx": 0,
+          "meanPx": 0
+        },
+        "textsAfterManualChange": {
+          "tag": "当前图谱 · 实体 109 · 关系 127",
+          "header": "实体 109 · 关系 127"
+        }
+      },
+      {
+        "step": "3-after-delete-entity",
+        "deleteStatus": 200,
+        "drawn": [
+          109,
+          108
+        ],
+        "sameSeriesModel": true,
+        "movedSinceBeforeRefresh": {
+          "compared": 108,
+          "maxPx": 50,
+          "meanPx": 24
+        },
+        "textsAfterManualChange": {
+          "tag": "当前图谱 · 实体 108 · 关系 126",
+          "header": "实体 108 · 关系 126"
+        }
+      },
+      {
+        "step": "4-after-reset-view",
+        "sameSeriesModel": false,
+        "moved": {
+          "compared": 80,
+          "maxPx": 586,
+          "meanPx": 259
+        }
+      },
+      {
+        "step": "final",
+        "graphEntities": 108,
+        "leftoverTempEntities": 0
+      }
+    ]
+  },
+  "neo4j_index_profiling": {
+    "method": "在 backend 镜像内分段计时：清层 → 规则抽取 → 融合 → Neo4j 全量投影（点焊工艺 399 实体 / 6,230 关系）",
+    "before_index": {
+      "clear_s": 0.05,
+      "extract_s": 1.5,
+      "fuse_s": 0.35,
+      "neo4j_resync_s": 30.18
+    },
+    "after_index": {
+      "clear_s": 0.04,
+      "extract_s": 1.14,
+      "fuse_s": 0.38,
+      "neo4j_resync_first_run_s": 2.13,
+      "neo4j_resync_second_run_s": 0.67
+    },
+    "indexes": [
+      "CONSTRAINT kg_entity_id UNIQUE (e:KGEntity) REQUIRE e.id IS UNIQUE",
+      "INDEX kg_entity_kb FOR (e:KGEntity) ON (e.kbId)"
+    ],
+    "quick_extract_request": "31.4s（超过前端 30s 超时）→ 页面确认到更新 2.6s"
+  },
+  "screenshots_reviewed": [
+    "01-initial / 02-quick-confirm / 03-quick-current / 04-deep-confirm / 05-deep-restored / 06-rerun-confirm / 07-running-early / 08-running-mid / 09-done / 10-after-reset",
+    "c1-after-add / c2-after-delete / c3-after-reset"
+  ],
+  "not_verified": [
+    "内置浏览器手工点选：验收期间页面帧回调停止触发（窗口不在前台/被遮挡），截图超时——改用无头 Chromium 脚本完成全部页面验证",
+    "A 组第 7 步的 sameSeries 采样无效（引用在任务启动、画布清空重建后失效），画布合并模式结论以 B 组为准",
+    "「开发计划」库（2,312 片）全量深度抽取未跑；按库配置 deepseek-v4-pro 的超时问题未复测",
+    "CI 未跑（按用户指示暂缓处理 CI 失败）"
+  ]
+}

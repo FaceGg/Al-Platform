@@ -70,12 +70,35 @@ class KgProjection:
                     max_connection_pool_size=10,
                 )
                 self._driver.verify_connectivity()
+                self._ensure_schema()
+                return self._driver
         except KgProjectionUnavailable:
             raise
         except Exception as error:  # noqa: BLE001 - 网络失败按不可用降级
             self._driver = None
             raise KgProjectionUnavailable(f"neo4j connect failed: {error}") from error
         return self._driver
+
+    NODE_LABEL = "KGEntity"
+    REL_TYPE = "KG_REL"
+
+    # 投影写入/查询都按 (kbId, id) 定位节点。没有索引时每条关系的两次 MATCH
+    # 都是全标签扫描：399 实体 / 6,230 关系的库全量重建要 30 秒（2026-11-24
+    # 实测，抽取本身 1 秒）——同步的快速抽取请求因此超过前端 30 秒超时，
+    # 深度抽取任务收尾也被拖慢。首次连上时幂等建好，存量部署自动生效。
+    _SCHEMA_STATEMENTS = (
+        "CREATE CONSTRAINT kg_entity_id IF NOT EXISTS "
+        f"FOR (e:{NODE_LABEL}) REQUIRE e.id IS UNIQUE",
+        f"CREATE INDEX kg_entity_kb IF NOT EXISTS FOR (e:{NODE_LABEL}) ON (e.kbId)",
+    )
+
+    def _ensure_schema(self) -> None:
+        with self._driver.session(database="neo4j") as session:
+            for statement in self._SCHEMA_STATEMENTS:
+                try:
+                    session.run(statement).consume()
+                except Exception as error:  # noqa: BLE001 - 建索引失败只是变慢，不阻断
+                    logger.warning("neo4j schema statement failed: %s", error)
 
     def available(self) -> bool:
         if self._driver_factory is None and not settings.neo4j_uri:
@@ -92,9 +115,6 @@ class KgProjection:
             return list(session.run(query, **params))
 
     # ------------------------------------------------------------ 投影写入
-
-    NODE_LABEL = "KGEntity"
-    REL_TYPE = "KG_REL"
 
     def upsert_entity(self, entity) -> None:
         """entity: GraphEntity ORM 行。"""

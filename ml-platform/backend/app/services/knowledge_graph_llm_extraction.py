@@ -1,22 +1,26 @@
 # -*- coding: utf-8 -*-
 """LLM 深度知识图谱抽取（五阶段流水线，阶段 2）。
 
-与规则层（knowledge_graph_extraction.py，jieba 统计层）并存的第二抽取通道：
 按 chunk 分片调用平台 LLM 网关，按「按库可配本体」约束实体/关系类型，输出经
 pydantic 契约校验 + 单轮修复回路（坏输出喂回模型重试，raw 留档）。
 
 设计要点：
-- 结果写 properties.method="llm"（规则层是 "rules"），两层并存、重建互不影响；
-- 单元结果缓存于 kg_unit_results（幂等键 kb_id+chunk_id+content_hash），
-  任务中断/重跑天然断点续抽；force（重新提取）则忽略缓存并先清 llm 层；
-- 流式构建：每个分片完成即并入图（画布实时成长），触及的实体/关系打
-  properties.job_id 标签——任务的「实体 N · 关系 M」按标签去重计数，
-  「本次抽取结果」视图（get_kg_job_graph）同源取数；
+- 结果写 properties.method="llm"。快速抽取（knowledge_graph_extraction.py，jieba
+  统计层）与深度抽取**不并存，以最后一次抽取为主**：谁后跑，库内就只留谁的结果
+  （见 clear_extraction_results / current_layer）；
+- 单元结果缓存于 kg_unit_results（幂等键 kb_id+chunk_id+content_hash），是「每个
+  分片最近一次大模型抽取的结果」：任务中断/新增文档后续抽只做没抽过的分片；
+  被快速抽取替换后再切回深度抽取，抽过的分片直接按缓存重建、不再调用大模型；
+  force（全部重新抽取）则作废缓存、清空图谱重做全部分片；
+- 流式构建：每个分片完成即并入图（画布实时成长）；任务的「实体 N · 关系 M」
+  按库内存活实体/关系去重计数（graph_ids），与画布标题栏同口径；
 - 任务收尾跑融合自动归并 + Neo4j 投影（尽力而为）。
 """
 import hashlib
 import time
 import uuid
+# 模块级导入：测试可 patch wait 来确定性地模拟「看门狗窗口内无分片落地」
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from pydantic import BaseModel, Field
 
@@ -120,19 +124,101 @@ def _content_hash(text: str) -> str:
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
 
 
-def _ids_tagged(db, model, kb_id, job_key: str) -> set:
-    """图中带某任务标签（properties.job_id）的行 id 集合。
+def current_layer(db, kb_id) -> str | None:
+    """库内当前抽取结果的来源："rules" / "llm" / "mixed" / None（未抽取）。
 
-    properties 是通用 JSON 列：用 SQLAlchemy 的 JSON 下标比较（PG 落为 ->>，
-    SQLite 落为 JSON_EXTRACT），两种后端行为一致。
+    「以最后一次抽取为主」（2026-11-24 用户指示）：快速抽取与深度抽取不并存，
+    一个库的抽取结果只有一种来源。mixed 只出现在该规则上线前的存量数据上
+    （两层并存时期的库），下一次抽取——无论哪一种——会整体重建。
     """
-    return {
+    methods = {
         row[0]
-        for row in db.query(model.id).filter(
-            model.kb_id == kb_id,
-            model.properties["job_id"].as_string() == job_key,
-        ).all()
+        for row in db.query(GraphEntity.properties["method"].as_string())
+        .filter(
+            GraphEntity.kb_id == kb_id,
+            GraphEntity.merged_into.is_(None),
+            GraphEntity.properties["source"].as_string() == "auto",
+        )
+        .distinct()
+        .all()
     }
+    if not methods:
+        return None
+    return next(iter(methods)) if len(methods) == 1 else "mixed"
+
+
+def clear_extraction_results(db, kb_id) -> None:
+    """清空库内全部抽取结果（快速抽取 + 深度抽取），手工行保留；不提交事务。
+
+    两种方法各走既有的层清理（连带删除触及这些实体的关系）；两端都落在手工
+    实体上的抽取关系不经过抽取实体，按来源标记单独删。
+    """
+    _clear_auto_layer(db, kb_id, method="rules")
+    _clear_auto_layer(db, kb_id, method="llm")
+    db.query(GraphRelation).filter(
+        GraphRelation.kb_id == kb_id,
+        GraphRelation.properties["source"].as_string() == "auto",
+    ).delete(synchronize_session=False)
+
+
+def graph_ids(db, kb_id) -> tuple[set, set]:
+    """库内图谱规模的 id 集：(存活实体, 端点都存活的关系)——与 GET /graph 同口径。
+
+    任务进度里的「实体 N · 关系 M」与画布标题栏的数字都按它计，两边逐项相等。
+    """
+    entity_ids = {
+        row[0]
+        for row in db.query(GraphEntity.id)
+        .filter(GraphEntity.kb_id == kb_id, GraphEntity.merged_into.is_(None))
+        .all()
+    }
+    relation_ids = {
+        row[0]
+        for row in db.query(
+            GraphRelation.id, GraphRelation.source_id, GraphRelation.target_id,
+        ).filter(GraphRelation.kb_id == kb_id).all()
+        if row[1] in entity_ids and row[2] in entity_ids
+    }
+    return entity_ids, relation_ids
+
+
+def graph_totals(db, kb_id) -> tuple[int, int]:
+    """库内图谱规模：(存活实体数, 端点都存活的关系数)——与 GET /graph 同口径。
+
+    状态标注里的「实体 N · 关系 M」用这组数。子查询计数，不把关系行读进内存
+    （大库的关系表有几十万行，摘要接口每次选中知识库都会调）。
+    """
+    from sqlalchemy import func
+
+    live = (
+        db.query(GraphEntity.id)
+        .filter(GraphEntity.kb_id == kb_id, GraphEntity.merged_into.is_(None))
+        .subquery()
+    )
+    entities = db.query(func.count()).select_from(live).scalar() or 0
+    relations = (
+        db.query(func.count(GraphRelation.id))
+        .filter(
+            GraphRelation.kb_id == kb_id,
+            GraphRelation.source_id.in_(db.query(live.c.id)),
+            GraphRelation.target_id.in_(db.query(live.c.id)),
+        )
+        .scalar() or 0
+    )
+    return int(entities), int(relations)
+
+
+def _drop_unit_cache(db, kb_id) -> None:
+    """「全部重新抽取」时作废分片缓存（不提交事务）。
+
+    缓存记的是每个分片最近一次大模型抽取的结果：保留它，重抽中断后剩余分片
+    会被旧结果顶替，「重新抽取」名不副实；作废后剩余分片如实算作待抽
+    （2026-11-24 实测：重抽 3/18 片中断，缓存仍是 18 片全部完成，界面显示
+    待抽 0 片、没有「继续抽取」入口）。
+    """
+    db.query(KgUnitResult).filter(KgUnitResult.kb_id == kb_id).delete(
+        synchronize_session=False,
+    )
 
 
 def extract_unit(
@@ -271,12 +357,18 @@ def run_kg_extraction_job(job_id: str) -> None:
         )
 
         chunks = _select_chunks(db, kb, job.params or {})
-        # force（重新提取）：忽略单元缓存重做全部分片，并清空 llm 层重建——
-        # 语义=「用当前模型/词表重新生成图谱」，与断点续抽（跳过已完成）互补
+        # force（全部重新抽取）：作废单元缓存，清空图谱重做全部分片——语义=
+        # 「用当前模型/词表重新生成图谱」
         force = bool((job.params or {}).get("force"))
+        # 以最后一次抽取为主：当前图谱不是纯深度抽取结果（快速抽取生成的，或
+        # 两层并存时期留下的混杂数据）时，先整体清空再重建；已是深度抽取结果
+        # 则在原结果上续建（断点续抽 / 新增文档），已有的产出不动
+        rebuild = force or current_layer(db, kb.id) != "llm"
+        if rebuild:
+            clear_extraction_results(db, kb.id)
         if force:
-            _clear_auto_layer(db, kb.id, method="llm")
-            db.commit()
+            _drop_unit_cache(db, kb.id)
+        db.commit()
         done_hashes = set() if force else {
             row[0]
             for row in (
@@ -297,7 +389,24 @@ def run_kg_extraction_job(job_id: str) -> None:
             for c in chunks
             if _content_hash(c.content or "") not in done_hashes
         ]
-        job.total_units = len(todo)
+        # 回放缓存：图谱整体重建时，抽过的分片直接按缓存并入，不再调用大模型
+        # （force 已作废缓存，无缓存可回放）。按文档顺序回放，实体链接结果与
+        # 首次抽取一致
+        replay: list = []
+        if rebuild:
+            order = {c.id: index for index, c in enumerate(chunks)}
+            replay = sorted(
+                (
+                    row for row in db.query(KgUnitResult).filter(
+                        KgUnitResult.kb_id == kb.id,
+                        KgUnitResult.status == "ok",
+                        KgUnitResult.chunk_id.in_(list(order)),
+                    ).all()
+                    if row.result
+                ),
+                key=lambda row: order[row.chunk_id],
+            )
+        job.total_units = len(replay) + len(todo)
         job.done_units = 0
         db.commit()
 
@@ -309,16 +418,22 @@ def run_kg_extraction_job(job_id: str) -> None:
         from app.services.kg_names import existing_entity_index
 
         entity_index = existing_entity_index(db, kb.id)
-        job_key = str(job.id)
-        # 任务去重口径：「实体 N · 关系 M」= 本次抽取在图中触及的**去重**实体/
-        # 关系数（与「本次抽取结果」视图同源，都按 properties.job_id 标签取），
-        # 不是各分片结果的累加——同一实体在多个分片出现只算一个。按标签从图
-        # 里恢复，worker 重启/任务重投后计数不丢。
-        job_entity_ids = _ids_tagged(db, GraphEntity, kb.id, job_key)
-        job_relation_ids = _ids_tagged(db, GraphRelation, kb.id, job_key)
+        # 进度口径「实体 N · 关系 M」= 库内图谱规模（去重后的存活实体/关系数，
+        # 与画布标题栏同口径），不是各分片结果的累加——同一实体在多个分片出现
+        # 只算一个。从当前图谱起算：续抽时已有的产出仍算数；worker 重启/任务
+        # 重投后计数也不丢。
+        job_entity_ids, job_relation_ids = graph_ids(db, kb.id)
         failed_chunk_ids: set = set()
         ok_chunk_ids: set = set()
         chunk_errors: dict = {}
+        for row in replay:
+            touched_entities, touched_relations = _merge_unit_into_graph(
+                db, kb, ontology, row.result,
+                chunk_id=row.chunk_id, entity_index=entity_index,
+            )
+            job_entity_ids.update(touched_entities)
+            job_relation_ids.update(touched_relations)
+            job.done_units += 1
         job.entities_found = len(job_entity_ids)
         job.relations_found = len(job_relation_ids)
         db.commit()
@@ -370,7 +485,7 @@ def run_kg_extraction_job(job_id: str) -> None:
                 # 流式构建：分片结果即时并入图（画布随抽取实时成长）
                 touched_entities, touched_relations = _merge_unit_into_graph(
                     db, kb, ontology, unit.model_dump(),
-                    chunk_id=chunk_id, entity_index=entity_index, job_id=job_key,
+                    chunk_id=chunk_id, entity_index=entity_index,
                 )
                 job_entity_ids.update(touched_entities)
                 job_relation_ids.update(touched_relations)
@@ -383,13 +498,11 @@ def run_kg_extraction_job(job_id: str) -> None:
             job.done_units += 1
             db.commit()
 
-        from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
-
         def _run_batch(executor, batch) -> bool:
             """提交一批分片并逐个落地；返回 True=整批处理完毕。
 
-            取消 / 时间预算耗尽 / 整批卡死（150s 无任何分片落地）时提前返回
-            False，未落地的分片留给断点续抽。
+            取消 / 时间预算耗尽 / 整批卡死（看门狗窗口内无任何分片落地）时
+            提前返回 False，未落地的分片留给断点续抽。
             """
             nonlocal cancelled
             pending = {executor.submit(_work, c): c for c in batch}
@@ -404,9 +517,11 @@ def run_kg_extraction_job(job_id: str) -> None:
                         db.commit()
                     return False
                 # 看门狗：整批无任何分片落地=LLM 出口卡死——放弃本批剩余分片。
-                # 非流式通道单次 HTTP 上限 240s，看门狗须 ≥ 它（300s）；
-                # 流式通道单次 60s stall / 600s wall，沿用 150s
-                watchdog = 150 if getattr(settings, "kg_llm_use_nonstream", True) else 300
+                # 阈值必须大于单次调用的最长合法耗时：非流式通道单次 HTTP 上限
+                # 240s → 300s；流式通道出字后 60s 无数据即报 stalled → 150s。
+                # （此前三元表达式写反：非流式拿到 150s，慢但正常的分片被当成
+                # 卡死，任务 3/18 片就提前结束——2026-11-24 实测）
+                watchdog = 300 if getattr(settings, "kg_llm_use_nonstream", True) else 150
                 done_set, pending = wait(
                     pending, timeout=watchdog, return_when=FIRST_COMPLETED,
                 )
@@ -425,8 +540,11 @@ def run_kg_extraction_job(job_id: str) -> None:
             max_workers=max(1, int(getattr(settings, "kg_llm_concurrency", 2))),
             thread_name_prefix="kg-extract",
         )
+        # 主批次是否整批处理完（看门狗/时间预算/取消会让它提前结束）
+        completed = False
         try:
-            if _run_batch(pool, todo):
+            completed = _run_batch(pool, todo)
+            if completed:
                 # 失败分片自动重试一轮：出口故障呈间歇性（同一分片隔几分钟重跑
                 # 即可成功），跨时间重试一轮能熬过多数故障窗口；仍失败的留给断点
                 # 续抽。重试片计入 total_units（否则进度会出现 36/18）。
@@ -448,11 +566,24 @@ def run_kg_extraction_job(job_id: str) -> None:
         auto_fuse_after_extraction(db, kb, method="llm")
         _project_to_neo4j(db, kb)
 
+        # 融合归并可能合并掉部分实体：收尾按图重算，保证进度里的
+        # 「实体 N · 关系 M」与画布标题栏（同一口径 graph_ids）逐项相等
+        final_entity_ids, final_relation_ids = graph_ids(db, kb.id)
         db.refresh(job)
+        job.entities_found = len(final_entity_ids)
+        job.relations_found = len(final_relation_ids)
         if cancelled:
             job.status = "cancelled"
         elif job.status == "running":
-            if failed_chunk_ids and not ok_chunk_ids:
+            if not completed:
+                # 看门狗/时间预算让分片没跑完：不能算「已完成」——实测 3/18 片
+                # 提前结束后界面仍显示绿色完成标注，剩余分片无人续抽
+                job.status = "failed"
+                job.error = (
+                    f"interrupted before finishing ({job.done_units}/{job.total_units} "
+                    f"chunk attempts done): {job.error or 'unknown reason'}"
+                )
+            elif failed_chunk_ids and not ok_chunk_ids:
                 # 一个分片都没抽出来：不能标「已完成」——否则界面显示绿色完成
                 # 标签而实体为 0，用户无从判断出了什么问题
                 first_error = next(iter(chunk_errors.values()), "")
@@ -514,27 +645,19 @@ def _project_to_neo4j(db, kb) -> None:
 
 def _merge_unit_into_graph(
     db, kb, ontology: dict[str, list[str]], unit_data: dict, *,
-    chunk_id, entity_index: dict, job_id: str | None = None,
+    chunk_id, entity_index: dict,
 ) -> tuple[list, list]:
-    """单个分片结果即时并入图（流式成长），返回 (触及的实体 id, 触及的关系 id)。
+    """单个分片结果并入图（流式成长 / 缓存回放共用），返回 (触及的实体 id, 关系 id)。
 
     不提交事务——由调用方与分片结果、任务计数一起单事务提交。
 
     - 实体链接：norm 名/别名命中 entity_index 时复用既有实体（freq+1、别名/
-      属性并集），否则新建；
-    - 复用到规则层实体（jieba 词性桶类型）时采纳 LLM 给出的领域类型：规则层
-      类型只是词性粗分，LLM 类型才有语义；
+      属性并集，类型保持原样——复用到的只会是手工实体：快速抽取与深度抽取
+      不并存，任务启动时上一轮抽取结果已整体清空），否则新建；
     - 关系 MERGE 式：同 (source,target,type) 已存在则 weight+1，否则插入；
-    - job_id 标签：触及的实体/关系记入 properties.job_id（最近一次产出它的
-      任务），是「本次抽取结果」视图与任务去重计数的唯一数据源；
     - entity_index 跨分片累积（调用方持有），保证后续分片的引用落到同一节点。
     """
     from app.services.kg_names import normalize_name
-
-    def _tag(props: dict) -> dict:
-        if job_id:
-            props["job_id"] = job_id
-        return props
 
     resolved: dict[str, "uuid.UUID"] = {}
     chunk_doc_id = None
@@ -560,7 +683,7 @@ def _merge_unit_into_graph(
                         normalize_name(str(x)) for x in (ent.get("aliases") or [])
                     ) if a and a != name
                 ][:8],
-                properties=_tag({
+                properties={
                     "source": "auto", "method": "llm", "freq": 1,
                     "doc_ids": [chunk_doc_id] if chunk_doc_id else [],
                     "attributes": [
@@ -573,7 +696,7 @@ def _merge_unit_into_graph(
                         for a in (ent.get("attributes") or [])[:MAX_ATTRIBUTES_PER_ENTITY]
                         if str(a.get("name", "")).strip() and str(a.get("value", "")).strip()
                     ],
-                }),
+                },
             ))
         else:
             row = db.get(GraphEntity, eid)
@@ -584,13 +707,6 @@ def _merge_unit_into_graph(
                 if alias and alias != row.name and alias not in aliases:
                     aliases.append(alias)
             props = dict(row.properties or {})
-            if (
-                llm_type != FALLBACK_ENTITY_TYPE
-                and props.get("method") == "rules"
-                and row.entity_type != llm_type
-            ):
-                row.entity_type = llm_type
-            _tag(props)
             props["freq"] = int(props.get("freq") or 0) + 1
             doc_ids = set(props.get("doc_ids") or [])
             if chunk_doc_id:
@@ -638,17 +754,17 @@ def _merge_unit_into_graph(
             props["weight"] = int(props.get("weight") or 0) + 1
             if not props.get("evidence"):
                 props["evidence"] = evidence
-            existing.properties = _tag(props)
+            existing.properties = props
             relation_ids.append(existing.id)
         else:
             relation = GraphRelation(
                 id=uuid.uuid4(),
                 kb_id=kb.id, source_id=s_id, target_id=t_id,
                 relation_type=rtype,
-                properties=_tag({
+                properties={
                     "source": "auto", "method": "llm",
                     "weight": 1, "evidence": evidence,
-                }),
+                },
             )
             db.add(relation)
             relation_ids.append(relation.id)

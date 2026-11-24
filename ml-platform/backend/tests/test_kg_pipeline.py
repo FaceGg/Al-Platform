@@ -281,13 +281,15 @@ class TestKgExtractionJob(unittest.TestCase):
             names = [e.name for e in entities]
             self.assertEqual(len(names), len(set(names)))
 
-    def test_job_counts_are_distinct_and_expose_job_graph(self):
-        # 进度里的「实体 N · 关系 M」是去重后的图中实体/关系数，不是各分片结果
-        # 的累加；「本次抽取结果」子图端点与之同源（properties.job_id 标签）
-        kb_id = _seed_kb("kg-job-distinct")
+    def test_deep_extraction_replaces_quick_results_and_counts_match_graph(self):
+        # 快速抽取与深度抽取不并存、以最后一次为主：规则层已有的实体与关系在
+        # 深度抽取时整体清掉，只留大模型抽出来的。进度里的「实体 N · 关系 M」
+        # 是库内图谱规模（去重后的存活实体/关系数，不是各分片结果的累加），
+        # 与画布 GET /graph 同源
+        kb_id = _seed_kb("kg-job-replace")
         _seed_doc(kb_id, "a.txt", ["点焊电流8kA会引起飞溅。", "点焊电流过大会导致飞溅。"])
         with SessionLocal() as db:
-            # 规则层已有「飞溅」（jieba 词性桶类型）及一条规则层关系
+            # 规则层已有「飞溅」（jieba 词性桶类型）、一个规则层独有实体及一条关系
             splash = GraphEntity(
                 kb_id=uuid.UUID(kb_id), name="飞溅", entity_type="concept",
                 properties={"source": "auto", "method": "rules", "freq": 5},
@@ -309,7 +311,6 @@ class TestKgExtractionJob(unittest.TestCase):
             db.add(job)
             db.commit()
             job_id = str(job.id)
-            splash_id = splash.id
 
         from app.services import knowledge_graph_llm_extraction as module
 
@@ -321,28 +322,37 @@ class TestKgExtractionJob(unittest.TestCase):
             job = db.get(KgExtractionJob, uuid.UUID(job_id))
             self.assertEqual(job.status, "succeeded")
             # 2 片 × (2 实体/1 关系) 的相同结果 → 去重后仍是 2/1，不是 4/2
-            self.assertEqual(job.entities_found, 2)
-            self.assertEqual(job.relations_found, 1)
-            # 规则层「飞溅」被实体链接复用（同 id），并采纳 LLM 的领域类型
-            splash = db.get(GraphEntity, splash_id)
-            self.assertEqual(splash.entity_type, "缺陷")
-            self.assertEqual(splash.properties["method"], "rules")
-            self.assertEqual(splash.properties["job_id"], job_id)
+            self.assertEqual((job.entities_found, job.relations_found), (2, 1))
+            live = {
+                (e.name, e.entity_type, e.properties["method"])
+                for e in db.query(GraphEntity).filter(
+                    GraphEntity.kb_id == uuid.UUID(kb_id),
+                    GraphEntity.merged_into.is_(None),
+                ).all()
+            }
+            # 规则层结果被整体替换：「飞溅」是大模型新建的实体（领域类型），规则层独有实体不在了
+            self.assertEqual(live, {("点焊", "工艺", "llm"), ("飞溅", "缺陷", "llm")})
 
-        r = client.get(
-            f"/api/knowledge/bases/{kb_id}/graph/extract/jobs/{job_id}/graph", headers=h,
-        )
-        self.assertEqual(r.status_code, 200)
-        graph = r.json()
+        graph = client.get(f"/api/knowledge/bases/{kb_id}/graph", headers=h).json()
         self.assertEqual(sorted(n["name"] for n in graph["nodes"]), ["点焊", "飞溅"])
-        self.assertEqual(len(graph["edges"]), 1)
-        self.assertEqual(graph["edges"][0]["relation_type"], "导致缺陷")
-        # 子图端点与进度数字逐项相等
+        self.assertEqual([e["relation_type"] for e in graph["edges"]], ["导致缺陷"])
+        # 状态标注的数字与画布逐项相等
         status = client.get(
             f"/api/knowledge/bases/{kb_id}/graph/extract/jobs/{job_id}", headers=h,
         ).json()
         self.assertEqual(len(graph["nodes"]), status["entities_found"])
         self.assertEqual(len(graph["edges"]), status["relations_found"])
+        summary = client.get(
+            f"/api/knowledge/bases/{kb_id}/graph/extract/summary", headers=h,
+        ).json()
+        self.assertEqual(summary["current"], "llm")
+        # 摘要里的图谱规模（状态标注用）与画布 GET /graph 同口径
+        self.assertEqual(
+            summary["graph"],
+            {"entities": len(graph["nodes"]), "relations": len(graph["edges"])},
+        )
+        self.assertTrue(summary["llm"]["extracted"])
+        self.assertFalse(summary["rules"]["extracted"])
 
     def test_job_with_every_chunk_failed_is_marked_failed(self):
         kb_id = _seed_kb("kg-job-all-failed")
@@ -396,6 +406,361 @@ class TestKgExtractionJob(unittest.TestCase):
             self.assertEqual((job.total_units, job.done_units), (3, 3))
             self.assertEqual(job.llm_errors, 1)
             self.assertEqual(job.entities_found, 2)
+
+
+    def test_job_interrupted_early_is_marked_failed(self):
+        # 看门狗/时间预算让分片没跑完：不能标「已完成」（实测 3/18 片提前结束
+        # 后界面仍显示绿色完成标注，剩余分片无人续抽）
+        kb_id = _seed_kb("kg-job-interrupted")
+        _seed_doc(kb_id, "a.txt", ["内容一句。", "内容两句。"])
+        with SessionLocal() as db:
+            job = KgExtractionJob(kb_id=uuid.UUID(kb_id), mode="llm", status="pending", params={})
+            db.add(job)
+            db.commit()
+            job_id = str(job.id)
+
+        from app.services import knowledge_graph_llm_extraction as module
+
+        def stalled_wait(futures, timeout=None, return_when=None):
+            # 模拟看门狗窗口内没有任何分片落地（确定性，不依赖时钟精度）
+            return set(), set(futures)
+
+        with patch.object(module, "wait", side_effect=stalled_wait), \
+             patch.object(module, "chat_completion_with_retry", return_value=(_GOOD_UNIT, {}, None)):
+            module.run_kg_extraction_job(job_id)
+
+        with SessionLocal() as db:
+            job = db.get(KgExtractionJob, uuid.UUID(job_id))
+            self.assertEqual(job.status, "failed")
+            self.assertIn("interrupted before finishing", job.error)
+            self.assertIn("LLM calls stalled", job.error)
+            self.assertEqual(job.done_units, 0)
+
+    def test_interrupted_reextraction_keeps_remaining_chunks_resumable(self):
+        # 重新抽取（force）清空图层时必须一并作废分片缓存：否则重抽中断后界面
+        # 显示待抽 0 片、不给「继续抽取」入口，图层却只剩一部分（2026-11-24
+        # 实测：图里 3/18 片，缓存仍是 18 片全部完成）
+        kb_id = _seed_kb("kg-job-force-resume")
+        _seed_doc(kb_id, "a.txt", ["点焊电流8kA会引起飞溅。", "电极采用铬锆铜材料制造。"])
+        with SessionLocal() as db:
+            job = KgExtractionJob(
+                kb_id=uuid.UUID(kb_id), mode="llm", status="pending", params={"force": True},
+            )
+            db.add(job)
+            db.commit()
+            job_id = str(job.id)
+
+        from concurrent.futures import FIRST_COMPLETED, wait as real_wait
+
+        from app.services import knowledge_graph_llm_extraction as module
+
+        electrode_unit = json.dumps({
+            "entities": [
+                {"name": "电极", "type": "部件", "aliases": [], "attributes": []},
+                {"name": "铬锆铜", "type": "材料", "aliases": [], "attributes": []},
+            ],
+            "relations": [
+                {"source": "电极", "target": "铬锆铜", "type": "相关", "evidence": "电极采用铬锆铜"},
+            ],
+        }, ensure_ascii=False)
+
+        def fake_llm(db, *, config, messages, **kwargs):
+            text = json.dumps(messages, ensure_ascii=False)
+            return (electrode_unit if "铬锆铜" in text else _GOOD_UNIT), {}, None
+
+        waits = {"n": 0}
+
+        def one_then_stall(futures, timeout=None, return_when=None):
+            # 第一次等待只放行一片（假 LLM 瞬间返回，两片可能都已完成）；第二次
+            # 等待窗口内无任何分片完成（看门狗触发）
+            done, pending = real_wait(futures, timeout=timeout, return_when=FIRST_COMPLETED)
+            waits["n"] += 1
+            if waits["n"] > 1:
+                return set(), set(futures)
+            released = set(sorted(done, key=id)[:1])
+            return released, set(pending) | (set(done) - released)
+
+        with patch.object(module, "chat_completion_with_retry", side_effect=fake_llm), \
+             patch.object(module, "wait", side_effect=one_then_stall):
+            module.run_kg_extraction_job(job_id)
+
+        h = login_headers()
+        url = f"/api/knowledge/bases/{kb_id}/graph/extract/summary"
+        with SessionLocal() as db:
+            job = db.get(KgExtractionJob, uuid.UUID(job_id))
+            self.assertEqual(job.status, "failed")
+            self.assertEqual((job.done_units, job.total_units), (1, 2))
+        interrupted = client.get(url, headers=h).json()
+        # 图里只有 1 片的结果 → 另 1 片必须算作待抽（重新抽取开始时缓存已作废）
+        self.assertEqual(interrupted["llm"]["pending_chunks"], 1)
+        self.assertEqual(interrupted["llm"]["latest_job"]["entities_found"], 2)
+
+        # 续抽：只做剩下的 1 片
+        with SessionLocal() as db:
+            resume = KgExtractionJob(
+                kb_id=uuid.UUID(kb_id), mode="llm", status="pending", params={},
+            )
+            db.add(resume)
+            db.commit()
+            resume_id = str(resume.id)
+        calls = {"n": 0}
+
+        def counting_llm(*args, **kwargs):
+            calls["n"] += 1
+            return fake_llm(*args, **kwargs)
+
+        with patch.object(module, "chat_completion_with_retry", side_effect=counting_llm):
+            module.run_kg_extraction_job(resume_id)
+        self.assertEqual(calls["n"], 1)
+
+        # 续建在原结果之上：两片的产出都在，补抽后图谱不减回去；
+        # 状态标注的数字与画布逐项相等
+        graph = client.get(f"/api/knowledge/bases/{kb_id}/graph", headers=h).json()
+        self.assertEqual(
+            sorted(n["name"] for n in graph["nodes"]), ["点焊", "电极", "铬锆铜", "飞溅"],
+        )
+        self.assertEqual(len(graph["edges"]), 2)
+        resumed = client.get(url, headers=h).json()
+        self.assertEqual(resumed["llm"]["pending_chunks"], 0)
+        self.assertEqual(resumed["llm"]["latest_job"]["status"], "succeeded")
+        self.assertEqual(resumed["llm"]["latest_job"]["entities_found"], len(graph["nodes"]))
+        self.assertEqual(resumed["llm"]["latest_job"]["relations_found"], len(graph["edges"]))
+
+    def test_force_reextraction_clears_what_is_not_extracted_again(self):
+        # 全部重新抽取从零重建：这一轮没再抽到的实体与关系不残留
+        kb_id = _seed_kb("kg-job-force-layer")
+        _seed_doc(kb_id, "a.txt", ["点焊电流8kA会引起飞溅。"])
+        with SessionLocal() as db:
+            first = KgExtractionJob(
+                kb_id=uuid.UUID(kb_id), mode="llm", status="pending", params={},
+            )
+            db.add(first)
+            db.commit()
+            first_id = str(first.id)
+
+        from app.services import knowledge_graph_llm_extraction as module
+
+        with patch.object(module, "chat_completion_with_retry", return_value=(_GOOD_UNIT, {}, None)):
+            module.run_kg_extraction_job(first_id)
+        h = login_headers()
+        graph = client.get(f"/api/knowledge/bases/{kb_id}/graph", headers=h).json()
+        self.assertEqual(sorted(n["name"] for n in graph["nodes"]), ["点焊", "飞溅"])
+
+        # 全部重新抽取：这一轮大模型只抽到「点焊」
+        only_weld = json.dumps({
+            "entities": [{"name": "点焊", "type": "工艺", "aliases": [], "attributes": []}],
+            "relations": [],
+        }, ensure_ascii=False)
+        with SessionLocal() as db:
+            second = KgExtractionJob(
+                kb_id=uuid.UUID(kb_id), mode="llm", status="pending", params={"force": True},
+            )
+            db.add(second)
+            db.commit()
+            second_id = str(second.id)
+        with patch.object(module, "chat_completion_with_retry", return_value=(only_weld, {}, None)):
+            module.run_kg_extraction_job(second_id)
+
+        with SessionLocal() as db:
+            second = db.get(KgExtractionJob, uuid.UUID(second_id))
+            self.assertEqual(second.status, "succeeded")
+            self.assertEqual((second.entities_found, second.relations_found), (1, 0))
+        graph = client.get(f"/api/knowledge/bases/{kb_id}/graph", headers=h).json()
+        self.assertEqual([n["name"] for n in graph["nodes"]], ["点焊"])
+        self.assertEqual(graph["edges"], [])
+
+    def test_quick_extraction_replaces_deep_results_and_deep_restores_from_cache(self):
+        # 以最后一次抽取为主：快速抽取清掉大模型抽取结果，但保留分片缓存；
+        # 之后改用深度抽取，抽过的分片按缓存重建，不再调用大模型
+        kb_id = _seed_kb("kg-job-switch")
+        _seed_doc(kb_id, "a.txt", ["点焊电流8kA会引起飞溅。", "电极采用铬锆铜材料制造。"])
+        with SessionLocal() as db:
+            first = KgExtractionJob(
+                kb_id=uuid.UUID(kb_id), mode="llm", status="pending", params={},
+            )
+            db.add(first)
+            db.commit()
+            first_id = str(first.id)
+
+        from app.services import knowledge_graph_llm_extraction as module
+
+        electrode_unit = json.dumps({
+            "entities": [
+                {"name": "电极", "type": "部件", "aliases": [], "attributes": []},
+                {"name": "铬锆铜", "type": "材料", "aliases": [], "attributes": []},
+            ],
+            "relations": [
+                {"source": "电极", "target": "铬锆铜", "type": "相关", "evidence": "电极采用铬锆铜"},
+            ],
+        }, ensure_ascii=False)
+
+        def fake_llm(db, *, config, messages, **kwargs):
+            text = json.dumps(messages, ensure_ascii=False)
+            return (electrode_unit if "铬锆铜" in text else _GOOD_UNIT), {}, None
+
+        with patch.object(module, "chat_completion_with_retry", side_effect=fake_llm):
+            module.run_kg_extraction_job(first_id)
+
+        h = login_headers()
+        url = f"/api/knowledge/bases/{kb_id}/graph/extract/summary"
+        graph_url = f"/api/knowledge/bases/{kb_id}/graph"
+        self.assertEqual(sorted(
+            n["name"] for n in client.get(graph_url, headers=h).json()["nodes"]
+        ), ["点焊", "电极", "铬锆铜", "飞溅"])
+
+        # 改用快速抽取：大模型抽取的实体与关系整体清掉
+        r = client.post(
+            f"/api/knowledge/bases/{kb_id}/graph/extract", json={"mode": "rules"}, headers=h,
+        )
+        self.assertEqual(r.status_code, 200)
+        summary = client.get(url, headers=h).json()
+        self.assertNotEqual(summary["current"], "llm")
+        self.assertFalse(summary["llm"]["extracted"])
+        self.assertNotIn(
+            "llm",
+            {
+                (n["properties"] or {}).get("method")
+                for n in client.get(graph_url, headers=h).json()["nodes"]
+            },
+        )
+        # 分片缓存保留：2 片都抽过 → 没有待抽分片
+        self.assertEqual(summary["llm"]["cached_chunks"], 2)
+        self.assertEqual(summary["llm"]["pending_chunks"], 0)
+
+        # 切回深度抽取：抽过的分片按缓存重建，不调用大模型
+        with SessionLocal() as db:
+            second = KgExtractionJob(
+                kb_id=uuid.UUID(kb_id), mode="llm", status="pending", params={},
+            )
+            db.add(second)
+            db.commit()
+            second_id = str(second.id)
+        with patch.object(module, "chat_completion_with_retry") as fake_llm_now:
+            module.run_kg_extraction_job(second_id)
+        self.assertEqual(fake_llm_now.call_count, 0)
+        with SessionLocal() as db:
+            second = db.get(KgExtractionJob, uuid.UUID(second_id))
+            self.assertEqual(second.status, "succeeded")
+            # 回放的 2 片计入进度：一开始就是 2/2
+            self.assertEqual((second.done_units, second.total_units), (2, 2))
+        graph = client.get(graph_url, headers=h).json()
+        self.assertEqual(
+            sorted(n["name"] for n in graph["nodes"]), ["点焊", "电极", "铬锆铜", "飞溅"],
+        )
+        self.assertEqual(len(graph["edges"]), 2)
+        summary = client.get(url, headers=h).json()
+        self.assertEqual(summary["current"], "llm")
+        self.assertTrue(summary["llm"]["extracted"])
+
+    def test_quick_extraction_is_refused_while_a_deep_job_runs(self):
+        # 快速抽取与深度抽取不并存：任务进行中若放行快速抽取，任务后续分片会
+        # 继续往刚重建的结果里写，两种结果重新混杂
+        kb_id = _seed_kb("kg-job-guard")
+        _seed_doc(kb_id, "a.txt", ["点焊电流8kA会引起飞溅。"])
+        with SessionLocal() as db:
+            running = KgExtractionJob(
+                kb_id=uuid.UUID(kb_id), mode="llm", status="running", params={}, total_units=1,
+            )
+            db.add(running)
+            db.commit()
+            running_id = running.id
+
+        r = client.post(
+            f"/api/knowledge/bases/{kb_id}/graph/extract",
+            json={"mode": "rules"}, headers=login_headers(),
+        )
+        self.assertEqual(r.status_code, 409)
+        with SessionLocal() as db:
+            self.assertEqual(db.get(KgExtractionJob, running_id).status, "running")
+
+    def test_summary_reports_mixed_legacy_layer_and_next_extraction_rebuilds(self):
+        # 两层并存时期留下的存量库：摘要如实报告混杂；下一次深度抽取整体重建
+        kb_id = _seed_kb("kg-job-mixed")
+        _seed_doc(kb_id, "a.txt", ["点焊电流8kA会引起飞溅。"])
+        with SessionLocal() as db:
+            db.add_all([
+                GraphEntity(
+                    kb_id=uuid.UUID(kb_id), name="规则层实体", entity_type="concept",
+                    properties={"source": "auto", "method": "rules", "freq": 5},
+                ),
+                GraphEntity(
+                    kb_id=uuid.UUID(kb_id), name="旧的大模型实体", entity_type="工艺",
+                    properties={"source": "auto", "method": "llm", "freq": 1},
+                ),
+            ])
+            job = KgExtractionJob(kb_id=uuid.UUID(kb_id), mode="llm", status="pending", params={})
+            db.add(job)
+            db.commit()
+            job_id = str(job.id)
+
+        from app.services import knowledge_graph_llm_extraction as module
+
+        h = login_headers()
+        url = f"/api/knowledge/bases/{kb_id}/graph/extract/summary"
+        before = client.get(url, headers=h).json()
+        self.assertEqual(before["current"], "mixed")
+        self.assertFalse(before["rules"]["extracted"])
+        self.assertFalse(before["llm"]["extracted"])
+
+        with patch.object(module, "chat_completion_with_retry", return_value=(_GOOD_UNIT, {}, None)):
+            module.run_kg_extraction_job(job_id)
+        names = sorted(
+            n["name"] for n in client.get(f"/api/knowledge/bases/{kb_id}/graph", headers=h).json()["nodes"]
+        )
+        self.assertEqual(names, ["点焊", "飞溅"])
+        self.assertEqual(client.get(url, headers=h).json()["current"], "llm")
+
+    def test_extract_summary_reflects_history(self):
+        kb_id = _seed_kb("kg-summary")
+        _seed_doc(kb_id, "a.txt", ["点焊电流8kA会引起飞溅。", "点焊电流过大会导致飞溅。"])
+        h = login_headers()
+        url = f"/api/knowledge/bases/{kb_id}/graph/extract/summary"
+
+        # 未抽取：当前图谱没有抽取结果，2 个分片待抽
+        before = client.get(url, headers=h).json()
+        self.assertEqual(before["chunks"], 2)
+        self.assertIsNone(before["current"])
+        self.assertEqual(before["rules"], {"extracted": False, "entities": 0})
+        self.assertEqual(before["llm"]["extracted"], False)
+        self.assertIsNone(before["llm"]["latest_job"])
+        self.assertEqual(before["llm"]["pending_chunks"], 2)
+        self.assertEqual(before["llm"]["cached_chunks"], 0)
+
+        with SessionLocal() as db:
+            job = KgExtractionJob(kb_id=uuid.UUID(kb_id), mode="llm", status="pending", params={})
+            db.add(job)
+            db.commit()
+            job_id = str(job.id)
+
+        from app.services import knowledge_graph_llm_extraction as module
+
+        with patch.object(module, "chat_completion_with_retry", return_value=(_GOOD_UNIT, {}, None)):
+            module.run_kg_extraction_job(job_id)
+
+        after = client.get(url, headers=h).json()
+        # 当前图谱由深度抽取生成
+        self.assertEqual(after["current"], "llm")
+        self.assertTrue(after["llm"]["extracted"])
+        self.assertEqual(after["llm"]["latest_job"]["id"], job_id)
+        self.assertEqual(after["llm"]["latest_job"]["status"], "succeeded")
+        # 全部分片已成功 → 无待抽、2 片有缓存；无进行中任务
+        self.assertEqual(after["llm"]["pending_chunks"], 0)
+        self.assertEqual(after["llm"]["cached_chunks"], 2)
+        self.assertIsNone(after["llm"]["active_job"])
+        self.assertEqual(after["rules"], {"extracted": False, "entities": 0})
+
+        # 任务进行中（30 分钟内创建）→ active_job 可见，刷新页面后能接续轮询
+        with SessionLocal() as db:
+            running = KgExtractionJob(
+                kb_id=uuid.UUID(kb_id), mode="llm", status="running", params={},
+                total_units=2, done_units=1,
+            )
+            db.add(running)
+            db.commit()
+            running_id = str(running.id)
+        during = client.get(url, headers=h).json()
+        self.assertEqual(during["llm"]["active_job"]["id"], running_id)
+        self.assertEqual(during["llm"]["latest_job"]["id"], running_id)
 
 
 class TestWebSearchOverride(unittest.TestCase):
@@ -453,6 +818,35 @@ class TestKgFusion(unittest.TestCase):
             r = db.get(GraphRelation, uuid.UUID(rel))
             self.assertIsNotNone(r)
             self.assertEqual(str(r.source_id), a)
+
+    def test_auto_merge_skips_pair_already_merged_in_this_pass(self):
+        # 互为别名的一对：先处理的一方并入另一方后，轮到存活者时索引（本轮开始
+        # 时的快照）仍指向「已并入自己」的对方——应识别为已合并并跳过。此前走
+        # 进防环分支抛 ValueError，整个抽取任务被判失败：缓存回放建的图所有
+        # 实体同一秒创建（created_at 相等、不换位），稳定触发（2026-11-24 实测）
+        kb_id = _seed_kb("kg-fusion-mutual")
+        with SessionLocal() as db:
+            loser = GraphEntity(
+                kb_id=uuid.UUID(kb_id), name="电阻焊", entity_type="工艺", aliases=["点焊"],
+                properties={"source": "auto", "method": "llm", "freq": 1},
+            )
+            winner = GraphEntity(
+                kb_id=uuid.UUID(kb_id), name="点焊", entity_type="工艺", aliases=["电阻焊"],
+                properties={"source": "auto", "method": "llm", "freq": 1},
+            )
+            db.add(loser)  # 列表序在前：先处理它 → 它成为被并入方
+            db.add(winner)
+            db.commit()
+            winner_id, loser_id = winner.id, loser.id
+
+            from app.models.knowledge import KnowledgeBase
+
+            from app.services.kg_fusion import auto_fuse_after_extraction
+
+            report = auto_fuse_after_extraction(db, db.get(KnowledgeBase, uuid.UUID(kb_id)), method="llm")
+            self.assertEqual(report["auto_merged"], 1)
+            self.assertEqual(db.get(GraphEntity, loser_id).merged_into, winner_id)
+            self.assertIn("电阻焊", db.get(GraphEntity, winner_id).aliases or [])
 
     def test_alias_and_conflict_and_fuzzy(self):
         kb_id = _seed_kb("kg-fusion-mixed")
@@ -572,6 +966,51 @@ class TestKgProjection(unittest.TestCase):
         self.assertEqual(counts["relations"], 1)
         merged_queries = [q for q, _ in driver.queries if "MERGE" in q]
         self.assertGreaterEqual(len(merged_queries), 2)  # 实体批 + 关系批
+
+    def test_schema_is_created_on_first_connection(self):
+        # 投影按 (kbId, id) 定位节点：没有索引时每条关系的两次 MATCH 都是全标签
+        # 扫描（399 实体 / 6,230 关系的库重建要 30 秒）。首连时幂等建约束与索引
+        class Result:
+            def __init__(self, log, query):
+                self.log, self.query = log, query
+
+            def consume(self):
+                self.log.append(("consume", self.query))
+
+        class Session:
+            def __init__(self, log):
+                self.log = log
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def run(self, query, **params):
+                self.log.append(("run", query))
+                return Result(self.log, query)
+
+        class Driver:
+            def __init__(self, log):
+                self.log = log
+
+            def session(self, database=None):
+                return Session(self.log)
+
+        from app.services.kg_projection import KgProjection
+
+        log = []
+        projection = KgProjection()
+        projection._driver = Driver(log)
+        projection._ensure_schema()
+
+        statements = [query for kind, query in log if kind == "consume"]
+        self.assertEqual(len(statements), 2)  # 两条语句都被执行到底（consume）
+        self.assertIn("CREATE CONSTRAINT kg_entity_id IF NOT EXISTS", statements[0])
+        self.assertIn("FOR (e:KGEntity) REQUIRE e.id IS UNIQUE", statements[0])
+        self.assertIn("CREATE INDEX kg_entity_kb IF NOT EXISTS", statements[1])
+        self.assertIn("FOR (e:KGEntity) ON (e.kbId)", statements[1])
 
     def test_pg_fallback_neighbors_and_path(self):
         kb_id = _seed_kb("kg-pg-fallback")

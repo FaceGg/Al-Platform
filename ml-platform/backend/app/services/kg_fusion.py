@@ -202,12 +202,21 @@ def _exact_and_alias_merges(db, kb, *, max_merges: int) -> int:
     for entity in list(entities):
         if merged >= max_merges:
             break
+        if entity.merged_into is not None:
+            continue
         norm = _normalize_name(entity.name)
         target = by_norm.get(norm)
         if target is None or target.id == entity.id:
             # 名字本身没撞上时再看别名索引（别人的别名=自己的规范名候选）
             target = alias_index.get(norm)
         if target is None or target.id == entity.id:
+            continue
+        # 两个索引都是本轮开始时的快照：对方可能已在本轮里被合并（含已并入
+        # 当前实体——互为别名的一对，反方向不必再合并）。先解析到最终存活者；
+        # 不解析的话 merge_entities 会按防环分支抛异常，整个抽取任务被判失败
+        # （缓存回放建的图所有实体同一秒创建，稳定触发——2026-11-24 实测）
+        target = resolve_merged(db, target.id)
+        if target is None or target.id == entity.id or target.merged_into is not None:
             continue
         if target.created_at and entity.created_at and entity.created_at < target.created_at:
             target, entity = entity, target

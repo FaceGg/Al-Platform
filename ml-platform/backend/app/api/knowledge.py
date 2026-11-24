@@ -1251,14 +1251,19 @@ def extract_kb_graph_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Rebuild the auto knowledge-graph layer from document content.
+    """Rebuild the knowledge graph of this KB from document content.
+
+    快速抽取与深度抽取**不并存，以最后一次抽取为主**：谁后跑，库内只留谁的
+    结果（上一轮抽取结果先整体清空，手工行——无 properties.source 标记——不受
+    影响）。
 
     mode="rules"（默认，兼容）：确定性规则+统计（jieba 词性粗分、共现、
-    is_a/part_of 模式），同步返回 report。
+    is_a/part_of 模式），同步返回 report。大模型分片缓存保留：之后改用深度
+    抽取时抽过的分片直接恢复，不重复调用大模型。
     mode="llm"：大模型深度抽取（按库本体约束类型、实体别名+属性+关系证据），
     创建异步任务立即返回 {mode, job_id}；进度走
     GET /bases/{kb_id}/graph/extract/jobs/{job_id}，取消走 POST .../cancel。
-    手工行（无 properties.source 标记）永不修改；auto 层按 method 分别重建。
+    force=true（仅 llm）：全部重新抽取——作废分片缓存、清空图谱重做全部分片。
     """
     kb = db.query(KnowledgeBase).filter(
         KnowledgeBase.id == uuid.UUID(kb_id),
@@ -1278,23 +1283,26 @@ def extract_kb_graph_endpoint(
     if not documents:
         raise HTTPException(422, "No documents to extract from")
 
+    from app.models.knowledge import KgExtractionJob
+
+    # 防重入：同库已有进行中的深度抽取任务时，两种抽取都不再派——多任务互抢
+    # LLM 出口、交错清写图谱；快速抽取重建后，任务后续分片还会继续往里写，
+    # 两种结果重新混杂。前端按钮在任务进行中禁用，这里兜底
+    active = db.query(KgExtractionJob).filter(
+        KgExtractionJob.kb_id == kb.id,
+        KgExtractionJob.status.in_(("pending", "running")),
+    ).first()
+    if active:
+        raise HTTPException(
+            409,
+            f"An extraction job is already running for this knowledge base "
+            f"(job {active.id}, {active.done_units}/{active.total_units} units done); "
+            f"wait for it to finish or cancel it first",
+        )
+
     if mode == "llm":
-        from app.models.knowledge import KgExtractionJob
         from app.tasks.kg_tasks import dispatch_kg_extraction
 
-        # 防重入：同库已有进行中的抽取任务时拒绝再派（避免多任务互抢 LLM
-        # 出口、交错清写同层）；前端刷新后仍可能重复点击，服务端兜底
-        active = db.query(KgExtractionJob).filter(
-            KgExtractionJob.kb_id == kb.id,
-            KgExtractionJob.status.in_(("pending", "running")),
-        ).first()
-        if active:
-            raise HTTPException(
-                409,
-                f"An extraction job is already running for this knowledge base "
-                f"(job {active.id}, {active.done_units}/{active.total_units} units done); "
-                f"wait for it to finish or cancel it first",
-            )
         has_chunks = (
             db.query(Chunk)
             .join(Document, Chunk.document)
@@ -1329,6 +1337,13 @@ def extract_kb_graph_endpoint(
         )
 
     from app.services.knowledge_graph_extraction import extract_kb_graph
+    from app.services.knowledge_graph_llm_extraction import clear_extraction_results
+
+    # 以最后一次抽取为主：先清空库内上一轮抽取结果（含深度抽取），再重建快速
+    # 抽取结果——不先清的话，快速抽取的实体链接会复用同名的大模型实体，两种
+    # 结果又混在一起
+    clear_extraction_results(db, kb.id)
+    db.commit()
     report = extract_kb_graph(
         db, kb,
         [(str(d.id), d.content or "") for d in documents],
@@ -1813,22 +1828,12 @@ def list_kg_jobs(
     ]
 
 
-@router.get("/bases/{kb_id}/graph/extract/jobs/{job_id}")
-def get_kg_job(
-    kb_id: str,
-    job_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    from app.models.knowledge import KgExtractionJob
+def _kg_job_info(job) -> dict:
+    """深度抽取任务的状态载荷（进度端点 / 摘要端点共用同一形态）。
 
-    kb = _owned_kb(db, kb_id, current_user)
-    job = db.query(KgExtractionJob).filter(
-        KgExtractionJob.id == uuid.UUID(job_id),
-        KgExtractionJob.kb_id == kb.id,
-    ).first()
-    if not job:
-        raise HTTPException(404, "Job not found")
+    entities_found / relations_found 是库内图谱规模（去重后的存活实体/关系数）：
+    任务每落地一片同步更新，收尾融合归并后再按图重算一次。
+    """
     total = job.total_units or 0
     done = job.done_units or 0
     return {
@@ -1848,18 +1853,13 @@ def get_kg_job(
     }
 
 
-@router.get("/bases/{kb_id}/graph/extract/jobs/{job_id}/graph")
-def get_kg_job_graph(
+@router.get("/bases/{kb_id}/graph/extract/jobs/{job_id}")
+def get_kg_job(
     kb_id: str,
     job_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """本次抽取在图中产出的子图（节点/边形态同 GET /bases/{id}/graph）。
-
-    数据源是并入图时打的 properties.job_id 标签：与任务进度里的
-    「实体 N · 关系 M」同源，抽取期间画布展示的就是这份数据。
-    """
     from app.models.knowledge import KgExtractionJob
 
     kb = _owned_kb(db, kb_id, current_user)
@@ -1869,45 +1869,93 @@ def get_kg_job_graph(
     ).first()
     if not job:
         raise HTTPException(404, "Job not found")
-    job_key = str(job.id)
-    entities = db.query(GraphEntity).filter(
-        GraphEntity.kb_id == kb.id,
-        GraphEntity.merged_into.is_(None),
-        GraphEntity.properties["job_id"].as_string() == job_key,
-    ).all()
-    entity_ids = {e.id for e in entities}
-    # 关系先按起点走索引收窄到本次抽取的实体，再按标签过滤（避免全库关系表扫描）
-    relations = (
-        db.query(GraphRelation).filter(
-            GraphRelation.kb_id == kb.id,
-            GraphRelation.source_id.in_(entity_ids),
-            GraphRelation.properties["job_id"].as_string() == job_key,
-        ).all()
-        if entity_ids
-        else []
+    return _kg_job_info(job)
+
+
+@router.get("/bases/{kb_id}/graph/extract/summary")
+def get_kg_extract_summary(
+    kb_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """抽取状态摘要：当前图谱由哪种抽取生成、未完成分片数、最近/进行中的深度抽取任务。
+
+    「以最后一次抽取为主」：current 是库内当前抽取结果的来源——rules / llm /
+    mixed（两层并存时期留下的存量数据）/ null（未抽取）。rules.extracted 与
+    llm.extracted 至多一个为真，它们说的是「当前图谱是谁生成的」，不是「历史
+    上跑没跑过」。前端据此决定再次点击弹哪种确认框（重新抽取 / 改用另一种
+    抽取）与状态行文案。进行中任务的 30 分钟新鲜度在服务端用数据库时钟判定
+    ——created_at 是库端 now()（UTC），浏览器端按本地时区解析无时区 ISO 会
+    差 8 小时，导致刷新后永远接不上进行中任务。
+    """
+    from datetime import timedelta
+
+    from app.models.knowledge import KgExtractionJob, KgUnitResult
+    from app.services.knowledge_graph_llm_extraction import current_layer, graph_totals
+
+    kb = _owned_kb(db, kb_id, current_user)
+    layer = current_layer(db, kb.id)
+    entity_count, relation_count = graph_totals(db, kb.id)
+    rules_entities = entity_count if layer == "rules" else 0
+    # 「最近任务」按开始时间排（未开始的按创建时间）：创建时间只有秒级精度，
+    # 中断后立刻续抽的两个任务同秒创建，只按创建时间倒序取首个会不确定
+    jobs = (
+        db.query(KgExtractionJob)
+        .filter(KgExtractionJob.kb_id == kb.id)
+        .order_by(
+            func.coalesce(KgExtractionJob.started_at, KgExtractionJob.created_at).desc(),
+            KgExtractionJob.created_at.desc(),
+        )
+        .limit(20)
+        .all()
     )
+    db_now = db.query(func.now()).scalar()
+    active = None
+    if db_now is not None:
+        fresh_before = db_now - timedelta(minutes=30)
+        active = next(
+            (
+                j for j in jobs
+                if j.status in ("pending", "running")
+                and j.created_at is not None and j.created_at >= fresh_before
+            ),
+            None,
+        )
+    # 进行中的任务就是「最近任务」：同库任务不并发，它必然是当前该跟踪的那个；
+    # 且 created_at 秒级精度下同秒任务排序不确定，不能只靠时间倒序取首个
+    latest = active or (jobs[0] if jobs else None)
+    total_chunks = (
+        db.query(func.count(Chunk.id))
+        .join(Document, Chunk.document)
+        .filter(Document.kb_id == kb.id)
+        .scalar()
+    ) or 0
+    # 缓存 = 抽过且成功（或确实抽不出内容）的分片：没抽过的算待抽；改用深度
+    # 抽取时抽过的分片直接按缓存重建，不再调用大模型
+    done_chunks = (
+        db.query(func.count(func.distinct(KgUnitResult.chunk_id)))
+        .join(Chunk, KgUnitResult.chunk_id == Chunk.id)
+        .join(Document, Chunk.document)
+        .filter(
+            Document.kb_id == kb.id,
+            KgUnitResult.kb_id == kb.id,
+            KgUnitResult.status.in_(("ok", "empty")),
+        )
+        .scalar()
+    ) or 0
     return {
-        "nodes": [
-            {
-                "id": str(e.id),
-                "name": e.name,
-                "entity_type": e.entity_type,
-                "aliases": e.aliases or [],
-                "properties": e.properties,
-            }
-            for e in entities
-        ],
-        "edges": [
-            {
-                "id": str(r.id),
-                "source": str(r.source_id),
-                "target": str(r.target_id),
-                "relation_type": r.relation_type,
-                "properties": r.properties,
-            }
-            for r in relations
-            if r.source_id in entity_ids and r.target_id in entity_ids
-        ],
+        "chunks": total_chunks,
+        "current": layer,
+        # 当前图谱规模（与画布标题栏同口径）
+        "graph": {"entities": entity_count, "relations": relation_count},
+        "rules": {"extracted": layer == "rules", "entities": rules_entities},
+        "llm": {
+            "extracted": layer == "llm",
+            "pending_chunks": max(0, total_chunks - done_chunks),
+            "cached_chunks": min(done_chunks, total_chunks),
+            "latest_job": _kg_job_info(latest) if latest else None,
+            "active_job": _kg_job_info(active) if active else None,
+        },
     }
 
 
