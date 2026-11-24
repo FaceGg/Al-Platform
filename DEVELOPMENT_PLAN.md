@@ -700,6 +700,14 @@ fail-closed 启动校验 + 手动 upgrade 的组合是设计行为（迁移失�
 - 发布与基线语义（2026-11-23）：GitHub Release `20261119-r19` 原位替换双资产（tar.gz + sha256，同名）并更新正文；tag `20261119-r19` 移指构建 HEAD；**补打语义标签 `baseline-pre-major-2026-11` 于 `5148e5f5`**（= 重打前原 r19 内容锚点，2026-11-19 基线固化的实际落地）——大更新前的功能对比/回归/回退以此为锚，重打后的 r19 则是包含 KG 批次的最新安装包。
 - README 同步：迁移头 `20261114_101`→`20261120_104`；升级重建命令补 `neo4j`；新增 neo4j 服务说明（拉取镜像/默认密码/降级行为）；r19 变更条目补 ⑤ 知识图谱五阶段流水线（2026-11-23 重打新增）。
 
+## 2026-11-24 Windows 安装包能力：双资产第二形态（用户拍板：正式部署/双资产/有外网）
+
+- 背景：现场出现 Windows 服务器部署需求，用户拍板正式部署标准、与 Linux 包双资产并存、现场有外网。r 系打包管线自此每次发布同时产出 `linkraft-ubuntu-<版本>.tar.gz` 与 `linkraft-windows-<版本>.zip`（同一棵源码树、同一套 compose/迁移链，差异仅在宿主机入口脚本与平台专有步骤）。
+- 实现（`c420c38b`+`eb96d8f8`）：①`packaging/install-windows.ps1`——与 Ubuntu 安装器逐键同口径（.env 全键集含 POSTGRES_*/DATABASE_URL/SECRET_KEY/ML_PLATFORM_ADMIN_INITIAL_PASSWORD/ANNOTATOR_SERVICE_SECRET/CELERY_*/MINIO_*/MLFLOW_*/TENSORBOARD_*/INFERENCE_*/NGINX_*/BACKEND_*/FRONTEND_*/ANNOTATOR_*（含 COOKIE_SECURE=false）/FRONTEND_ORIGIN+ALIASES；升级只补缺键不覆盖秘钥；CORS 清洗对齐 r13 修复并重排到 docker 预检之前）；平台差异=秘钥 .NET RNG（无 openssl 依赖）、跳过存储 chown（Docker Desktop 的 Windows bind mount 无 UID 检查）、防火墙 New-NetFirewallRule（非管理员仅打印建议命令）、icacls 文件权限收敛；UTF-8 带 BOM，pwsh 7 与 Windows PowerShell 5.1 双兼容。②`compose-windows.ps1` 三 -f 叠加（base+legacy-cpu+**windows 覆盖**）：`docker-compose.windows.yml` 把 legacy-cpu 硬编码的构建网络 `host` 回落 default——Docker Desktop 引擎在 WSL2 VM 内 host 语义不同且有历史兼容风险，默认桥接 NAT 同样可达 aliyun/npmmirror。③`uninstall-windows.ps1` 与 bash 版同构。④打包脚本同一 stage 树增产 zip+sha256（仅 Git Bash 构建机有 powershell.exe+cygpath 时产出；下游 Ubuntu/WSL 重建自动降级只产 tar.gz）。⑤README-WINDOWS.md（环境要求 Win10 22H2+/Win11/Server 2019+、Docker Desktop 4.30+/Compose ≥2.24.4、安装/升级保留 .env、neo4j、运维、常见问题 127.0.0.1、CPU 兼容同 CPUv1 钉版、torch 可选）+README-UBUNTU 首部 Windows 指引。
+- 验证证据：三 ps1 UTF-8 BOM 落盘核验（`efbbbf`）+ PowerShell Language.Parser 语法全过；zip 结构核验（顶层目录正确/脚本齐/BOM 在包内完好/manifest 双平台注记）；本机演练 D1 非法 origin（带路径）→ 正确报错 exit 1、D2 尾斜杠容忍 → docker 缺失友好报错 exit 1（**本机未装 Docker Desktop，docker 在场的完整安装路径未真机跑过**——栈正确性由 11-23 Production integration CI 六绿背书，Docker Desktop 特有风险（host 构建网络）已用 windows 覆盖确定性消除）；WSL（Compose v5.5.0）三文件合并校验 `config` 通过，10 个可构建服务全部 `network: default`（覆盖生效实证）。
+- 发布挂接：Windows 资产 `linkraft-windows-20261124-r19.zip`（SHA `ee2826a9…16ab3`，manifest 绑定 `eb96d8f8`）作为第三资产挂到现有 r19 Release（tag/manifest 不动，正文注明 Windows 资产绑定打包能力提交）；自下一版起每次发布从同一提交同时产双平台资产。
+- 遗留：真机 Docker Desktop 完整安装路径待现场首次部署实测回填；`network: host` 若现场构建仍异常（理论上已被覆盖消除），兜底见 README-WINDOWS 常见问题。
+
 ## 2026-11-11 重新打包 r18：纳入 r17 后智能体全链与治理安全批次
 
 - 背景：r17（2026-10-20）发布后主线累计 498 个提交（智能体全链、治理安全批次九~十四、知识中心大修、trivy 豁免合同化、复验日修复等，迁移 head 推进至 `20261107_97`）；用户要求更新文档重新打包。
