@@ -122,7 +122,11 @@ ZIP_ARCHIVE="$OUTPUT_DIR/linkraft-windows-${VERSION}.zip"
 ZIP_CHECKSUM="${ZIP_ARCHIVE}.sha256"
 ZIP_DIR_NAME="linkraft-windows-${VERSION}"
 if command -v powershell.exe >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
-  mv -- "$STAGE_DIR/$PACKAGE_NAME" "$STAGE_DIR/$ZIP_DIR_NAME"
+  # Windows 下目录 rename 会被瞬时句柄锁（索引/杀软/并发进程）拒绝——拷贝兜底
+  if ! mv -- "$STAGE_DIR/$PACKAGE_NAME" "$STAGE_DIR/$ZIP_DIR_NAME" 2>/dev/null; then
+    cp -r -- "$STAGE_DIR/$PACKAGE_NAME" "$STAGE_DIR/$ZIP_DIR_NAME"
+    rm -rf -- "$STAGE_DIR/$PACKAGE_NAME"
+  fi
   STAGE_WIN="$(cygpath -w "$STAGE_DIR/$ZIP_DIR_NAME")"
   ZIP_WIN="$(cygpath -w "$ZIP_ARCHIVE")"
   powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
