@@ -1,11 +1,11 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
-  Select, Button, Form, Input, List, Typography, message, Card, Space, Tag, Empty, Tabs,
+  Select, Button, Form, Input, Typography, message, Card, Space, Tag, Empty, Tabs,
   AutoComplete, InputNumber, Tooltip,
 } from "antd";
 import {
   PlusOutlined, DeleteOutlined, ReloadOutlined, AimOutlined, ScanOutlined,
-  ApartmentOutlined, NodeIndexOutlined, EyeOutlined, EyeInvisibleOutlined,
+  ApartmentOutlined, NodeIndexOutlined, EyeOutlined, EyeInvisibleOutlined, InfoCircleOutlined,
 } from "@ant-design/icons";
 import ReactECharts from "echarts-for-react";
 import apiClient from "../api/client";
@@ -122,6 +122,9 @@ export default function KnowledgeGraphPage() {
     viewCapHelp: "总览最多渲染的实体数量；库内超出时按连接数与词频优先采样（Top 枢纽 + 其关系），保证布局性能与可读性。聚焦邻域时不受此限制。",
     neighborhood: "邻域",
     entityList: "实体列表",
+    entityCount: (n: number, total: number) =>
+      n < total ? `显示 ${n} / ${total}（按当前视图采样）` : `共 ${n} 个`,
+    detail: "详情", delete: "删除",
     ontology: "本体设置",
     pathQuery: "路径查询",
     labelsOn: "隐藏文字",
@@ -142,6 +145,9 @@ export default function KnowledgeGraphPage() {
     viewCapHelp: "Max entities rendered in the overview; beyond it, top-connected entities are sampled (top hubs + their edges) for layout performance and readability. Focus mode is not capped.",
     neighborhood: "Neighborhood",
     entityList: "Entities",
+    entityCount: (n: number, total: number) =>
+      n < total ? `Showing ${n} of ${total} (view sample)` : `${n} entities`,
+    detail: "Info", delete: "Delete",
     ontology: "Ontology",
     pathQuery: "Path query",
     labelsOn: "Hide labels",
@@ -822,39 +828,83 @@ export default function KnowledgeGraphPage() {
                 key: "entities",
                 label: graphText.entityList,
                 children: (
-                  <Card size="small">
-                    <List
-                      size="small"
-                      dataSource={view.nodes}
-                      style={{ maxHeight: `calc(100vh - ${CANVAS_OFFSET + 90}px)`, overflowY: "auto" }}
-                      locale={{ emptyText: <Empty description={t.common.loading} /> }}
-                      renderItem={(node: GraphNode) => (
-                        <List.Item
-                          style={{ cursor: "pointer", background: node.id === focusId ? "#fff7e6" : undefined }}
-                          onClick={() => { setSearchFocus(false); setFocusId(node.id === focusId ? null : node.id); }}
-                          actions={[
-                            <Button type="link" size="small"
-                              onClick={(e) => { e.stopPropagation(); setDetailId(node.id); setDetailOpen(true); }}
+                  <Card size="small" styles={{ body: { padding: 0 } }}>
+                    <style>{`
+                      .kg-entity-row:hover { background: ${isDark ? "rgba(138,125,255,0.10)" : "#fafafa"}; }
+                    `}</style>
+                    {/* 行头计数：画布按视图上限采样，列表只画采样出的节点 */}
+                    <div style={{
+                      padding: "6px 12px", fontSize: 11,
+                      color: isDark ? "#8FA8C4" : "#57707B",
+                      borderBottom: `1px solid ${isDark ? "#24344f" : "#f0f0f0"}`,
+                    }}>
+                      {graphText.entityCount(view.nodes.length, graphData.nodes.length)}
+                    </div>
+                    <div style={{ maxHeight: `calc(100vh - ${CANVAS_OFFSET + 118}px)`, overflowY: "auto" }}>
+                      {view.nodes.length === 0 ? (
+                        <Empty
+                          description={loading ? t.common.loading : graphText.emptyKb}
+                          style={{ marginTop: 120 }}
+                        />
+                      ) : view.nodes.map((node: GraphNode) => {
+                        const selected = node.id === focusId;
+                        return (
+                          <div
+                            key={node.id}
+                            className="kg-entity-row"
+                            onClick={() => { setSearchFocus(false); setFocusId(selected ? null : node.id); }}
+                            style={{
+                              display: "flex", alignItems: "center", gap: 8,
+                              padding: "6px 12px",
+                              borderBottom: `1px solid ${isDark ? "#1d2c45" : "#f5f5f5"}`,
+                              cursor: "pointer",
+                              background: selected
+                                ? (isDark ? "rgba(138,125,255,0.18)" : "#fff7e6")
+                                : undefined,
+                            }}
+                          >
+                            <Tag
+                              style={{ marginInlineEnd: 0, flexShrink: 0 }}
+                              color={groupColorOf(node)}
                             >
-                              {lang === "zh" ? "详情" : "Info"}
-                            </Button>,
-                            <Button type="link" danger size="small" icon={<DeleteOutlined />}
-                              onClick={(e) => { e.stopPropagation(); deleteEntity(node.id); }} />,
-                          ]}
-                        >
-                          <Space>
-                            <Tag style={{ marginInlineEnd: 0 }} color={groupColorOf(node)}>
                               {typeDisplayName(node.type || "entity", lang)}
                             </Tag>
-                            <Text>{node.label}</Text>
-                            {node.source === "auto"
-                              ? <Tag color="orange">{graphText.auto}</Tag>
-                              : <Tag>{graphText.manual}</Tag>}
-                            {node.docCount ? <Text type="secondary" style={{ fontSize: 11 }}>{graphText.docCount(node.docCount)}</Text> : null}
-                          </Space>
-                        </List.Item>
-                      )}
-                    />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div
+                                title={node.label}
+                                style={{
+                                  fontWeight: 500, fontSize: 13,
+                                  color: isDark ? "#D8E2F0" : undefined,
+                                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                }}
+                              >
+                                {node.label}
+                              </div>
+                              <div style={{
+                                fontSize: 11,
+                                color: isDark ? "#8FA8C4" : "#57707B",
+                                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                              }}>
+                                {node.source === "auto" ? graphText.auto : graphText.manual}
+                                {node.docCount ? ` · ${graphText.docCount(node.docCount)}` : ""}
+                              </div>
+                            </div>
+                            <Space size={0} style={{ flexShrink: 0 }}>
+                              <Button
+                                type="text" size="small" title={graphText.detail}
+                                icon={<InfoCircleOutlined />}
+                                onClick={(e) => { e.stopPropagation(); setDetailId(node.id); setDetailOpen(true); }}
+                              />
+                              <Button
+                                type="text" size="small" danger title={graphText.delete}
+                                icon={<DeleteOutlined />}
+                                onClick={(e) => { e.stopPropagation(); deleteEntity(node.id); }}
+                              />
+                            </Space>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </Card>
                 ),
               },
