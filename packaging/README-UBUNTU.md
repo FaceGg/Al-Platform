@@ -1,5 +1,7 @@
 # Linkraft Ubuntu 安装部署
 
+> Windows 服务器部署使用同版本号的 `linkraft-windows-*.zip`（Docker Desktop + PowerShell 安装器），见包内 `packaging/README-WINDOWS.md` 或 Release 资产；两平台来自同一棵源码树，compose 服务与迁移链完全一致。
+
 ## 环境要求
 
 - Ubuntu 22.04 或 24.04 LTS，4 vCPU，8 GB 内存，至少 40 GB 可用磁盘。

@@ -102,6 +102,8 @@ Annotator frontend build: node:20-bookworm-slim source build; no host dist/ requ
 Writable storage: installer repairs bind-mounted backend data/uploads ownership to UID/GID 1000 before startup
 MinIO health: CPUv1 server uses curl HTTP readiness probe; mc init waits for service_healthy before creating the bucket
 Package indexes: PIP_INDEX_URL defaults to mirrors.aliyun.com; NPM_REGISTRY defaults to registry.npmmirror.com
+Windows package: linkraft-windows-<VERSION>.zip（同一源码树；入口 packaging/install-windows.ps1 + README-WINDOWS.md）
+Storage ownership repair (chown 1000:1000) applies to Ubuntu bind mounts only; Windows Docker Desktop needs no chown
 Excluded: .env, secrets, databases, caches, dependencies, test evidence, Git metadata
 EOF
 
@@ -112,3 +114,24 @@ mv -f -- "$TMP_ARCHIVE" "$ARCHIVE"
   sha256sum "$(basename "$ARCHIVE")" > "$(basename "$CHECKSUM")"
 )
 printf '%s\n' "$ARCHIVE"
+
+# Windows 包：同一棵 stage 树，顶层目录改 windows 命名后压成 zip。仅构建机
+# 同时具备 powershell.exe 与 cygpath（Git Bash）时产出——下游 Ubuntu 重建与
+# WSL 构建自动降级为只产 tar.gz，不受影响。
+ZIP_ARCHIVE="$OUTPUT_DIR/linkraft-windows-${VERSION}.zip"
+ZIP_CHECKSUM="${ZIP_ARCHIVE}.sha256"
+ZIP_DIR_NAME="linkraft-windows-${VERSION}"
+if command -v powershell.exe >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+  mv -- "$STAGE_DIR/$PACKAGE_NAME" "$STAGE_DIR/$ZIP_DIR_NAME"
+  STAGE_WIN="$(cygpath -w "$STAGE_DIR/$ZIP_DIR_NAME")"
+  ZIP_WIN="$(cygpath -w "$ZIP_ARCHIVE")"
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
+    "Compress-Archive -Path '$STAGE_WIN' -DestinationPath '$ZIP_WIN' -Force" >/dev/null
+  (
+    cd "$OUTPUT_DIR"
+    sha256sum "$(basename "$ZIP_ARCHIVE")" > "$(basename "$ZIP_CHECKSUM")"
+  )
+  printf '%s\n' "$ZIP_ARCHIVE"
+else
+  echo "[INFO] powershell.exe/cygpath 不可用，跳过 Windows zip（仅产出 tar.gz）。"
+fi
