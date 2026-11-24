@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App as AntApp } from "antd";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -123,6 +123,9 @@ describe("KnowledgeGraphPage", () => {
     await waitFor(() => {
       expect(get.mock.calls.filter(([url]) => url === SUMMARY_URL).length).toBe(1);
     });
+    // 等初始 loadGraph 落地再点刷新：慢机（CI）上摘要先于图返回，按钮仍处
+    // loading 态会吞掉点击，摘要计数停在 1（run 45354020461 实证）
+    await act(async () => {});
 
     fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
     await waitFor(() => {
