@@ -33,6 +33,8 @@ export interface KgExtractSummary {
     pending_chunks: number;
     /** 抽过的分片数：改用深度抽取时直接恢复，不再调用大模型 */
     cached_chunks: number;
+    /** 成本护栏：单个任务最多调大模型的分片数；待抽分片多于它时分多次完成 */
+    max_chunks_per_job?: number;
     latest_job: KgJobInfo | null;
     active_job: KgJobInfo | null;
   };

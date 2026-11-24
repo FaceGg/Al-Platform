@@ -288,6 +288,11 @@ def extract_unit(
 
 
 def _select_chunks(db, kb, params: dict) -> list[Chunk]:
+    """任务可见的全部分片，按文档创建时间、分片序号排好（不截断）。
+
+    成本护栏不在这里截：要先剔除已缓存的分片再取前 cap 个，否则分批续抽时
+    每次都落在同一批分片上（见 job_chunk_cap）。
+    """
     doc_ids = params.get("doc_ids") or None
     query = (
         db.query(Chunk)
@@ -298,12 +303,29 @@ def _select_chunks(db, kb, params: dict) -> list[Chunk]:
         wanted = set(str(x) for x in doc_ids)
         query = query.filter(Document.id.in_(wanted))
     query = query.order_by(Document.created_at.asc(), Chunk.chunk_index.asc())
-    chunks = query.all()
+    return query.all()
+
+
+def job_chunk_cap(params: dict) -> int:
+    """单个任务最多调用大模型的分片数（成本护栏）；请求里的 max_chunks 只能调低。
+
+    护栏按「本次实际要调大模型的分片」计：之前是先截前 cap 个分片再剔除已缓存
+    的——278 片的库抽完前 120 片后，页面显示「补抽 158 片」，点下去每次都是
+    0/0，后面的分片永远抽不到（2026-11-24 实测）。
+    """
     cap = settings.kg_llm_max_chunks
     override = params.get("max_chunks")
     if isinstance(override, int) and override > 0:
         cap = min(cap, override)
-    return chunks[:cap]
+    return cap
+
+
+def job_heartbeat(params: dict) -> float | None:
+    """任务行 params 里的心跳时刻（epoch 秒）；没有则 None。"""
+    beat = (params or {}).get("_heartbeat")
+    if isinstance(beat, bool) or not isinstance(beat, (int, float)):
+        return None
+    return float(beat)
 
 
 def run_kg_extraction_job(job_id: str) -> None:
@@ -342,8 +364,17 @@ def run_kg_extraction_job(job_id: str) -> None:
             job.finished_at = datetime.datetime.utcnow()
             db.commit()
             return
+        def _beat() -> None:
+            """心跳写进任务行（params 里的内部键，不需要迁移）：摘要接口据此区分
+            「还在跑的长任务」与「worker 没了留下的僵尸任务」。按创建时间判活的
+            话，120 片、要跑一小时以上的任务在 30 分钟后刷新页面就失联了。"""
+            params = dict(job.params or {})
+            params["_heartbeat"] = time.time()
+            job.params = params
+
         job.status = "running"
         job.started_at = datetime.datetime.utcnow()
+        _beat()
         db.commit()
 
         ontology = resolve_ontology(kb)
@@ -384,14 +415,16 @@ def run_kg_extraction_job(job_id: str) -> None:
         # 分片任务物化为纯值（id+content）：ORM 对象传入线程后，属性访问会因
         # commit 过期触发「用主线程会话在工作线程里重载」→ Session 跨线程并发
         # （InvalidRequestError 实证 2026-11-20）。线程池只收普通值。
+        # 成本护栏按「本次实际要调大模型的分片」计：先剔除已缓存的，再取前 cap 个
+        cap = job_chunk_cap(job.params or {})
         todo = [
             (c.id, c.content or "")
             for c in chunks
             if _content_hash(c.content or "") not in done_hashes
-        ]
+        ][:cap]
         # 回放缓存：图谱整体重建时，抽过的分片直接按缓存并入，不再调用大模型
-        # （force 已作废缓存，无缓存可回放）。按文档顺序回放，实体链接结果与
-        # 首次抽取一致
+        # （force 已作废缓存，无缓存可回放）。回放库内全部已缓存分片——分批抽取
+        # 的库缓存可能横跨多批；按文档顺序回放，实体链接结果与首次抽取一致
         replay: list = []
         if rebuild:
             order = {c.id: index for index, c in enumerate(chunks)}
@@ -496,6 +529,7 @@ def run_kg_extraction_job(job_id: str) -> None:
             # 失败片数按「最终仍失败的分片」计（重试成功的不算），重试不会翻倍
             job.llm_errors = len(failed_chunk_ids)
             job.done_units += 1
+            _beat()
             db.commit()
 
         def _run_batch(executor, batch) -> bool:

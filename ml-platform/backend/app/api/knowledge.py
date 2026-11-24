@@ -1872,6 +1872,64 @@ def get_kg_job(
     return _kg_job_info(job)
 
 
+# 进行中任务的活性判定：心跳在这个窗口内算活着。任务每落地一片写一次心跳，
+# 单片耗时上限（含重试）远小于它
+KG_ACTIVE_HEARTBEAT_SECONDS = 15 * 60
+
+
+def _kg_db_now_utc(db_now):
+    """数据库时钟归一成不带时区的 UTC；拿不到则 None。
+
+    PostgreSQL 的 now() **带时区**，而任务行的时间列不带时区（按 UTC 存）——
+    直接比较抛 TypeError，任务一旦进入 pending/running 摘要接口就 500
+    （2026-11-24 实测：用户点了深度抽取后页面一直「抽取状态加载失败」）。
+    SQLite 的 now() 本来就不带时区。
+    """
+    import datetime
+
+    if not isinstance(db_now, datetime.datetime):
+        return None
+    if db_now.tzinfo is not None:
+        db_now = db_now.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    return db_now
+
+
+def _kg_job_alive(job, now_utc) -> bool:
+    """进行中的任务是否还活着（已结束的任务恒为 True）。
+
+    - 有心跳（任务每落地一片写一次，存在 params._heartbeat）：15 分钟内算活着
+      ——120 片、要跑一小时以上的任务，按创建时间判活会在 30 分钟后失联；
+    - 没有心跳：排队中（还没轮到执行）的任务给到时间预算的窗口；旧代码写的
+      running 任务沿用创建后 30 分钟。僵尸任务（worker 没了）心跳一停就判死。
+    """
+    import datetime
+    from datetime import timedelta
+
+    from app.config import settings
+    from app.services.knowledge_graph_llm_extraction import job_heartbeat
+
+    if job.status not in ("pending", "running"):
+        return True
+    if now_utc is None or job.created_at is None:
+        return False
+    beat = job_heartbeat(job.params)
+    if beat is not None:
+        age = now_utc.replace(tzinfo=datetime.timezone.utc).timestamp() - beat
+        return age <= KG_ACTIVE_HEARTBEAT_SECONDS
+    if job.status == "pending":
+        return job.created_at >= now_utc - timedelta(seconds=settings.kg_llm_time_budget_seconds)
+    return job.created_at >= now_utc - timedelta(minutes=30)
+
+
+def _kg_active_job(jobs, db_now):
+    """仍然活着的进行中任务（页面刷新后据此接续轮询）；没有则 None。"""
+    now_utc = _kg_db_now_utc(db_now)
+    return next(
+        (j for j in jobs if j.status in ("pending", "running") and _kg_job_alive(j, now_utc)),
+        None,
+    )
+
+
 @router.get("/bases/{kb_id}/graph/extract/summary")
 def get_kg_extract_summary(
     kb_id: str,
@@ -1884,14 +1942,16 @@ def get_kg_extract_summary(
     mixed（两层并存时期留下的存量数据）/ null（未抽取）。rules.extracted 与
     llm.extracted 至多一个为真，它们说的是「当前图谱是谁生成的」，不是「历史
     上跑没跑过」。前端据此决定再次点击弹哪种确认框（重新抽取 / 改用另一种
-    抽取）与状态行文案。进行中任务的 30 分钟新鲜度在服务端用数据库时钟判定
+    抽取）与状态行文案。进行中任务是否还活着在服务端用数据库时钟判定
     ——created_at 是库端 now()（UTC），浏览器端按本地时区解析无时区 ISO 会
     差 8 小时，导致刷新后永远接不上进行中任务。
     """
-    from datetime import timedelta
-
     from app.models.knowledge import KgExtractionJob, KgUnitResult
-    from app.services.knowledge_graph_llm_extraction import current_layer, graph_totals
+    from app.services.knowledge_graph_llm_extraction import (
+        job_chunk_cap,
+        current_layer,
+        graph_totals,
+    )
 
     kb = _owned_kb(db, kb_id, current_user)
     layer = current_layer(db, kb.id)
@@ -1909,18 +1969,7 @@ def get_kg_extract_summary(
         .limit(20)
         .all()
     )
-    db_now = db.query(func.now()).scalar()
-    active = None
-    if db_now is not None:
-        fresh_before = db_now - timedelta(minutes=30)
-        active = next(
-            (
-                j for j in jobs
-                if j.status in ("pending", "running")
-                and j.created_at is not None and j.created_at >= fresh_before
-            ),
-            None,
-        )
+    active = _kg_active_job(jobs, db.query(func.now()).scalar())
     # 进行中的任务就是「最近任务」：同库任务不并发，它必然是当前该跟踪的那个；
     # 且 created_at 秒级精度下同秒任务排序不确定，不能只靠时间倒序取首个
     latest = active or (jobs[0] if jobs else None)
@@ -1953,6 +2002,8 @@ def get_kg_extract_summary(
             "extracted": layer == "llm",
             "pending_chunks": max(0, total_chunks - done_chunks),
             "cached_chunks": min(done_chunks, total_chunks),
+            # 成本护栏：单个任务最多调大模型的分片数，待抽分片多于它时分多次完成
+            "max_chunks_per_job": job_chunk_cap({}),
             "latest_job": _kg_job_info(latest) if latest else None,
             "active_job": _kg_job_info(active) if active else None,
         },

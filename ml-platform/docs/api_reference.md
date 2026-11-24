@@ -183,8 +183,8 @@ Authorization: Bearer <access_token>
 
 | 方法 | 端点 | 说明 |
 |------|------|------|
-| POST | `/api/knowledge/bases/{kb_id}/graph/extract` | 抽取。**快速抽取与深度抽取不并存，以最后一次抽取为主**（2026-11-24）：`mode=rules` 同步返回 report，替换库内上一轮抽取结果（大模型分片缓存保留）；`mode=llm` 创建异步任务返回 job_id。可带 doc_ids/max_chunks；`force=true`（仅 llm）=全部重新抽取（作废缓存、重做全部分片）。同库已有进行中的深度抽取任务时两种模式都返回 409 |
-| GET | `/api/knowledge/bases/{kb_id}/graph/extract/summary` | 抽取状态摘要：`current`（当前图谱由 rules/llm 生成，mixed=存量混杂，null=未抽取）、`graph`（图谱规模）、`llm.pending_chunks`/`cached_chunks`（待抽/已缓存分片数）、最近与进行中的任务 |
+| POST | `/api/knowledge/bases/{kb_id}/graph/extract` | 抽取。**快速抽取与深度抽取不并存，以最后一次抽取为主**（2026-11-24）：`mode=rules` 同步返回 report，替换库内上一轮抽取结果（大模型分片缓存保留）；`mode=llm` 创建异步任务返回 job_id。可带 doc_ids/max_chunks（max_chunks 只能把单次上限调低）；`force=true`（仅 llm）=全部重新抽取（作废缓存、重做全部分片）。同库已有进行中的深度抽取任务时两种模式都返回 409 |
+| GET | `/api/knowledge/bases/{kb_id}/graph/extract/summary` | 抽取状态摘要：`current`（当前图谱由 rules/llm 生成，mixed=存量混杂，null=未抽取）、`graph`（图谱规模）、`llm.pending_chunks`/`cached_chunks`（待抽/已缓存分片数）、`llm.max_chunks_per_job`（单个任务最多处理的分片数，待抽更多时分多次完成）、最近与进行中的任务（进行中=15 分钟内有过心跳） |
 | GET | `/api/knowledge/bases/{kb_id}/graph/extract/jobs?limit=` | 深度抽取任务列表（页面刷新后恢复进度跟踪） |
 | GET | `/api/knowledge/bases/{kb_id}/graph/extract/jobs/{job_id}` | 深度抽取任务进度（done/total/实体/关系/错误；实体/关系数=库内图谱规模） |
 | POST | `/api/knowledge/bases/{kb_id}/graph/extract/jobs/{job_id}/cancel` | 取消深度抽取（已完成单元保留，可续抽） |

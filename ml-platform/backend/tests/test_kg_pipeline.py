@@ -762,6 +762,148 @@ class TestKgExtractionJob(unittest.TestCase):
         self.assertEqual(during["llm"]["active_job"]["id"], running_id)
         self.assertEqual(during["llm"]["latest_job"]["id"], running_id)
 
+    def test_summary_active_job_uses_heartbeat_and_normalizes_database_clock(self):
+        # PostgreSQL 的 now() 带时区，任务行 created_at 不带时区（按 UTC 存）：
+        # 任务进入 pending/running 后摘要接口曾因此 500，页面一直「抽取状态
+        # 加载失败」（2026-11-24 实测）。测试库是 SQLite（now() 不带时区），这里
+        # 直接覆盖数据库时钟的归一与「任务是否还活着」的判定
+        import datetime
+        from types import SimpleNamespace
+
+        from app.api.knowledge import _kg_active_job
+
+        now = datetime.datetime(2026, 11, 24, 6, 51, 43, tzinfo=datetime.timezone.utc)
+        naive_now = now.replace(tzinfo=None)
+
+        def minutes_ago(minutes):
+            return naive_now - datetime.timedelta(minutes=minutes)
+
+        def beat_minutes_ago(minutes):
+            return {"_heartbeat": now.timestamp() - minutes * 60}
+
+        # 心跳新鲜的进行中任务：创建于一小时多以前也算活着（120 片的任务要跑一小时
+        # 以上——按创建时间判活，30 分钟后刷新页面就失联）
+        long_running = SimpleNamespace(status="running", created_at=minutes_ago(70), params=beat_minutes_ago(3))
+        # 心跳停了的「进行中」任务：worker 没了留下的僵尸
+        zombie = SimpleNamespace(status="running", created_at=minutes_ago(5), params=beat_minutes_ago(20))
+        # 排队中（还没轮到执行、没有心跳）的任务：创建一小时多也还在窗口内
+        queued = SimpleNamespace(status="pending", created_at=minutes_ago(70), params={})
+        # 旧代码写的 running 任务没有心跳：沿用创建后 30 分钟
+        legacy_running = SimpleNamespace(status="running", created_at=minutes_ago(10), params={})
+        legacy_stale = SimpleNamespace(status="running", created_at=minutes_ago(40), params={})
+        done = SimpleNamespace(status="succeeded", created_at=minutes_ago(1), params={})
+
+        self.assertIs(_kg_active_job([done, zombie, long_running], now), long_running)
+        self.assertIs(_kg_active_job([queued], now), queued)
+        self.assertIs(_kg_active_job([legacy_running], now), legacy_running)
+        # 僵尸任务、过期任务不算活跃——页面不会追着一个死任务转圈
+        self.assertIsNone(_kg_active_job([zombie, legacy_stale, done], now))
+        # 同一时刻、带其它时区偏移的数据库时钟，结论一致
+        local = now.astimezone(datetime.timezone(datetime.timedelta(hours=8)))
+        self.assertIs(_kg_active_job([long_running], local), long_running)
+        # 不带时区的时钟（SQLite）照常；拿不到时钟时不把进行中任务当成活的
+        self.assertIs(_kg_active_job([long_running], naive_now), long_running)
+        self.assertIsNone(_kg_active_job([long_running], None))
+
+
+    def test_successive_jobs_advance_beyond_the_per_job_cap(self):
+        # 成本护栏按「本次实际要调大模型的分片」计：5 片的库、每次最多 2 片 →
+        # 三次抽完全部分片。此前是先截前 cap 个再剔除已缓存的，第二次起每次都是
+        # 0/0，后面的分片永远抽不到（2026-11-24 实测：278 片的库）
+        kb_id = _seed_kb("kg-job-batches")
+        texts = [f"第{index}段内容：点焊工艺参数{index}，电极压力{index}千牛。" for index in range(1, 6)]
+        _seed_doc(kb_id, "a.txt", texts)
+        h = login_headers()
+        url = f"/api/knowledge/bases/{kb_id}/graph/extract/summary"
+
+        from app.services import knowledge_graph_llm_extraction as module
+
+        prompts = []
+
+        def fake_llm(db, *, config, messages, **kwargs):
+            prompts.append(messages[-1]["content"])
+            return _GOOD_UNIT, {}, None
+
+        def run_one():
+            with SessionLocal() as db:
+                job = KgExtractionJob(kb_id=uuid.UUID(kb_id), mode="llm", status="pending", params={})
+                db.add(job)
+                db.commit()
+                job_id = str(job.id)
+            with patch.object(module, "chat_completion_with_retry", side_effect=fake_llm), \
+                 patch.object(module.settings, "kg_llm_max_chunks", 2):
+                module.run_kg_extraction_job(job_id)
+                cap = module.job_chunk_cap({})
+                # 摘要在护栏补丁生效期间取：max_chunks_per_job 如实反映护栏
+                llm = client.get(url, headers=h).json()["llm"]
+            return cap, llm
+
+        cap, after1 = run_one()
+        _, after2 = run_one()
+        _, after3 = run_one()
+        _, after4 = run_one()
+
+        self.assertEqual(cap, 2)
+        self.assertEqual(after1["max_chunks_per_job"], 2)
+        # 每次最多 2 片：2 / 2 / 1，待抽分片逐次减少直到抽完
+        self.assertEqual(
+            [after["latest_job"]["done_units"] for after in (after1, after2, after3, after4)],
+            [2, 2, 1, 0],
+        )
+        self.assertEqual(
+            [after["pending_chunks"] for after in (after1, after2, after3, after4)],
+            [3, 1, 0, 0],
+        )
+        self.assertEqual([after["cached_chunks"] for after in (after1, after4)], [2, 5])
+        # 每片恰好调了一次大模型：没有重复、没有遗漏
+        self.assertEqual(len(prompts), 5)
+        for text in texts:
+            self.assertEqual(sum(1 for prompt in prompts if text in prompt), 1)
+        # 任务每落地一片写一次心跳（摘要接口据此区分长任务与僵尸任务）
+        with SessionLocal() as db:
+            first = db.get(KgExtractionJob, uuid.UUID(after4["latest_job"]["id"]))
+            self.assertIsInstance(first.params.get("_heartbeat"), float)
+
+    def test_switching_back_replays_every_cached_batch(self):
+        # 分批抽过的库（缓存横跨多批）改用快速抽取后再切回深度抽取：全部已缓存
+        # 分片都按缓存回放，不调大模型，后面几批也不丢
+        kb_id = _seed_kb("kg-job-batches-replay")
+        texts = [f"第{index}段内容：点焊工艺参数{index}，电极压力{index}千牛。" for index in range(1, 6)]
+        _seed_doc(kb_id, "a.txt", texts)
+
+        from app.services import knowledge_graph_llm_extraction as module
+
+        def run_llm_job():
+            with SessionLocal() as db:
+                job = KgExtractionJob(kb_id=uuid.UUID(kb_id), mode="llm", status="pending", params={})
+                db.add(job)
+                db.commit()
+                job_id = str(job.id)
+            with patch.object(module, "chat_completion_with_retry", return_value=(_GOOD_UNIT, {}, None)), \
+                 patch.object(module.settings, "kg_llm_max_chunks", 2):
+                module.run_kg_extraction_job(job_id)
+
+        for _ in range(3):
+            run_llm_job()
+        r = client.post(
+            f"/api/knowledge/bases/{kb_id}/graph/extract", json={"mode": "rules"}, headers=login_headers(),
+        )
+        self.assertEqual(r.status_code, 200)
+
+        with SessionLocal() as db:
+            job = KgExtractionJob(kb_id=uuid.UUID(kb_id), mode="llm", status="pending", params={})
+            db.add(job)
+            db.commit()
+            job_id = str(job.id)
+        with patch.object(module, "chat_completion_with_retry") as fake_llm:
+            module.run_kg_extraction_job(job_id)
+        self.assertEqual(fake_llm.call_count, 0)
+        with SessionLocal() as db:
+            job = db.get(KgExtractionJob, uuid.UUID(job_id))
+            self.assertEqual(job.status, "succeeded")
+            # 回放的 5 片全部计入进度（不再受单次上限截断）
+            self.assertEqual((job.done_units, job.total_units), (5, 5))
+
 
 class TestWebSearchOverride(unittest.TestCase):
     def test_default_follows_profile_and_explicit_flag_wins(self):

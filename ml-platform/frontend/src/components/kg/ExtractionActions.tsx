@@ -89,6 +89,15 @@ export default function ExtractionActions({ extraction }: { extraction: KgExtrac
     const chunks = s.chunks ?? 0;
     const pending = s.llm?.pending_chunks ?? 0;
     const cached = s.llm?.cached_chunks ?? 0;
+    // 成本护栏：单个任务最多处理 maxChunks 片，待抽分片更多时分多次完成。
+    // 摘要没带这个字段（旧后端）时按「一次能抽完」表述
+    const maxChunks = Math.max(1, s.llm?.max_chunks_per_job ?? pending ?? 1);
+    const batch = Math.min(pending, maxChunks);
+    // 耗时提醒：要分多次时说明每次上限
+    const effort = pending > maxChunks
+      ? (zh ? `（每次最多 ${maxChunks} 片，分多次完成，耗时较长）`
+        : ` (at most ${maxChunks} chunks per run, several runs, this takes a while)`)
+      : (zh ? "（耗时较长）" : " (this takes a while)");
 
     // 从未抽取：直接开始（此前抽过的分片若有缓存会直接恢复）
     if (s.current === null) {
@@ -142,8 +151,12 @@ export default function ExtractionActions({ extraction }: { extraction: KgExtrac
             <div>
               <div>
                 {zh
-                  ? `当前图谱由深度抽取生成${scale}。还有 ${pending} 个分片未完成抽取（新增文档或上次失败），本次只抽取这些分片。`
-                  : `The current graph comes from deep extraction${scale}. ${pending} chunk(s) are not finished yet (new documents or previous failures); this run extracts only those.`}
+                  ? (pending > maxChunks
+                    ? `当前图谱由深度抽取生成${scale}。还有 ${pending} 个分片未完成抽取（新增文档或上次失败）。深度抽取每次最多处理 ${maxChunks} 片：本次抽取 ${batch} 片，其余 ${pending - batch} 片下次继续。`
+                    : `当前图谱由深度抽取生成${scale}。还有 ${pending} 个分片未完成抽取（新增文档或上次失败），本次只抽取这些分片。`)
+                  : (pending > maxChunks
+                    ? `The current graph comes from deep extraction${scale}. ${pending} chunk(s) are not finished yet (new documents or previous failures). Deep extraction handles at most ${maxChunks} chunks per run: this run does ${batch}, the remaining ${pending - batch} continue next time.`
+                    : `The current graph comes from deep extraction${scale}. ${pending} chunk(s) are not finished yet (new documents or previous failures); this run extracts only those.`)}
               </div>
               <div style={{ marginTop: 8 }}>
                 <Button
@@ -160,7 +173,7 @@ export default function ExtractionActions({ extraction }: { extraction: KgExtrac
               </div>
             </div>
           ),
-          okText: zh ? `抽取未完成的 ${pending} 片` : `Extract ${pending} pending chunk(s)`,
+          okText: zh ? `抽取未完成的 ${batch} 片` : `Extract ${batch} pending chunk(s)`,
           cancelText,
           onOk: () => extraction.startDeep(false),
         });
@@ -186,11 +199,11 @@ export default function ExtractionActions({ extraction }: { extraction: KgExtrac
         : `The ${cached} previously extracted chunk(s) are restored from cache without calling the LLM.`)
       : cached > 0
         ? (zh
-          ? `此前抽取过的 ${cached} 个分片直接恢复，其余 ${pending} 个分片调用大模型抽取（耗时较长）。`
-          : `The ${cached} previously extracted chunk(s) are restored from cache; the remaining ${pending} chunk(s) call the LLM (this takes a while).`)
+          ? `此前抽取过的 ${cached} 个分片直接恢复，其余 ${pending} 个分片调用大模型抽取${effort}。`
+          : `The ${cached} previously extracted chunk(s) are restored from cache; the remaining ${pending} chunk(s) call the LLM${effort}.`)
         : (zh
-          ? `需调用大模型抽取 ${pending} 个分片，耗时较长。`
-          : `The LLM extracts ${pending} chunk(s); this takes a while.`);
+          ? `需调用大模型抽取 ${pending} 个分片${effort}。`
+          : `The LLM extracts ${pending} chunk(s)${effort}.`);
     let dialog: { destroy: () => void } | undefined;
     dialog = Modal.confirm({
       title: zh ? "改用深度抽取？" : "Switch to deep extraction?",

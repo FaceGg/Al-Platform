@@ -211,6 +211,31 @@ describe("extraction actions and status", () => {
     expect(post).not.toHaveBeenCalledWith(EXTRACT_URL, { mode: "llm", force: true });
   });
 
+  it("says how many chunks one run covers when more are pending than the per-job cap", async () => {
+    // 成本护栏：单个任务最多处理 120 片。待抽 158 片时不能承诺一次抽完——
+    // 状态行与确认框都写清「本次 120 片，其余 38 片下次继续」
+    mockApi({
+      summary: summaryOf({
+        current: "llm", graph: { entities: 566, relations: 609 },
+        llm: { pending_chunks: 158, cached_chunks: 120, max_chunks_per_job: 120 },
+      }),
+    });
+    render(<Harness onExtracted={vi.fn()} />);
+    await screen.findByTestId("kg-deep-current");
+    expect(screen.getByTestId("kg-deep-resume").textContent).toBe("补抽 120 片（共 158 片未完成）");
+
+    fireEvent.click(screen.getByRole("button", { name: /深度抽取/ }));
+    const config = await openedConfirm();
+    expect(config.okText).toBe("抽取未完成的 120 片");
+    render(config.content as React.ReactElement);
+    expect(screen.getByText(/本次抽取 120 片，其余 38 片下次继续/)).toBeTruthy();
+
+    await config.onOk?.();
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith(EXTRACT_URL, { mode: "llm" });
+    });
+  });
+
   it("the dialog offers re-extracting everything as the secondary action", async () => {
     mockApi({
       summary: summaryOf({

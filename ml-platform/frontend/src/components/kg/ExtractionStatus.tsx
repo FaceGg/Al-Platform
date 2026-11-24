@@ -28,8 +28,13 @@ export default function ExtractionStatus({ extraction }: { extraction: KgExtract
   // 没抽完的分片可以续抽；分片都抽过了但上次任务没成功结束（收尾的归并/同步
   // 失败、最后一刻取消）也可以重试——重试只重做收尾，不调用大模型
   const canResume = pending > 0 || job?.status === "failed" || job?.status === "cancelled";
+  // 成本护栏：单个任务最多处理 maxChunks 片，待抽分片更多时每次续抽推进一批
+  const maxChunks = Math.max(1, (summary?.llm.max_chunks_per_job ?? pending) || 1);
   const resumeLabel = job?.status === "succeeded"
-    ? (zh ? `补抽 ${pending} 片未完成` : `Extract ${pending} pending chunk(s)`)
+    ? (pending > maxChunks
+      ? (zh ? `补抽 ${maxChunks} 片（共 ${pending} 片未完成）`
+        : `Extract ${maxChunks} of ${pending} pending chunk(s)`)
+      : (zh ? `补抽 ${pending} 片未完成` : `Extract ${pending} pending chunk(s)`))
     : pending > 0
       ? (zh ? "继续抽取" : "Resume")
       : (zh ? "重试" : "Retry");
