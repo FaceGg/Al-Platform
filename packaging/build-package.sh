@@ -121,7 +121,16 @@ printf '%s\n' "$ARCHIVE"
 ZIP_ARCHIVE="$OUTPUT_DIR/linkraft-windows-${VERSION}.zip"
 ZIP_CHECKSUM="${ZIP_ARCHIVE}.sha256"
 ZIP_DIR_NAME="linkraft-windows-${VERSION}"
-if command -v powershell.exe >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+ZIP_PSHELL_BIN=""
+if command -v pwsh >/dev/null 2>&1; then
+  ZIP_PSHELL_BIN=pwsh
+elif command -v pwsh.exe >/dev/null 2>&1; then
+  ZIP_PSHELL_BIN=pwsh.exe
+elif command -v powershell.exe >/dev/null 2>&1; then
+  # 仅剩 5.1 时可用但产物 zip 条目用反斜杠分隔符（跨平台解压告警）
+  ZIP_PSHELL_BIN=powershell.exe
+fi
+if [ -n "$ZIP_PSHELL_BIN" ] && command -v cygpath >/dev/null 2>&1; then
   # Windows 下目录 rename 会被瞬时句柄锁（索引/杀软/并发进程）拒绝——拷贝兜底
   if ! mv -- "$STAGE_DIR/$PACKAGE_NAME" "$STAGE_DIR/$ZIP_DIR_NAME" 2>/dev/null; then
     cp -r -- "$STAGE_DIR/$PACKAGE_NAME" "$STAGE_DIR/$ZIP_DIR_NAME"
@@ -129,7 +138,7 @@ if command -v powershell.exe >/dev/null 2>&1 && command -v cygpath >/dev/null 2>
   fi
   STAGE_WIN="$(cygpath -w "$STAGE_DIR/$ZIP_DIR_NAME")"
   ZIP_WIN="$(cygpath -w "$ZIP_ARCHIVE")"
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
+  "$ZIP_PSHELL_BIN" -NoProfile -ExecutionPolicy Bypass -Command \
     "Compress-Archive -Path '$STAGE_WIN' -DestinationPath '$ZIP_WIN' -Force" >/dev/null
   (
     cd "$OUTPUT_DIR"
