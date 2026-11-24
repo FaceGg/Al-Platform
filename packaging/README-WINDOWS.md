@@ -1,5 +1,7 @@
 # Linkraft Windows 安装部署（Docker Desktop）
 
+> **打包规约（2026-11-24 用户指示）**：以后每次打包必须同步产出 Linux 与 Windows 双资产——`packaging/build-package.sh <版本>` 单命令同时产出 `linkraft-ubuntu-<版本>.tar.gz` 与 `linkraft-windows-<版本>.zip`（同一棵源码树、同一提交绑定），正式发布 Release 同时附带双平台资产与各自 sha256。
+
 Windows 包（`linkraft-windows-*.zip`）与 Ubuntu 包来自同一棵源码树：同样的 compose
 服务定义、同样的 legacy-cpu 镜像钉版、同样的迁移链。差异只在宿主机入口脚本
 （PowerShell 取代 bash）与平台专有步骤（防火墙/文件权限/存储属主）。`compose-windows.ps1`

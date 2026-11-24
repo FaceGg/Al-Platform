@@ -191,4 +191,4 @@ r8 及之后版本的 worker 会在应用 Linux 地址空间限制之前导入 O
 ./packaging/compose-ubuntu.sh up -d --remove-orphans
 ```
 
-如需从当前源码树重新构建安装包，运行 `./packaging/build-package.sh 20261119-r19`。
+如需从当前源码树重新构建安装包，运行 `./packaging/build-package.sh 20261119-r19`。**自 2026-11-24 起该命令为双平台口径**：同一命令同时产出 Linux `linkraft-ubuntu-<版本>.tar.gz` 与 Windows `linkraft-windows-<版本>.zip` 及各自 sha256（Windows zip 仅在带 powershell.exe 的 Git Bash 构建机上产出，Ubuntu/WSL 重建自动降级为只产 tar.gz）；正式发布时 Release 必须同时附带双平台资产。
