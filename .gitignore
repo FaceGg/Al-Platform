@@ -42,3 +42,13 @@ venv/
 # 重写（曾致 git status 永久挂 M），其余 .iml/inspectionProfiles 等亦为机器
 # 本地配置。整个 .idea/ 移出跟踪，本地文件保留。
 .idea/
+
+# 工具自建目录与运行时产物（2026-11-24）：git status 曾长期挂着 6 项未跟踪，
+# 打包前需人工排查。backend/data 是知识库向量库缓存（vs_*.pkl，曾 24 个误提交）；
+# temp_login/temp_token 是本地栈调试用的登录凭据快照（一律不入库）。
+.trae/
+.trae-html-share-packages/
+.zcode/
+ml-platform/backend/data/
+temp_login.json
+temp_token.txt
