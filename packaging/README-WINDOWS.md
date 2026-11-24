@@ -2,6 +2,9 @@
 
 Windows 包（`linkraft-windows-*.zip`）与 Ubuntu 包来自同一棵源码树：同样的 compose
 服务定义、同样的 legacy-cpu 镜像钉版、同样的迁移链。差异只在宿主机入口脚本
+（PowerShell 取代 bash）与平台专有步骤（防火墙/文件权限/存储属主）。`compose-windows.ps1`
+额外叠加 `docker-compose.windows.yml` 覆盖：把 legacy-cpu 硬编码的构建网络 `host` 回落为默认桥接（Docker Desktop 兼容），镜像源可达性不受影响。
+服务定义、同样的 legacy-cpu 镜像钉版、同样的迁移链。差异只在宿主机入口脚本
 （PowerShell 取代 bash）与平台专有步骤（防火墙/文件权限/存储属主）。
 
 ## 环境要求

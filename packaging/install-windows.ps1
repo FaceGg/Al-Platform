@@ -111,6 +111,16 @@ function Get-DefaultFrontendOriginAliases([string]$Origin) {
   return $aliases
 }
 
+# ---------- PUBLIC_ORIGIN 清洗（先于预检；对齐 r13 修复） ----------
+$origin = ""
+if ($PublicOrigin) { $origin = ([string]$PublicOrigin).Trim() }
+while ($origin.EndsWith("/")) {
+  $origin = $origin.Substring(0, $origin.Length - 1)
+}
+if ($origin -and ($origin -notmatch "^(https?://[^/\s]+)$")) {
+  Die "PUBLIC_ORIGIN 必须是 http://SERVER_IP:5175 形式的源（不含路径）。"
+}
+
 # ---------- 预检 ----------
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
   Die "未找到 docker 命令：请先安装 Docker Desktop 并确认其正在运行。"
@@ -132,16 +142,6 @@ if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue)) {
 }
 if (-not (Test-Path -LiteralPath $ComposeWrapper)) {
   Die "缺少 Compose 包装器：$ComposeWrapper"
-}
-
-# ---------- PUBLIC_ORIGIN 清洗（对齐 r13 修复：剥纯空白前缀/CR/尾斜杠） ----------
-$origin = ""
-if ($PublicOrigin) { $origin = ([string]$PublicOrigin).Trim() }
-while ($origin.EndsWith("/")) {
-  $origin = $origin.Substring(0, $origin.Length - 1)
-}
-if ($origin -and ($origin -notmatch "^(https?://[^/\s]+)$")) {
-  Die "PUBLIC_ORIGIN 必须是 http://SERVER_IP:5175 形式的源（不含路径）。"
 }
 
 # ---------- 防火墙（正式部署建议管理员运行） ----------

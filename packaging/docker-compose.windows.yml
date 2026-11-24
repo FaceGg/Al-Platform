@@ -1,0 +1,36 @@
+# Windows（Docker Desktop）专用覆盖：legacy-cpu 覆盖文件把各服务构建网络硬编码
+# 为 `network: host`（Linux 守护进程下的镜像源加速手法）。Docker Desktop 的引擎
+# 跑在 WSL2 虚拟机里，host 语义不同且历史版本有兼容性风险——构建一律回落默认
+# 桥接网络（NAT 出网同样可达 aliyun/npmmirror 镜像源）。仅由 compose-windows.ps1
+# 作为第三个 -f 文件挂载，Ubuntu 链路不受影响。
+services:
+  backend:
+    build:
+      network: default
+  worker:
+    build:
+      network: default
+  scheduler:
+    build:
+      network: default
+  migrate:
+    build:
+      network: default
+  inference-runtime:
+    build:
+      network: default
+  frontend:
+    build:
+      network: default
+  annotator:
+    build:
+      network: default
+  annotator-frontend:
+    build:
+      network: default
+  mlflow:
+    build:
+      network: default
+  tensorboard-gateway:
+    build:
+      network: default
