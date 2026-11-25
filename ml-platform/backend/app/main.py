@@ -76,6 +76,7 @@ from app.api import model_library as model_lib_api, dashboard as dash_api, readi
 from app.api import project_access as project_access_api
 from app.api import model_registry as model_registry_api
 from app.api import inference_production as inference_production_api
+from app.api import inference_results as inference_results_api
 from app.api import platform_security as platform_security_api
 from app.api import notifications as notifications_api
 from app.api import spot_weld_quality as spot_weld_quality_api
@@ -413,6 +414,7 @@ app.include_router(experiments.router)
 app.include_router(schedules.router)
 app.include_router(model_registry_api.router)
 app.include_router(inference_production_api.router)
+app.include_router(inference_results_api.router)
 app.include_router(platform_security_api.router)
 app.include_router(notifications_api.router)
 # Generic task routes are registered before the deprecated industry route so

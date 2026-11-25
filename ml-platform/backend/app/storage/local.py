@@ -54,6 +54,40 @@ class LocalStorage:
             raise StorageError("Could not store local artifact") from error
         return StoredObject(uri=target.as_uri(), size=size, sha256=sha256)
 
+    def put_snapshot(
+        self,
+        source: Path,
+        project_id: str,
+        date_key: str,
+        filename: str,
+    ) -> StoredObject:
+        """推理结果完整快照（B1-16）：projects/{pid}/inference-snapshots/
+        {date}/{filename}；随处置单长期保留，F1 只写不删。"""
+        source = source.expanduser().resolve()
+        if not source.is_file():
+            raise StorageError("Snapshot source file does not exist")
+        segments = (
+            validate_key_segment(str(project_id), "project_id"),
+            "inference-snapshots",
+            validate_key_segment(str(date_key), "date_key"),
+            validate_key_segment(str(filename), "filename"),
+        )
+        target = self._require_contained(self.base_dir.joinpath(*segments))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            with source.open("rb") as input_stream, temporary.open("xb") as output_stream:
+                shutil.copyfileobj(input_stream, output_stream, 1024 * 1024)
+            with temporary.open("rb") as stored_stream:
+                sha256, size = stream_integrity(stored_stream)
+            os.replace(temporary, target)
+        except Exception as error:
+            temporary.unlink(missing_ok=True)
+            if isinstance(error, StorageError):
+                raise
+            raise StorageError("Could not store local snapshot") from error
+        return StoredObject(uri=target.as_uri(), size=size, sha256=sha256)
+
     def open(self, uri: str) -> BinaryIO:
         path = self._path_from_uri(uri)
         try:

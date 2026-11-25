@@ -23,6 +23,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_quality_domain",
         # 字段角色排除挂钩（P1，D5）
         "test_automl_excluded_columns",
+        # 推理结果明细（P2，B1-16）
+        "test_inference_results",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",

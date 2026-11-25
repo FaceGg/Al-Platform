@@ -38,6 +38,11 @@ from app.services.inference_deployment import (
 )
 from app.services.inference_observability import InferenceObservability
 from app.services.inference_rate_limit import RateLimitBackendUnavailable, RedisTokenBucket
+from app.services.inference_results import (
+    InferenceResultRecorder,
+    emit_persist_failed_event,
+    resolve_context_rows,
+)
 from app.services.inference_rollout import InferenceRolloutError, WeightedTargetRouter
 from app.services.inference_runtime_client import InferenceRuntimeClient
 
@@ -240,6 +245,78 @@ def _schedule_observation(
     )
 
 
+def _persist_result(
+    *,
+    request_id,
+    project_id,
+    deployment_id,
+    revision_id,
+    model_version_id,
+    condition_values,
+    context_rows,
+    result,
+    records,
+    threshold=None,
+):
+    """推理结果明细异步落库（B1-16/D2）：失败只告警不反噬推理响应。"""
+    try:
+        InferenceResultRecorder().record_prediction(
+            request_id=request_id,
+            project_id=project_id,
+            deployment_id=deployment_id,
+            revision_id=revision_id,
+            model_version_id=model_version_id,
+            condition_values=condition_values,
+            context_rows=context_rows,
+            result=result,
+            records=records,
+            threshold=threshold,
+        )
+    except Exception:
+        logger.exception("inference result persistence failed")
+        try:
+            with SessionLocal() as event_db:
+                emit_persist_failed_event(
+                    event_db,
+                    project_id=project_id,
+                    deployment_id=deployment_id,
+                    error_code="INFERENCE_RESULT_PERSIST_FAILED",
+                )
+                event_db.commit()
+        except Exception:
+            logger.exception("inference result persist alert path failed")
+
+
+def _schedule_result_persist(
+    background_tasks: BackgroundTasks,
+    *,
+    request_id,
+    project_id,
+    deployment_id,
+    revision_id,
+    model_version_id,
+    condition_values,
+    context_rows,
+    result,
+    records,
+    threshold=None,
+):
+    background_tasks.add_task(
+        _TELEMETRY_EXECUTOR.submit,
+        _persist_result,
+        request_id=request_id,
+        project_id=project_id,
+        deployment_id=deployment_id,
+        revision_id=revision_id,
+        model_version_id=model_version_id,
+        condition_values=condition_values,
+        context_rows=context_rows,
+        result=result,
+        records=records,
+        threshold=threshold,
+    )
+
+
 def build_inference_production_router(
     *,
     api_key_service=None,
@@ -298,6 +375,14 @@ def build_inference_production_router(
         request_id = str(request_id)
         if len(data.records) > 100:
             return _error(413, "INFERENCE_LIMIT_EXCEEDED")
+        # 请求级上下文（B1-16/D3）：契约校验 + 保留键换算（查库同步做），
+        # 落库异步做。校验失败 422 拒绝——契约违例必须显式暴露，不静默丢弃。
+        try:
+            context_rows = resolve_context_rows(db, data.context, record_count=len(data.records))
+        except ValueError as error:
+            if str(error) == "INFERENCE_CONTEXT_INVALID":
+                return _error(422, "INFERENCE_CONTEXT_INVALID")
+            raise
         if limiter is None:
             return _error(503, "RATE_LIMIT_BACKEND_UNAVAILABLE")
         try:
@@ -372,6 +457,18 @@ def build_inference_production_router(
                         api_key.id, len(data.records), duration_ms, "success",
                         aggregate=False,
                     )
+                _schedule_result_persist(
+                    background_tasks,
+                    request_id=request_id,
+                    project_id=deployment.project_id,
+                    deployment_id=deployment.id,
+                    revision_id=revision_id,
+                    model_version_id=model_version_id,
+                    condition_values=result.get("condition_values"),
+                    context_rows=context_rows,
+                    result=result,
+                    records=data.records,
+                )
                 return {
                     "request_id": request_id,
                     "deployment_id": str(deployment.id),
@@ -397,6 +494,7 @@ def build_inference_production_router(
             # 无监督三要素（技术方案 §3.5）：anomaly 部署补 anomaly_score/
             # is_anomaly/top_contributors（与平台端点共用同一映射函数）；
             # 非 anomaly 部署原样返回。
+            threshold_score = anomaly_threshold_for_version(db, version)
             result = anomaly_predict_enrichment(
                 deployment_service_value.runtime,
                 f"{revision_id}:{model_version_id}",
@@ -407,7 +505,7 @@ def build_inference_production_router(
                 conversion_metadata=version.conversion_metadata,
                 # §6.6A 判定统一：生产端点此前未传标定阈值 → 恒走 label 端口
                 # 回退（AE 的 label 是占位全 1 → 部署后静默全判「正常」）。
-                threshold_score=anomaly_threshold_for_version(db, version),
+                threshold_score=threshold_score,
             )
             duration_ms = max(0, int((perf_counter() - started) * 1000))
             if isinstance(observation, InferenceObservability):
@@ -427,6 +525,19 @@ def build_inference_production_router(
                     db, request_id, deployment.id, revision_id, model_version_id, api_key.id,
                     len(data.records), duration_ms, "success", aggregate=False,
                 )
+            _schedule_result_persist(
+                background_tasks,
+                request_id=request_id,
+                project_id=deployment.project_id,
+                deployment_id=deployment.id,
+                revision_id=revision_id,
+                model_version_id=model_version_id,
+                condition_values=None,
+                context_rows=context_rows,
+                result=result,
+                records=data.records,
+                threshold=threshold_score,
+            )
             return {
                 "request_id": request_id,
                 "deployment_id": str(deployment.id),

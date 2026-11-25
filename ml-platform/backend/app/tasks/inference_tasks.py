@@ -132,3 +132,14 @@ def prune_inference_telemetry():
         ).prune(db)
         db.commit()
         return {"pruned": pruned}
+
+
+@celery_app.task(name="ml_platform.prune_inference_results")
+def prune_inference_results():
+    """推理结果明细保留期清理（B1-16：独立 90 天配置；聚合桶永久保留）。"""
+    from app.services.inference_results import InferenceResultRecorder
+
+    with SessionLocal() as db:
+        pruned = InferenceResultRecorder().prune(db)
+        db.commit()
+        return {"pruned": pruned}

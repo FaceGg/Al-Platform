@@ -78,6 +78,11 @@ celery_app.conf.update(
             "task": "ml_platform.prune_inference_telemetry",
             "schedule": crontab(hour=0, minute=0),
         },
+        "inference-result-retention": {
+            # 推理结果明细保留期清理（B1-16）：每日清理，聚合桶永久保留
+            "task": "ml_platform.prune_inference_results",
+            "schedule": crontab(hour=0, minute=5),
+        },
         "kubernetes-job-reconcile": {
             "task": "ml_platform.kubernetes_jobs_reconcile",
             "schedule": 60.0,

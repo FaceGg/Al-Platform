@@ -64,10 +64,10 @@ def upgrade() -> None:
             sa.ForeignKey("users.id", ondelete="SET NULL"),
             nullable=True,
         ),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now()),
         sa.Column(
             "updated_at", sa.DateTime(),
-            server_default=sa.func.now(), nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.UniqueConstraint(
             "project_id", "code", name="uq_quality_scenes_project_code",
@@ -107,10 +107,10 @@ def upgrade() -> None:
             sa.ForeignKey("users.id", ondelete="SET NULL"),
             nullable=True,
         ),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now()),
         sa.Column(
             "updated_at", sa.DateTime(),
-            server_default=sa.func.now(), nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.UniqueConstraint(
             "scene_id", "code", name="uq_quality_stations_scene_code",
@@ -142,10 +142,10 @@ def upgrade() -> None:
             sa.ForeignKey("users.id", ondelete="SET NULL"),
             nullable=True,
         ),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now()),
         sa.Column(
             "updated_at", sa.DateTime(),
-            server_default=sa.func.now(), nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.UniqueConstraint(
             "scene_id", "field", "statistic",

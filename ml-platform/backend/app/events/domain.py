@@ -20,6 +20,8 @@ SAFE_EVENT_TYPES = frozenset({
     "rate_limit.threshold_exceeded",
     "inference.error_rate.threshold_exceeded",
     "inference.unknown_condition",
+    # 推理结果明细异步落库失败（B1-16/D4）：推理响应不受影响，只告警
+    "inference.result_persist_failed",
     "annotation_return.accepted",
     "annotation_return.returned_for_changes",
     "annotation_comment.replied",

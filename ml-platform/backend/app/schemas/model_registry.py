@@ -154,6 +154,12 @@ class ModelCardGuidanceUpdate(StrictSchema):
 
 class ProductionPredictRequest(StrictSchema):
     records: list[dict[str, RecordValue]] = Field(min_length=1, max_length=10000)
+    # 请求级可选上下文（B1-16/D3，行式自由 dict）：长度必须等于 records、
+    # 每行键数 ≤32、字符串值 ≤256 字符（服务层校验）。保留键（sample_key/
+    # station/device/batch_no/shift/product/collected_at）进明细表专属列，
+    # 其余键进 extra JSON；API 层在调用 runtime 前剥除（runtime 特征严格
+    # 校验不动，既有调用方零影响）。
+    context: list[dict[str, RecordValue | None]] | None = None
 
 
 class ProductionPredictResponse(StrictSchema):

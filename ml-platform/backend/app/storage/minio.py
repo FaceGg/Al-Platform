@@ -70,6 +70,45 @@ class MinioStorage:
             sha256=sha256,
         )
 
+    def put_snapshot(
+        self,
+        source: Path,
+        project_id: str,
+        date_key: str,
+        filename: str,
+    ) -> StoredObject:
+        """推理结果完整快照（B1-16）：projects/{pid}/inference-snapshots/
+        {date}/{filename}；URI 仍走 s3:// 形制，_parse_uri 按类别放行。"""
+        source = source.expanduser().resolve()
+        if not source.is_file():
+            raise StorageError("Snapshot source file does not exist")
+        key = "/".join(
+            (
+                "projects",
+                validate_key_segment(str(project_id), "project_id"),
+                "inference-snapshots",
+                validate_key_segment(str(date_key), "date_key"),
+                validate_key_segment(str(filename), "filename"),
+            )
+        )
+        size = source.stat().st_size
+        with source.open("rb") as stream:
+            sha256, measured_size = stream_integrity(stream)
+            stream.seek(0)
+            try:
+                self.client.put_object(self.bucket, key, stream, size)
+            except Exception as error:
+                self._compensate_delete(key)
+                raise StorageError("Could not store MinIO snapshot") from error
+        if measured_size != size:
+            self._compensate_delete(key)
+            raise StorageError("Snapshot changed while it was being uploaded")
+        return StoredObject(
+            uri=f"s3://{self.bucket}/{quote(key, safe='/')}",
+            size=size,
+            sha256=sha256,
+        )
+
     def open(self, uri: str) -> BinaryIO:
         bucket, key = self._parse_uri(uri)
         try:
@@ -149,7 +188,10 @@ class MinioStorage:
         if parsed.scheme != "s3" or parsed.netloc != self.bucket or not key:
             raise StorageError("Invalid MinIO artifact URI")
         parts = key.split("/")
-        if len(parts) != 5 or parts[0] != "projects" or parts[2] != "artifacts":
+        if len(parts) != 5 or parts[0] != "projects":
+            raise StorageError("Invalid MinIO artifact key")
+        # 类别段：常规工件 / 推理结果完整快照（B1-16），同形不同目录
+        if parts[2] not in {"artifacts", "inference-snapshots"}:
             raise StorageError("Invalid MinIO artifact key")
         for index, part in enumerate(parts):
             validate_key_segment(part, f"key segment {index}")

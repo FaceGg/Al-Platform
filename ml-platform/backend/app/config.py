@@ -156,6 +156,11 @@ class Settings(BaseSettings):
     )
     inference_log_retention_days: int = Field(default=30, ge=1, le=365)
     inference_rollout_observation_seconds: int = Field(default=60, ge=10, le=3600)
+    # 推理结果明细（B1-16，技术方案 §3）：三项独立于 inference_log_retention_days。
+    # 评审确认点 2 默认值：日量上限 20 万行（0=不限）、快照采样 1%、保留 90 天。
+    inference_result_retention_days: int = Field(default=90, ge=1, le=3650)
+    inference_result_daily_cap: int = Field(default=200_000, ge=0)
+    inference_snapshot_sample_rate: float = Field(default=0.01, ge=0.0, le=1.0)
 
     annotation_max_samples: int = Field(default=1_000_000, ge=1, le=10_000_000)
     annotation_max_input_columns: int = Field(default=200, ge=1, le=2_000)

@@ -128,6 +128,27 @@ _ANOMALY_PREDICTION_THRESHOLD_CACHE: dict[str, float] = {}
 logger = logging.getLogger(__name__)
 
 
+def _record_demo_result(*, db, deployment, served_version, predicted, confidence, anomaly_score, is_error, record) -> None:
+    """演示推理单行落明细（B1-16/D13，channel='demo'）：聚合与默认查询
+    排除 demo；任何失败只记日志——演示链路绝不因明细落库中断。"""
+    try:
+        from app.services.inference_results import InferenceResultRecorder
+
+        InferenceResultRecorder().record_demo(
+            db=db,
+            project_id=deployment.project_id,
+            deployment_id=deployment.id,
+            model_version_id=served_version.id,
+            predicted_label=predicted,
+            probability=confidence,
+            anomaly_score=anomaly_score,
+            is_anomaly=bool(is_error),
+            record=record,
+        )
+    except Exception:
+        logger.exception("demo inference result persistence failed")
+
+
 def _version_is_autoencoder(version) -> bool:
     """该版本是否为自编码器（ONNX 融合图，converter=="torch"）。
 
@@ -597,6 +618,19 @@ class DemoLoopService:
             f"预测类别 {predicted}" + ("（命中报错类别，回流数据集）" if is_error else ""),
             severity="warning" if is_error else "info",
             payload={"prediction": str(predicted), "confidence": confidence},
+        )
+
+        # 推理结果明细（B1-16/D13）：demo 通道单行落库，聚合与默认查询排除；
+        # 写失败只记日志——演示链路绝不因明细落库中断
+        _record_demo_result(
+            db=self.db,
+            deployment=deployment,
+            served_version=served_version,
+            predicted=predicted,
+            confidence=confidence,
+            anomaly_score=anomaly_score,
+            is_error=is_error,
+            record=record,
         )
 
         appended = False
