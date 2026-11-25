@@ -6,6 +6,8 @@ import * as echarts from "echarts";
 import apiClient, { formatApiError } from "../api/client";
 import type { AutoMLRunPayload, AutoMLSearchMethod, AutoMLSearchStrength, AutoMLTaskType, AutoMLTimeBudget } from "../api/training";
 import { getDatasetPreview, listDatasets } from "../api/datasets";
+import { listQualityScenes, sceneExcludedColumns } from "../api/qualityDomain";
+import type { QualityScene } from "../api/qualityDomain";
 import {
   createQualityRun,
   downloadQualityArtifact,
@@ -209,6 +211,10 @@ export default function AutoMLPage() {
   // 随分区布局落在工况列下方；仅工况列已选时可用）。
   const [conditionColumn, setConditionColumn] = useState<string | null>(null);
   const [fleetShared, setFleetShared] = useState(false);
+  // 质量场景绑定（补齐路线第一批 P1，B1-10 字段角色）：绑定后按
+  // field_roles 换算 excluded_columns 随任务下发（引擎做差集，默认零变化）
+  const [qualityScenes, setQualityScenes] = useState<QualityScene[]>([]);
+  const [qualitySceneId, setQualitySceneId] = useState<string | null>(null);
   const isAnomaly = taskType === "anomaly_detection";
   const [algorithmIds, setAlgorithmIds] = useState<string[]>(() => [...AUTOML_ALGORITHM_IDS]);
   const [mlpParams, setMlpParams] = useState<{ solver: "adam" | "lbfgs" | "sgd"; learning_rate_init: number; alpha: number; hidden_layers: string }>({ ...MLP_DEFAULT_PARAMS });
@@ -264,6 +270,13 @@ export default function AutoMLPage() {
     );
     return Array.from(new Set([...required, ...allowed]));
   };
+
+  const selectedQualityScene = qualityScenes.find((scene) => scene.id === qualitySceneId) ?? null;
+  const sceneExcludedColumnsList = useMemo(
+    () => sceneExcludedColumns(selectedQualityScene),
+    [selectedQualityScene],
+  );
+  const sceneTargetColumn = selectedQualityScene?.field_roles?.target ?? null;
 
   const refreshModelingTasks = async () => {
     setLoadingModelingTasks(true);
@@ -330,9 +343,12 @@ export default function AutoMLPage() {
     if (!selectedProject) {
       setDatasets([]); setSelectedDataset(null);
       setSelectedExperiment(null);
+      setQualityScenes([]); setQualitySceneId(null);
       return;
     }
     listDatasets(selectedProject).then(setDatasets).catch(() => setDatasets([]));
+    // 质量场景绑定（补齐路线第一批 P1）：field_roles → excluded_columns
+    listQualityScenes(selectedProject).then(setQualityScenes).catch(() => setQualityScenes([]));
     // 实验自动创建（用户建议 1）：提交时按需创建专属实验，不再预取/预选
     setSelectedExperiment(null);
     void refreshModelingTasks();
@@ -583,6 +599,9 @@ export default function AutoMLPage() {
         project_id: selectedProject, experiment_id: experimentId,
         dataset_artifact_id: selectedDataset,
         input_columns: inputColumns,
+        // 字段角色排除挂钩（D5）：绑定质量场景时随任务下发排除列，
+        // 引擎在候选特征列上做差集（未绑定=不带该字段，默认零变化）
+        ...(sceneExcludedColumnsList.length ? { excluded_columns: sceneExcludedColumnsList } : {}),
         algorithm_ids: algorithmIds,
         // 仅当用户显式开启「自定义 MLP 超参」时才固定；默认关闭=全部参数
         // 交给强度缩放后的自动搜索（否则默认值会钉死隐藏层/学习率/正则化，
@@ -955,6 +974,26 @@ export default function AutoMLPage() {
               <small style={FORM_HINT_STYLE}>决定标签学习方式与可用算法族</small>
             </Col>
           )}
+          <Col xs={24} sm={6}>
+            <Text strong>质量场景（可选）</Text>
+            <Select
+              aria-label="质量场景"
+              showSearch
+              allowClear
+              style={{ width: "100%", marginTop: 4 }}
+              placeholder="绑定场景按字段角色排除列"
+              value={qualitySceneId ?? undefined}
+              onChange={(value: string | undefined) => setQualitySceneId(value ?? null)}
+              disabled={!selectedProject}
+              optionFilterProp="label"
+              options={qualityScenes.map((scene) => ({ value: scene.id, label: `${scene.name}（${scene.code}）` }))}
+            />
+            <small style={FORM_HINT_STYLE}>
+              {selectedQualityScene
+                ? `排除列：${sceneExcludedColumnsList.length ? sceneExcludedColumnsList.join("、") : "无"}${sceneTargetColumn ? `；目标列：${sceneTargetColumn}` : ""}`
+                : "绑定质量管理场景后，其字段角色（样本键/批次/工况等）自动排除出模型输入"}
+            </small>
+          </Col>
           <Col xs={24} sm={6}>
             <Text strong>输入列</Text>
             <Select

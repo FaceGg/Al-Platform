@@ -95,6 +95,10 @@ class AutoMLRunRequest(BaseModel):
     target_column: str | None = Field(default=None, min_length=1)
     target_columns: list[str] | None = None
     input_columns: list[str] | None = None
+    # 字段角色排除挂钩（补齐路线第一批 D5）：从候选特征列中剔除的列
+    # （场景 field_roles 换算结果；通用能力不绑场景实体）。None=默认零变化；
+    # 目标列不可排除、差集后为空 400。S2a 划分管理复用同一入口。
+    excluded_columns: list[str] | None = None
     task: str = "classification"
     # 无监督（anomaly_detection）专用：预期异常比例先验，宁低勿高，缺省 0.01。
     contamination: float | None = Field(default=None, gt=0.0, le=0.5)
@@ -777,6 +781,7 @@ def start_automl(
                 target_columns[0] if target_columns else None,
                 data.input_columns,
                 target_columns=target_columns,
+                excluded_columns=data.excluded_columns,
             )
             if len(target_columns) > 1:
                 if any(column in feature_columns for column in target_columns):
@@ -793,6 +798,7 @@ def start_automl(
                     "target_columns": target_columns,
                 } if target_columns else {"target_columns": []}),
                 "input_columns": list(data.input_columns) if data.input_columns is not None else None,
+                "excluded_columns": list(data.excluded_columns) if data.excluded_columns else None,
                 "task": task_type,
                 **(
                     {

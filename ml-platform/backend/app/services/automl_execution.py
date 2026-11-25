@@ -677,20 +677,49 @@ def resolve_automl_feature_columns(
     requested_input_columns: Sequence[str] | None,
     *,
     target_columns: Sequence[str] | None = None,
+    excluded_columns: Sequence[str] | None = None,
 ) -> list[str]:
+    # 字段角色排除挂钩（补齐路线第一批 D5）：excluded_columns 为 None/空时
+    # 与原行为完全等价（默认零变化）；给出时对候选特征列做差集——排除列
+    # 必须在数据集中存在、不可为目标列，差集后为空显式报错。
+    excluded: list[str] = []
+    if excluded_columns:
+        if not isinstance(excluded_columns, (list, tuple)):
+            raise ValueError("AutoML excluded columns must be a list")
+        excluded = [str(column) for column in excluded_columns]
+        if len(set(excluded)) != len(excluded):
+            raise ValueError("AutoML excluded columns must be unique")
+        missing_excluded = [column for column in excluded if column not in frame.columns]
+        if missing_excluded:
+            raise ValueError(
+                f"AutoML excluded columns are missing: {', '.join(missing_excluded)}",
+            )
     all_targets = [str(column) for column in (target_columns or ([target_column] if target_column else []))]
+    if excluded and any(column in excluded for column in all_targets):
+        raise ValueError("AutoML target column cannot be excluded")
     if all_targets and any(column not in frame.columns for column in all_targets):
         raise ValueError("AutoML target column is missing")
     if requested_input_columns is None:
         # 无目标列（anomaly_detection）时默认特征 = 全数值列；
         # 全 NaN/常数列的无监督专项剔除由执行层承担。
         base_frame = frame.drop(columns=all_targets) if all_targets else frame
-        return base_frame.select_dtypes(include=["number"]).columns.tolist()
+        candidates = base_frame.select_dtypes(include=["number"]).columns.tolist()
+        if excluded:
+            remaining = [column for column in candidates if column not in excluded]
+            if not remaining:
+                raise ValueError(
+                    "AutoML requires at least one input column after exclusions",
+                )
+            return remaining
+        return candidates
     if not isinstance(requested_input_columns, (list, tuple)):
         raise ValueError("AutoML input columns must be a list")
-    feature_columns = [str(column) for column in requested_input_columns]
+    feature_columns = [
+        str(column) for column in requested_input_columns
+        if str(column) not in excluded
+    ]
     if not feature_columns:
-        raise ValueError("AutoML requires at least one input column")
+        raise ValueError("AutoML requires at least one input column after exclusions")
     if len(set(feature_columns)) != len(feature_columns):
         raise ValueError("AutoML input columns must be unique")
     if all_targets and any(column in feature_columns for column in all_targets):
@@ -1245,6 +1274,7 @@ def _execute_multioutput_job(
         target_columns[0],
         params.get("input_columns"),
         target_columns=target_columns,
+        excluded_columns=params.get("excluded_columns"),
     )
     prepared = frame.dropna(subset=target_columns)
     features = prepared.loc[:, feature_columns]
@@ -2525,7 +2555,10 @@ def _execute_anomaly_job(
         contamination=contamination,
     )
     validate_target_columns(frame, task, params_targets)
-    feature_columns = resolve_automl_feature_columns(frame, None, params.get("input_columns"))
+    feature_columns = resolve_automl_feature_columns(
+        frame, None, params.get("input_columns"),
+        excluded_columns=params.get("excluded_columns"),
+    )
     removed_columns: dict[str, str] = {}
 
     condition_column = str(params.get("condition_column") or "").strip() or None
@@ -3091,6 +3124,7 @@ def execute_automl_job(
             frame,
             target_column,
             requested_input_columns,
+            excluded_columns=params.get("excluded_columns"),
         )
         prepared = frame.dropna(subset=[target_column, *feature_columns])
         features = prepared.loc[:, feature_columns]

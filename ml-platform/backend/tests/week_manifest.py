@@ -21,6 +21,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_kg_pipeline",
         # 补齐路线第一批 F1（2026-11-25 起）：质量领域模型（B1-10）
         "test_quality_domain",
+        # 字段角色排除挂钩（P1，D5）
+        "test_automl_excluded_columns",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",
