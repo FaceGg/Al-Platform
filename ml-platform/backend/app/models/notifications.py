@@ -22,7 +22,9 @@ from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
 
 
-NOTIFICATION_ENDPOINT_KINDS = ("in_app", "wecom", "email", "webhook")
+# 通知通道形态（B1-11）：dingtalk=钉钉机器人（可选 HMAC 加签）；
+# sms_gateway=HTTP 短信网关适配器（不绑云厂商 SDK，D9）
+NOTIFICATION_ENDPOINT_KINDS = ("in_app", "wecom", "email", "webhook", "dingtalk", "sms_gateway")
 NOTIFICATION_SEVERITIES = ("info", "warning", "critical")
 NOTIFICATION_OUTBOX_STATUSES = (
     "pending",
@@ -45,7 +47,7 @@ class NotificationEndpoint(Base):
     __tablename__ = "notification_endpoints"
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('in_app', 'wecom', 'email', 'webhook')",
+            "kind IN ('in_app', 'wecom', 'email', 'webhook', 'dingtalk', 'sms_gateway')",
             name="ck_notification_endpoint_kind",
         ),
         UniqueConstraint(

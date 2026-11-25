@@ -371,6 +371,54 @@ describe("ProjectGovernanceTabs", () => {
     ));
   });
 
+  // 补齐路线第一批 B1-11：钉钉与短信网关两个新通道
+  it("creates a signed DingTalk endpoint with an optional signing secret", async () => {
+    const signingValue = ["ding", "signing", "value"].join("-");
+    render(<AntApp><LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider></AntApp>);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add endpoint" }));
+    fireEvent.mouseDown(screen.getAllByRole("combobox")[0]);
+    fireEvent.click(await screen.findByText("DingTalk robot"));
+    fireEvent.change(screen.getByLabelText("Endpoint name"), { target: { value: "Quality alerts" } });
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "https://oapi.dingtalk.com/robot/send" } });
+    fireEvent.change(screen.getByLabelText("Signing secret (optional)"), { target: { value: signingValue } });
+    // 钉钉表单不出现 Webhook 专属字段
+    expect(screen.queryByLabelText("Custom headers JSON")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(governanceMocks.createEndpoint).toHaveBeenCalledWith("project-1", {
+      kind: "dingtalk",
+      name: "Quality alerts",
+      config: { url: "https://oapi.dingtalk.com/robot/send", secret: signingValue },
+    }));
+  });
+
+  it("creates an SMS gateway endpoint from recipients and a body template", async () => {
+    render(<AntApp><LangProvider><ProjectGovernanceTabs projectId="project-1" projectRole="editor" /></LangProvider></AntApp>);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Notifications" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add endpoint" }));
+    fireEvent.mouseDown(screen.getAllByRole("combobox")[0]);
+    fireEvent.click(await screen.findByText("SMS gateway"));
+    fireEvent.change(screen.getByLabelText("Endpoint name"), { target: { value: "Line leads" } });
+    fireEvent.change(screen.getByLabelText("URL"), { target: { value: "https://sms-gateway.example.invalid/send" } });
+    fireEvent.change(screen.getByLabelText("Recipient numbers (comma separated)"), { target: { value: "13800000001, 13800000002" } });
+    fireEvent.change(screen.getByLabelText("Body template"), { target: { value: "phone={phone}&text={content}" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(governanceMocks.createEndpoint).toHaveBeenCalledWith("project-1", {
+      kind: "sms_gateway",
+      name: "Line leads",
+      config: {
+        url: "https://sms-gateway.example.invalid/send",
+        method: "POST",
+        body_template: "phone={phone}&text={content}",
+        to: ["13800000001", "13800000002"],
+      },
+    }));
+  });
+
   it("shows configured subscription recipients to notification managers", async () => {
     governanceMocks.listSubscriptions.mockResolvedValue({
       items: [{

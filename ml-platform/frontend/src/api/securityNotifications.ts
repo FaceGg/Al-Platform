@@ -1,7 +1,7 @@
 import apiClient from "./client";
 
 export type ProjectRole = "owner" | "editor" | "operator" | "viewer";
-export type NotificationEndpointKind = "in_app" | "wecom" | "email" | "webhook";
+export type NotificationEndpointKind = "in_app" | "wecom" | "email" | "webhook" | "dingtalk" | "sms_gateway";
 export type NotificationSeverity = "info" | "warning" | "critical";
 export type NotificationDeliveryStatus = "pending" | "processing" | "sent" | "retry" | "failed" | "dead_letter";
 

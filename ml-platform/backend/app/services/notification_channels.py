@@ -7,12 +7,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from email.utils import parseaddr
+import base64
 import hashlib
 import hmac
 import re
 import smtplib
 import ssl
+import time
 from typing import Literal, Protocol
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import httpx
@@ -551,6 +554,24 @@ class NotificationChannelRouter:
                 resolve=self.resolve,
                 allowlist=self.settings.notification_webhook_allowlist,
             )
+        elif endpoint.kind == "dingtalk":
+            adapter = DingTalkNotificationAdapter(
+                config,
+                http_client=self.http_client,
+                timeout_seconds=self.settings.notification_webhook_timeout_seconds,
+                max_payload_bytes=self.settings.notification_max_payload_bytes,
+                resolve=self.resolve,
+                allowlist=self.settings.notification_webhook_allowlist,
+            )
+        elif endpoint.kind == "sms_gateway":
+            adapter = SmsGatewayNotificationAdapter(
+                config,
+                http_client=self.http_client,
+                timeout_seconds=self.settings.notification_webhook_timeout_seconds,
+                max_payload_bytes=self.settings.notification_max_payload_bytes,
+                resolve=self.resolve,
+                allowlist=self.settings.notification_webhook_allowlist,
+            )
         else:
             return DeliveryResult("failed", "NOTIFICATION_ENDPOINT_INVALID")
         return adapter.send(
@@ -558,4 +579,205 @@ class NotificationChannelRouter:
             event=event,
             delivery_key=delivery_key,
             recipient_user_ids=recipient_user_ids,
+        )
+
+
+class DingTalkNotificationAdapter:
+    """钉钉群机器人 webhook（B1-11/D9）。
+
+    config {url, secret?}：无 secret 走无加签 webhook；有 secret 走官方
+    加签口径——sign = base64(hmac_sha256(secret, "{timestamp_ms}\\n{secret}"))，
+    timestamp 与 sign 进 query（技术方案 D9 注）。secret 由 normalize 层
+    校验、API 层整段加密存储，不落日志不回显。
+    """
+
+    MAX_CONTENT_CHARS = 5000
+
+    def __init__(
+        self,
+        config: Mapping[str, object],
+        *,
+        http_client: object,
+        timeout_seconds: int,
+        max_payload_bytes: int,
+        resolve: Callable[[str, int], Iterable[object]] | None,
+        allowlist: Iterable[str],
+    ) -> None:
+        self.config = config
+        self.http_client = http_client
+        self.timeout_seconds = timeout_seconds
+        self.max_payload_bytes = max_payload_bytes
+        self.resolve = resolve
+        self.allowlist = allowlist
+
+    def _signed_url(self, validated_url: str, secret: str) -> str:
+        timestamp = str(int(time.time() * 1000))
+        string_to_sign = f"{timestamp}\n{secret}"
+        digest = hmac.new(
+            secret.encode("utf-8"), string_to_sign.encode("utf-8"), hashlib.sha256,
+        ).digest()
+        signature = base64.b64encode(digest).decode("ascii")
+        separator = "&" if "?" in validated_url else "?"
+        return (
+            f"{validated_url}{separator}"
+            f"timestamp={quote(timestamp, safe='')}&sign={quote(signature, safe='')}"
+        )
+
+    def send(
+        self,
+        *,
+        endpoint: NotificationEndpoint,
+        event: DomainEvent,
+        delivery_key: str,
+        recipient_user_ids: Iterable[UUID] | None = None,
+    ) -> DeliveryResult:
+        del endpoint, recipient_user_ids
+        url = self.config.get("url")
+        if not isinstance(url, str):
+            return DeliveryResult("failed", "NOTIFICATION_ENDPOINT_INVALID")
+        try:
+            validated_url = validate_webhook_url(
+                url,
+                resolve=self.resolve,
+                allowlist=self.allowlist,
+            )
+            secret = self.config.get("secret")
+            if secret is not None and not isinstance(secret, str):
+                return DeliveryResult("failed", "NOTIFICATION_CREDENTIAL_INVALID")
+            content = f"{_event_title(event)}\n{_event_body(event)}"[: self.MAX_CONTENT_CHARS]
+            payload = {"msgtype": "text", "text": {"content": content}}
+            body = canonical_json_bytes(payload, max_payload_bytes=self.max_payload_bytes)
+            target_url = self._signed_url(validated_url, secret) if secret else validated_url
+        except WebhookSecurityError as error:
+            return DeliveryResult("failed", error.code)
+        headers = {
+            "Content-Type": "application/json",
+            "Idempotency-Key": delivery_key,
+        }
+        try:
+            response = self.http_client.post(
+                target_url,
+                content=body,
+                headers=headers,
+                timeout=self.timeout_seconds,
+                follow_redirects=False,
+            )
+        except (httpx.HTTPError, OSError, TimeoutError):
+            return _network_error_result()
+        return _http_result(response)
+
+
+class SmsGatewayNotificationAdapter:
+    """HTTP 短信网关适配器（B1-11/D9）：不绑云厂商 SDK，零新依赖、离线可用。
+
+    config {url, method?, headers?, body_template, to}：body_template 含
+    {phone}/{content} 占位符，逐号码渲染投递；全部成功才 sent，任一
+    失败即 failed（重试语义交给既有投递重试管线）。真实运营商验证为
+    现场配置网关凭据的环境阻塞项（§11 证据口径）。
+    """
+
+    MAX_CUSTOM_HEADERS = 16
+
+    def __init__(
+        self,
+        config: Mapping[str, object],
+        *,
+        http_client: object,
+        timeout_seconds: int,
+        max_payload_bytes: int,
+        resolve: Callable[[str, int], Iterable[object]] | None,
+        allowlist: Iterable[str],
+    ) -> None:
+        self.config = config
+        self.http_client = http_client
+        self.timeout_seconds = timeout_seconds
+        self.max_payload_bytes = max_payload_bytes
+        self.resolve = resolve
+        self.allowlist = allowlist
+
+    def _custom_headers(self) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        custom = self.config.get("headers", {})
+        if not isinstance(custom, Mapping) or len(custom) > self.MAX_CUSTOM_HEADERS:
+            raise WebhookSecurityError("NOTIFICATION_ENDPOINT_INVALID")
+        for name, value in custom.items():
+            normalized_name = str(name)
+            normalized_value = str(value)
+            if (
+                not HEADER_NAME.fullmatch(normalized_name)
+                or normalized_name.lower() in FORBIDDEN_HEADERS
+                or "\r" in normalized_value
+                or "\n" in normalized_value
+                or len(normalized_value) > 512
+            ):
+                raise WebhookSecurityError("NOTIFICATION_ENDPOINT_FORBIDDEN")
+            headers[normalized_name] = normalized_value
+        return headers
+
+    def send(
+        self,
+        *,
+        endpoint: NotificationEndpoint,
+        event: DomainEvent,
+        delivery_key: str,
+        recipient_user_ids: Iterable[UUID] | None = None,
+    ) -> DeliveryResult:
+        del endpoint, recipient_user_ids
+        url = self.config.get("url")
+        method = self.config.get("method", "POST")
+        template = self.config.get("body_template")
+        recipients = self.config.get("to")
+        if not isinstance(url, str) or not isinstance(template, str) or not isinstance(recipients, list):
+            return DeliveryResult("failed", "NOTIFICATION_ENDPOINT_INVALID")
+        try:
+            validated_url = validate_webhook_url(
+                url,
+                resolve=self.resolve,
+                allowlist=self.allowlist,
+            )
+            custom_headers = self._custom_headers()
+        except WebhookSecurityError as error:
+            return DeliveryResult("failed", error.code)
+        content = f"{_event_title(event)}\n{_event_body(event)}"
+        headers = {"Content-Type": "text/plain; charset=utf-8", **custom_headers}
+        if method == "POST":
+            def _request(phone: str, rendered: str):
+                return self.http_client.post(
+                    validated_url,
+                    content=rendered.encode("utf-8"),
+                    headers=headers,
+                    timeout=self.timeout_seconds,
+                    follow_redirects=False,
+                )
+        else:
+            def _request(phone: str, rendered: str):
+                del rendered
+                return self.http_client.get(
+                    validated_url,
+                    params={"phone": phone, "content": content},
+                    headers=headers,
+                    timeout=self.timeout_seconds,
+                    follow_redirects=False,
+                )
+        delivered_all = True
+        last_result: DeliveryResult | None = None
+        for phone in recipients:
+            if not isinstance(phone, str):
+                return DeliveryResult("failed", "NOTIFICATION_ENDPOINT_INVALID")
+            rendered = template.replace("{phone}", phone).replace("{content}", content)
+            try:
+                last_result = _http_result(_request(phone, rendered))
+            except (httpx.HTTPError, OSError, TimeoutError):
+                last_result = _network_error_result()
+            if last_result.status != "sent":
+                delivered_all = False
+                break
+        if last_result is None:
+            return DeliveryResult("failed", "NOTIFICATION_ENDPOINT_INVALID")
+        if delivered_all:
+            return last_result
+        return DeliveryResult(
+            "failed" if last_result.status == "failed" else "retry",
+            last_result.error_code,
+            last_result.provider_status,
         )

@@ -19,6 +19,8 @@ const readiness = {
   inference_runtime: { ready: true, code: "OK" },
   notification_crypto_configured: true,
   notification_worker_registered: false,
+  // 通知通道形态（B1-11）：含钉钉与短信网关
+  notification_channel_kinds: ["in_app", "wecom", "email", "webhook", "dingtalk", "sms_gateway"],
   migration_head: "20261026_83",
 };
 
@@ -57,5 +59,12 @@ describe("SystemSettingsPage", () => {
     const calledUrls = apiGet.mock.calls.map((call: unknown[]) => String(call[0]));
     expect(calledUrls.includes("/readiness")).toBe(false);
     expect(calledUrls.includes("/config/public")).toBe(false);
+  });
+
+  it("lists every notification channel kind including DingTalk and the SMS gateway", async () => {
+    render(<MemoryRouter><SystemSettingsPage /></MemoryRouter>);
+
+    expect(await screen.findByText("通知通道形态")).toBeInTheDocument();
+    expect(screen.getByText("站内通知 · 企业微信 · 邮件 · Webhook · 钉钉 · 短信网关")).toBeInTheDocument();
   });
 });

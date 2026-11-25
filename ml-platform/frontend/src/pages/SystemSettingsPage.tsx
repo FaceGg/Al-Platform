@@ -18,8 +18,14 @@ interface Readiness {
   inference_runtime?: ComponentCheck;
   notification_crypto_configured?: boolean;
   notification_worker_registered?: boolean;
+  notification_channel_kinds?: string[];
   migration_head?: string | null;
 }
+
+const channelLabels: Record<"zh" | "en", Record<string, string>> = {
+  zh: { in_app: "站内通知", wecom: "企业微信", email: "邮件", webhook: "Webhook", dingtalk: "钉钉", sms_gateway: "短信网关" },
+  en: { in_app: "In-app", wecom: "WeCom", email: "Email", webhook: "Webhook", dingtalk: "DingTalk", sms_gateway: "SMS gateway" },
+};
 
 /** 系统管理→平台状态：平台组件健康矩阵与只读运行配置。 */
 export default function SystemSettingsPage() {
@@ -63,6 +69,13 @@ export default function SystemSettingsPage() {
     { label: zh ? "大模型档案" : "LLM profiles", value: llm == null ? (zh ? "未配置" : "not configured") : `${llm.count} · ${llm.model}` },
     { label: zh ? "通知加密" : "Notification crypto", value: String(health?.notification_crypto_configured ?? "—") },
     { label: zh ? "通知 Worker" : "Notification worker", value: String(health?.notification_worker_registered ?? "—") },
+    // 通知通道形态可用性（B1-11）：站内信/企微/邮件/Webhook + 钉钉/短信网关
+    {
+      label: zh ? "通知通道形态" : "Notification channels",
+      value: health?.notification_channel_kinds?.length
+        ? health.notification_channel_kinds.map((kind) => channelLabels[zh ? "zh" : "en"][kind] || kind).join(" · ")
+        : "—",
+    },
   ];
 
   return (

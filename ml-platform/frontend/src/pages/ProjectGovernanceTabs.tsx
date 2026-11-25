@@ -52,6 +52,11 @@ interface EndpointFormValues {
   headers?: string;
   signature_mode?: "none" | "hmac-sha256";
   signing_secret?: string;
+  // 钉钉（加签密钥可选）与短信网关（号码清单 + 请求体模板）
+  secret?: string;
+  sms_to?: string;
+  body_template?: string;
+  sms_method?: "POST" | "GET";
 }
 
 interface SubscriptionFormValues {
@@ -82,6 +87,16 @@ function endpointPayload(values: EndpointFormValues): NotificationEndpointInput 
     config = { to: commaSeparated(values.to), cc: commaSeparated(values.cc) };
   } else if (values.kind === "wecom") {
     config = { url: values.url || "" };
+  } else if (kind === "dingtalk") {
+    // 钉钉机器人：加签密钥可选（无 secret = 无加签 webhook）
+    config = { url: values.url || "", ...(values.secret?.trim() ? { secret: values.secret.trim() } : {}) };
+  } else if (kind === "sms_gateway") {
+    config = {
+      url: values.url || "",
+      method: values.sms_method || "POST",
+      body_template: values.body_template || "",
+      to: commaSeparated(values.sms_to),
+    };
   } else {
     let headers: Record<string, string> = {};
     if (values.headers?.trim()) {
@@ -459,7 +474,8 @@ function NotificationSettingsPanel({
             title: copy.channel,
             dataIndex: "kind",
             render: (kind: NotificationEndpointKind) => <Tag>{
-              kind === "in_app" ? copy.inApp : kind === "wecom" ? copy.wecom : kind === "email" ? copy.email : copy.webhook
+              kind === "in_app" ? copy.inApp : kind === "wecom" ? copy.wecom : kind === "email" ? copy.email
+                : kind === "dingtalk" ? copy.dingtalk : kind === "sms_gateway" ? copy.smsGateway : copy.webhook
             }</Tag>,
           },
           { title: copy.destination, dataIndex: "destination_hint" },
@@ -583,6 +599,8 @@ function NotificationSettingsPanel({
               { value: "wecom", label: copy.wecom },
               { value: "email", label: copy.email },
               { value: "webhook", label: copy.webhook },
+              { value: "dingtalk", label: copy.dingtalk },
+              { value: "sms_gateway", label: copy.smsGateway },
             ]} />
           </Form.Item>
           </> : null}
@@ -591,7 +609,17 @@ function NotificationSettingsPanel({
             <Form.Item name="to" label={copy.recipients} rules={[{ required: true }]}><Input /></Form.Item>
             <Form.Item name="cc" label={copy.ccRecipients}><Input /></Form.Item>
           </> : null}
-          {endpointKind === "wecom" || endpointKind === "webhook" ? <Form.Item name="url" label={copy.url} rules={[{ required: true, type: "url" }]}><Input /></Form.Item> : null}
+          {endpointKind === "wecom" || endpointKind === "webhook" || endpointKind === "dingtalk" || endpointKind === "sms_gateway" ? <Form.Item name="url" label={copy.url} rules={[{ required: true, type: "url" }]}><Input /></Form.Item> : null}
+          {endpointKind === "dingtalk" ? <Form.Item name="secret" label={copy.dingtalkSecret}><Input.Password autoComplete="new-password" /></Form.Item> : null}
+          {endpointKind === "sms_gateway" ? <>
+            <Form.Item name="sms_to" label={copy.smsRecipients} rules={[{ required: true }]}><Input /></Form.Item>
+            <Form.Item name="sms_method" label={copy.smsMethod}>
+              <Select options={[{ value: "POST", label: "POST" }, { value: "GET", label: "GET" }]} />
+            </Form.Item>
+            <Form.Item name="body_template" label={copy.smsBodyTemplate} rules={[{ required: true }]}>
+              <Input.TextArea rows={3} placeholder='{"phone": "{phone}", "content": "{content}"}' />
+            </Form.Item>
+          </> : null}
           {endpointKind === "webhook" ? <>
             <Form.Item name="headers" label={copy.headers}><Input.TextArea rows={2} /></Form.Item>
             <Form.Item name="signature_mode" label={copy.signatureMode}>

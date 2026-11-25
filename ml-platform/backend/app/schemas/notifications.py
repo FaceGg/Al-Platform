@@ -7,7 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-NotificationEndpointKind = Literal["in_app", "wecom", "email", "webhook"]
+NotificationEndpointKind = Literal["in_app", "wecom", "email", "webhook", "dingtalk", "sms_gateway"]
 NotificationSeverity = Literal["info", "warning", "critical"]
 NotificationRecipientRole = Literal["owner", "editor", "operator", "viewer"]
 
@@ -54,6 +54,11 @@ def normalize_endpoint_config(
             raise ValueError("email endpoint recipients are invalid")
         return {"to": list(to), "cc": list(cc)}
 
+    if kind == "dingtalk":
+        return _normalize_dingtalk_config(config)
+    if kind == "sms_gateway":
+        return _normalize_sms_gateway_config(config)
+
     allowed = {"url", "headers", "signature_mode", "signing_secret"}
     url = config.get("url")
     headers = config.get("headers", {})
@@ -82,6 +87,55 @@ def normalize_endpoint_config(
     if signature_mode == "hmac-sha256":
         normalized["signing_secret"] = signing_secret
     return normalized
+
+
+def _normalize_dingtalk_config(config: dict[str, object]) -> dict[str, object]:
+    """钉钉机器人：{url, secret?}；无 secret 走无加签 webhook；
+    加签口径见 services/notification_channels.py（D9 注）。"""
+    allowed = {"url", "secret"}
+    url = config.get("url")
+    secret = config.get("secret")
+    if set(config) - allowed or not isinstance(url, str) or not url:
+        raise ValueError("dingtalk endpoint requires a URL")
+    if secret is not None and (not isinstance(secret, str) or not secret):
+        raise ValueError("dingtalk secret must be a non-empty string")
+    normalized: dict[str, object] = {"url": url}
+    if secret:
+        normalized["secret"] = secret
+    return normalized
+
+
+def _normalize_sms_gateway_config(config: dict[str, object]) -> dict[str, object]:
+    """HTTP 短信网关适配器（D9）：{url, method?, headers?, body_template, to}；
+    body_template 含 {phone}/{content} 占位符；to 为号码清单（≤50）。"""
+    allowed = {"url", "method", "headers", "body_template", "to"}
+    url = config.get("url")
+    method = config.get("method", "POST")
+    headers = config.get("headers", {})
+    body_template = config.get("body_template")
+    to = config.get("to")
+    if set(config) - allowed or not isinstance(url, str) or not url:
+        raise ValueError("sms gateway endpoint requires a URL")
+    if method not in {"POST", "GET"}:
+        raise ValueError("sms gateway method must be POST or GET")
+    if not isinstance(headers, dict) or not all(
+        isinstance(name, str) and isinstance(value, str)
+        for name, value in headers.items()
+    ):
+        raise ValueError("sms gateway headers are invalid")
+    if not isinstance(body_template, str) or "{phone}" not in body_template or "{content}" not in body_template:
+        raise ValueError("sms gateway body_template requires {phone} and {content} placeholders")
+    if not isinstance(to, list) or not to or len(to) > 50 or not all(
+        isinstance(value, str) and value.strip() for value in to
+    ):
+        raise ValueError("sms gateway recipient list is invalid")
+    return {
+        "url": url,
+        "method": method,
+        "headers": dict(headers),
+        "body_template": body_template,
+        "to": [str(value).strip() for value in to],
+    }
 
 
 class NotificationEndpointCreate(BaseModel):

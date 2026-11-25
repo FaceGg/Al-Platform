@@ -8,6 +8,7 @@ import httpx
 from sqlalchemy import text
 
 from app.database_schema import require_current_schema
+from app.models.notifications import NOTIFICATION_ENDPOINT_KINDS
 
 _DEFAULT_PROBE_TIMEOUT_SECONDS = 10.0
 
@@ -81,6 +82,8 @@ class ReadinessService:
             **checks,
             "notification_crypto_configured": notification_crypto_configured,
             "notification_worker_registered": notification_worker_registered,
+            # 通知通道形态可用性（B1-11，技术方案 §5）：平台状态页展示
+            "notification_channel_kinds": list(NOTIFICATION_ENDPOINT_KINDS),
             "migration_head": results["migration_head"],
         }
 
