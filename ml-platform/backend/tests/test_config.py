@@ -34,6 +34,9 @@ class TestSettings(unittest.TestCase):
             "inference_runtime_url": "http://inference-runtime:7000",
             "inference_internal_secret": "inference-internal-secret-value-1234",
             "notification_master_key": "bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm4=",
+            # 三把 Fernet 主密钥同形必填（D8，20261125）：数据源口令 + LLM 档案
+            "datasource_master_key": "bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm4=",
+            "llm_master_key": "bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm4=",
         }
         values.update(overrides)
         return values

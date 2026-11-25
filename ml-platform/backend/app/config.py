@@ -194,6 +194,12 @@ class Settings(BaseSettings):
     notification_master_key_file: str | None = Field(
         default=None, repr=False, exclude=True
     )
+    # 外部数据源口令加密主密钥（B1-08/D8）：独立于通知/LLM 密钥隔离爆炸半径；
+    # 三把主密钥共用一个轮换工具（tools/rotate_fernet_keys.py）
+    datasource_master_key: SecretStr | None = Field(default=None, exclude=True)
+    datasource_master_key_file: str | None = Field(
+        default=None, repr=False, exclude=True
+    )
     smtp_host: str | None = None
     smtp_port: int = Field(default=587, ge=1, le=65535)
     smtp_username: SecretStr | None = Field(default=None, exclude=True)
@@ -217,6 +223,8 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-3.5-turbo"
     # Master key encrypting LLMProfile API keys at rest (spec v0.9 §14.1).
     llm_master_key: SecretStr | None = Field(default=None, exclude=True)
+    # 文件变体对齐通知/数据源密钥形制（D8：纳入生产校验）
+    llm_master_key_file: str | None = Field(default=None, repr=False, exclude=True)
 
     # Knowledge-graph auto extraction limits (rules + statistics pipeline).
     # Entity/relation caps of 0 mean unlimited: storage keeps every candidate
@@ -304,6 +312,14 @@ class Settings(BaseSettings):
     def resolved_notification_master_key(self) -> SecretStr | None:
         return self._resolved_notification_master_key
 
+    @property
+    def resolved_datasource_master_key(self) -> SecretStr | None:
+        return self._resolved_datasource_master_key
+
+    @property
+    def resolved_llm_master_key(self) -> SecretStr | None:
+        return self._resolved_llm_master_key
+
     @field_validator("notification_webhook_allowlist", mode="before")
     @classmethod
     def normalize_notification_webhook_allowlist(cls, value):
@@ -334,6 +350,12 @@ class Settings(BaseSettings):
         )
         self._resolved_notification_master_key = self._resolve_secret_pair(
             "notification_master_key", "notification_master_key_file"
+        )
+        self._resolved_datasource_master_key = self._resolve_secret_pair(
+            "datasource_master_key", "datasource_master_key_file"
+        )
+        self._resolved_llm_master_key = self._resolve_secret_pair(
+            "llm_master_key", "llm_master_key_file"
         )
 
         if self.app_mode == "production":
@@ -413,6 +435,23 @@ class Settings(BaseSettings):
             )
         except (UnicodeEncodeError, ValueError) as error:
             raise ValueError("Production NOTIFICATION_MASTER_KEY must be a valid Fernet key") from error
+        # 三把 Fernet 主密钥同形校验（D8）：数据源口令与 LLM 档案密钥纳入生产门
+        if not self._has_secret(self.resolved_datasource_master_key):
+            raise ValueError("Production mode requires DATASOURCE_MASTER_KEY")
+        try:
+            Fernet(
+                self.resolved_datasource_master_key.get_secret_value().encode("ascii")
+            )
+        except (UnicodeEncodeError, ValueError) as error:
+            raise ValueError("Production DATASOURCE_MASTER_KEY must be a valid Fernet key") from error
+        if not self._has_secret(self.resolved_llm_master_key):
+            raise ValueError("Production mode requires LLM_MASTER_KEY")
+        try:
+            Fernet(
+                self.resolved_llm_master_key.get_secret_value().encode("ascii")
+            )
+        except (UnicodeEncodeError, ValueError) as error:
+            raise ValueError("Production LLM_MASTER_KEY must be a valid Fernet key") from error
 
         jwt_secret = self.resolved_secret_key.get_secret_value()
         if jwt_secret == DEFAULT_SECRET_KEY or len(jwt_secret) < 32:

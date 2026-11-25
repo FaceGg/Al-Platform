@@ -90,6 +90,12 @@ class QualityScene(Base):
     field_roles = Column(JSON, nullable=False, default=dict)
     # 波形列声明（供 B1-02 曲线叠加把关，F2a 消费）
     waveform_column = Column(String(256), nullable=True)
+    # 绑定外部数据源（_107 建表后同批加入：建表与外键必须同迁移）
+    data_source_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("external_data_sources.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_by_id = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),

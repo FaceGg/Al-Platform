@@ -27,6 +27,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_inference_results",
         # 板块可见性与 quality 角色（P3，§7.1/D10）
         "test_role_visibility",
+        # 外部数据源与 SQL 白名单（P4，B1-08/D7/D8）
+        "test_external_data_sources",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",

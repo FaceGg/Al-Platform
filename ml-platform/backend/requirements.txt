@@ -59,3 +59,9 @@ hdbscan==0.8.*
 # PG remains the transactional source; projection degrades gracefully when the
 # driver/server are unavailable (graph queries fall back to PG BFS).
 neo4j==5.28.*
+
+# External read-only database access (B1-08, 20261125_107): sqlglot powers
+# the syntax-parsed SQL whitelist (contract §6-7 exception); PyMySQL is the
+# pure-python MySQL driver. Wheels synced into wheelhouse (方式 B 演练).
+sqlglot==27.29.0
+PyMySQL==1.1.*

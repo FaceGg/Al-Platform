@@ -81,6 +81,7 @@ from app.api import platform_security as platform_security_api
 from app.api import notifications as notifications_api
 from app.api import spot_weld_quality as spot_weld_quality_api
 from app.api import quality_domain as quality_domain_api
+from app.api import data_sources as data_sources_api
 from app.api import annotator_internal as annotator_internal_api
 from app.api import annotation_returns as annotation_returns_api
 from app.api import model_exports as model_exports_api
@@ -443,6 +444,7 @@ app.include_router(agent_extras.router)
 app.include_router(spot_weld_quality_api.router)
 app.include_router(spot_weld_quality_api.all_runs_router)
 app.include_router(quality_domain_api.router)
+app.include_router(data_sources_api.router)
 app.include_router(annotator_internal_api.router)
 
 
