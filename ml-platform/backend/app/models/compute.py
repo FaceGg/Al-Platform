@@ -42,4 +42,8 @@ class EdgeDevice(Base):
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     description = Column(Text, default="")
     config = Column(JSON, default=dict)
+    # 设备影子 desired/reported 双状态（诚实设计⑤预留，B4-02 正式落地；
+    # F1 不读写，工位与设备页仅展示空态）
+    shadow_desired = Column(JSON, nullable=True)
+    shadow_reported = Column(JSON, nullable=True)
     created_at = Column(DateTime, server_default=func.now())

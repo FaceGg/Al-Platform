@@ -19,6 +19,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_knowledge",
         # 知识图谱五阶段流水线（2026-11-20 批次）：抽取/融合/投影/图查询
         "test_kg_pipeline",
+        # 补齐路线第一批 F1（2026-11-25 起）：质量领域模型（B1-10）
+        "test_quality_domain",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",

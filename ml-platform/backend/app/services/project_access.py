@@ -37,6 +37,7 @@ PERMISSIONS = frozenset({
     "notification.manage",
     "quality.label",
     "quality.review",
+    "quality.manage",
 })
 
 ROLE_PERMISSIONS = {
@@ -57,6 +58,7 @@ ROLE_PERMISSIONS = {
         "notification.manage",
         "quality.label",
         "quality.review",
+        "quality.manage",
     }),
     ProjectRole.OPERATOR: frozenset({
         "project.read",

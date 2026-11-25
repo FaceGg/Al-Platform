@@ -101,6 +101,7 @@ from app.models.spot_weld_quality import (
     SpotWeldLabelSnapshot,
 )
 from app.models.platform_option import PlatformOption
+from app.models.quality_domain import QualityScene, QualityStation, QualitySpecLimit
 
 __all__ = [
     "User",
@@ -216,4 +217,7 @@ __all__ = [
     "SpotWeldLabelRevision",
     "SpotWeldLabelSnapshot",
     "PlatformOption",
+    "QualityScene",
+    "QualityStation",
+    "QualitySpecLimit",
 ]
