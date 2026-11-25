@@ -17,6 +17,7 @@ export const SECTIONS = {
   portal: { zh: "首页门户", en: "Portal" },
   algo: { zh: "算法平台", en: "Algorithms" },
   agent: { zh: "智能体中心", en: "Agent Center" },
+  quality: { zh: "质量管理", en: "Quality Management" },
   infra: { zh: "基础设施", en: "Infrastructure" },
   admin: { zh: "系统管理", en: "Administration" },
 } as const;
@@ -56,6 +57,10 @@ export const NAV_FALLBACK: Record<string, { zh: string; en: string }> = {
   settings: { zh: "平台状态", en: "Platform Status" },
   llm_gateway: { zh: "大模型管理", en: "LLM Management" },
   llm_usage: { zh: "Tokens 用量", en: "Token usage" },
+  quality_scenes: { zh: "场景管理", en: "Quality Scenes" },
+  quality_stations: { zh: "工位与设备", en: "Stations & Devices" },
+  quality_production_records: { zh: "生产记录", en: "Production Records" },
+  help_center: { zh: "帮助中心", en: "Help Center" },
 };
 
 export function navTitle(t: unknown, key: string, zh: boolean): string {

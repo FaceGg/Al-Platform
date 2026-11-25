@@ -8,6 +8,7 @@ import {
   ExperimentOutlined,
   PushpinOutlined,
   RobotOutlined,
+  SafetyCertificateOutlined,
   SettingOutlined,
 } from "@ant-design/icons";
 import AppLayout from "../components/AppLayout";
@@ -195,6 +196,12 @@ export default function PortalPage() {
       path: "/agent",
     },
     {
+      icon: <SafetyCertificateOutlined />, cls: "v2-c-green", title: zh ? "质量管理" : "Quality Management",
+      desc: zh ? "工序质量业务底座：场景与工位设备台账、推理生产记录查询；预警处置与 SPC 随后续批次接入。" : "Quality domain: scenes, stations & devices, production records; alerts and SPC land in later batches.",
+      chips: zh ? ["场景管理", "工位与设备", "生产记录"] : ["Scenes", "Stations & Devices", "Production records"],
+      path: "/quality/scenes",
+    },
+    {
       icon: <ClusterOutlined />, cls: "v2-c-green", title: zh ? "基础设施（运行时）" : "Infrastructure",
       desc: zh ? "算力与运行环境：K8s 集群、作业、Notebook、镜像与资源治理。" : "Compute and runtime: K8s, jobs, notebooks, images and governance.",
       chips: zh ? ["K8s 集群", "作业运行", "Notebook 会话", "镜像目录", "集群治理", "资源监控", "计算资源"] : ["K8s", "Jobs", "Notebooks", "Images", "Governance", "Monitor", "Compute"],
@@ -212,8 +219,8 @@ export default function PortalPage() {
     <AppLayout>
       <div className="v2-hero">
         <div>
-          <h1>{greeting(zh)}，{username} —— {zh ? "一个平台，三大中心：" : "One platform, three centers: "}
-            <em>{zh ? "算法 · 智能体 · 基础设施" : "Algorithms · Agents · Infra"}</em>
+          <h1>{greeting(zh)}，{username} —— {zh ? "一个平台，四大中心：" : "One platform, four centers: "}
+            <em>{zh ? "算法 · 智能体 · 质量 · 基础设施" : "Algorithms · Agents · Quality · Infra"}</em>
           </h1>
         </div>
         <div className="meta">

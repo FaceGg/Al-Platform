@@ -6,7 +6,9 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 
-PLATFORM_ROLES = frozenset({"admin", "engineer", "operator", "viewer"})
+# 平台角色（技术方案 §7.1/D10）：quality=质量工程师；User.role 为 String(16)
+# 无 DB 约束，扩枚举零迁移；注册默认角色不变（engineer）
+PLATFORM_ROLES = frozenset({"admin", "engineer", "operator", "viewer", "quality"})
 
 
 class RegisterRequest(BaseModel):

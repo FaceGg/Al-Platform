@@ -48,6 +48,10 @@ const AgentCenterPage = lazy(() => import("./pages/AgentCenterPage"));
 const AgentRunDetailPage = lazy(() => import("./pages/AgentRunDetailPage"));
 const AIChatPage = lazy(() => import("./pages/AIChatPage"));
 const LLMUsageStatsPage = lazy(() => import("./pages/LLMUsageStatsPage"));
+const QualityScenesPage = lazy(() => import("./pages/QualityScenesPage"));
+const QualityStationsPage = lazy(() => import("./pages/QualityStationsPage"));
+const ProductionRecordsPage = lazy(() => import("./pages/ProductionRecordsPage"));
+const HelpCenterPage = lazy(() => import("./pages/HelpCenterPage"));
 
 const LIGHT_TOKENS = {
   // 主色对齐 v2-btn.primary（浅色主题 --v2-blue 渐变起点 #1a6fc4），
@@ -146,6 +150,10 @@ function AppContent() {
             <Route path="/images" element={<ProtectedRoute><PageErrorBoundary pageName="镜像目录"><ImageCatalogPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/cluster-governance" element={<ProtectedRoute><PageErrorBoundary pageName="集群治理"><ClusterGovernancePage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/chat" element={<ProtectedRoute><AIChatPage /></ProtectedRoute>} />
+            <Route path="/quality/scenes" element={<ProtectedRoute><PageErrorBoundary pageName="场景管理"><QualityScenesPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/quality/stations" element={<ProtectedRoute><PageErrorBoundary pageName="工位与设备"><QualityStationsPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/quality/production-records" element={<ProtectedRoute><PageErrorBoundary pageName="生产记录"><ProductionRecordsPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/help" element={<ProtectedRoute><HelpCenterPage /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </BrowserRouter>

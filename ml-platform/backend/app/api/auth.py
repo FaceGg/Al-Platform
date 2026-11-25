@@ -25,6 +25,7 @@ from app.services.platform_audit import (
     record_failed_platform_event,
     record_platform_event,
 )
+from app.services.section_visibility import resolve_visible_views
 from app.services.security import (
     LOGIN_ACCOUNT_LIMIT,
     LOGIN_IP_LIMIT,
@@ -176,7 +177,8 @@ def login(
     )
     db.commit()
 
-    return {"access_token": token, "token_type": "bearer", "user_id": str(user.id), "role": user.role}
+    return {"access_token": token, "token_type": "bearer", "user_id": str(user.id), "role": user.role,
+            "visible_views": resolve_visible_views(db, user.role)}
 
 
 
@@ -254,12 +256,15 @@ def register(
 @router.get("/me")
 def get_current_user_info(
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     return {
         "id": str(current_user.id),
         "username": current_user.username,
         "role": current_user.role,
         "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+        # 板块可见性（技术方案 §7.1）：服务端按角色解析后返回；缺省六视图全量
+        "visible_views": resolve_visible_views(db, current_user.role),
     }
 
 

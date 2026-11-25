@@ -25,6 +25,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_automl_excluded_columns",
         # 推理结果明细（P2，B1-16）
         "test_inference_results",
+        # 板块可见性与 quality 角色（P3，§7.1/D10）
+        "test_role_visibility",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",

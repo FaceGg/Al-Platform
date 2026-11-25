@@ -8,7 +8,7 @@ import {
   MessageOutlined, MonitorOutlined, ClusterOutlined, DeploymentUnitOutlined,
   PlayCircleOutlined, BookOutlined, ControlOutlined, TagsOutlined, ApartmentOutlined,
   RocketOutlined, CopyOutlined, FileTextOutlined, SettingOutlined,
-  NotificationOutlined, BarChartOutlined,
+  NotificationOutlined, BarChartOutlined, SafetyCertificateOutlined, QuestionCircleOutlined,
 } from "@ant-design/icons";
 import { SunOutlined, MoonOutlined } from "@ant-design/icons";
 import { useI18n } from "../i18n";
@@ -18,7 +18,7 @@ import { navTitle, sectionName } from "./PageHeading";
 import apiClient from "../api/client";
 import "../styles/v2-shell.css";
 
-type ViewId = "portal" | "algo" | "agent" | "infra" | "admin";
+type ViewId = "portal" | "algo" | "agent" | "quality" | "infra" | "admin";
 
 interface SideEntry { key: string; icon: React.ReactNode; label: string; query?: string }
 interface SideGroup { label: string; items: SideEntry[] }
@@ -28,6 +28,7 @@ const VIEW_ROUTES: Record<ViewId, string[]> = {
   portal: ["/"],
   algo: ["/algo", "/projects", "/workspace", "/template", "/models", "/data", "/data-annotation", "/automl", "/training", "/orchestration", "/demo-loop", "/annotations", "/algorithms", "/api-marketplace"],
   agent: ["/agent", "/knowledge-center", "/prompt-templates", "/knowledge", "/knowledge-graph", "/chat"],
+  quality: ["/quality"],
   infra: ["/infra", "/kubernetes", "/notebooks", "/images", "/cluster-governance", "/monitor", "/compute"],
   admin: ["/llm-gateway", "/admin/llm-usage", "/admin/users", "/admin/announcements", "/admin/audit", "/admin/settings"],
 };
@@ -37,12 +38,13 @@ const VIEW_HOME: Record<ViewId, string> = {
   portal: "/",
   algo: "/algo",
   agent: "/agent",
+  quality: "/quality/scenes",
   infra: "/infra",
   admin: "/admin/users",
 };
 
 function resolveView(pathname: string): ViewId {
-  const order: ViewId[] = ["algo", "agent", "infra", "admin", "portal"];
+  const order: ViewId[] = ["algo", "agent", "quality", "infra", "admin", "portal"];
   let best: { view: ViewId; len: number } = { view: "portal", len: 0 };
   for (const view of order) {
     for (const prefix of VIEW_ROUTES[view]) {
@@ -70,13 +72,31 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // 板块名一律取 PageHeading 的 SECTIONS。
   const nav = (key: string) => navTitle(t, key, zh);
 
-  const viewTabs: { id: ViewId; label: string; tag?: string }[] = [
+  // 板块可见性（技术方案 §7.1）：服务端按角色解析（visible_views），
+  // 缺省六视图全量；未加载完成前按全量渲染（避免闪没）。
+  const [visibleViews, setVisibleViews] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (!localStorage.getItem("token")) return;
+    let active = true;
+    apiClient.get("/auth/me").then((response) => {
+      if (!active) return;
+      const views = response.data?.visible_views;
+      if (Array.isArray(views) && views.length > 0) setVisibleViews(views.map(String));
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+  const viewVisible = (view: ViewId) =>
+    isAdmin || visibleViews === null || visibleViews.includes(view);
+
+  const allViewTabs: { id: ViewId; label: string; tag?: string }[] = [
     { id: "portal", label: sectionName("portal", zh) },
     { id: "algo", label: sectionName("algo", zh) },
     { id: "agent", label: sectionName("agent", zh) },
+    { id: "quality", label: sectionName("quality", zh) },
     { id: "infra", label: sectionName("infra", zh) },
     ...(isAdmin ? [{ id: "admin" as ViewId, label: sectionName("admin", zh) }] : []),
   ];
+  const viewTabs = allViewTabs.filter((tab) => viewVisible(tab.id));
 
   const sideGroups: Record<ViewId, SideGroup[]> = {
     portal: [],
@@ -98,6 +118,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         { key: "/demo-loop", icon: <DeploymentUnitOutlined />, label: nav("demo_loop") },
         { key: "/orchestration", icon: <RobotOutlined />, label: nav("orchestration") },
         { key: "/api-marketplace", icon: <ApiOutlined />, label: nav("api_market") },
+      ] },
+    ],
+    quality: [
+      { label: zh ? "监控" : "Monitoring", items: [
+        { key: "/quality/production-records", icon: <DatabaseOutlined />, label: nav("quality_production_records") },
+      ] },
+      { label: zh ? "配置" : "Configuration", items: [
+        { key: "/quality/scenes", icon: <AppstoreOutlined />, label: nav("quality_scenes") },
+        { key: "/quality/stations", icon: <ClusterOutlined />, label: nav("quality_stations") },
       ] },
     ],
     agent: [
@@ -143,8 +172,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     ],
   };
 
+  const [username, setUsername] = useState(() => localStorage.getItem("username") || "");
+  const displayUsername = username || "-";
+  const roleLabel = (() => {
+    const profiles = (t as { profile?: Record<string, string> }).profile || {};
+    // 优先取 i18n 的角色键（admin/engineer/quality/viewer/operator），缺省回退普通用户
+    return profiles[userRole] || (userRole === "admin" ? t.profile.admin : userRole === "engineer" ? t.profile.engineer : t.profile.user);
+  })();
+
   const userMenuItems = [
-    { key: "profile", icon: <UserOutlined />, label: userRole === "admin" ? t.profile.admin : userRole === "engineer" ? t.profile.engineer : t.profile.user, onClick: () => setProfileOpen(true) },
+    { key: "profile", icon: <UserOutlined />, label: roleLabel, onClick: () => setProfileOpen(true) },
     ...(isAdmin ? [{ key: "admin", icon: <TeamOutlined />, label: t.nav.users, onClick: () => navigate("/admin/users") }] : []),
     { type: "divider" as const },
     { key: "logout", icon: <LogoutOutlined />, label: t.app.logout, onClick: () => { localStorage.clear(); navigate("/login"); } },
@@ -191,8 +228,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     navigate(item.query ? `${item.key}?${item.query}` : item.key);
   };
 
-  const [username, setUsername] = useState(() => localStorage.getItem("username") || "");
-
   useEffect(() => {
     if (username || !localStorage.getItem("token")) return;
     let active = true;
@@ -209,8 +244,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     }).catch(() => undefined);
     return () => { active = false; };
   }, [username]);
-  const displayUsername = username || "-";
-  const roleLabel = userRole === "admin" ? t.profile.admin : userRole === "engineer" ? t.profile.engineer : t.profile.user;
 
   return (
     <>
@@ -235,6 +268,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </nav>
           <div className="v2-topright">
             <span className="v2-env-chip" style={{ display: "none" }} />
+            <button
+              type="button"
+              className="v2-seg-btn"
+              aria-label={zh ? "帮助中心" : "Help center"}
+              title={zh ? "帮助中心" : "Help center"}
+              onClick={() => navigate(`/help?page=${encodeURIComponent(location.pathname)}`)}
+              style={{ display: "inline-flex", alignItems: "center" }}
+            >
+              <QuestionCircleOutlined />
+            </button>
             <NotificationCenter />
             <div className="v2-seg" role="group" aria-label={zh ? "语言与主题" : "Language & theme"}>
               <button type="button" className={`v2-seg-btn${lang === "zh" ? " on" : ""}`}

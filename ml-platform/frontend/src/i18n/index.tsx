@@ -46,6 +46,10 @@ const ZH = {
     audit: "审计日志",
     settings: "平台状态",
     llm_usage: "Tokens 用量",
+    quality_scenes: "场景管理",
+    quality_stations: "工位与设备",
+    quality_production_records: "生产记录",
+    help_center: "帮助中心",
   },
   demo_loop: {
     project: "项目", choose_project: "选择项目", refresh: "刷新",
@@ -555,6 +559,9 @@ const ZH = {
   profile: {
     admin: "\u7ba1\u7406\u5458",
     engineer: "\u5de5\u7a0b\u5e08",
+    quality: "\u8d28\u91cf\u5de5\u7a0b\u5e08",
+    viewer: "\u53ea\u8bfb\u7528\u6237",
+    operator: "\u64cd\u4f5c\u5458",
     user: "\u666e\u901a\u7528\u6237",
     username: "\u7528\u6237\u540d",
     role: "\u89d2\u8272",
@@ -896,7 +903,8 @@ const EN: Record<string, any> = {
   app: { title: "Linkraft", login: "Login", register: "Register", logout: "Logout", success: "Success", error: "Error", confirm: "Confirm" },
   nav: { dashboard: "Dashboard", projects: "Projects", models: "Model Library", users: "User Management", data: "Data Management", data_annotation: "Data Annotation", knowledge: "Knowledge Base", training: "Model Training", monitor: "Resource Monitor", chat: "AI Chat", automl: "AutoML", orchestration: "App Orchestration", demo_loop: "Closed-Loop Automation", algorithms: "Algorithms", api_market: "API Market", annotation: "Annotation", compute: "Compute Resources", kubernetes: "Kubernetes Clusters", infra_overview: "Cluster overview", job_runs: "Job Runs", notebooks: "Notebook Sessions", images: "Image Catalog", cluster_governance: "Cluster Governance", llm_gateway: "LLM Management", knowledge_center: "Knowledge Center",
     prompt_templates: "Prompt Templates", agent_new: "New task", agent_tasks: "Jobs", agent_recipes: "Recipes",
-    announcements: "Notices", audit: "Audit log", settings: "Platform Status", llm_usage: "Token usage" },
+    announcements: "Notices", audit: "Audit log", settings: "Platform Status", llm_usage: "Token usage",
+    quality_scenes: "Quality Scenes", quality_stations: "Stations & Devices", quality_production_records: "Production Records", help_center: "Help Center" },
   demo_loop: {
     project: "Project", choose_project: "Select project", refresh: "Refresh",
     manual: "Manual", manual_title: "Closed-loop manual (Plan A / Plan B)", showcase: "Live monitor",
@@ -1260,7 +1268,7 @@ const EN: Record<string, any> = {
   },
   chat: { title: "AI Chat", placeholder: "Type your question...", send: "Send" },
   monitor: { title: "Resource Monitor", cpu: "CPU", memory: "Memory", disk: "Disk", gpu: "GPU", refresh: "Refresh", used: "Used", total: "Total", usage: "Usage", temperature: "Temp", no_gpu: "No GPU detected", net: "Network", diskio: "Disk I/O", load: "Load", down: "Down", up: "Up", readOp: "Read", writeOp: "Write", uptime: "Uptime", updated: "Updated" },
-  profile: { admin: "Admin", engineer: "Engineer", user: "User", username: "Username", role: "Role", language: "Language", logout: "Logout", profile: "Profile" },
+  profile: { admin: "Admin", engineer: "Engineer", quality: "Quality Engineer", viewer: "Viewer", operator: "Operator", user: "User", username: "Username", role: "Role", language: "Language", logout: "Logout", profile: "Profile" },
   template: { welding: "Welding Quality Prediction", param_recommend: "Parameter Recommendation", anomaly_detect: "Anomaly Detection", full_ml: "Full ML Pipeline", next: "Next", create_and_run: "Create & Run", wizard_title: "Industrial workflow template", scenario: "Scenario", target: "Target", required_columns: "Required columns", project: "Project", dataset_artifact: "Dataset artifact", parameter_config: "Parameter configuration", create_project: "Create project", use_existing_project: "Use existing project", project_name: "Project name", project_description: "Project description", create_workflow: "Create workflow", load_failed: "Unable to load template", create_failed: "Unable to create workflow", no_datasets: "No dataset artifacts" },
   operator: {
     csv_import: "CSV / Excel Import", csv_export: "CSV / Excel Export", read_excel: "Read Excel",

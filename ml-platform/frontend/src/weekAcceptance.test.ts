@@ -133,6 +133,10 @@ const weekTestFiles: Record<number | string, string[]> = {
     "./components/PageHeading.test.tsx",
     "./hooks/useAdaptivePolling.test.tsx",
   ],
+  // 补齐路线第一批 F1（2026-11-25）：质量管理板块三页 + 帮助中心
+  gap_batch_f1: [
+    "./pages/QualityPages.test.tsx",
+  ],
 };
 
 const discoveredTestFiles = Object.keys(

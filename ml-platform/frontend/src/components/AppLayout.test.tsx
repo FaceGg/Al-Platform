@@ -139,7 +139,7 @@ describe("AppLayout (v2 five-view shell)", () => {
     expect(await screen.findByRole("button", { name: /switch to light mode/i })).toBeInTheDocument();
   });
 
-  it("keeps the five view tabs visible and switches the active view", async () => {
+  it("keeps the six view tabs visible and switches the active view", async () => {
     function LocationProbe() {
       const location = useLocation();
       return <output data-testid="location">{location.pathname}</output>;
@@ -151,9 +151,30 @@ describe("AppLayout (v2 five-view shell)", () => {
     );
 
     expect(screen.getByRole("button", { name: /agent center/i })).toBeInTheDocument();
+    // 质量管理为第六个一级板块（2026-11-24 导航确认）
+    expect(screen.getByRole("button", { name: /quality management/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /quality management/i }));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/quality/scenes"));
+    expect(within(screen.getByTestId("v2-sidebar")).getByText("Quality Scenes")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /agent center/i }));
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/agent"));
     expect(within(screen.getByTestId("v2-sidebar")).getByText("New task")).toBeInTheDocument();
+  });
+
+  it("groups the quality sidebar into monitoring and configuration", async () => {
+    const sidebarGroups = async () => Array.from((await screen.findByTestId("v2-sidebar")).children).map((group) => ({
+      label: group.querySelector(".v2-side-group")?.textContent,
+      items: Array.from(group.querySelectorAll("button")).map((button) => button.textContent),
+    }));
+    render(
+      <MemoryRouter initialEntries={["/quality/scenes"]}>
+        <LangProvider><AppLayout><div>test</div></AppLayout></LangProvider>
+      </MemoryRouter>,
+    );
+    expect(await sidebarGroups()).toEqual([
+      { label: "Monitoring", items: ["Production Records"] },
+      { label: "Configuration", items: ["Quality Scenes", "Stations & Devices"] },
+    ]);
   });
 
   it("selects data annotation instead of the shorter data route", async () => {
