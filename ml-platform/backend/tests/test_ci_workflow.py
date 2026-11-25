@@ -394,6 +394,66 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertIn('if [[ ! -s "$key_file" ]]; then', script)
         self.assertIn("openssl rand -base64 32", script)
         self.assertIn('Existing notification key preserved', script)
+        # 补齐路线 D8：LLM 档案 / 数据源口令主密钥纳入 production 必填校验，
+        # 密钥准备脚本负责补键（缺失或为空生成、非空保留）
+        self.assertIn("ensure_master_key LLM_MASTER_KEY", script)
+        self.assertIn("ensure_master_key DATASOURCE_MASTER_KEY", script)
+
+    def test_every_production_service_receives_all_required_master_keys(self):
+        """每个 production 模式服务都要收齐三把 Fernet 主密钥的环境注入。
+
+        缺任何一把，该容器导入应用配置即被 Settings 校验拒绝——与 2026-11-18
+        「worker 缺 LLM 主密钥、force-recreate 后智能体全挂」是同一事故形态。
+        """
+        compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+        services = compose["services"]
+        required = {
+            "LLM_MASTER_KEY": "${LLM_MASTER_KEY:-}",
+            "DATASOURCE_MASTER_KEY": "${DATASOURCE_MASTER_KEY:-}",
+            "NOTIFICATION_MASTER_KEY_FILE": "/run/secrets/notification_master_key",
+        }
+        production_services = sorted(
+            name
+            for name, service in services.items()
+            if (service.get("environment") or {}).get("APP_MODE") == "production"
+        )
+        self.assertEqual(
+            production_services,
+            ["backend", "inference-runtime", "migrate", "scheduler", "worker"],
+        )
+        for service_name in production_services:
+            environment = services[service_name]["environment"]
+            for key, expected in required.items():
+                with self.subTest(service=service_name, key=key):
+                    self.assertEqual(environment.get(key), expected)
+
+    def test_ci_generates_required_master_keys_at_runtime(self):
+        """CI 的生产栈作业运行期生成两把主密钥并经 GITHUB_ENV 下发。
+
+        compose 用 ${VAR:-} 插值读取；工作流里不出现任何主密钥字面量
+        （gitleaks 零命中，证据脱敏无需追加规则）。
+        """
+        workflow_text = CI_WORKFLOW.read_text(encoding="utf-8")
+        generation = "DATASOURCE_MASTER_KEY={Fernet.generate_key().decode()}"
+        self.assertIn(generation, workflow_text)
+        self.assertIn("LLM_MASTER_KEY={Fernet.generate_key().decode()}", workflow_text)
+        jobs = yaml.safe_load(workflow_text)["jobs"]
+        for job_name in (
+            "production-integration",
+            "browser-acceptance",
+            "experiment-integration",
+            "security-release-verification",
+        ):
+            job = jobs[job_name]
+            with self.subTest(job=job_name):
+                self.assertNotIn("LLM_MASTER_KEY", job.get("env") or {})
+                self.assertNotIn("DATASOURCE_MASTER_KEY", job.get("env") or {})
+                self.assertTrue(
+                    any(
+                        generation in (step.get("run") or "")
+                        for step in job["steps"]
+                    )
+                )
 
     @unittest.skipUnless(
         platform.system() != "Windows" and shutil.which("bash"),
@@ -407,13 +467,25 @@ trap 'rm -rf "$temp_dir"' EXIT
 env_file="$temp_dir/.env"
 key_file="$temp_dir/generated/secrets/notification_master_key"
 printf 'NOTIFICATION_CRYPTO_SECRET_FILE=%s\n' "$key_file" > "$env_file"
+# 既有非空 LLM 主密钥必须原样保留；为空的数据源主密钥必须被补齐
+existing_llm_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '\n')"
+printf 'LLM_MASTER_KEY=%s\n' "$existing_llm_key" >> "$env_file"
+printf 'DATASOURCE_MASTER_KEY=\n' >> "$env_file"
 ENV_FILE="$env_file" bash "$root/ml-platform/scripts/prepare-production-secrets.sh"
 test -s "$key_file"
 test "$(wc -c < "$key_file")" -eq 44
 first_hash="$(sha256sum "$key_file" | awk '{print $1}')"
+# Fernet 密钥以 = 结尾，取值须用 substr（-F= 会吃掉结尾的 =）
+env_key() { awk -v key="$1" '$0 ~ "^" key "=" { print substr($0, index($0, "=") + 1); exit }' "$env_file"; }
+test "$(env_key LLM_MASTER_KEY)" = "$existing_llm_key"
+datasource_key="$(env_key DATASOURCE_MASTER_KEY)"
+test "${#datasource_key}" -eq 44
 ENV_FILE="$env_file" bash "$root/ml-platform/scripts/prepare-production-secrets.sh"
 second_hash="$(sha256sum "$key_file" | awk '{print $1}')"
 test "$first_hash" = "$second_hash"
+# 二次执行：已补齐的两把主密钥不再变化
+test "$(env_key DATASOURCE_MASTER_KEY)" = "$datasource_key"
+test "$(env_key LLM_MASTER_KEY)" = "$existing_llm_key"
 '''
         result = subprocess.run(
             ["bash", "-s"],

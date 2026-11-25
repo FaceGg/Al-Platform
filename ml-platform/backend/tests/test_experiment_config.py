@@ -1,3 +1,4 @@
+import base64
 import json
 import tempfile
 import unittest
@@ -7,6 +8,14 @@ from unittest.mock import patch
 from pydantic import ValidationError
 
 from app.config import Settings
+
+
+# 与通知主密钥同形的测试密钥（production 必填三把 Fernet 主密钥，D8）
+FERNET_TEST_KEYS = {
+    "notification_master_key": base64.urlsafe_b64encode(b"n" * 32).decode("ascii"),
+    "datasource_master_key": base64.urlsafe_b64encode(b"d" * 32).decode("ascii"),
+    "llm_master_key": base64.urlsafe_b64encode(b"l" * 32).decode("ascii"),
+}
 
 
 class TestExperimentConfiguration(unittest.TestCase):
@@ -31,7 +40,9 @@ class TestExperimentConfiguration(unittest.TestCase):
             "tensorboard_session_secret": "t" * 32,
             "inference_runtime_url": "http://inference-runtime:7000",
             "inference_internal_secret": "i" * 32,
-            "notification_master_key": "bm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm5ubm4=",
+            "notification_master_key": FERNET_TEST_KEYS["notification_master_key"],
+            "datasource_master_key": FERNET_TEST_KEYS["datasource_master_key"],
+            "llm_master_key": FERNET_TEST_KEYS["llm_master_key"],
             "smtp_username": "smtp-user-secret",
             "smtp_password": "smtp-password-secret",
         }

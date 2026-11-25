@@ -69,6 +69,9 @@ def production_values(**overrides):
         "tensorboard_session_secret": "tensorboard-session-secret-value-1234",
         "inference_runtime_url": "http://inference-runtime:7000",
         "inference_internal_secret": "inference-internal-secret-value-1234",
+        # 三把 Fernet 主密钥同为 production 必填（补齐路线 D8，2026-11-25）
+        "datasource_master_key": base64.urlsafe_b64encode(b"d" * 32).decode("ascii"),
+        "llm_master_key": base64.urlsafe_b64encode(b"l" * 32).decode("ascii"),
     }
     values.update(overrides)
     return values
@@ -88,6 +91,14 @@ class TestNotificationSettings(unittest.TestCase):
         )
         self.assertNotIn(NOTIFICATION_MASTER_KEY, repr(configured))
         self.assertNotIn(NOTIFICATION_MASTER_KEY, repr(configured.safe_summary()))
+        # 补齐路线 D8：LLM 档案密钥与数据源口令密钥同属 production 必填
+        for missing in ("datasource_master_key", "llm_master_key"):
+            values = production_values(notification_master_key=NOTIFICATION_MASTER_KEY)
+            values.pop(missing)
+            with self.subTest(missing=missing), self.assertRaisesRegex(
+                ValidationError, f"Production mode requires {missing.upper()}",
+            ):
+                Settings(**values)
 
 
 class TestNotificationModels(unittest.TestCase):

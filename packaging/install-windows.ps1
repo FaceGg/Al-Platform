@@ -195,6 +195,8 @@ if (-not (Test-Path -LiteralPath $EnvFile)) {
     "SECRET_KEY=$secretKey",
     "ML_PLATFORM_ADMIN_INITIAL_PASSWORD=$adminPassword",
     "ANNOTATOR_SERVICE_SECRET=$annotatorServiceSecret",
+    "LLM_MASTER_KEY=$(Get-RandomUrlSafeBase64)",
+    "DATASOURCE_MASTER_KEY=$(Get-RandomUrlSafeBase64)",
     "CELERY_BROKER_URL=redis://redis:6379/0",
     "CELERY_RESULT_BACKEND=redis://redis:6379/1",
     "REDIS_EVENTS_URL=redis://redis:6379/2",
@@ -251,6 +253,16 @@ if (-not (Test-EnvKey "ML_PLATFORM_ADMIN_INITIAL_PASSWORD")) {
 }
 if (-not (Test-EnvKey "ANNOTATOR_SERVICE_SECRET")) {
   Set-EnvValue "ANNOTATOR_SERVICE_SECRET" (Get-RandomHex 32)
+}
+# Fernet 主密钥（LLM 档案密钥 / 外部数据源口令）纳入 production 必填校验：
+# 缺失或为空时补随机值；已有非空值原样保留——换 key 会让已保存的 LLM 档案密钥
+# 无法解密。若此前经其他方式（如系统环境变量）提供 LLM_MASTER_KEY，请改回原值。
+foreach ($masterKey in @("LLM_MASTER_KEY", "DATASOURCE_MASTER_KEY")) {
+  $existingKey = Get-EnvValue $masterKey
+  if (-not $existingKey) {
+    Set-EnvValue $masterKey (Get-RandomUrlSafeBase64)
+    Write-Info "已生成主密钥：$masterKey"
+  }
 }
 
 if ($origin) {

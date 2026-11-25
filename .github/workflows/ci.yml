@@ -229,6 +229,12 @@ jobs:
           target = Path(os.environ["NOTIFICATION_CRYPTO_SECRET_FILE"])
           target.write_bytes(Fernet.generate_key() + b"\n")
           target.chmod(0o600)
+          # LLM 档案 / 数据源口令主密钥是 production 必填项（补齐路线 D8）：
+          # 运行期生成并经 GITHUB_ENV 下发，compose 的 ${VAR:-} 插值读取，
+          # 工作流里不出现任何密钥字面量。
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as handle:
+              handle.write(f"LLM_MASTER_KEY={Fernet.generate_key().decode()}\n")
+              handle.write(f"DATASOURCE_MASTER_KEY={Fernet.generate_key().decode()}\n")
           PY
           openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
             -subj "/CN=qyapi.weixin.qq.com" \
@@ -443,6 +449,12 @@ jobs:
           target = Path(os.environ["NOTIFICATION_MASTER_KEY_FILE"])
           target.write_bytes(Fernet.generate_key() + b"\n")
           target.chmod(0o600)
+          # LLM 档案 / 数据源口令主密钥是 production 必填项（补齐路线 D8）：
+          # 本作业在宿主进程里以 production 模式跑 alembic/uvicorn，同样经
+          # GITHUB_ENV 注入运行期生成的密钥（工作流零字面量）。
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as handle:
+              handle.write(f"LLM_MASTER_KEY={Fernet.generate_key().decode()}\n")
+              handle.write(f"DATASOURCE_MASTER_KEY={Fernet.generate_key().decode()}\n")
           PY
       - name: Upgrade production schema
         working-directory: ml-platform/backend
@@ -618,6 +630,12 @@ jobs:
           target = Path(os.environ["NOTIFICATION_CRYPTO_SECRET_FILE"])
           target.write_bytes(Fernet.generate_key() + b"\n")
           target.chmod(0o600)
+          # LLM 档案 / 数据源口令主密钥是 production 必填项（补齐路线 D8）：
+          # 运行期生成并经 GITHUB_ENV 下发，compose 的 ${VAR:-} 插值读取，
+          # 工作流里不出现任何密钥字面量。
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as handle:
+              handle.write(f"LLM_MASTER_KEY={Fernet.generate_key().decode()}\n")
+              handle.write(f"DATASOURCE_MASTER_KEY={Fernet.generate_key().decode()}\n")
           PY
           sudo chown 1000:1000 "$NOTIFICATION_CRYPTO_SECRET_FILE"
           sudo chmod 0400 "$NOTIFICATION_CRYPTO_SECRET_FILE"
@@ -906,6 +924,12 @@ jobs:
           target = Path(os.environ["NOTIFICATION_CRYPTO_SECRET_FILE"])
           target.write_bytes(Fernet.generate_key() + b"\n")
           target.chmod(0o600)
+          # LLM 档案 / 数据源口令主密钥是 production 必填项（补齐路线 D8）：
+          # 运行期生成并经 GITHUB_ENV 下发，compose 的 ${VAR:-} 插值读取，
+          # 工作流里不出现任何密钥字面量。
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as handle:
+              handle.write(f"LLM_MASTER_KEY={Fernet.generate_key().decode()}\n")
+              handle.write(f"DATASOURCE_MASTER_KEY={Fernet.generate_key().decode()}\n")
           PY
           sudo chown 1000:1000 "$NOTIFICATION_CRYPTO_SECRET_FILE"
           sudo chmod 0400 "$NOTIFICATION_CRYPTO_SECRET_FILE"

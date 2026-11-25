@@ -83,6 +83,14 @@ cd ~/linkraft-ubuntu-20260924-r4
 ./packaging/compose-ubuntu.sh ps
 ```
 
+**升级到 2026-11-25 及之后的版本（补齐路线第一批起）必做一步**：生产模式新增两把必填的 Fernet 主密钥——`LLM_MASTER_KEY`（大模型档案密钥加密）与 `DATASOURCE_MASTER_KEY`（外部数据源口令加密）。缺失时 `migrate` 容器导入配置即被拒绝启动（日志出现 `Production mode requires DATASOURCE_MASTER_KEY` 或 `... LLM_MASTER_KEY`）。执行 `compose up` 之前先跑一次密钥补齐脚本：
+
+```bash
+./ml-platform/scripts/prepare-production-secrets.sh
+```
+
+脚本对 `.env` 里缺失或为空的键生成随机值，已有的非空值原样保留（换 `LLM_MASTER_KEY` 会让已保存的大模型档案密钥无法解密）。**若此前 `LLM_MASTER_KEY` 是通过 shell 环境变量等其他方式提供的，务必把 `.env` 里这一行改回原密钥。** 全新安装的 `install-ubuntu.sh` 会自动调用该脚本，无需手动执行。
+
 从 r9-r18 升级到 r19 使用同样的流程（覆盖源码后执行上面的重建命令）。r19 重打包（2026-11-23）起 compose 新增 `neo4j` 服务（知识图谱五阶段流水线的图存储投影，迁移 3 个新版本）；上面的升级命令已包含 `neo4j`，首次执行会从 Docker Hub 拉取 `neo4j:5-community` 镜像（约 500MB）。Neo4j 仅内网运行、不暴露宿主端口，密码经 `.env` 的 `NEO4J_PASSWORD` 配置（默认 `kgdevpass123`，建议生产环境显式设置）；堆与页缓存已限死（128m/256m/128m）。**不启动 neo4j 也不影响平台运行**——知识图谱的图存储投影会自动降级到 PostgreSQL（事务主源），查询 API 与画布仍可用，仅图存储镜像能力（Neo4j 直连查询）缺席。r19 相比 r12 的主要变更：
 
 - **新增平台功能**：Kubernetes 集群管理/作业运行/Notebook 会话/镜像目录/多集群治理（Week 14-16，集群在平台内登记与连通性检查，无需为本包额外配置环境变量）、闭环演示（推理→错误数据回流→阈值告警→自动重训换模型）、编排服务图工作台、资源监控页；主平台/门户时间显示统一按 UTC 解析修复（此前 UTC+8 环境统一慢 8 小时）。

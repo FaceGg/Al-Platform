@@ -52,6 +52,8 @@ pwsh -File packaging\compose-windows.ps1 logs migrate
 pwsh -File packaging\compose-windows.ps1 ps
 ```
 
+**升级到 2026-11-25 及之后的版本（补齐路线第一批起）注意**：生产模式新增两把必填的 Fernet 主密钥——`LLM_MASTER_KEY`（大模型档案密钥加密）与 `DATASOURCE_MASTER_KEY`（外部数据源口令加密）。缺失时 `migrate` 容器导入配置即被拒绝启动（日志出现 `Production mode requires DATASOURCE_MASTER_KEY` 或 `... LLM_MASTER_KEY`）。走上面的 `install-windows.ps1` 升级会自动补齐（缺失或为空才生成随机值，已有的非空值原样保留）；若直接用下面的 `compose-windows.ps1 up` 重建，需先手动在 `.env` 里补这两行（值为任意合法 Fernet 密钥，如 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` 的输出）。**若此前 `LLM_MASTER_KEY` 是通过系统环境变量等其他方式提供的，务必把 `.env` 里这一行改回原密钥**，否则已保存的大模型档案密钥无法解密。
+
 r19（重打版）起 compose 新增 `neo4j` 服务（知识图谱图存储投影，仅内网不暴露宿主端口，密码 `.env` 的 `NEO4J_PASSWORD`，默认 `kgdevpass123` 建议生产显式设置）。不启动 neo4j 也不影响平台——图存储投影自动降级 PostgreSQL。升级重建命令：
 
 ```powershell

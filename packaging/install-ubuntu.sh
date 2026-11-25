@@ -53,6 +53,10 @@ create_production_env() {
   admin_initial_password="${ADMIN_INITIAL_PASSWORD:-$(openssl rand -hex 12)}"
   # A-02：内部服务令牌/门户会话签名密钥（production 校验拒绝默认值）
   annotator_service_secret="$(openssl rand -hex 32)"
+  # Fernet 主密钥：LLM 档案密钥 / 外部数据源口令（production 必填校验，2026-11-25）。
+  # 全新安装直接生成；存量升级的补键在 prepare-production-secrets.sh。
+  llm_master_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '\r\n')"
+  datasource_master_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '\r\n')"
   cat > "$ENV_FILE" <<EOF
 # Generated for this deployment. Keep this file and secrets/ outside version control.
 POSTGRES_DB=ml_platform
@@ -63,6 +67,8 @@ DATABASE_URL=postgresql+psycopg://ml_platform:${postgres_password}@postgres:5432
 SECRET_KEY=${secret_key}
 ML_PLATFORM_ADMIN_INITIAL_PASSWORD=${admin_initial_password}
 ANNOTATOR_SERVICE_SECRET=${annotator_service_secret}
+LLM_MASTER_KEY=${llm_master_key}
+DATASOURCE_MASTER_KEY=${datasource_master_key}
 CELERY_BROKER_URL=redis://redis:6379/0
 CELERY_RESULT_BACKEND=redis://redis:6379/1
 REDIS_EVENTS_URL=redis://redis:6379/2

@@ -77,6 +77,10 @@ services:
       # 全部 AGENT_RUN_NOT_EXECUTABLE（2026-11-18 实测：仅 backend 配置，
       # force-recreate worker 后智能体全挂）。
       LLM_MASTER_KEY: ${LLM_MASTER_KEY:-}
+      # 外部数据源口令加密主密钥（B1-08/D8）：与 LLM 主密钥同属 production
+      # 必填校验——缺失时 migrate 容器导入配置即被拒（fail-closed）。全新安装由
+      # install 脚本写入 .env，存量升级先跑 prepare-production-secrets.sh 补键。
+      DATASOURCE_MASTER_KEY: ${DATASOURCE_MASTER_KEY:-}
       # 初始管理员口令（仅全新数据库首启需要；已部署环境 admin 已存在不受影响）。
       # 留空时后端在"库中无 admin"场景拒绝启动（fail-closed），由后端裁决而非
       # compose 强制，保证老部署升级重启不因缺新变量而失败。
@@ -237,6 +241,10 @@ services:
       INFERENCE_RATE_LIMIT_REFILL_PER_SECOND: ${INFERENCE_RATE_LIMIT_REFILL_PER_SECOND:-10}
       INFERENCE_ROLLOUT_OBSERVATION_SECONDS: ${INFERENCE_ROLLOUT_OBSERVATION_SECONDS:-60}
       NOTIFICATION_MASTER_KEY_FILE: /run/secrets/notification_master_key
+      # 推理运行时同样以 production 模式导入应用配置：两把 Fernet 主密钥是
+      # production 必填项（D8），缺失时容器启动即被校验拒绝（与通知密钥同形）。
+      LLM_MASTER_KEY: ${LLM_MASTER_KEY:-}
+      DATASOURCE_MASTER_KEY: ${DATASOURCE_MASTER_KEY:-}
       ML_PLATFORM_TEMP_DIR: /tmp/ml-platform
     expose:
       - "7000"
@@ -301,6 +309,7 @@ services:
       LLM_API_URL: ${LLM_API_URL:-https://api.openai.com/v1/chat/completions}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
       LLM_MASTER_KEY: ${LLM_MASTER_KEY:-}
+      DATASOURCE_MASTER_KEY: ${DATASOURCE_MASTER_KEY:-}
       KNOWLEDGE_GRAPH_MAX_EXTRACT_CHARS: ${KNOWLEDGE_GRAPH_MAX_EXTRACT_CHARS:-2000000}
       KNOWLEDGE_GRAPH_TIME_BUDGET_SECONDS: ${KNOWLEDGE_GRAPH_TIME_BUDGET_SECONDS:-120}
     volumes:
