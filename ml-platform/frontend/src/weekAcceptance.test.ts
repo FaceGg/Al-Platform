@@ -145,6 +145,12 @@ const weekTestFiles: Record<number | string, string[]> = {
     "./pages/QualityMonitorPages.test.tsx",
     "./pages/QualitySpcDriftPages.test.tsx",
   ],
+  // 补齐路线第二批 S1（2026-11-26）：审批中心 + 动作审计（AppLayout 顶栏
+  // 审批入口的断言并入其既有登记组，本组只登记两个新页面测试）
+  gap_batch_s1: [
+    "./pages/ApprovalCenterPage.test.tsx",
+    "./pages/AgentActionAuditPage.test.tsx",
+  ],
 };
 
 const discoveredTestFiles = Object.keys(

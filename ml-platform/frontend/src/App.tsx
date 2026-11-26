@@ -60,6 +60,8 @@ const QualityTrendsPage = lazy(() => import("./pages/QualityTrendsPage"));
 const QualitySpcPage = lazy(() => import("./pages/QualitySpcPage"));
 const DriftMonitorPage = lazy(() => import("./pages/DriftMonitorPage"));
 const HelpCenterPage = lazy(() => import("./pages/HelpCenterPage"));
+const ApprovalCenterPage = lazy(() => import("./pages/ApprovalCenterPage"));
+const AgentActionAuditPage = lazy(() => import("./pages/AgentActionAuditPage"));
 
 const LIGHT_TOKENS = {
   // 主色对齐 v2-btn.primary（浅色主题 --v2-blue 渐变起点 #1a6fc4），
@@ -170,6 +172,8 @@ function AppContent() {
             <Route path="/quality/spc" element={<ProtectedRoute><PageErrorBoundary pageName="SPC 过程控制"><QualitySpcPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/algo/drift" element={<ProtectedRoute><PageErrorBoundary pageName="漂移监控"><DriftMonitorPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/help" element={<ProtectedRoute><HelpCenterPage /></ProtectedRoute>} />
+            <Route path="/approvals" element={<ProtectedRoute><PageErrorBoundary pageName="审批中心"><ApprovalCenterPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/admin/agent-audit" element={<ProtectedRoute><PageErrorBoundary pageName="动作审计"><AgentActionAuditPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </BrowserRouter>

@@ -54,6 +54,7 @@ export const NAV_FALLBACK: Record<string, { zh: string; en: string }> = {
   users: { zh: "用户管理", en: "User Management" },
   announcements: { zh: "公告管理", en: "Notices" },
   audit: { zh: "审计日志", en: "Audit log" },
+  agent_audit: { zh: "动作审计", en: "Agent action audit" },
   settings: { zh: "平台状态", en: "Platform Status" },
   llm_gateway: { zh: "大模型管理", en: "LLM Management" },
   llm_usage: { zh: "Tokens 用量", en: "Token usage" },

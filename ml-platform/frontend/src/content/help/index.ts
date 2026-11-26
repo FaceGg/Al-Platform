@@ -20,6 +20,8 @@ import qualityMonitorMd from "./quality-monitor.md?raw";
 import qualityTrendsMd from "./quality-trends.md?raw";
 import qualitySpcMd from "./quality-spc.md?raw";
 import driftMonitorMd from "./drift-monitor.md?raw";
+import approvalCenterMd from "./approval-center.md?raw";
+import agentActionAuditMd from "./agent-action-audit.md?raw";
 
 export interface HelpChapter {
   id: string;
@@ -134,6 +136,22 @@ export const HELP_CHAPTERS: HelpChapter[] = [
     order: 16,
     md: driftMonitorMd,
     navPrefixes: ["/algo/drift"],
+  },
+  {
+    id: "approval-center",
+    titleZh: "审批中心",
+    titleEn: "Approval center",
+    order: 17,
+    md: approvalCenterMd,
+    navPrefixes: ["/approvals"],
+  },
+  {
+    id: "agent-action-audit",
+    titleZh: "动作审计",
+    titleEn: "Agent action audit",
+    order: 18,
+    md: agentActionAuditMd,
+    navPrefixes: ["/admin/agent-audit"],
   },
   {
     id: "closed-loop-demo",

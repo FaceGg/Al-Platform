@@ -59,6 +59,35 @@ describe("AppLayout (v2 five-view shell)", () => {
     await waitFor(() => expect(container).toBeTruthy());
   });
 
+  it("shows the topbar approvals entry and polls the pending count (S1/D16)", async () => {
+    apiMocks.get.mockImplementation((url: string) => {
+      if (url === "/approvals/pending-count") {
+        return Promise.resolve({ data: { count: 3 } });
+      }
+      return Promise.reject(new Error("offline"));
+    });
+    render(
+      <MemoryRouter>
+        <AppLayout><div>test</div></AppLayout>
+      </MemoryRouter>
+    );
+    const entry = await screen.findByTestId("topbar-approvals");
+    expect(entry).toBeTruthy();
+    // 角标数字 = pending 数（Badge 在按钮内）
+    await waitFor(() => expect(within(entry).getByText("3")).toBeTruthy());
+  });
+
+  it("lists the agent action audit entry under the admin sidebar (S1/D17)", async () => {
+    localStorage.setItem("role", "admin");
+    render(
+      <MemoryRouter initialEntries={["/admin/audit"]}>
+        <AppLayout><div>test</div></AppLayout>
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByTestId("v2-sidebar")).toBeTruthy());
+    expect(screen.getByText("动作审计")).toBeInTheDocument();
+  });
+
   it("renders the portal route without a sidebar (design: big-card entry)", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>

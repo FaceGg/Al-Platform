@@ -1,4 +1,4 @@
-import { Avatar, Dropdown, Modal, Descriptions, Tag } from "antd";
+import { Avatar, Badge, Dropdown, Modal, Descriptions, Tag } from "antd";
 import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
@@ -9,7 +9,7 @@ import {
   PlayCircleOutlined, BookOutlined, ControlOutlined, TagsOutlined, ApartmentOutlined,
   RocketOutlined, CopyOutlined, FileTextOutlined, SettingOutlined,
   NotificationOutlined, BarChartOutlined, SafetyCertificateOutlined, QuestionCircleOutlined,
-  AlertOutlined, ToolOutlined, DashboardOutlined,
+  AlertOutlined, ToolOutlined, DashboardOutlined, AuditOutlined,
 } from "@ant-design/icons";
 import { SunOutlined, MoonOutlined } from "@ant-design/icons";
 import { useI18n } from "../i18n";
@@ -190,6 +190,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         { key: "/admin/users", icon: <TeamOutlined />, label: nav("users") },
         { key: "/admin/announcements", icon: <NotificationOutlined />, label: nav("announcements") },
         { key: "/admin/audit", icon: <FileTextOutlined />, label: nav("audit") },
+        { key: "/admin/agent-audit", icon: <SafetyCertificateOutlined />, label: nav("agent_audit") },
       ] },
       { label: zh ? "平台" : "Platform", items: [
         { key: "/admin/settings", icon: <SettingOutlined />, label: nav("settings") },
@@ -213,6 +214,21 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { type: "divider" as const },
     { key: "logout", icon: <LogoutOutlined />, label: t.app.logout, onClick: () => { localStorage.clear(); navigate("/login"); } },
   ];
+
+  // 审批中心待办角标（第二批 S1/D16）：30s 轮询 pending-count，失败静默
+  const [approvalPending, setApprovalPending] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    const tick = () => {
+      import("../api/approvals")
+        .then((mod) => mod.fetchPendingApprovalCount())
+        .then((count) => { if (alive) setApprovalPending(count); })
+        .catch(() => undefined);
+    };
+    tick();
+    const timer = window.setInterval(tick, 30000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, []);
 
   const selectedKey = (() => {
     const p = location.pathname;
@@ -309,6 +325,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               style={{ display: "inline-flex", alignItems: "center" }}
             >
               <QuestionCircleOutlined />
+            </button>
+            {/* 审批中心（第二批 S1/D16）：顶栏全局入口 + 待办角标 */}
+            <button
+              type="button"
+              className="v2-seg-btn"
+              aria-label={zh ? "审批中心" : "Approval center"}
+              title={zh ? "审批中心" : "Approval center"}
+              data-testid="topbar-approvals"
+              onClick={() => navigate("/approvals")}
+              style={{ display: "inline-flex", alignItems: "center" }}
+            >
+              <Badge count={approvalPending} size="small" offset={[-2, 2]}>
+                <AuditOutlined />
+              </Badge>
             </button>
             <NotificationCenter />
             <div className="v2-seg" role="group" aria-label={zh ? "语言与主题" : "Language & theme"}>

@@ -1,0 +1,54 @@
+{
+  "schema_version": "gap-batch2-s1/v1",
+  "batch": "补齐路线第二批 S1（审批与审计底座）",
+  "date": "2026-11-26",
+  "commits": {
+    "r0_migration": "05f65f3e",
+    "r1_hash_chain": "ddf613db",
+    "r2_action_audit": "dafce301",
+    "r3_r4_approval_queue": "3beb287e",
+    "r5_frontend_and_closeout": "本文件所在提交"
+  },
+  "spec": "ml-platform/docs/技术方案-补齐路线第二批.md#0.2",
+  "environment": {
+    "platform": "windows-local",
+    "python": "3.11 (.venv)",
+    "database": "sqlite (in-memory + sealed)",
+    "frontend": "vitest/jsdom"
+  },
+  "acceptance_criteria": [
+    {"id": 1, "statement": "审批人=发起人路径被拒（四眼）", "status": "passed", "evidence": ["tests/test_approval_center.py::TestFourEyes::test_self_approval_is_rejected"]},
+    {"id": 2, "statement": "72h 过期自动回收实测", "status": "passed", "evidence": ["tests/test_approval_center.py::TestExpiry::test_expired_after_ttl_and_reminder_once", "tests/test_approval_center.py::TestExpiry::test_expired_request_cannot_be_approved", "beat approval-expiry-sweep 600s"], "subitems": [{"status": "not_run", "item": "beat 真实调度节奏"}]},
+    {"id": 3, "statement": "过期前 12h 提醒送达通知中心", "status": "passed", "scope": "事件层（outbox）", "evidence": ["TestExpiry::test_expired_after_ttl_and_reminder_once（approval.expiring 入 outbox，reminded_at 只置一次）"], "subitems": [{"status": "not_run", "item": "真实通道送达（现场凭据）"}]},
+    {"id": 4, "statement": "拒绝必附意见；执行回执可见", "status": "passed", "evidence": ["TestFourEyes::test_rejection_requires_note", "TestReservedTypeAndRetrainTrigger 两用例（execution_ref/execution_error）"]},
+    {"id": 5, "statement": "脱敏规则单测；每次 LLM 调用自动入审计", "status": "passed", "evidence": ["tests/test_agent_action_audit.py::TestMasking（4 用例）", "TestGatewayHook（成功/异常/超时三路）", "TestChatToolHook"], "note": "键清单按路线七键，与 audit.py 九键的差异是有意决策（技术方案 D12/§12.1）"},
+    {"id": 6, "statement": "篡改任一审计表事件可定位断点；正常写入校验通过", "status": "passed", "evidence": ["tests/test_audit_hash_chain.py 13 用例（hash_mismatch/link_mismatch、两表独立、三写入分支、校验端点）", "frontend AgentActionAuditPage.test.tsx 链校验卡两态"]},
+    {"id": 7, "statement": "存量四套审批按映射在统一中心可查，迁移期无审批单丢失", "status": "passed", "scope": "只读投影层", "evidence": ["tests/test_approval_center.py::TestLegacyProjection::test_projection_maps_four_sources"], "subitems": [{"status": "not_run", "item": "真实浏览器渲染"}]},
+    {"id": 8, "statement": "E05 拒绝水位线：被拒提案越线才可再提", "status": "passed", "evidence": ["tests/test_approval_center.py::TestRetrainWatermark（水位线下 409 / 越线通过，样本数按部署推理明细可复算）"]},
+    {"id": 9, "statement": "E06 内容指纹：批的是 A、发的是 B 不可执行", "status": "passed", "evidence": ["TestDispositionExecutor::test_fingerprint_invalidates_when_alert_moved（状态型指纹 invalidated）"]},
+    {"id": 10, "statement": "保留类型诚实降级", "status": "passed", "evidence": ["TestReservedTypeAndRetrainTrigger::test_reserved_type_perform_reports_not_ready"]},
+    {"id": 11, "statement": "队列生产者接线", "status": "passed", "scope": "S1 范围两类（disposition/retrain_proposal）", "evidence": ["TestProducersWiring 3 用例（drift 提案建单、critical 关闭路由开/关两态）", "model_release 生产者随 S2b、recipe_change 随 B4-04（保留）"]},
+    {"id": 12, "statement": "审计写入同事务成链、审计失败不中断业务", "status": "passed", "evidence": ["test_audit_hash_chain.py::TestWriterHooks（4 用例）", "TestDedup（SAVEPOINT 隔离）"]},
+    {"id": 13, "statement": "顶栏审批全局入口+待办角标；动作审计页（admin 侧栏）", "status": "passed", "scope": "组件层", "evidence": ["frontend AppLayout.test.tsx 19 用例（含 topbar-approvals 轮询角标、动作审计菜单项）", "ApprovalCenterPage.test.tsx 4 用例", "AgentActionAuditPage.test.tsx 3 用例"], "subitems": [{"status": "not_run", "item": "真实浏览器渲染"}]}
+  ],
+  "horizontal_contracts": [
+    {"name": "迁移纪律（_113 往返/审计行保留/漂移门禁）", "status": "passed", "evidence": ["tests/test_gap_batch2_migrations.py 4 用例", "tests/test_gap_batch1_migrations.py 12 用例（单头断言改不变式）"], "subitems": [{"status": "not_run", "item": "PostgreSQL 往返（CI 背书）"}]},
+    {"name": "测试登记", "status": "passed", "evidence": ["week 1 新增 4 后端模块", "frontend gap_batch_s1 组 2 文件（AppLayout 断言并入既有组）", "test_suite_manifest + weekAcceptance 不变式绿"]},
+    {"name": "新权限键纳入权限矩阵回归", "status": "passed", "evidence": ["approval.approve（OWNER/EDITOR）", "test_role_visibility / test_open_api 回归绿"]},
+    {"name": "前端全量", "status": "passed", "evidence": ["102 文件 651 passed + 19 skipped", "tsc 零错误"]},
+    {"name": "帮助同批交付", "status": "passed", "evidence": ["content/help/approval-center.md", "content/help/agent-action-audit.md（注册表 order 17/18 + navPrefixes）"]},
+    {"name": "后端全量 run_suite", "status": "pending_backfill", "evidence": ["收口提交上执行后回填验收 md §3"]}
+  ],
+  "not_run_or_blocked": [
+    "Kafka/钉钉/短信真实通道（环境无凭据）",
+    "beat 真实调度节奏（单测以 sweep 函数为证）",
+    "真实浏览器渲染（组件层为证）",
+    "PostgreSQL 迁移往返（CI 生产集成作业背书，本机无 docker）"
+  ],
+  "known_limits": [
+    "哈希链不检测尾部整段删除（无外部锚点的固有限制，帮助中心已如实写明）",
+    "未绑定闭环重训配置的部署：批准重训提案如实执行失败（提示需闭环绑定）",
+    "存量投影的模型版本源经部署关联（未部署版本不进投影，技术方案 §12.8）"
+  ],
+  "conclusion": "S1 范围 13 条口径全部 passed（口径 3/7/11/13 带范围限制如实登记）；E05/E06 增补口径各有专测。任务完成不等于发布就绪。"
+}
