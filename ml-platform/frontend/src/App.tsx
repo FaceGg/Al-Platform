@@ -57,6 +57,8 @@ const QualitySopsPage = lazy(() => import("./pages/QualitySopsPage"));
 const QualityDashboardPage = lazy(() => import("./pages/QualityDashboardPage"));
 const QualityMonitorPage = lazy(() => import("./pages/QualityMonitorPage"));
 const QualityTrendsPage = lazy(() => import("./pages/QualityTrendsPage"));
+const QualitySpcPage = lazy(() => import("./pages/QualitySpcPage"));
+const DriftMonitorPage = lazy(() => import("./pages/DriftMonitorPage"));
 const HelpCenterPage = lazy(() => import("./pages/HelpCenterPage"));
 
 const LIGHT_TOKENS = {
@@ -165,6 +167,8 @@ function AppContent() {
             <Route path="/quality/dashboard" element={<ProtectedRoute><PageErrorBoundary pageName="质量驾驶舱"><QualityDashboardPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/quality/monitor" element={<ProtectedRoute><PageErrorBoundary pageName="实时生产监控"><QualityMonitorPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/quality/trends" element={<ProtectedRoute><PageErrorBoundary pageName="趋势与帕累托"><QualityTrendsPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/quality/spc" element={<ProtectedRoute><PageErrorBoundary pageName="SPC 过程控制"><QualitySpcPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/algo/drift" element={<ProtectedRoute><PageErrorBoundary pageName="漂移监控"><DriftMonitorPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/help" element={<ProtectedRoute><HelpCenterPage /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

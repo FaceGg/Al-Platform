@@ -27,7 +27,7 @@ interface SideGroup { label: string; items: SideEntry[] }
 /** Route prefix -> owning view. Longest prefix wins when resolving. */
 const VIEW_ROUTES: Record<ViewId, string[]> = {
   portal: ["/"],
-  algo: ["/algo", "/projects", "/workspace", "/template", "/models", "/data", "/data-annotation", "/automl", "/training", "/orchestration", "/demo-loop", "/annotations", "/algorithms", "/api-marketplace"],
+  algo: ["/algo", "/projects", "/workspace", "/template", "/models", "/data", "/data-annotation", "/automl", "/training", "/orchestration", "/demo-loop", "/annotations", "/algorithms", "/api-marketplace", "/algo/drift"],
   agent: ["/agent", "/knowledge-center", "/prompt-templates", "/knowledge", "/knowledge-graph", "/chat"],
   quality: ["/quality"],
   infra: ["/infra", "/kubernetes", "/notebooks", "/images", "/cluster-governance", "/monitor", "/compute"],
@@ -134,6 +134,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         { key: "/orchestration", icon: <RobotOutlined />, label: nav("orchestration") },
         { key: "/api-marketplace", icon: <ApiOutlined />, label: nav("api_market") },
       ] },
+      { label: zh ? "模型运营" : "Model operations", items: [
+        { key: "/algo/drift", icon: <CloudServerOutlined />, label: nav("drift_monitor") },
+      ] },
     ],
     quality: [
       { label: zh ? "监控" : "Monitoring", items: [
@@ -145,6 +148,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       ] },
       { label: zh ? "分析" : "Analysis", items: [
         { key: "/quality/trends", icon: <BarChartOutlined />, label: nav("quality_trends") },
+        { key: "/quality/spc", icon: <ControlOutlined />, label: nav("quality_spc") },
       ] },
       { label: zh ? "配置" : "Configuration", items: [
         { key: "/quality/scenes", icon: <AppstoreOutlined />, label: nav("quality_scenes") },

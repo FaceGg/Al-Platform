@@ -1,0 +1,60 @@
+{
+  "schema_version": "gap-batch1-f4/v1",
+  "batch": "补齐路线第一批 F4（统计与漂移）",
+  "date": "2026-11-26",
+  "commits": {
+    "spc_statistics": "3c1efdd5",
+    "f4_backend": "27d7a74c",
+    "f4_frontend_and_closeout": "本文件所在提交"
+  },
+  "spec": "ml-platform/docs/技术方案-补齐路线第一批.md#9C",
+  "environment": {
+    "platform": "windows-local",
+    "python": "3.11 (.venv)",
+    "database": "sqlite",
+    "frontend": "vitest/jsdom"
+  },
+  "acceptance_criteria": [
+    {"id": 1, "statement": "竞品同口径数据复算一致（106,504 行取最新 5,000、5 样本/组）", "status": "environment-blocked", "reason": "数据集未随竞品简报提供，无法复算（D42）；口径以手算向量单测锁死", "evidence": ["tests/test_spc_statistics.py 25 用例（常数表 / A2·R̄ / Nelson 1–8 / 能力指数）"]},
+    {"id": 2, "statement": "8 类判异各有单测", "status": "passed", "evidence": ["tests/test_spc_statistics.py::TestNelsonRules（每条规则专用用例 + 并集 + σ=0 + 规则开关）"]},
+    {"id": 3, "statement": "缺规格限时能力指数留空不报错", "status": "passed", "evidence": ["tests/test_spc_statistics.py::test_missing_spec_limits_leave_indices_blank", "tests/test_spc_api.py::test_missing_spec_limits_leave_capability_blank_without_error"]},
+    {"id": 4, "statement": "规格来源在结果中可区分", "status": "passed", "evidence": ["tests/test_spc_api.py::test_dataset_source_i_mr_with_scene_spec", "tests/test_spc_api.py::test_manual_limits_override_scene_spec_per_limit"]},
+    {"id": 5, "statement": "SPC 页点位与预警中心可互相跳转", "status": "passed", "scope": "跳预警方向", "evidence": ["tests/test_spc_api.py::test_raising_alerts_merges_repeated_analysis（判异点带样本键，evidence 带规则与点位）"], "subitems": [{"status": "not_run", "item": "预警中心跳回 SPC 页的深链（现为按来源筛选的列表级）"}]},
+    {"id": 6, "statement": "越冻结基线控制限接入预警中心（SPC 判异类）", "status": "passed", "evidence": ["tests/test_quality_alert_sources.py::test_beyond_frozen_baseline_limit_raises_spc_alert_in_realtime（真实落库路径；无基线不产生）"]},
+    {"id": 7, "statement": "定时批检真实产出分级报告", "status": "passed", "scope": "任务体层", "evidence": ["tests/test_drift_detection.py 四级报告用例", "beat drift-scan 已注册（300s 可配）"], "subitems": [{"status": "not_run", "item": "Celery 真实巡检节奏"}]},
+    {"id": 8, "statement": "严重级报告自动通知", "status": "passed", "scope": "站内信通道", "evidence": ["tests/test_drift_detection.py::test_shifted_distribution_is_graded_and_notified（outbox 域事件 + 负责人站内信）", "test_watch_level_does_not_notify"], "subitems": [{"status": "environment-blocked", "item": "钉钉/短信/邮件真实送达"}]},
+    {"id": 9, "statement": "特征明细可展开复算", "status": "passed", "evidence": ["报告特征行带 observed_shares 与 baseline_id（可追溯到所用基线）"]},
+    {"id": 10, "statement": "数据质量命中进预警中心（传感器异常）", "status": "passed", "evidence": ["tests/test_drift_detection.py::test_data_quality_hits_become_sensor_anomaly_alerts", "test_constant_feature_is_flagged_unless_it_was_constant_in_training（退化基线豁免）"]},
+    {"id": 11, "statement": "特征直方图覆盖全部样本（超限降级不丢样本）", "status": "passed", "evidence": ["tests/test_drift_detection.py::test_histograms_cover_all_samples_even_when_detail_rows_are_dropped（真实落库路径：明细 0 条、直方图 60 条）"]},
+    {"id": 12, "statement": "基线按血缘计算；无血缘如实标注", "status": "passed", "evidence": ["tests/test_drift_detection.py::test_baseline_is_computed_from_the_training_dataset_by_lineage", "test_model_without_training_lineage_has_no_baseline"]},
+    {"id": 13, "statement": "漂移是触发器不是自动开关", "status": "passed", "evidence": ["严重级只通知（部署与模型版本未被改动）", "tests/test_drift_detection.py::test_drift_endpoints（提案只通知 + 审计 + 重复 409）"]},
+    {"id": 14, "statement": "现有分数级 PSI 原样保留", "status": "passed", "evidence": ["services/anomaly_drift.py 零改动", "test_demo_loop.py 回归绿", "报告 not_wired 如实列出未接入"]}
+  ],
+  "horizontal_contracts": [
+    {"name": "迁移纪律（_111 四张漂移表）", "status": "passed", "evidence": ["tests/test_gap_batch1_migrations.py"], "subitems": [{"status": "not_run", "item": "PostgreSQL 往返（CI 背书）"}]},
+    {"name": "测试登记", "status": "passed", "evidence": ["week 1 新增 test_spc_api / test_drift_detection", "前端 gap_batch_f2a 组登记 QualitySpcDriftPages.test.tsx"]},
+    {"name": "新依赖", "status": "passed", "evidence": ["零新依赖（SPC 纯函数只用标准库 math）"]},
+    {"name": "泛化门禁", "status": "passed", "evidence": ["test_genericization_contract 绿"]},
+    {"name": "演示隔离", "status": "passed", "evidence": ["直方图只累计 online/batch 通道", "SPC 推理来源排除 demo 通道"]},
+    {"name": "口径单一来源", "status": "passed", "evidence": ["SPC 规格限读场景规格定义（E27）", "σ 类判据与实时判异共用冻结基线查找"]},
+    {"name": "文档与代码同批", "status": "passed", "evidence": ["技术方案 §9C 详设先行 + §9C.5 实施记录 7 条"]}
+  ],
+  "full_regressions": {
+    "f4_backend_modules": {"status": "passed", "passed": 53},
+    "adjacent_modules": {"status": "passed", "modules": 16, "passed": 245, "subtests": 110},
+    "frontend_affected_files": {"status": "passed", "files": 5, "passed": 34},
+    "frontend_vitest": {"status": "pending", "note": "F4 收口提交上全量执行，结果由后续回填提交登记"},
+    "backend_run_suite": {"status": "pending", "note": "第一批最终提交上以干净 worktree 全量执行一次（覆盖 F4–F5），结果回填"}
+  },
+  "open_items": [
+    {"status": "environment-blocked", "item": "竞品同口径数据复算（数据集未随简报提供，D42）"},
+    {"status": "not_run", "item": "真实浏览器内控制图/直方图渲染与漂移明细弹窗（jsdom + 图表替身）"},
+    {"status": "not_run", "item": "Celery beat drift-scan 真实巡检节奏"},
+    {"status": "not_run", "item": "PostgreSQL 上 _111 往返（CI 背书）"},
+    {"status": "environment-blocked", "item": "严重级通知经钉钉/短信/邮件的真实送达"},
+    {"status": "design-limit", "item": "PCA 重构误差未实现；分数级 PSI 未并入报告；分片按部署主版本合并统计；预警中心跳回 SPC 页为列表级筛选；基线首次惰性计算在后台线程多花数秒（D39 / §9C.5）"},
+    {"status": "note", "item": "实施记录 5：实时 3σ 判异重复传参缺陷由测试拦下并修复（保存点兜住落库，但曾撤销整段预警评估）"},
+    {"status": "note", "item": "提交时安全扫描器多次未给出完整结论（scanner_enobufs），不据此宣称项目安全"}
+  ],
+  "conclusion": "14 条口径：12 passed、1 environment-blocked、1 passed（保持现状核验）；口径 5/7/8 带范围限定或 not_run 子项，不折算为已验证。横向合同核验通过。前端全量与第一批最终后端全量回归待回填。任务完成不等于发布就绪。"
+}

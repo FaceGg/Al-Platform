@@ -18,6 +18,8 @@ import modelEvidenceMd from "./model-evidence.md?raw";
 import qualityDashboardMd from "./quality-dashboard.md?raw";
 import qualityMonitorMd from "./quality-monitor.md?raw";
 import qualityTrendsMd from "./quality-trends.md?raw";
+import qualitySpcMd from "./quality-spc.md?raw";
+import driftMonitorMd from "./drift-monitor.md?raw";
 
 export interface HelpChapter {
   id: string;
@@ -116,6 +118,22 @@ export const HELP_CHAPTERS: HelpChapter[] = [
     order: 14,
     md: qualityTrendsMd,
     navPrefixes: ["/quality/trends"],
+  },
+  {
+    id: "quality-spc",
+    titleZh: "SPC 过程控制",
+    titleEn: "SPC control",
+    order: 15,
+    md: qualitySpcMd,
+    navPrefixes: ["/quality/spc"],
+  },
+  {
+    id: "drift-monitor",
+    titleZh: "漂移监控",
+    titleEn: "Drift monitoring",
+    order: 16,
+    md: driftMonitorMd,
+    navPrefixes: ["/algo/drift"],
   },
   {
     id: "closed-loop-demo",

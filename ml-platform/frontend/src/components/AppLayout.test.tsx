@@ -115,7 +115,7 @@ describe("AppLayout (v2 five-view shell)", () => {
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/api-marketplace"));
   });
 
-  it("groups the algo sidebar into overview, data, modeling and serving", async () => {
+  it("groups the algo sidebar into overview, data, modeling, serving and model operations", async () => {
     const sidebarGroups = async () => Array.from((await screen.findByTestId("v2-sidebar")).children).map((group) => ({
       label: group.querySelector(".v2-side-group")?.textContent,
       items: Array.from(group.querySelectorAll("button")).map((button) => button.textContent),
@@ -126,11 +126,12 @@ describe("AppLayout (v2 five-view shell)", () => {
       { label: "数据", items: ["数据管理", "数据标注"] },
       { label: "建模", items: ["自动建模", "模型训练", "模型库"] },
       { label: "服务", items: ["闭环自动化", "应用编排", "API市场"] },
+      { label: "模型运营", items: ["漂移监控"] },
     ]);
     zhView.unmount();
 
     render(<MemoryRouter initialEntries={["/automl"]}><LangProvider><AppLayout><div>test</div></AppLayout></LangProvider></MemoryRouter>);
-    expect((await sidebarGroups()).map((group) => group.label)).toEqual(["Overview", "Data", "Modeling", "Serving"]);
+    expect((await sidebarGroups()).map((group) => group.label)).toEqual(["Overview", "Data", "Modeling", "Serving", "Model operations"]);
   });
 
   it("marks the theme toggle and header with stable theme-aware hooks", async () => {
@@ -179,9 +180,23 @@ describe("AppLayout (v2 five-view shell)", () => {
     );
     expect(await sidebarGroups()).toEqual([
       { label: "Monitoring", items: ["Quality Cockpit", "Realtime Monitoring", "Alert Center", "Disposition Workbench", "Production Records"] },
-      { label: "Analysis", items: ["Trends & Pareto"] },
+      { label: "Analysis", items: ["Trends & Pareto", "SPC Control"] },
       { label: "Configuration", items: ["Quality Scenes", "Stations & Devices", "SOP Maintenance"] },
     ]);
+  });
+
+  it("groups the algo sidebar with the model-operations group carrying drift monitoring", async () => {
+    const groups = async () => Array.from((await screen.findByTestId("v2-sidebar")).children).map((group) => ({
+      label: group.querySelector(".v2-side-group")?.textContent,
+      items: Array.from(group.querySelectorAll("button")).map((button) => button.textContent),
+    }));
+    render(
+      <MemoryRouter initialEntries={["/algo/drift"]}>
+        <LangProvider><AppLayout><div>test</div></AppLayout></LangProvider>
+      </MemoryRouter>,
+    );
+    const items = await groups();
+    expect(items.at(-1)).toEqual({ label: "Model operations", items: ["Drift Monitoring"] });
   });
 
   it("shows a persistent demo-data badge when an accessible project has a demo loop (E22)", async () => {

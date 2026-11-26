@@ -52,6 +52,8 @@ const ZH = {
     quality_dashboard: "质量驾驶舱",
     quality_monitor: "实时生产监控",
     quality_trends: "趋势与帕累托",
+    quality_spc: "SPC 过程控制",
+    drift_monitor: "漂移监控",
     quality_alerts: "预警中心",
     quality_disposition: "处置工作台",
     quality_sops: "SOP 维护",
@@ -918,6 +920,7 @@ const EN: Record<string, any> = {
     announcements: "Notices", audit: "Audit log", settings: "Platform Status", llm_usage: "Token usage",
     quality_scenes: "Quality Scenes", quality_stations: "Stations & Devices", quality_production_records: "Production Records",
     quality_dashboard: "Quality Cockpit", quality_monitor: "Realtime Monitoring", quality_trends: "Trends & Pareto",
+    quality_spc: "SPC Control", drift_monitor: "Drift Monitoring",
     quality_alerts: "Alert Center", quality_disposition: "Disposition Workbench", quality_sops: "SOP Maintenance", help_center: "Help Center" },
   demo_loop: {
     project: "Project", choose_project: "Select project", refresh: "Refresh",
