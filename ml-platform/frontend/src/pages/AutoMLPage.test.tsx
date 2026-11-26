@@ -43,6 +43,7 @@ const quality = vi.hoisted(() => ({
   downloadQualityArtifact: vi.fn(),
   getQualityRun: vi.fn(),
 }));
+const qualityDomain = vi.hoisted(() => ({ listQualityScenes: vi.fn() }));
 const dashboardEvents = vi.hoisted(() => ({ notifyDashboardStatsChanged: vi.fn() }));
 
 vi.mock("../components/AppLayout", () => ({ default: ({ children }: any) => <>{children}</> }));
@@ -58,6 +59,19 @@ vi.mock("../api/client", () => ({
 }));
 vi.mock("../api/datasets", () => datasets);
 vi.mock("../api/spotWeldQuality", () => quality);
+vi.mock("../api/qualityDomain", () => ({
+  listQualityScenes: qualityDomain.listQualityScenes,
+  listQualityStations: vi.fn().mockResolvedValue([]),
+  listQualitySpecLimits: vi.fn().mockResolvedValue([]),
+  sceneExcludedColumns: (scene: any) =>
+    Object.entries(scene?.field_roles || {})
+      .filter(([role]) => !["target", "feature"].includes(role))
+      .map(([, column]) => column),
+  FIELD_ROLE_EXCLUDED: new Set([
+    "ignore", "sample_key", "product", "batch", "shift",
+    "collected_at", "time", "group", "condition", "waveform",
+  ]),
+}));
 vi.mock("../events/dashboardStats", () => dashboardEvents);
 vi.mock("../i18n", () => ({
   useI18n: () => ({
@@ -105,6 +119,7 @@ describe("AutoMLPage", () => {
     quality.createQualityRun.mockResolvedValue({ id: "run-1", status: "queued" });
     quality.getQualityRun.mockResolvedValue({ id: "run-1", status: "completed" });
     quality.downloadQualityArtifact.mockResolvedValue(new Blob(["report"]));
+    qualityDomain.listQualityScenes.mockReset().mockResolvedValue([]);
     dashboardEvents.notifyDashboardStatsChanged.mockReset();
   });
 
@@ -900,6 +915,52 @@ describe("AutoMLPage", () => {
       expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) }),
     ));
     expect(api.post.mock.calls[0][1]).not.toHaveProperty("target_column");
+  });
+
+  it("sends scene-derived excluded columns when a quality scene is bound (B1-10 P1)", async () => {
+    api.post.mockImplementation((url: string) => url === "/experiments"
+      ? Promise.resolve({ data: { id: "experiment-new", name: "自动建模" } })
+      : Promise.reject({ response: { data: { detail: "Error" } } }));
+    datasets.getDatasetPreview.mockResolvedValue({
+      columns: ["current", "force", "vin_id", "quality"],
+      dtypes: { current: "float64", force: "float64", vin_id: "int64", quality: "int64" },
+      preview: [],
+    });
+    qualityDomain.listQualityScenes.mockResolvedValue([
+      { id: "scene-1", code: "SC-1", name: "点焊场景", field_roles: { sample_key: "vin_id", target: "quality" } },
+    ]);
+    render(<MemoryRouter><AntApp><AutoMLPage /></AntApp></MemoryRouter>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "新建" }));
+    fireEvent.click(await screen.findByRole("button", { name: "范式：有监督建模" }));
+    const comboboxes = await screen.findAllByRole("combobox");
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText("Weld line"));
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText("weld.csv"));
+    await waitFor(() => expect(datasets.getDatasetPreview).toHaveBeenCalled());
+
+    // 绑定质量场景：字段角色 sample_key=vin_id → 排除列提示出现
+    const sceneSelect = await screen.findByRole("combobox", { name: "质量场景" });
+    fireEvent.mouseDown(sceneSelect);
+    fireEvent.click(await screen.findByText("点焊场景（SC-1）"));
+    await waitFor(() => expect(screen.getByText(/排除列：vin_id/)).toBeInTheDocument());
+
+    // 监督范式需要目标列：选 quality（与场景角色一致）
+    const targetSelect = await screen.findByRole("combobox", { name: "目标列" });
+    fireEvent.mouseDown(targetSelect);
+    fireEvent.click(await screen.findByText("quality", { selector: ".ant-select-item-option-content" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "thunderbolt Run" }));
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      "/training/automl/run",
+      expect.objectContaining({ excluded_columns: ["vin_id"] }),
+      expect.anything(),
+    ));
+    // 未绑定场景时该字段整体不出现（默认零变化）
+    const payload = api.post.mock.calls[0][1];
+    expect(payload).not.toHaveProperty("target_column");
   });
 
   it("submits an unsupervised anomaly detection task without any target column", async () => {

@@ -1,0 +1,49 @@
+{
+  "schema_version": "gap-batch1-f1/v1",
+  "batch": "补齐路线第一批 F1",
+  "date": "2026-11-25",
+  "commits": [
+    "c67eef78",
+    "37485786",
+    "17370ef8",
+    "826e1873",
+    "3968314f",
+    "2a93b8a1",
+    "c9048ecb"
+  ],
+  "spec": "ml-platform/docs/技术方案-补齐路线第一批.md",
+  "environment": {
+    "platform": "windows-local",
+    "python": "3.11 (.venv)",
+    "database": "sqlite-sealed",
+    "frontend": "vitest/jsdom"
+  },
+  "acceptance_criteria": [
+    {"id": 1, "statement": "带上下文推理结果可按样本键/批次/工位查询；落库失败不影响推理且有告警", "status": "passed", "evidence": ["tests/test_inference_results.py::TestPredictToRecordsChain::test_contextual_prediction_is_queryable", "tests/test_inference_results.py::TestPredictToRecordsChain::test_persist_failure_keeps_prediction_and_alerts"]},
+    {"id": 2, "statement": "明细行四级归属链（项目→场景→工位→设备）完整", "status": "passed", "evidence": ["tests/test_inference_results.py::TestPredictToRecordsChain (station_id/scene_id 断言)", "tests/test_inference_results.py::TestInferenceResultRecorder::test_context_rows_resolve_and_extra"], "note": "预警/处置单归属字段属 F2 表"},
+    {"id": 3, "statement": "场景→字段角色→训练特征排除全链生效（AutoML 全量回归绿）", "status": "passed", "evidence": ["tests/test_automl_excluded_columns.py::TestExcludedColumnsEngine (引擎级 3 用例)", "tests/test_automl_excluded_columns.py::TestExcludedColumnsAPI (12 用例)", "frontend AutoMLPage 场景绑定用例", "AutoML 15 模块 226 用例回归"]},
+    {"id": 4, "statement": "设备注册→心跳→离线状态准确", "status": "passed", "evidence": ["frontend QualityPages.test.tsx::QualityStationsPage 心跳/影子用例"], "note": "设备端点复用 /api/compute/devices（既有回归覆盖）"},
+    {"id": 5, "statement": "白名单外 SQL 拒绝并落审计；口令不回显", "status": "passed", "evidence": ["tests/test_external_data_sources.py 白名单矩阵 15 绕过用例", "test_preview_rejects_and_audits", "CRUD mask 用例", "test_notification_channels_dingtalk_sms.py::TestNewChannelEndpointsNeverEchoSecrets"]},
+    {"id": 6, "statement": "钉钉/短信测试消息可达且 secret 不回显", "status": "passed", "evidence": ["tests/test_notification_channels_dingtalk_sms.py 16 用例（加签向量/请求构造/错误映射/逐号码渲染）"], "blocked_subitems": [{"status": "environment-blocked", "reason": "真实钉钉/运营商送达需现场网关凭据（D9 登记），未执行"}]},
+    {"id": 7, "statement": "帮助中心可搜索命中；F1 三新页帮助同批交付", "status": "passed", "evidence": ["frontend QualityPages.test.tsx::HelpCenterPage 3 用例", "frontend/src/content/help/ 内容注册表（三新页章 + 四份手册）"]},
+    {"id": 8, "statement": "板块可见性：缺省全可见/按角色收敛/admin 恒全可见", "status": "passed", "evidence": ["tests/test_role_visibility.py 9 用例", "frontend AppLayout.test.tsx 可见性过滤用例"]}
+  ],
+  "horizontal_contracts": [
+    {"name": "迁移纪律（往返/保留/单一头/漂移门禁）", "status": "passed", "evidence": ["tests/test_gap_batch1_migrations.py 5 用例 + 10 子用例"], "note": "PostgreSQL 往返由 CI 生产集成作业背书"},
+    {"name": "测试登记（week_manifest / weekAcceptance）", "status": "passed", "evidence": ["week 1 新增 7 模块登记", "frontend gap_batch_f1 组", "test_suite_manifest 绿"]},
+    {"name": "新增依赖进离线包", "status": "passed_with_gap", "evidence": ["requirements.txt + wheelhouse（sqlglot 27.29.0 / PyMySQL 1.1.3）", "两轮子零强制运行时依赖"], "gaps": [{"status": "not_run", "reason": "Linux 容器离线闭包演练未在本机执行（平台标签集不可模拟）"}]}
+  ],
+  "full_regressions": {
+    "backend_run_suite": {"status": "pending", "note": "收口提交后于干净 worktree 全量执行，结果由后续回填提交登记（绑定被测提交 SHA）"},
+    "frontend_vitest": {"status": "passed", "files": 96, "passed": 605, "skipped": 19},
+    "automl_regression": {"status": "passed", "count": 226},
+    "adjacent_regression": {"status": "passed", "count": 126}
+  },
+  "open_items": [
+    {"status": "environment-blocked", "item": "真实钉钉/运营商送达；真实外部库连接；PostgreSQL 迁移往返（CI 背书）"},
+    {"status": "not_run", "item": "Windows 安装器与 CI 生产栈实跑；Linux 容器离线闭包演练"},
+    {"status": "registered", "item": "api/agent_extras.py:828/:985 import 不可解析（随 F2a 修）"},
+    {"status": "note", "item": "M1（真实数据闭环演练 + 全量 CI）为第一批整体收口口径，不随 F1 判定"}
+  ],
+  "conclusion": "F1 八条口径 8 passed（其中 1 条含 environment-blocked 子项，未折算成功）；横向合同通过；本地全量结果见 full_regressions"
+}

@@ -22,12 +22,14 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
+from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.config import Settings
-from app.database import Base
+from app.database import Base, get_db
 from app.events.domain import DomainEvent
 from app.models.notifications import NOTIFICATION_ENDPOINT_KINDS, NotificationEndpoint
 from app.models.project import Project
@@ -355,6 +357,83 @@ class TestConfigNormalization(unittest.TestCase):
         for bad in invalid:
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 normalize_endpoint_config("sms_gateway", bad)
+
+
+class TestNewChannelEndpointsNeverEchoSecrets(unittest.TestCase):
+    """API 层（F1 验收口径⑥「secret 不回显」）：创建/列表/更新响应都不含配置。"""
+
+    @classmethod
+    def setUpClass(cls):
+        from app.api.auth import get_current_user
+        from app.main import app
+
+        cls.engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+        )
+        Base.metadata.create_all(cls.engine)
+        cls.db = sessionmaker(bind=cls.engine, expire_on_commit=False)()
+        cls.actor = User(username=f"new-channel-{uuid4().hex[:6]}", password_hash="hash")
+        cls.db.add(cls.actor)
+        cls.db.flush()
+        cls.project = Project(name="New channels", owner_id=cls.actor.id)
+        cls.db.add(cls.project)
+        cls.db.commit()
+        cls.previous_settings = getattr(app.state, "settings", None)
+        app.state.settings = Settings(_env_file=None, notification_master_key=MASTER_KEY)
+        app.dependency_overrides[get_db] = lambda: cls.db
+        app.dependency_overrides[get_current_user] = lambda: cls.actor
+        cls.client = TestClient(app)
+        cls.base = f"/api/projects/{cls.project.id}/notification-endpoints"
+
+    @classmethod
+    def tearDownClass(cls):
+        from app.main import app
+
+        app.dependency_overrides.clear()
+        if cls.previous_settings is None:
+            delattr(app.state, "settings")
+        else:
+            app.state.settings = cls.previous_settings
+        cls.db.close()
+        cls.engine.dispose()
+
+    def test_dingtalk_secret_and_gateway_config_are_never_returned(self):
+        header_token = "-".join(("tenant", uuid4().hex[:8]))
+        cases = (
+            ("dingtalk", {"url": "https://oapi.dingtalk.com/robot/send", "secret": VECTOR_SECRET}, VECTOR_SECRET),
+            (
+                "sms_gateway",
+                {
+                    "url": "https://sms-gateway.example.invalid/send",
+                    "body_template": "{phone}:{content}",
+                    "to": ["13800000000"],
+                    "headers": {"X-Tenant-Token": header_token},
+                },
+                header_token,
+            ),
+        )
+        for kind, config, private_value in cases:
+            with self.subTest(kind=kind):
+                created = self.client.post(
+                    self.base, json={"kind": kind, "name": f"{kind}-{uuid4().hex[:6]}", "config": config},
+                )
+                self.assertEqual(created.status_code, 201, created.text)
+                self.assertNotIn("config", created.json())
+                self.assertNotIn(private_value, created.text)
+
+                listed = self.client.get(self.base)
+                self.assertEqual(listed.status_code, 200, listed.text)
+                self.assertNotIn(private_value, listed.text)
+                # 列表带 destination_hint（只有主机名），不带配置
+                item = next(row for row in listed.json()["items"] if row["id"] == created.json()["id"])
+                self.assertNotIn("config", item)
+                self.assertEqual(item["destination_hint"], urlsplit(config["url"]).hostname)
+
+                updated = self.client.patch(
+                    f"{self.base}/{created.json()['id']}", json={"enabled": False},
+                )
+                self.assertEqual(updated.status_code, 200, updated.text)
+                self.assertNotIn(private_value, updated.text)
 
 
 class TestReadinessChannelKinds(unittest.TestCase):

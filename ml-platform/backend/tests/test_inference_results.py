@@ -13,8 +13,10 @@
 """
 import unittest
 import uuid
+from concurrent.futures import Future
 from datetime import datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -22,10 +24,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.auth import get_current_user
 from app.database import Base, SessionLocal, get_db
 from app.models.compute import EdgeDevice
 from app.models.inference_result import InferenceResult, InferenceResultBucket
-from app.models.model_registry import InferenceDeployment
+from app.models.model_registry import DeploymentRevision, InferenceDeployment, ModelVersion
 from app.models.notifications import NotificationOutbox
 from app.models.project import Project
 from app.models.quality_domain import QualityScene, QualityStation
@@ -513,6 +516,203 @@ class TestInferenceContextContractAPI(unittest.TestCase):
     def test_request_body_stays_strict(self):
         response = self._post({"records": [{"current": 1.0}], "unexpected": True})
         self.assertEqual(response.status_code, 422, response.text)
+
+
+class _InlineExecutor:
+    """同步执行器：TestClient 下线程池的 Future 不被等待，改为内联执行，
+    响应返回时异步落库已完成，断言确定。"""
+
+    def submit(self, fn, *args, **kwargs):
+        future = Future()
+        try:
+            future.set_result(fn(*args, **kwargs))
+        except Exception as error:  # 与线程池语义一致：异常留在 Future 里
+            future.set_exception(error)
+        return future
+
+
+class TestPredictToRecordsChain(unittest.TestCase):
+    """端点级全链（F1 验收口径①）：
+
+    - 带上下文推理 → 异步落库 → 生产记录查询可按样本键/批次查到，工位码解析到
+      工位与场景，聚合桶同步计数；
+    - 落库失败不影响推理响应，且告警事件入 outbox。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from app.api.inference_production import build_inference_production_router
+        from app.api.inference_results import router as results_router
+        from app.models.artifact import Artifact
+        from app.models.model_registry import RegisteredModel
+        from tests.test_api_inference_production import (
+            AllowKeyService,
+            AllowingLimiter,
+            NoopObservability,
+        )
+
+        cls.run_tag = uuid.uuid4().hex[:6]
+        with SessionLocal() as db:
+            user = User(username=f"predict-chain-{cls.run_tag}", password_hash="hash")
+            db.add(user)
+            db.flush()
+            project = Project(name="Predict chain", owner_id=user.id)
+            db.add(project)
+            db.flush()
+            scene = QualityScene(project_id=project.id, code=f"PC-{cls.run_tag}", name="scene")
+            db.add(scene)
+            db.flush()
+            station = QualityStation(scene_id=scene.id, code=f"ST-{cls.run_tag}", name="station")
+            db.add(station)
+            artifact = Artifact(
+                project_id=project.id, name=f"chain-artifact-{cls.run_tag}",
+                type="model", storage_path=f"chain/{cls.run_tag}.joblib",
+            )
+            db.add(artifact)
+            db.flush()
+            registered = RegisteredModel(project_id=project.id, name=f"chain-model-{cls.run_tag}")
+            db.add(registered)
+            db.flush()
+            version = ModelVersion(
+                registered_model_id=registered.id, version_number=1,
+                source_kind="onnx_artifact",
+                source_artifact_id=artifact.id, onnx_artifact_id=artifact.id,
+            )
+            db.add(version)
+            db.flush()
+            deployment = InferenceDeployment(
+                project_id=project.id, model_version_id=version.id,
+                name=f"chain-{cls.run_tag}", desired_state="running",
+                observed_state="running",
+            )
+            db.add(deployment)
+            db.flush()
+            # 明细行的 revision_id 是真实外键：造一条稳定 revision
+            revision = DeploymentRevision(
+                deployment_id=deployment.id, revision_number=1,
+                strategy="immediate", status="stable",
+            )
+            db.add(revision)
+            db.commit()
+            # 只带走纯值：会话关闭后 ORM 实例即 detach，不能再读属性
+            cls.actor = SimpleNamespace(id=user.id, username=user.username, role="engineer")
+            cls.project_id = project.id
+            cls.scene_id = scene.id
+            cls.station_id = station.id
+            cls.station_code = station.code
+            cls.deployment_id = deployment.id
+            cls.revision_id, cls.version_id = revision.id, version.id
+
+        cls.app = FastAPI()
+        cls.app.include_router(build_inference_production_router(
+            api_key_service=AllowKeyService(uuid.uuid4()),
+            rate_limiter=AllowingLimiter(),
+            observability=NoopObservability(),
+            deployment_service=SimpleNamespace(
+                runtime=SimpleNamespace(
+                    predict=lambda _key, records: {"predictions": [1] * len(records)},
+                ),
+            ),
+        ))
+        cls.app.include_router(results_router)
+        cls.app.dependency_overrides[get_current_user] = lambda: cls.actor
+        cls.client = TestClient(cls.app)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.client.close()
+        cls.app.dependency_overrides.pop(get_current_user, None)
+
+    def _predict(self, context):
+        with (
+            patch("app.api.inference_production._TELEMETRY_EXECUTOR", _InlineExecutor()),
+            patch("app.api.inference_production.WeightedTargetRouter") as router,
+            patch(
+                "app.api.inference_production.anomaly_predict_enrichment",
+                side_effect=lambda _runtime, _key, _records, result, **_kw: result,
+            ),
+            patch("app.api.inference_production.anomaly_threshold_for_version", return_value=None),
+            # 抽样恒不命中：快照路径不在本用例范围
+            patch("app.services.inference_results.random.random", return_value=0.99),
+        ):
+            router.return_value.select_active.return_value = SimpleNamespace(
+                revision_id=self.revision_id, model_version_id=self.version_id,
+            )
+            return self.client.post(
+                f"/api/v1/inference/{self.deployment_id}/predict",
+                headers={_API_KEY_HEADER: "chain-key"},
+                json={
+                    "records": [{"current": 1.0}, {"current": 2.0}],
+                    "context": context,
+                },
+            )
+
+    def test_contextual_prediction_is_queryable(self):
+        first, second = f"{self.run_tag}-VIN-A", f"{self.run_tag}-VIN-B"
+        batch = f"{self.run_tag}-B9"
+        response = self._predict([
+            {"sample_key": first, "station": self.station_code, "batch_no": batch},
+            {"sample_key": second, "batch_no": batch},
+        ])
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["predictions"], [1, 1])
+
+        base = f"/api/projects/{self.project_id}/inference-results"
+        by_sample = self.client.get(base, params={"sample_key": first})
+        self.assertEqual(by_sample.status_code, 200, by_sample.text)
+        self.assertEqual(by_sample.json()["total"], 1)
+        row = by_sample.json()["items"][0]
+        # 归属链：工位码 → 工位 → 场景（产生时点绑定快照）
+        self.assertEqual(row["station_id"], str(self.station_id))
+        self.assertEqual(row["scene_id"], str(self.scene_id))
+        self.assertEqual(row["batch_no"], batch)
+        self.assertEqual(row["channel"], "online")
+        self.assertEqual(row["model_version_id"], str(self.version_id))
+        self.assertIsNotNone(row["expires_at"])  # 保留期到期时间随行写入
+
+        unbound = self.client.get(base, params={"sample_key": second}).json()["items"][0]
+        self.assertIsNone(unbound["station_id"])
+
+        by_batch = self.client.get(base, params={"batch_no": batch})
+        self.assertEqual(by_batch.json()["total"], 2)
+
+        # 聚合桶与明细同口径：两行都计入
+        summary = self.client.get(f"{base}/summary")
+        self.assertEqual(summary.status_code, 200, summary.text)
+        self.assertGreaterEqual(summary.json()["total"], 2)
+
+    def test_persist_failure_keeps_prediction_and_alerts(self):
+        sample_key = f"{self.run_tag}-VIN-FAIL"
+
+        def _events():
+            with SessionLocal() as db:
+                return db.query(NotificationOutbox).filter(
+                    NotificationOutbox.event_type == "inference.result_persist_failed",
+                    NotificationOutbox.project_id == self.project_id,
+                ).all()
+
+        before = len(_events())
+        with patch.object(
+            InferenceResultRecorder, "record_prediction",
+            side_effect=RuntimeError("database unavailable"),
+        ):
+            response = self._predict([{"sample_key": sample_key}, {}])
+        # 推理响应不受落库失败影响
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["predictions"], [1, 1])
+
+        with SessionLocal() as db:
+            kept = db.query(InferenceResult).filter(
+                InferenceResult.request_id == response.json()["request_id"],
+            ).count()
+            self.assertEqual(kept, 0)
+        # 一次落库失败对应恰好一条告警事件（不重复、不遗漏）
+        events = _events()
+        self.assertEqual(len(events), before + 1)
+        self.assertEqual(events[-1].severity, "warning")
+        self.assertEqual(
+            events[-1].payload.get("error_code"), "INFERENCE_RESULT_PERSIST_FAILED",
+        )
 
 
 if __name__ == "__main__":

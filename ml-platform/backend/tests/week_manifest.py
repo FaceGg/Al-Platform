@@ -31,6 +31,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_external_data_sources",
         # 通知通道补齐：钉钉 + 短信网关（P5，B1-11/D9）
         "test_notification_channels_dingtalk_sms",
+        # 第一批迁移合同 _105–_108（P6：往返/旧数据保留/单一头/漂移门禁）
+        "test_gap_batch1_migrations",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",

@@ -21,6 +21,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base
 from app.models.experiment import Experiment
 from app.models.project import Project
+from app.models.training import TrainingJob
 from app.models.user import User
 from app.services.automl_execution import resolve_automl_feature_columns
 
@@ -282,3 +283,104 @@ class TestExcludedColumnsAPI(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400, response.text)
         self.assertEqual(self.dispatcher.enqueued, [])
+
+
+class TestExcludedColumnsEngine(unittest.TestCase):
+    """引擎级全链：带排除列的真训练任务，模型输入契约确实不含被排除列。
+
+    F1 验收口径③「新场景 → 字段角色 → 训练特征排除全链生效」的直接证据——
+    上面的 API 测试只证明参数进了任务，这里证明引擎真跑后的输入契约。
+    """
+
+    def setUp(self):
+        from tests.test_automl_tracking import FakeArtifactService, FakeTracking
+
+        self.temporary = tempfile.TemporaryDirectory()
+        self.engine = create_engine(f"sqlite:///{Path(self.temporary.name) / 'excluded.db'}")
+        Base.metadata.create_all(self.engine)
+        self.Session = sessionmaker(bind=self.engine, autocommit=False, autoflush=False)
+        self.dataset_id = uuid.uuid4()
+        dataset_path = Path(self.temporary.name) / "dataset.csv"
+        # vin_id 是数值型的样本序号（字段角色 sample_key 的典型形态）：与标签
+        # 完全无关，但不排除就会进模型输入
+        rows = ["current,force,vin_id,quality"] + [
+            f"{index % 8},{index % 5},{index},{int((index % 8) + (index % 5) > 5)}"
+            for index in range(150)
+        ]
+        dataset_path.write_text("\n".join(rows), encoding="utf-8")
+        with self.Session() as db:
+            user = User(username=f"excluded-engine-{uuid.uuid4().hex[:8]}", password_hash="hash")
+            db.add(user)
+            db.flush()
+            project = Project(name="Excluded engine", owner_id=user.id)
+            db.add(project)
+            db.flush()
+            experiment = Experiment(
+                project_id=project.id, created_by=user.id, name="Excluded engine",
+                mlflow_experiment_id=f"excluded-engine-{uuid.uuid4().hex[:8]}",
+            )
+            db.add(experiment)
+            db.commit()
+            self.user_id, self.project_id, self.experiment_id = user.id, project.id, experiment.id
+        self.artifacts = FakeArtifactService(self.dataset_id, dataset_path)
+        self.tracking = FakeTracking()
+
+    def tearDown(self):
+        self.engine.dispose()
+        self.temporary.cleanup()
+
+    def _run(self, **extra_params):
+        from app.services.automl_execution import AutoMLDependencies, execute_automl_job
+
+        params = {
+            "search_contract": "optuna_v1",
+            "target_column": "quality",
+            "task": "classification",
+            "algorithm_ids": ["gbdt"],
+            "search_method": "random",
+            "max_trials": 5,
+            "time_budget": 60,
+            "cross_validation_enabled": False,
+            "cross_validation_folds": None,
+        }
+        params.update(extra_params)
+        with self.Session() as db:
+            job = TrainingJob(
+                project_id=self.project_id, user_id=self.user_id,
+                experiment_id=self.experiment_id, dataset_artifact_id=self.dataset_id,
+                name=f"excluded-engine-{uuid.uuid4().hex[:8]}", operator_id="automl",
+                params=params, status="pending",
+            )
+            db.add(job)
+            db.commit()
+            job_id = job.id
+        result = execute_automl_job(job_id, dependencies=AutoMLDependencies(
+            session_factory=self.Session,
+            artifact_service_factory=lambda _db: self.artifacts,
+            tracking_factory=lambda: self.tracking,
+            worker_id="worker-1", task_id="task-1",
+        ))
+        self.assertEqual(result.status, "completed", result.status)
+        with self.Session() as db:
+            job = db.get(TrainingJob, job_id)
+            return list(job.metrics["input_contract"]["input_columns"])
+
+    def test_excluded_column_is_absent_from_the_trained_input_contract(self):
+        inputs = self._run(
+            input_columns=["current", "force", "vin_id"],
+            excluded_columns=["vin_id"],
+        )
+        self.assertEqual(inputs, ["current", "force"])
+
+    def test_exclusion_is_equivalent_to_never_selecting_the_column(self):
+        # 「选中后排除」与「从不选」产出同一份输入契约（默认行为零变化的等价性）
+        explicit = self._run(input_columns=["current", "force"])
+        via_exclusion = self._run(
+            input_columns=["current", "force", "vin_id"],
+            excluded_columns=["vin_id"],
+        )
+        self.assertEqual(via_exclusion, explicit)
+
+    def test_without_exclusions_every_selected_column_is_used(self):
+        inputs = self._run(input_columns=["current", "force", "vin_id"])
+        self.assertEqual(inputs, ["current", "force", "vin_id"])

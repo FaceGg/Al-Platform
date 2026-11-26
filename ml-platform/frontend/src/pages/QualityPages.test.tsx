@@ -22,6 +22,7 @@ vi.mock("../api/client", () => ({
 
 import ProductionRecordsPage from "./ProductionRecordsPage";
 import QualityScenesPage from "./QualityScenesPage";
+import QualityStationsPage from "./QualityStationsPage";
 import HelpCenterPage from "./HelpCenterPage";
 
 function renderPage(node: React.ReactElement, initialEntries = ["/"]) {
@@ -160,5 +161,65 @@ describe("HelpCenterPage（帮助中心）", () => {
     renderPage(<HelpCenterPage />, ["/help"]);
     expect(screen.getByText("章节目录")).toBeInTheDocument();
     expect(screen.getAllByText("平台说明").length).toBeGreaterThan(0);
+  });
+});
+
+describe("QualityStationsPage（工位与设备）", () => {
+  const recentHeartbeat = new Date(Date.now() - 10_000).toISOString();
+  const staleHeartbeat = new Date(Date.now() - 10 * 60_000).toISOString();
+
+  const setupStations = (devices: unknown[]) => {
+    mocks.apiClient.get.mockImplementation((url: string) => {
+      if (url === "/projects") {
+        return Promise.resolve({ data: { items: [{ id: "p1", name: "项目一" }] } });
+      }
+      if (url === "/auth/me") {
+        return Promise.resolve({ data: { id: "u1", username: "qc", role: "engineer" } });
+      }
+      if (url === "/projects/p1/quality-scenes") {
+        return Promise.resolve({ data: { items: [{ id: "s1", code: "S1", name: "场景一", field_roles: {} }] } });
+      }
+      if (url === "/projects/p1/quality-stations") {
+        return Promise.resolve({ data: { items: [
+          { id: "st1", code: "ST1", name: "工位一", scene_id: "s1", enabled: true, edge_device_id: "d1" },
+          { id: "st2", code: "ST2", name: "工位二", scene_id: "s1", enabled: true, edge_device_id: "d2" },
+          { id: "st3", code: "ST3", name: "工位三", scene_id: "s1", enabled: true, edge_device_id: null },
+        ] } });
+      }
+      if (url === "/compute/devices") {
+        return Promise.resolve({ data: devices });
+      }
+      return Promise.resolve({ data: {} });
+    });
+  };
+
+  beforeEach(() => {
+    localStorage.setItem("lang", "zh");
+    vi.clearAllMocks();
+  });
+
+  it("marks bound devices online/offline by heartbeat freshness (B1-10 验收④)", async () => {
+    setupStations([
+      { id: "d1", name: "网关机-01", last_heartbeat: recentHeartbeat },
+      { id: "d2", name: "网关机-02", last_heartbeat: staleHeartbeat },
+    ]);
+    renderPage(<QualityStationsPage />);
+
+    expect(await screen.findByText("工位一")).toBeInTheDocument();
+    // 设备清单异步到达后重渲染：新鲜心跳在线、过期心跳离线
+    expect(await screen.findByText("在线")).toBeInTheDocument();
+    expect(screen.getByText("离线")).toBeInTheDocument();
+    // 绑定的设备名列出设备名，未绑定工位显示占位短横
+    expect(await screen.findByText("网关机-01")).toBeInTheDocument();
+    expect(screen.getByText("网关机-02")).toBeInTheDocument();
+  });
+
+  it("renders the shadow state placeholder for all rows (B4-02 预留)", async () => {
+    setupStations([{ id: "d1", name: "网关机-01", last_heartbeat: recentHeartbeat }]);
+    renderPage(<QualityStationsPage />);
+
+    expect(await screen.findByText("工位一")).toBeInTheDocument();
+    // 影子列的「未启用」占位随每行渲染（B4-02 正式落地前）
+    expect(await screen.findAllByText("未启用")).not.toEqual([]);
   });
 });

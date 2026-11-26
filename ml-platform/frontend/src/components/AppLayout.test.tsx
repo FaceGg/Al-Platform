@@ -13,10 +13,12 @@ const notificationMocks = vi.hoisted(() => ({
   markRead: vi.fn(),
   archive: vi.fn(),
 }));
+const apiMocks = vi.hoisted(() => ({ get: vi.fn() }));
 
 vi.mock("../api/securityNotifications", () => ({
   notificationsApi: notificationMocks,
 }));
+vi.mock("../api/client", () => ({ default: apiMocks }));
 
 describe("AppLayout (v2 five-view shell)", () => {
   beforeEach(() => {
@@ -26,6 +28,10 @@ describe("AppLayout (v2 five-view shell)", () => {
     notificationMocks.listInAppNotifications.mockReset().mockResolvedValue({ items: [], total: 0 });
     notificationMocks.markRead.mockReset();
     notificationMocks.archive.mockReset();
+    apiMocks.get.mockReset().mockRejectedValue(new Error("offline"));
+    localStorage.removeItem("role");
+    localStorage.removeItem("username");
+    localStorage.removeItem("token");
   });
 
   it("returns to the annotation task list from an active annotation run", async () => {
@@ -175,6 +181,40 @@ describe("AppLayout (v2 five-view shell)", () => {
       { label: "Monitoring", items: ["Production Records"] },
       { label: "Configuration", items: ["Quality Scenes", "Stations & Devices"] },
     ]);
+  });
+
+  it("filters top tabs by the server-resolved visible views (B1 §7.1)", async () => {
+    localStorage.setItem("role", "engineer");
+    localStorage.setItem("token", "test-token");
+    apiMocks.get.mockImplementation((url: string) => {
+      if (url === "/auth/me") {
+        return Promise.resolve({
+          data: { id: "u1", username: "qc", role: "engineer", visible_views: ["portal", "quality"] },
+        });
+      }
+      return Promise.reject(new Error("offline"));
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/quality/scenes"]}>
+        <LangProvider><AppLayout><div>test</div></AppLayout></LangProvider>
+      </MemoryRouter>,
+    );
+
+    // 收敛生效后：Quality Management 在位，Algorithms/Agent Center/Infrastructure 不可见
+    expect(await screen.findByRole("button", { name: /quality management/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(apiMocks.get).toHaveBeenCalledWith("/auth/me");
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /^algorithms$/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /agent center/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /infrastructure/i })).not.toBeInTheDocument();
+    });
+    // 门户恒可见（登录落点不允许被收敛掉）
+    expect(screen.getByRole("button", { name: /portal/i })).toBeInTheDocument();
+    localStorage.removeItem("role");
+    localStorage.removeItem("token");
   });
 
   it("selects data annotation instead of the shorter data route", async () => {
