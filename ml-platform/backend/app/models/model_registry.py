@@ -589,6 +589,9 @@ class ModelCard(Base):
     limitations = Column(String(4000), nullable=False, default="")
     operational_guidance = Column(Text, nullable=False, default="")
     guidance_revision = Column(Integer, nullable=False, default=1)
+    # S4/B2-04（C6 扩展）：11 章节结构化内容 + 数据指纹（变化触发重建+审批回 pending）
+    sections_v2 = Column(JSON, nullable=True)
+    data_fingerprint = Column(String(64), nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(
         DateTime,

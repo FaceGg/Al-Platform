@@ -139,6 +139,7 @@ from app.models.label_quality import (
     LabelArbitration,
     PseudoLabelBatch,
 )
+from app.models.audit_qa import AuditReport, ModelTrustScore
 
 __all__ = [
     "User",
@@ -286,4 +287,6 @@ __all__ = [
     "AnnotationBlindLabel",
     "LabelArbitration",
     "PseudoLabelBatch",
+    "AuditReport",
+    "ModelTrustScore",
 ]

@@ -71,6 +71,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_release_governance",
         # S3 标注质量链（B2-05/06/G4/E15）：九策略选样+κ仲裁+纯度门禁+伪标签凭证
         "test_label_quality",
+        # S4 智能应用（B2-01/B2-04）：引用编号+问数注册表+七因子可信度+CBPE+模型卡指纹
+        "test_audit_qa",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",
