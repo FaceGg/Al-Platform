@@ -3,7 +3,8 @@
   "batch": "补齐路线第一批 F5（接入开放）",
   "date": "2026-11-26",
   "commits": {
-    "f5_closeout": "本文件所在提交"
+    "f5_closeout": "本文件所在提交",
+    "ci_contract_sync": "8b22de55"
   },
   "spec": "ml-platform/docs/技术方案-补齐路线第一批.md#9A",
   "acceptance_criteria": [
@@ -136,8 +137,19 @@
       "passed": 28
     },
     "backend_run_suite": {
-      "status": "pending",
-      "note": "第一批最终提交上干净 worktree 全量执行，结果回填"
+      "status": "passed",
+      "modules_passed": 231,
+      "modules_failed": 0,
+      "modules_total": 231,
+      "tested_commit": "8b22de55",
+      "executed_at": "2026-11-26 16:30-17:36",
+      "environment": "clean git worktree at 8b22de55"
+    },
+    "frontend_vitest": {
+      "status": "passed",
+      "files": 100,
+      "passed": 642,
+      "skipped": 19
     }
   },
   "open_items": [
