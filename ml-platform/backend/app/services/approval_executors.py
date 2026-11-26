@@ -218,6 +218,7 @@ class ModelReleaseExecutor:
         db.flush()
         checks = evaluate_release_gates(db, deployment=deployment, version=version,
                                         approval=approval)
+        db.flush()
         for check in checks:
             db.delete(check)
         db.delete(approval)
@@ -260,10 +261,14 @@ class ModelReleaseExecutor:
 
         service = InferenceRolloutService(db)
         rollout = service.create_candidate(
-            deployment_id=deployment.id,
-            model_version_id=version.id,
+            db,
+            deployment.id,
+            actor_id,
+            targets=[{
+                "model_version_id": version.id,
+                "weight_bps": int(payload.get("weight_bps") or 10000),
+            }],
             strategy=str(payload.get("strategy") or "canary"),
-            actor_id=actor_id,
         )
         return {
             "rollout_id": str(rollout.id),

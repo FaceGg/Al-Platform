@@ -460,11 +460,13 @@ def evaluate_release_gates(
                     metrics.get("task") or "classification")
 
     def _add(check_key, threshold, observed, verdict, detail=None):
-        checks.append(ReleaseCheck(
+        check = ReleaseCheck(
             approval_id=approval.id, check_key=check_key,
             threshold=threshold, observed=observed,
             verdict=verdict, detail=detail,
-        ))
+        )
+        db.add(check)
+        checks.append(check)
 
     # 1) 指标下限（无监督按冠军资格口径；有监督 F1/召回下限）
     floor = float(options.get("f1_floor") or DEFAULT_F1_FLOOR)

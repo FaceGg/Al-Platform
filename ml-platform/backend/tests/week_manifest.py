@@ -73,6 +73,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_label_quality",
         # S4 智能应用（B2-01/B2-04）：引用编号+问数注册表+七因子可信度+CBPE+模型卡指纹
         "test_audit_qa",
+        # M2 五段全链贯通演练：预警→处置→标注→重训→灰度发布→回执（独立验收项）
+        "test_gap_m2_drill",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",
