@@ -41,6 +41,9 @@ PERMISSIONS = frozenset({
     # 预警处置动作（F2a/D17）：确认/分配/流转/处置/附件——运营动作，
     # operator（班组长）必须有；配置类（SOP/基线/规则）仍走 quality.manage
     "quality.alert_handle",
+    # 统一四眼审批（第二批 S1/D3）：批准与驳回统一队列的动作权限；
+    # 四眼强制 = 持有本键 且 发起人≠审批人（无平台管理员后门）
+    "approval.approve",
 })
 
 ROLE_PERMISSIONS = {
@@ -63,6 +66,7 @@ ROLE_PERMISSIONS = {
         "quality.review",
         "quality.manage",
         "quality.alert_handle",
+        "approval.approve",
     }),
     ProjectRole.OPERATOR: frozenset({
         "project.read",

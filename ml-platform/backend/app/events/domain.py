@@ -27,6 +27,10 @@ SAFE_EVENT_TYPES = frozenset({
     "quality.alert.sla_overdue",
     # 漂移严重级报告（F4/D40）：只通知，不自动处置
     "drift.severe",
+    # 统一审批队列三事件（S1/D6）：过期前提醒、过期回收、决策回执
+    "approval.expiring",
+    "approval.expired",
+    "approval.decided",
     "annotation_return.accepted",
     "annotation_return.returned_for_changes",
     "annotation_comment.replied",
@@ -53,6 +57,12 @@ SAFE_PAYLOAD_KEYS = frozenset({
     # 漂移严重级事件载荷（F4/D40）
     "report_id",
     "drifted_feature_count",
+    # 审批队列事件载荷（S1/D6）
+    "approval_id",
+    "approval_type",
+    "decision",
+    "decision_note",
+    "expires_at",
 })
 
 

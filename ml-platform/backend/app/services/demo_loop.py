@@ -1832,6 +1832,17 @@ class DemoLoopService:
             self._emit(config, "retrain_failed", f"自动建模触发失败：{error}", severity="warning")
             self.db.commit()
 
+    def trigger_retrain_from_approval(self, config: DemoLoopConfig, actor_id) -> dict:
+        """S1 审批执行器入口（补齐路线第二批）：批准重训提案后触发该部署
+        闭环的重训轮。公开包装 _trigger_retrain（保留其异常自愈语义），
+        返回触发形态供审批单 execution_ref 留痕。"""
+        self._trigger_retrain(config, actor_id)
+        return {
+            "triggered": True,
+            "retrain_mode": getattr(config, "retrain_mode", None) or "engine",
+            "loop_config_id": str(config.id),
+        }
+
     def _trigger_retrain_inner(self, config: DemoLoopConfig, actor_id) -> None:
         from app.services.closed_loop_actions import resolve_retrain_dataset_ids
 

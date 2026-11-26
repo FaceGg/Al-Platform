@@ -377,6 +377,45 @@ def transition_alert(
         db, project_id, current_user.id, "quality.alert_handle",
     )
     alert = _get_alert(db, project_id, alert_id)
+    # D8（第二批 S1）：场景开关开启时，critical 关闭改走四眼审批——
+    # 创建 disposition 审批单而非直接关闭（默认关=F2 行为零变化）
+    if data.to_status == "closed" and alert_service.close_requires_approval(db, alert):
+        from app.services.approvals import ApprovalError, create_approval
+
+        with _audit_service(db).project_action(
+            db, request=request, actor=current_user, access=access,
+            permission="quality.alert_handle",
+            intent=AuditIntent(
+                project_id=project_id, action="quality.alert.close_approval_requested",
+                resource_type="quality_alert", resource_id=str(alert.id),
+                changes={"resolution": data.resolution},
+            ),
+            allowed_changes={"resolution"},
+        ):
+            try:
+                approval = create_approval(
+                    db,
+                    project_id=project_id,
+                    approval_type="disposition",
+                    title=f"严重预警关闭审批：{alert.title}",
+                    payload={
+                        "alert_id": str(alert.id),
+                        "resolution": data.resolution or "confirmed_issue",
+                    },
+                    initiator_id=current_user.id,
+                )
+            except ApprovalError as error:
+                db.rollback()
+                raise HTTPException(
+                    409, {"code": error.code, "message": error.message}
+                ) from None
+        db.commit()
+        return {
+            "routed_to_approval": True,
+            "approval_id": str(approval.id),
+            "approval_status": approval.status,
+            "expires_at": approval.expires_at.isoformat(),
+        }
     with _audit_service(db).project_action(
         db, request=request, actor=current_user, access=access,
         permission="quality.alert_handle",

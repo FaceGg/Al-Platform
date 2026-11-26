@@ -174,7 +174,11 @@ def propose_retrain(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """「转重训提案」：通知项目负责人并落审计。审批流属第二批，本期只到提案。"""
+    """「转重训提案」：创建 retrain_proposal 审批单（S1 队列）+ 通知 + 审计。
+
+    第二批 S1 接线：提案进统一四眼审批队列（驳回落拒绝水位线 E05，
+    批准经部署绑定闭环触发重训轮）；同部署同报告水位线未越过时 409。
+    """
     access: ProjectAccess = require_project_access(
         db, project_id, current_user.id, "quality.manage",
     )
@@ -192,6 +196,14 @@ def propose_retrain(
             DriftReportFeature.signal_kind == "feature_psi",
         ).all()
     })
+    proposal_payload = {
+        "deployment_id": str(report.deployment_id) if report.deployment_id else None,
+        "report_id": str(report.id),
+        "model_version_id": str(report.model_version_id) if report.model_version_id else None,
+        "report_created_at": report.created_at.isoformat() if report.created_at else None,
+        "level": report.level,
+        "drifted_features": len(drifted),
+    }
     with _audit_service(db).project_action(
         db, request=request, actor=current_user, access=access,
         permission="quality.manage",
@@ -202,6 +214,16 @@ def propose_retrain(
         ),
         allowed_changes={"level", "drifted_features"},
     ):
+        from app.services.approvals import ApprovalError, create_approval
+
+        approval = create_approval(
+            db,
+            project_id=project_id,
+            approval_type="retrain_proposal",
+            title=f"重训提案：漂移报告 {str(report.id)[:8]}（{report.level}）",
+            payload=proposal_payload,
+            initiator_id=current_user.id,
+        )
         report.proposal_at = datetime.utcnow()
         report.proposal_by_id = current_user.id
         db.commit()
@@ -214,12 +236,17 @@ def propose_retrain(
             f"{current_user.username} 基于漂移报告提交了重训提案："
             f"{len(drifted)} 个特征分布偏离训练基线"
             + (f"（{'、'.join(drifted[:5])}{'…' if len(drifted) > 5 else ''}）" if drifted else "")
-            + "。漂移是触发信号，是否重训由人工评估；审批流程尚未开通。"
+            + "。漂移是触发信号，是否重训由人工评估；已进统一审批队列。"
         ),
         severity="warning", event_type="drift.retrain_proposal",
-        payload={"report_id": str(report.id)},
+        payload={"report_id": str(report.id), "approval_id": str(approval.id)},
     )
-    return {"report_id": str(report.id), "proposal_at": report.proposal_at.isoformat(), "notified": notified}
+    return {
+        "report_id": str(report.id),
+        "proposal_at": report.proposal_at.isoformat(),
+        "approval_id": str(approval.id),
+        "notified": notified,
+    }
 
 
 @router.post("/api/projects/{project_id}/drift/scan")

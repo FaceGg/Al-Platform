@@ -1366,6 +1366,16 @@ def watch_devices(db: Session, *, now: datetime | None = None) -> dict:
     }
 
 
+def close_requires_approval(db: Session, alert: QualityAlert) -> bool:
+    """D8 场景开关：critical 关闭是否走审批（quality_scenes.alert_settings
+    .require_close_approval_for_critical，默认 False=F2 行为零变化）。"""
+    if getattr(alert, "severity", None) != "critical" or alert.scene_id is None:
+        return False
+    scene = db.get(QualityScene, alert.scene_id)
+    scene_settings = (getattr(scene, "alert_settings", None) or {}) if scene else {}
+    return bool(scene_settings.get("require_close_approval_for_critical"))
+
+
 def watch_sla(db: Session, *, now: datetime | None = None) -> dict:
     """SLA 巡检（D21）：临期（剩余 ≤25% 总时长）与超时两档域事件入 outbox，
     由既有订阅路由投递；预警上的档位保证每档只通知一次。

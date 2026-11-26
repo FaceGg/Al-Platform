@@ -62,6 +62,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_audit_hash_chain",
         # S1/R2 动作审计：七键脱敏、幂等去重、网关/chat 工具挂点、查询与 CSV（B2-08）
         "test_agent_action_audit",
+        # S1/R3+R4 统一四眼审批中心：四眼/过期回收+提醒/指纹失效/水位线/执行器/投影（B2-07/B2-10）
+        "test_approval_center",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",
