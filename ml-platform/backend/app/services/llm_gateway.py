@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import settings
 from app.models.llm_profile import LLMProfile
+from app.services.agent_action_audit import audited_llm_call
 from app.services.llm_profile_crypto import (
     LLMCredentialError,
     decrypt_llm_api_key,
@@ -1097,6 +1098,7 @@ def list_upstream_models(
     return [str(item.get("id")) for item in items if item.get("id")]
 
 
+@audited_llm_call
 def chat_completion(
     db: Session,
     *,

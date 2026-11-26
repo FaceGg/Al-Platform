@@ -106,6 +106,15 @@ class Settings(BaseSettings):
     # Agent 运行心跳陈旧阈值：超过该秒数未刷新心跳的 running 行会被
     # 启动期恢复扫描标记为失败（AGENT_RUN_INTERRUPTED）。
     agent_run_stale_after_seconds: int = Field(default=600, ge=60)
+    # S1 动作审计（B2-08）：是否在动作审计里记录请求/响应内容（七键脱敏 +
+    # 长度封顶）。默认 True=路线 B2-08「记录请求与结果」；置 False 退到仅
+    # 元数据（与网关出口审计 v0.9 §17.1 的内容最小化口径对齐）。张力登记
+    # 于技术方案-补齐路线第二批 §12。
+    agent_action_audit_content: bool = Field(default=True)
+    # S1 统一审批队列（B2-07/B2-10）：默认有效期 72h（可按单覆盖）
+    approval_ttl_hours: int = Field(default=72, ge=1)
+    # 过期前提醒窗口（B2-10：过期前 12h 提醒一次）
+    approval_remind_window_hours: int = Field(default=12, ge=1)
 
     # 闭环「智能体重训模式」护栏：项目内重放并发上限（跨部署资源护栏）/
     # 重放轮询超时（LLM S1 实测 >60s、超时地板 240s，全流程按小时留量）/

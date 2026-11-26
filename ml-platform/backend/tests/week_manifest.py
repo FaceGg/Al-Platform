@@ -60,6 +60,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_gap_batch2_migrations",
         # S1/R1 审计哈希链：两表成链、篡改/断链定位、三写入分支挂接、校验端点（B2-08/E10）
         "test_audit_hash_chain",
+        # S1/R2 动作审计：七键脱敏、幂等去重、网关/chat 工具挂点、查询与 CSV（B2-08）
+        "test_agent_action_audit",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",

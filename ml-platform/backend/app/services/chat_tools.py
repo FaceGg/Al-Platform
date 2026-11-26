@@ -175,11 +175,37 @@ def execute_tool(
         # their existing API services at wiring time; declare the boundary.
         raise LookupError("handler not wired for tool: %s" % tool)
     try:
+        import time as _time
+
+        _started = _time.perf_counter()
         payload = handler(db, user, params)
         _audit(db, user=user, tool=tool, params=params, result="success", request=request)
+        from app.services.agent_action_audit import record_agent_action
+
+        record_agent_action(
+            db,
+            agent_type="chat_tool",
+            tool_name=tool,
+            status="success",
+            duration_ms=int((_time.perf_counter() - _started) * 1000),
+            actor_id=getattr(user, "id", None),
+            request_payload={"params": params, "confirmed": confirmed},
+            response_payload={"payload": payload},
+        )
         return payload
-    except Exception:
+    except Exception as error:
         _audit(db, user=user, tool=tool, params=params, result="failed", request=request)
+        from app.services.agent_action_audit import record_agent_action
+
+        record_agent_action(
+            db,
+            agent_type="chat_tool",
+            tool_name=tool,
+            status="error",
+            error_code=f"{type(error).__name__}: {error}"[:64],
+            actor_id=getattr(user, "id", None),
+            request_payload={"params": params, "confirmed": confirmed},
+        )
         raise
 
 
