@@ -60,6 +60,9 @@ export const NAV_FALLBACK: Record<string, { zh: string; en: string }> = {
   quality_scenes: { zh: "场景管理", en: "Quality Scenes" },
   quality_stations: { zh: "工位与设备", en: "Stations & Devices" },
   quality_production_records: { zh: "生产记录", en: "Production Records" },
+  quality_alerts: { zh: "预警中心", en: "Alert Center" },
+  quality_disposition: { zh: "处置工作台", en: "Disposition Workbench" },
+  quality_sops: { zh: "SOP 维护", en: "SOP Maintenance" },
   help_center: { zh: "帮助中心", en: "Help Center" },
 };
 

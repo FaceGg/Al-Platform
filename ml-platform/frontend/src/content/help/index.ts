@@ -11,6 +11,9 @@ import platformMd from "./platform-overview.md?raw";
 import qualityScenesMd from "./quality-scenes.md?raw";
 import qualityStationsMd from "./quality-stations.md?raw";
 import qualityRecordsMd from "./quality-production-records.md?raw";
+import qualityAlertsMd from "./quality-alerts.md?raw";
+import qualityDispositionMd from "./quality-disposition.md?raw";
+import qualitySopsMd from "./quality-sops.md?raw";
 
 export interface HelpChapter {
   id: string;
@@ -53,6 +56,30 @@ export const HELP_CHAPTERS: HelpChapter[] = [
     order: 4,
     md: qualityRecordsMd,
     navPrefixes: ["/quality/production-records"],
+  },
+  {
+    id: "quality-alerts",
+    titleZh: "预警中心",
+    titleEn: "Alert center",
+    order: 8,
+    md: qualityAlertsMd,
+    navPrefixes: ["/quality/alerts"],
+  },
+  {
+    id: "quality-disposition",
+    titleZh: "处置工作台",
+    titleEn: "Disposition workbench",
+    order: 9,
+    md: qualityDispositionMd,
+    navPrefixes: ["/quality/disposition"],
+  },
+  {
+    id: "quality-sops",
+    titleZh: "SOP 维护",
+    titleEn: "SOP maintenance",
+    order: 10,
+    md: qualitySopsMd,
+    navPrefixes: ["/quality/sops"],
   },
   {
     id: "closed-loop-demo",

@@ -178,8 +178,8 @@ describe("AppLayout (v2 five-view shell)", () => {
       </MemoryRouter>,
     );
     expect(await sidebarGroups()).toEqual([
-      { label: "Monitoring", items: ["Production Records"] },
-      { label: "Configuration", items: ["Quality Scenes", "Stations & Devices"] },
+      { label: "Monitoring", items: ["Alert Center", "Disposition Workbench", "Production Records"] },
+      { label: "Configuration", items: ["Quality Scenes", "Stations & Devices", "SOP Maintenance"] },
     ]);
   });
 

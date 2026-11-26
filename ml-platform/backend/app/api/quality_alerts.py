@@ -147,6 +147,7 @@ def list_alerts(
     sample_key: str | None = None,
     batch_no: str | None = None,
     include_demo: bool = False,
+    sla_overdue: bool = False,
     occurred_from: str | None = None,
     occurred_to: str | None = None,
     page: int = 1,
@@ -159,6 +160,13 @@ def list_alerts(
     # 演示隔离（D18/诚实设计⑥）：默认排除演示预警，显式开关可见
     if not include_demo:
         query = query.filter(QualityAlert.is_demo.is_(False))
+    if sla_overdue:
+        # SLA 已超时且仍未处置完（驾驶舱「超时」口径与此同源）
+        query = query.filter(
+            QualityAlert.sla_due_at.isnot(None),
+            QualityAlert.sla_due_at < datetime.utcnow(),
+            QualityAlert.status.in_(("open", "acknowledged", "processing")),
+        )
     if status:
         query = query.filter(QualityAlert.status == status)
     if severity:

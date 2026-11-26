@@ -151,8 +151,9 @@ describe("HelpCenterPage（帮助中心）", () => {
   it("searches chapters by body substring", async () => {
     renderPage(<HelpCenterPage />);
     const input = await screen.findByLabelText("搜索帮助");
-    fireEvent.change(input, { target: { value: "规格定义" } });
-    // 规格定义出现在场景管理章正文
+    // 「字段角色」只出现在场景管理章正文（F2a 新增的预警/处置/SOP 章也讲规格定义，
+    // 用规格定义会命中多章，不再适合做唯一定位）
+    fireEvent.change(input, { target: { value: "字段角色" } });
     expect(screen.getByText(/…/)).toBeInTheDocument();
     fireEvent.click(screen.getByText("场景管理"));
   });

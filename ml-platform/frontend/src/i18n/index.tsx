@@ -49,6 +49,9 @@ const ZH = {
     quality_scenes: "场景管理",
     quality_stations: "工位与设备",
     quality_production_records: "生产记录",
+    quality_alerts: "预警中心",
+    quality_disposition: "处置工作台",
+    quality_sops: "SOP 维护",
     help_center: "帮助中心",
   },
   demo_loop: {
@@ -910,7 +913,8 @@ const EN: Record<string, any> = {
   nav: { dashboard: "Dashboard", projects: "Projects", models: "Model Library", users: "User Management", data: "Data Management", data_annotation: "Data Annotation", knowledge: "Knowledge Base", training: "Model Training", monitor: "Resource Monitor", chat: "AI Chat", automl: "AutoML", orchestration: "App Orchestration", demo_loop: "Closed-Loop Automation", algorithms: "Algorithms", api_market: "API Market", annotation: "Annotation", compute: "Compute Resources", kubernetes: "Kubernetes Clusters", infra_overview: "Cluster overview", job_runs: "Job Runs", notebooks: "Notebook Sessions", images: "Image Catalog", cluster_governance: "Cluster Governance", llm_gateway: "LLM Management", knowledge_center: "Knowledge Center",
     prompt_templates: "Prompt Templates", agent_new: "New task", agent_tasks: "Jobs", agent_recipes: "Recipes",
     announcements: "Notices", audit: "Audit log", settings: "Platform Status", llm_usage: "Token usage",
-    quality_scenes: "Quality Scenes", quality_stations: "Stations & Devices", quality_production_records: "Production Records", help_center: "Help Center" },
+    quality_scenes: "Quality Scenes", quality_stations: "Stations & Devices", quality_production_records: "Production Records",
+    quality_alerts: "Alert Center", quality_disposition: "Disposition Workbench", quality_sops: "SOP Maintenance", help_center: "Help Center" },
   demo_loop: {
     project: "Project", choose_project: "Select project", refresh: "Refresh",
     manual: "Manual", manual_title: "Closed-loop manual (Plan A / Plan B)", showcase: "Live monitor",

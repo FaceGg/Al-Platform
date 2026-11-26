@@ -9,6 +9,7 @@ import {
   PlayCircleOutlined, BookOutlined, ControlOutlined, TagsOutlined, ApartmentOutlined,
   RocketOutlined, CopyOutlined, FileTextOutlined, SettingOutlined,
   NotificationOutlined, BarChartOutlined, SafetyCertificateOutlined, QuestionCircleOutlined,
+  AlertOutlined, ToolOutlined,
 } from "@ant-design/icons";
 import { SunOutlined, MoonOutlined } from "@ant-design/icons";
 import { useI18n } from "../i18n";
@@ -122,11 +123,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     ],
     quality: [
       { label: zh ? "监控" : "Monitoring", items: [
+        { key: "/quality/alerts", icon: <AlertOutlined />, label: nav("quality_alerts") },
+        { key: "/quality/disposition", icon: <ToolOutlined />, label: nav("quality_disposition") },
         { key: "/quality/production-records", icon: <DatabaseOutlined />, label: nav("quality_production_records") },
       ] },
       { label: zh ? "配置" : "Configuration", items: [
         { key: "/quality/scenes", icon: <AppstoreOutlined />, label: nav("quality_scenes") },
         { key: "/quality/stations", icon: <ClusterOutlined />, label: nav("quality_stations") },
+        { key: "/quality/sops", icon: <FileTextOutlined />, label: nav("quality_sops") },
       ] },
     ],
     agent: [

@@ -404,6 +404,33 @@ class TestSlaWatch(QualityAlertApiCase):
         )
         self.assertIsNone(self._outbox(alert, 1))
 
+    def test_sla_overdue_filter_returns_only_unresolved_overdue(self):
+        """列表的「SLA 超时」口径：已超时且仍未处置完；已关闭的与未到期的都不算。"""
+        overdue = self._alert(hours_ago=25)
+        fresh = QualityAlert(
+            project_id=self.project.id, scene_id=self.scene.id,
+            station_id=self.station.id, source_type="model_risk", severity="warning",
+            title="尚未到期", evidence={}, merge_key=f"sla-{self.case_key}-fresh",
+            sla_due_at=datetime.utcnow() + timedelta(hours=20),
+            last_event_at=datetime.utcnow(), created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        self.db.add(fresh)
+        self.db.commit()
+        resolved = self._alert(hours_ago=30)
+        resolved.assigned_to_id = self.assignee.id
+        service.transition_alert(self.db, resolved, "acknowledged", actor_id=self.owner.id)
+        service.transition_alert(
+            self.db, resolved, "closed", resolution="other", actor_id=self.owner.id,
+        )
+        self.db.commit()
+        own = {str(overdue.id), str(fresh.id), str(resolved.id)}
+        listed = self.client.get(
+            f"/api/projects/{self.project.id}/quality-alerts",
+            params={"sla_overdue": "true"},
+        ).json()["items"]
+        self.assertEqual({item["id"] for item in listed} & own, {str(overdue.id)})
+
     def test_due_notification_reaches_project_owner_inbox(self):
         """验收口径「SLA 临期自动通知送达」：outbox → 订阅 → 真实站内信适配器。"""
         alert = self._alert(hours_ago=20)
