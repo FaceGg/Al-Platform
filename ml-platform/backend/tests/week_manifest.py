@@ -42,6 +42,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_quality_spc_baselines",
         # SOP 版本化与处置单快照取数口径（E07）
         "test_quality_sops",
+        # 补齐路线第一批 F2b：闭环证据总览 12 环节 + 上线检查五项 + 证据链 ZIP 导出（B1-12/E21）
+        "test_evidence_exports",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",

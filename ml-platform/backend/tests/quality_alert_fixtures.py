@@ -86,11 +86,12 @@ class QualityAlertApiCase(unittest.TestCase):
         """切换当前请求的用户。依赖注入读的是类属性，必须设在类上而不是实例上。"""
         type(self).actor = user
 
-    def make_dataset_version(self, rows):
+    def make_dataset_version(self, rows, **version_fields):
         """造一个就绪的数据集版本；rows 是按行序排列的字典列表。
 
         行里有 "vin" 键时用它作 sample_id，否则用行号——复核任务与曲线叠加
-        都按 sample_id 找行。
+        都按 sample_id 找行。version_fields 在创建时写入（数据集版本表组不可变，
+        建好后不能改）。
         """
         latest = self.db.query(DatasetVersion.version).filter(
             DatasetVersion.project_id == self.project.id,
@@ -105,6 +106,7 @@ class QualityAlertApiCase(unittest.TestCase):
             column_count=len(columns),
             content_hash=uuid.uuid4().hex,
             schema_hash=uuid.uuid4().hex,
+            **version_fields,
         )
         self.db.add(version)
         self.db.flush()
