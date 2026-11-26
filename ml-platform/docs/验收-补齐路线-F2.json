@@ -47,7 +47,7 @@
     "f2_backend_modules": {"status": "passed", "passed": 70, "subtests": 17},
     "adjacent_existing_modules": {"status": "passed", "distinct_modules": 27},
     "frontend_vitest": {"status": "passed", "files": 98, "passed": 624, "skipped": 19, "tsc": "clean"},
-    "backend_run_suite": {"status": "pending", "note": "在 F2 收口提交上以干净 worktree 全量执行，结果由后续回填提交登记（绑定被测提交 SHA）"}
+    "backend_run_suite": {"status": "passed", "modules_passed": 226, "modules_failed": 0, "modules_total": 226, "tested_commit": "bc932754", "executed_at": "2026-11-26 10:37-11:44", "environment": "clean git worktree at bc932754, per-module sealed SQLite"}
   },
   "open_items": [
     {"status": "not_run", "item": "真实浏览器内渲染与交互（曲线叠加/抽屉/下拉/批量确认）"},
@@ -60,5 +60,5 @@
     {"status": "design-limit", "item": "参数超限只评数值特征；波形统计量规格待接入通道保存波形原文后生效"},
     {"status": "note", "item": "提交时安全扫描器多次未给出完整结论（scanner_enobufs），不据此宣称项目安全"}
   ],
-  "conclusion": "17 条口径逐条结论均为 passed；第 2/7/8/14 条限定在逻辑层或接口与组件层，带 not_run / environment-blocked 子项且不折算为已验证。后端全量回归待回填。任务完成不等于发布就绪。"
+  "conclusion": "17 条口径逐条结论均为 passed；第 2/7/8/14 条限定在逻辑层或接口与组件层，带 not_run / environment-blocked 子项且不折算为已验证。后端全量回归 226 模块全过 @ bc932754。任务完成不等于发布就绪。"
 }
