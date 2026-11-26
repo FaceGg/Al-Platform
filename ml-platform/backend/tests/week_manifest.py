@@ -46,6 +46,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_evidence_exports",
         # 补齐路线第一批 F3：监控驾驶聚合口径 + 驾驶舱/趋势/实时监控接口 + 推送流（B1-03/04/05）
         "test_quality_monitor",
+        # 补齐路线第一批 F4：SPC 纯函数统计库（Nelson 1–8 / 控制图 / 能力指数，B1-06）
+        "test_spc_statistics",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",
