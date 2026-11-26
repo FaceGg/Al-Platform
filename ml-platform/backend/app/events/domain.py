@@ -25,6 +25,8 @@ SAFE_EVENT_TYPES = frozenset({
     # 预警 SLA 两档（F2a/D21）：临期与超时通知，走 outbox→订阅路由投递
     "quality.alert.sla_due",
     "quality.alert.sla_overdue",
+    # 漂移严重级报告（F4/D40）：只通知，不自动处置
+    "drift.severe",
     "annotation_return.accepted",
     "annotation_return.returned_for_changes",
     "annotation_comment.replied",
@@ -48,6 +50,9 @@ SAFE_PAYLOAD_KEYS = frozenset({
     "title",
     "severity",
     "sla_due_at",
+    # 漂移严重级事件载荷（F4/D40）
+    "report_id",
+    "drifted_feature_count",
 })
 
 

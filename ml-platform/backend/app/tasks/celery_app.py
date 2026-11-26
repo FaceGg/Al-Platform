@@ -117,6 +117,11 @@ celery_app.conf.update(
             "task": "ml_platform.watch_alert_sla",
             "schedule": 600.0,
         },
+        # F4 漂移定时批检（D40）：周期可配，默认 300 秒
+        "drift-scan": {
+            "task": "ml_platform.scan_model_drift",
+            "schedule": float(settings.drift_scan_interval_seconds),
+        },
     },
 )
 

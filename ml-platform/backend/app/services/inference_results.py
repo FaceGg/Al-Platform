@@ -267,6 +267,9 @@ class InferenceResultRecorder:
         # 成对的 (明细行, 该行特征记录)：预警评估要读特征值（D19）。必须在
         # 这次遍历里配对——超限降级会跳过正常样本，事后按两个序列对齐会错位
         detail_pairs: list[tuple[InferenceResult, Mapping]] = []
+        # 全部样本的范围元组 (场景, 工位, 工况, 通道)：特征直方图要覆盖全部样本（F4/D38），
+        # 不能用 detail_pairs 代替——超限降级时明细只留异常与抽样，那是有偏样本
+        histogram_scopes: list[tuple] = []
         buckets: dict[tuple, dict] = {}
         expires_at = now + timedelta(days=retention_days)
         for index in range(record_count):
@@ -334,6 +337,9 @@ class InferenceResultRecorder:
                     detail_row,
                     records[index] if index < len(records) else {},
                 ))
+            histogram_scopes.append((
+                context_row.scene_id, context_row.station_id, condition_value, channel,
+            ))
 
             # 聚合桶（永久保留；demo 通道由调用方拦截不进桶）
             bucket_key = (
@@ -370,6 +376,10 @@ class InferenceResultRecorder:
                         evaluate_inference_alerts(db_session, detail_pairs)
                 except Exception:
                     logger.exception("inference alert evaluation failed (persist continues)")
+                self._record_histograms_safely(
+                    db_session, project_id=project_id, model_version_id=model_version_id,
+                    scopes=histogram_scopes, records=records, now=now,
+                )
                 for bucket_key, stats in buckets.items():
                     self._upsert_bucket(db_session, project_id=project_id, bucket_key=bucket_key, stats=stats, now=now)
                 db_session.commit()
@@ -379,17 +389,40 @@ class InferenceResultRecorder:
             finally:
                 db_session.close()
         elif buckets:
-            # 仅桶计数（超限降级下的纯正常样本）：同样要落桶
+            # 仅桶计数（超限降级下的纯正常样本）：同样要落桶——直方图更要落，
+            # 这正是它覆盖「被降级丢弃的样本」的场合
             db_session = SessionLocal()
             try:
                 for bucket_key, stats in buckets.items():
                     self._upsert_bucket(db_session, project_id=project_id, bucket_key=bucket_key, stats=stats, now=now)
+                self._record_histograms_safely(
+                    db_session, project_id=project_id, model_version_id=model_version_id,
+                    scopes=histogram_scopes, records=records, now=now,
+                )
                 db_session.commit()
             except Exception:
                 db_session.rollback()
                 raise
             finally:
                 db_session.close()
+
+    @staticmethod
+    def _record_histograms_safely(
+        db_session, *, project_id, model_version_id, scopes, records, now,
+    ) -> None:
+        """特征直方图（F4/D38）：包在保存点里，失败只撤销这一段，不影响明细与聚合桶。"""
+        if model_version_id is None or not scopes:
+            return
+        try:
+            with db_session.begin_nested():
+                from app.services.drift_detection import record_feature_histograms
+
+                record_feature_histograms(
+                    db_session, project_id=project_id, model_version_id=model_version_id,
+                    scopes=scopes, records=records, now=now,
+                )
+        except Exception:
+            logger.exception("feature histogram recording failed (persist continues)")
 
     def record_demo(
         self,

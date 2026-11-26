@@ -111,6 +111,12 @@ from app.models.quality_alerts import (
     QualitySpcBaseline,
     ModelEvidenceCheck,
 )
+from app.models.drift import (
+    DriftBaseline,
+    DriftReport,
+    DriftReportFeature,
+    InferenceFeatureHistogram,
+)
 
 __all__ = [
     "User",
@@ -237,4 +243,8 @@ __all__ = [
     "QualitySop",
     "QualitySpcBaseline",
     "ModelEvidenceCheck",
+    "DriftBaseline",
+    "DriftReport",
+    "DriftReportFeature",
+    "InferenceFeatureHistogram",
 ]

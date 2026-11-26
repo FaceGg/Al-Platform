@@ -43,3 +43,18 @@ def watch_alert_sla_task() -> dict:
             db.rollback()
             logger.exception("quality alert SLA watch failed")
             raise
+
+
+@celery_app.task(name="ml_platform.scan_model_drift")
+def scan_model_drift_task() -> dict:
+    """漂移定时批检（F4/D40）：对每个运行态部署产出一份分级报告。
+
+    漂移是触发器不是自动开关——本任务只落报告、通知与数据质量预警，不处置模型。
+    """
+    from app.services.drift_detection import run_drift_scan
+
+    result = run_drift_scan()
+    if result["errors"]:
+        # 让调度侧看到失败：已成功的部署报告不受影响（各自独立事务）
+        raise RuntimeError(f"drift scan failed for {result['errors']} deployment(s)")
+    return result

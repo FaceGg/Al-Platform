@@ -332,6 +332,9 @@ def evaluate_inference_alerts(
     scene_ids = {row.scene_id for row, _ in eligible if row.scene_id is not None}
     scenes: dict[Any, QualityScene] = {}
     specs_by_scene: dict[Any, list] = {}
+    # 冻结基线（F4/D37）：有基线的字段做 3σ 判定，越限即产生 spc_violation 预警；
+    # 没有冻结基线的字段不产生 σ 类预警（与判据链口径一致）
+    baselines_by_scene: dict[Any, list] = {}
     if scene_ids:
         scenes = {
             scene.id: scene
@@ -343,6 +346,16 @@ def evaluate_inference_alerts(
             .all()
         ):
             specs_by_scene.setdefault(spec.scene_id, []).append(spec)
+        for baseline in (
+            db.query(QualitySpcBaseline)
+            .filter(
+                QualitySpcBaseline.scene_id.in_(scene_ids),
+                QualitySpcBaseline.is_active.is_(True),
+                QualitySpcBaseline.statistic == "value",
+            )
+            .all()
+        ):
+            baselines_by_scene.setdefault(baseline.scene_id, []).append(baseline)
     settings_cache: dict[Any, dict] = {}
 
     for row, record in eligible:
@@ -469,7 +482,74 @@ def evaluate_inference_alerts(
             if was_created:
                 created.append(alert)
 
+        # —— spc_violation：越冻结基线控制限（中心 ± 3σ）——
+        for baseline in _baselines_for_row(
+            baselines_by_scene.get(row.scene_id) or [], row.station_id, row.condition_value,
+        ):
+            raw = record.get(baseline.field)
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                continue
+            value = float(raw)
+            sigma = float(baseline.sigma)
+            if sigma <= 0 or abs(value - baseline.center) <= 3 * sigma:
+                continue
+            alert, was_created = create_alert(
+                db,
+                project_id=row.project_id,
+                merge_key=f"spc:3sigma:{baseline.field}",
+                source_type="spc_violation",
+                title=f"SPC 判异：{baseline.field}={value:g} 越出冻结基线控制限"
+                + (f"（样本 {row.sample_key}）" if row.sample_key else ""),
+                severity="high",
+                # 归属（场景 / 工位 / 设备 / 工况 / 样本键）由 common 统一带入，不重复传
+                evidence={
+                    "kind": "spc_violation",
+                    "rule": "3sigma",
+                    "field": baseline.field,
+                    "recorded_value": value,
+                    "center": baseline.center,
+                    "sigma": baseline.sigma,
+                    "baseline": {"id": str(baseline.id), "version": int(baseline.version or 1)},
+                    "model_version_id": (
+                        str(row.model_version_id) if row.model_version_id else None
+                    ),
+                    "occurred_at": occurred_at,
+                },
+                **common,
+            )
+            row.alert_triggered = True
+            if row.alert_id is None:
+                row.alert_id = alert.id
+            if was_created:
+                created.append(alert)
+
     return created
+
+
+def _baselines_for_row(candidates, station_id, condition_value) -> list:
+    """从场景的活动基线里，为每个字段挑出与该行归属最匹配的一条。
+
+    匹配分：基线的工位 / 工况为空表示适用全部；与该行不同则不适用。
+    """
+    best: dict[str, tuple[int, Any]] = {}
+    for baseline in candidates:
+        score = 0
+        if baseline.station_id is None:
+            score += 2
+        elif baseline.station_id == station_id:
+            score += 3
+        else:
+            continue
+        if baseline.condition_value is None:
+            score += 1
+        elif baseline.condition_value == condition_value:
+            score += 2
+        else:
+            continue
+        current = best.get(baseline.field)
+        if current is None or score > current[0]:
+            best[baseline.field] = (score, baseline)
+    return [item[1] for item in best.values()]
 
 
 # ----------------------------------------------------------------------

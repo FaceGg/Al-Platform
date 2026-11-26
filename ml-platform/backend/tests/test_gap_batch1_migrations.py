@@ -31,8 +31,9 @@ from app.models.user import User
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 PRE_BATCH_REVISION = "20261120_104"
-BATCH_HEAD_REVISION = "20261126_110"
+BATCH_HEAD_REVISION = "20261126_111"
 BATCH_CHAIN = (
+    "20261126_111",
     "20261126_110",
     "20261126_109",
     "20261125_108",
@@ -57,7 +58,13 @@ F2_ALERT_TABLES = (
     "quality_spc_baselines",
     "model_evidence_checks",
 )
-NEW_TABLES = F1_TABLES + F2_ALERT_TABLES
+F4_DRIFT_TABLES = (
+    "inference_feature_histograms",
+    "drift_baselines",
+    "drift_reports",
+    "drift_report_features",
+)
+NEW_TABLES = F1_TABLES + F2_ALERT_TABLES + F4_DRIFT_TABLES
 
 
 def device_name_of(session, row_id):
@@ -189,7 +196,7 @@ class TestGapBatch1Migrations(unittest.TestCase):
         """逐个迁移升级与一步到 head 等价（批内相邻迁移可独立执行）。"""
         for revision in (
             "20261125_105", "20261125_106", "20261125_107", "20261125_108",
-            "20261126_109", "20261126_110",
+            "20261126_109", "20261126_110", "20261126_111",
         ):
             command.upgrade(self.config, revision)
         command.check(self.config)
@@ -205,6 +212,21 @@ class TestGapBatch1Migrations(unittest.TestCase):
             settings.database_url = f"sqlite:///{self.db_path}"
             other_engine.dispose()
         self.assertEqual(stepwise, direct)
+
+    def test_drift_tables_upgrade_and_downgrade_cleanly(self):
+        """_111（F4）：四张漂移表全新建表，定向降级后既有推理明细行不受影响。"""
+        command.upgrade(self.config, "head")
+        self.assertTrue(set(F4_DRIFT_TABLES) <= set(sa.inspect(self.engine).get_table_names()))
+        drift_indexes = {index["name"] for index in sa.inspect(self.engine).get_indexes("inference_feature_histograms")}
+        self.assertIn("ix_inference_feature_histograms_version_bucket", drift_indexes)
+        # 降级只移除四张漂移表；F1–F3 的表原样保留
+        command.downgrade(self.config, "20261126_110")
+        tables = set(sa.inspect(self.engine).get_table_names())
+        self.assertTrue(set(F4_DRIFT_TABLES).isdisjoint(tables))
+        self.assertTrue(set(F2_ALERT_TABLES) <= tables)
+        self.assertIn("inference_results", tables)
+        command.upgrade(self.config, "head")
+        command.check(self.config)
 
     def test_alerts_migration_keeps_inference_rows_and_links_alerts(self):
         """_109（F2a）：推理明细行跨降级保留；alert_id 改建外键后可挂预警。"""

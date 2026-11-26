@@ -168,6 +168,20 @@ class Settings(BaseSettings):
     quality_alert_critical_threshold: float = Field(default=0.95, ge=0.0, le=1.0)
     quality_alert_sla_hours: int = Field(default=24, ge=1, le=24 * 30)
     quality_alert_merge_window_minutes: int = Field(default=30, ge=1, le=1440)
+    # 漂移监控（B1-09，技术方案 §9C D38–D40）：扫描周期、窗口、最小样本、分级阈值与
+    # 数据质量阈值都可配。漂移是触发器不是自动开关——严重级只通知，不自动处置。
+    drift_scan_interval_seconds: int = Field(default=300, ge=30, le=86400)
+    drift_window_hours: int = Field(default=24, ge=1, le=24 * 30)
+    drift_min_samples: int = Field(default=200, ge=10)
+    drift_severe_psi: float = Field(default=0.25, ge=0.0)
+    drift_watch_psi: float = Field(default=0.10, ge=0.0)
+    drift_missing_ratio: float = Field(default=0.05, ge=0.0, le=1.0)
+    drift_constant_share: float = Field(default=0.999, ge=0.5, le=1.0)
+    drift_psi_bins: int = Field(default=10, ge=2, le=50)
+    drift_baseline_max_rows: int = Field(default=50_000, ge=100)
+    drift_baseline_min_samples: int = Field(default=100, ge=10)
+    # 单次推理请求累计特征直方图的样本上限（0 = 不限）：限的是落库线程的单次工作量
+    inference_histogram_max_records: int = Field(default=2000, ge=0)
 
     annotation_max_samples: int = Field(default=1_000_000, ge=1, le=10_000_000)
     annotation_max_input_columns: int = Field(default=200, ge=1, le=2_000)

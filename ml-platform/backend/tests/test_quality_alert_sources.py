@@ -229,6 +229,41 @@ class TestInferenceAlertSources(unittest.TestCase):
         self.assertEqual(self._alerts("model_risk"), [])
         self.assertEqual(self._alerts("param_exceed"), [])
 
+    def test_beyond_frozen_baseline_limit_raises_spc_alert_in_realtime(self):
+        """F4/D37：有冻结基线的字段越出中心 ± 3σ 即产生 SPC 判异预警；没有基线则不产生。"""
+        from app.models.quality_alerts import QualitySpcBaseline
+
+        now = datetime.utcnow()
+        with SessionLocal() as db:
+            db.add(QualitySpcBaseline(
+                project_id=self.project_id, scene_id=self.scene_id, field="force",
+                statistic="value", center=10.0, sigma=0.5, sample_count=30,
+                window_start=now - timedelta(days=1), window_end=now,
+                reference={}, version=1, is_active=True, created_at=now,
+            ))
+            db.commit()
+        records = [{"force": 14.0}, {"force": 10.2}, {"force": 6.4}]
+        try:
+            self._record(f"req-f2-{uuid.uuid4().hex[:6]}", {"predictions": ["OK"] * 3}, records)
+            alerts = self._alerts("spc_violation")
+            self.assertEqual(len(alerts), 1, "越限的两个样本并成一条同因预警")
+            self.assertEqual(alerts[0].occurrence_count, 2)
+            self.assertEqual(alerts[0].evidence["rule"], "3sigma")
+            self.assertEqual(alerts[0].evidence["baseline"]["version"], 1)
+            self.assertAlmostEqual(alerts[0].evidence["sigma"], 0.5)
+        finally:
+            with SessionLocal() as db:
+                db.query(QualitySpcBaseline).filter(
+                    QualitySpcBaseline.scene_id == self.scene_id,
+                ).delete(synchronize_session="fetch")
+                db.commit()
+        # 没有冻结基线：同样的数据不再产生 σ 类预警（只有规格类判据）。
+        # 前半段建的那条预警还在表里，所以断言的是「没有新增、计数没有变化」
+        self._record(f"req-f2-{uuid.uuid4().hex[:6]}", {"predictions": ["OK"] * 3}, records)
+        after = self._alerts("spc_violation")
+        self.assertEqual(len(after), 1)
+        self.assertEqual(after[0].occurrence_count, 2, "没有基线就不再并入新的越限样本")
+
     def test_demo_channel_is_not_evaluated(self):
         self._record(
             f"demo-{uuid.uuid4().hex[:6]}",

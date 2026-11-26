@@ -84,6 +84,8 @@ from app.api import quality_domain as quality_domain_api
 from app.api import quality_alerts as quality_alerts_api
 from app.api import evidence_chain as evidence_chain_api
 from app.api import quality_monitor as quality_monitor_api
+from app.api import spc as spc_api
+from app.api import drift as drift_api
 from app.api import data_sources as data_sources_api
 from app.api import annotator_internal as annotator_internal_api
 from app.api import annotation_returns as annotation_returns_api
@@ -450,6 +452,8 @@ app.include_router(quality_domain_api.router)
 app.include_router(quality_alerts_api.router)
 app.include_router(evidence_chain_api.router)
 app.include_router(quality_monitor_api.router)
+app.include_router(spc_api.router)
+app.include_router(drift_api.router)
 app.include_router(data_sources_api.router)
 app.include_router(annotator_internal_api.router)
 
