@@ -411,6 +411,11 @@ def evaluate_inference_alerts(
                     "model_version_id": (
                         str(row.model_version_id) if row.model_version_id else None
                     ),
+                    # 预测的类别标签（无监督模型为空）：F3 缺陷帕累托按它经 NG 词表归并
+                    "predicted_label": (
+                        str(row.predicted_label)[:128]
+                        if row.predicted_label is not None else None
+                    ),
                     "occurred_at": occurred_at,
                 },
                 **common,

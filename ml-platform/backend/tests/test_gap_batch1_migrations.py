@@ -1,8 +1,9 @@
-"""补齐路线第一批迁移合同（_105–_109）：全新升级、定向降级、旧数据保留、单一头。
+"""补齐路线第一批迁移合同（_105–_110）：全新升级、定向降级、旧数据保留、单一头。
 
 迁移内容：_105 质量领域三新表 + edge_devices 影子两列；_106 推理结果明细两表；
 _107 外部数据源表 + 场景绑定列；_108 通知端点 kind CHECK 约束重建；
-_109（F2a）预警处置五新表 + 场景 alert_settings 列 + 推理明细 alert_id 改建外键。
+_109（F2a）预警处置五新表 + 场景 alert_settings 列 + 推理明细 alert_id 改建外键；
+_110（F3）监控驾驶的三个查询索引。
 本地在 SQLite 上跑；PostgreSQL 的往返由 CI 生产集成作业（alembic upgrade /
 current / check）背书。外键强制语义由 test_quality_domain 等用例覆盖，本模块
 只验证结构往返与数据保留。
@@ -30,8 +31,9 @@ from app.models.user import User
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 PRE_BATCH_REVISION = "20261120_104"
-BATCH_HEAD_REVISION = "20261126_109"
+BATCH_HEAD_REVISION = "20261126_110"
 BATCH_CHAIN = (
+    "20261126_110",
     "20261126_109",
     "20261125_108",
     "20261125_107",
@@ -118,6 +120,11 @@ class TestGapBatch1Migrations(unittest.TestCase):
         )
         bucket_indexes = {index["name"] for index in inspector.get_indexes("inference_result_buckets")}
         self.assertIn("ix_inference_result_buckets_bucket", bucket_indexes)
+        # F3 监控驾驶的查询索引（_110）
+        result_indexes = {index["name"] for index in inspector.get_indexes("inference_results")}
+        self.assertIn("ix_inference_results_station_occurred", result_indexes)
+        alert_indexes = {index["name"] for index in inspector.get_indexes("quality_alerts")}
+        self.assertTrue({"ix_quality_alerts_project_created", "ix_quality_alerts_station_created"} <= alert_indexes)
         # 模型与迁移零漂移
         command.check(self.config)
 
@@ -182,7 +189,7 @@ class TestGapBatch1Migrations(unittest.TestCase):
         """逐个迁移升级与一步到 head 等价（批内相邻迁移可独立执行）。"""
         for revision in (
             "20261125_105", "20261125_106", "20261125_107", "20261125_108",
-            "20261126_109",
+            "20261126_109", "20261126_110",
         ):
             command.upgrade(self.config, revision)
         command.check(self.config)

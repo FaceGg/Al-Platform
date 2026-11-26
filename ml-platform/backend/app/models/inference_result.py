@@ -53,6 +53,8 @@ class InferenceResult(Base):
             "scene_id",
             "occurred_at",
         ),
+        # F3 实时监控：按工位取最新一条推理结果（工位卡）
+        Index("ix_inference_results_station_occurred", "station_id", "occurred_at"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

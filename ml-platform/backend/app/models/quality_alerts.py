@@ -109,6 +109,9 @@ class QualityAlert(Base):
         Index("ix_quality_alerts_batch_no", "batch_no"),
         Index("ix_quality_alerts_sla_due", "sla_due_at"),
         Index("ix_quality_alerts_is_demo", "is_demo"),
+        # F3 监控驾驶：按时间窗聚合预警走势、按工位取最近预警
+        Index("ix_quality_alerts_project_created", "project_id", "created_at"),
+        Index("ix_quality_alerts_station_created", "station_id", "created_at"),
         # 同因合并查找路径（E20/D15）：项目 + 合并键 + 是否仍接受合并
         Index(
             "ix_quality_alerts_merge_key",
