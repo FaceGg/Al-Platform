@@ -358,6 +358,23 @@ class TestDispositionSnapshot(QualityAlertApiCase):
         ).json()["criteria"]
         self.assertEqual(criteria[1]["detail"]["baseline"]["version"], 2)
 
+    def test_snapshot_records_the_model_version_cited_by_the_alert(self):
+        """快照三要素里的模型版本：取自预警证据；库里查不到时如实留引用 id。"""
+        version_id = str(uuid.uuid4())
+        alert = self.make_alert(
+            merge_key=f"model-version-{self.case_key}",
+            evidence={"kind": "model_risk", "score": 0.97, "model_version_id": version_id},
+        )
+        self.assertEqual(self.ack(alert.id).status_code, 200)
+        response = self.client.post(
+            f"/api/projects/{self.project.id}/quality-alerts/{alert.id}/disposition",
+            json={"resolution": "confirmed_issue"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        snapshot = self.events(alert.id)[-1]["snapshot"]
+        self.assertEqual(snapshot["model_version"], {"id": version_id})
+        self.assertTrue(snapshot["frozen_at"])
+
 
 class TestAlertSettings(QualityAlertApiCase):
     def _settings_url(self):

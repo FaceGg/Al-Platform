@@ -338,14 +338,20 @@ class TestEvidenceChain(QualityAlertApiCase):
         self.assertIn("alert/alert.json", files)
 
     def test_model_version_export_and_scope_guards(self):
+        # 验收口径「上线检查五项结果留档并进入证据包」：先留档再导出
+        archived = self.client.post(self._overview_url().replace("evidence-overview", "evidence-checks"))
+        self.assertEqual(archived.status_code, 200, archived.text)
         created = self._export("model_version", self.version.id)
         self.assertEqual(created.status_code, 200, created.text)
         files, _ = self._download_zip(created.json()["artifact_id"])
         listed = self._verify_manifest(files)
-        for expected in ("model/stages.json", "model/launch_checks.json", "training/training_job.json",
+        for expected in ("model/stages.json", "model/launch_checks.json",
+                         "model/archived_check.json", "training/training_job.json",
                          "data/dataset_version.json", "production/deployments.json",
                          "production/alerts.json"):
             self.assertIn(expected, listed)
+        archived_payload = json.loads(files["model/archived_check.json"])
+        self.assertEqual(len(archived_payload["checks"]), 5)
 
         # 别的项目里的 id、非法 scope、不存在的预警都被拒，且不产生半截工件
         before = self.db.query(Artifact).filter(Artifact.type == "evidence_export").count()

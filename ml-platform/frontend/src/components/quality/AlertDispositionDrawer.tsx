@@ -3,7 +3,7 @@ import {
   Alert, App as AntApp, Button, Checkbox, Col, Descriptions, Drawer, Empty, Form, Input,
   List, Row, Select, Space, Steps, Tag, Timeline, Tooltip, Typography, Upload,
 } from "antd";
-import { UploadOutlined } from "@ant-design/icons";
+import { DownloadOutlined, UploadOutlined } from "@ant-design/icons";
 import ReactECharts from "echarts-for-react";
 import {
   ALERT_LABELS, SEVERITY_COLOR, STATUS_COLOR, alertEvidenceText,
@@ -16,6 +16,7 @@ import type {
 } from "../../api/qualityAlerts";
 import { useI18n } from "../../i18n";
 import { formatLocalTime } from "../../utils/time";
+import { downloadEvidence, exportEvidence } from "../../api/evidenceChain";
 
 /** 处置工作台抽屉（B1-02）：预警中心与处置工作台共用。技术方案 §9.8。 */
 
@@ -156,6 +157,26 @@ export default function AlertDispositionDrawer({
       return;
     }
     void run(() => disposeQualityAlert(projectId, alertId!, values), zh ? "处置已提交" : "Disposition submitted");
+  };
+
+  /** 按预警导出证据链 ZIP（处置轨迹、判据链、触发它的推理明细与模型证据）。 */
+  const exportEvidenceZip = async () => {
+    setBusy(true);
+    try {
+      const created = await exportEvidence(projectId, "alert", alertId!);
+      const blob = await downloadEvidence(projectId, created.artifact_id);
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = created.name || "evidence.zip";
+      link.click();
+      URL.revokeObjectURL(href);
+      message.success(zh ? `证据包已导出（${created.file_count} 个文件，附 MANIFEST.SHA256）` : `Evidence exported (${created.file_count} files)`);
+    } catch (e) {
+      message.error(apiErrorText(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const latestDisposition = useMemo(() => {
@@ -432,6 +453,9 @@ export default function AlertDispositionDrawer({
               >
                 <Button icon={<UploadOutlined />} disabled={isClosed || !alertId}>{zh ? "上传附件" : "Upload"}</Button>
               </Upload>
+              <Button icon={<DownloadOutlined />} loading={busy} onClick={exportEvidenceZip} data-testid="alert-export-evidence">
+                {zh ? "导出证据包" : "Export evidence"}
+              </Button>
             </Space>
             <List
               size="small"

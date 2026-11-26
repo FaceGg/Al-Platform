@@ -310,6 +310,24 @@ describe("QualityDispositionPage（处置工作台）", () => {
     renderPage(<QualityDispositionPage />, ["/quality/disposition?alert=a1"]);
     expect(await screen.findByTestId("waveform-chart")).toBeInTheDocument();
   });
+
+  it("exports an evidence package for the alert", async () => {
+    URL.createObjectURL = vi.fn(() => "blob:evidence");
+    URL.revokeObjectURL = vi.fn();
+    mocks.apiClient.post.mockResolvedValue({
+      data: { artifact_id: "e1", name: "evidence-alert.zip", file_size: 10, sha256: "x", file_count: 5, include_audit: false },
+    });
+    mockDetail({ status: "closed", resolution: "confirmed_issue", allowed_transitions: [] }, [CREATED_EVENT]);
+    renderPage(<QualityDispositionPage />, ["/quality/disposition?alert=a1"]);
+    await screen.findByTestId("alert-trail");
+    fireEvent.click(screen.getByTestId("alert-export-evidence"));
+    await waitFor(() => expect(mocks.apiClient.post).toHaveBeenCalledWith(
+      "/projects/p1/evidence-exports", { scope: "alert", target_id: "a1" },
+    ));
+    await waitFor(() => expect(mocks.apiClient.get).toHaveBeenCalledWith(
+      "/projects/p1/evidence-exports/e1/download", expect.objectContaining({ responseType: "blob" }),
+    ));
+  });
 });
 
 describe("QualitySopsPage（SOP 维护）", () => {

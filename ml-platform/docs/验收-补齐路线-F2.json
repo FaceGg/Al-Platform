@@ -1,0 +1,64 @@
+{
+  "schema_version": "gap-batch1-f2/v1",
+  "batch": "补齐路线第一批 F2（预警处置主干）",
+  "date": "2026-11-26",
+  "commits": {
+    "f2a_backend": "acdb740a",
+    "f2a_frontend": "f914e529",
+    "f2b_backend": "8fac852e",
+    "f2b_frontend_and_closeout": "本文件所在提交"
+  },
+  "spec": "ml-platform/docs/技术方案-补齐路线第一批.md#9",
+  "environment": {
+    "platform": "windows-local",
+    "python": "3.11 (.venv)",
+    "database": "sqlite (in-memory + sealed)",
+    "storage": "local-filesystem",
+    "frontend": "vitest/jsdom"
+  },
+  "acceptance_criteria": [
+    {"id": 1, "statement": "合成事件产生→确认→分配→处置全链可追溯", "status": "passed", "evidence": ["tests/test_quality_alerts.py::TestAlertLifecycle::test_full_lifecycle_records_continuous_status_trail", "tests/test_quality_alert_sources.py::TestInferenceAlertSources"]},
+    {"id": 2, "statement": "SLA 临期自动通知送达", "status": "passed", "scope": "站内信通道", "evidence": ["tests/test_quality_alert_sources.py::TestSlaWatch::test_due_then_overdue_notified_once_each", "tests/test_quality_alert_sources.py::TestSlaWatch::test_due_notification_reaches_project_owner_inbox"], "subitems": [{"status": "not_run", "item": "Celery beat 真实巡检节奏"}, {"status": "environment-blocked", "item": "钉钉/短信/邮件通道真实送达需现场凭据"}]},
+    {"id": 3, "statement": "责任人为空时确认不可用", "status": "passed", "evidence": ["tests/test_quality_alerts.py::TestAlertLifecycle::test_ack_requires_assignee", "frontend QualityAlertPages.test.tsx acknowledge/batch-ack 用例"]},
+    {"id": 4, "statement": "同因重放只增计数不产生重复条目", "status": "passed", "evidence": ["tests/test_quality_alerts.py::TestAlertMerge (5 用例)", "tests/test_quality_alert_sources.py::test_model_risk_threshold_merges_and_flags_rows"]},
+    {"id": 5, "statement": "触发下限独立于分级阈值且可配置", "status": "passed", "evidence": ["tests/test_quality_alerts.py::TestAlertSettings (2 用例)", "frontend 预警规则用例"]},
+    {"id": 6, "statement": "每条预警有完整阶段轨迹", "status": "passed", "evidence": ["tests/test_quality_alerts.py::test_full_lifecycle_records_continuous_status_trail"]},
+    {"id": 7, "statement": "误报结论自动进标注回流队列", "status": "passed", "scope": "任务建成", "evidence": ["tests/test_quality_alerts.py::TestFalsePositiveReviewTask (3 用例)"], "subitems": [{"status": "not_run", "item": "标注员门户内指派与标注操作"}]},
+    {"id": 8, "statement": "带波形样本可叠加目标窗口", "status": "passed", "scope": "逻辑层", "evidence": ["tests/test_quality_alerts.py::TestWaveformOverlay (3 用例)", "frontend 曲线叠加用例（图表为替身）"], "subitems": [{"status": "not_run", "item": "真实浏览器内渲染"}]},
+    {"id": 9, "statement": "处置单快照三要素齐全且不随后续变更改写", "status": "passed", "evidence": ["tests/test_quality_alerts.py::TestDispositionSnapshot (2 用例)"]},
+    {"id": 10, "statement": "判据链可用所记基线版本复算", "status": "passed", "evidence": ["tests/test_quality_spc_baselines.py::TestCriteriaChain (4 用例)"]},
+    {"id": 11, "statement": "修改规格后判据同步变化，规格单一来源", "status": "passed", "evidence": ["tests/test_quality_spc_baselines.py::test_spec_change_is_reflected_in_recomputed_chain"]},
+    {"id": 12, "statement": "设备心跳离线/恢复", "status": "passed", "evidence": ["tests/test_quality_alert_sources.py::TestDeviceWatch (3 用例)"]},
+    {"id": 13, "statement": "异机解包校验 SHA-256 全部通过", "status": "passed", "evidence": ["tests/test_evidence_exports.py 各导出用例重新解包并逐条复算 MANIFEST.SHA256"]},
+    {"id": 14, "statement": "模型版本可一屏看出各环节状态并下钻", "status": "passed", "scope": "接口与组件层", "evidence": ["tests/test_evidence_exports.py::test_overview_reports_all_twelve_stages_with_evidence_refs", "frontend EvidenceOverviewDrawer.test.tsx (5 用例)"], "subitems": [{"status": "not_run", "item": "真实浏览器内渲染"}]},
+    {"id": 15, "statement": "上线检查五项留档并进入证据包", "status": "passed", "evidence": ["tests/test_evidence_exports.py::test_archive_recomputes_the_model_checksum_and_keeps_a_snapshot", "tests/test_evidence_exports.py::test_model_version_export_and_scope_guards"]},
+    {"id": 16, "statement": "后三类来源接入时预警中心不改表", "status": "passed", "scope": "结构层", "evidence": ["quality_alerts.source_type CHECK 已含六类"]},
+    {"id": 17, "statement": "演示预警带标记且默认不显示", "status": "passed", "evidence": ["tests/test_quality_alert_sources.py::TestDemoRelay", "tests/test_quality_alerts.py::TestAlertListing"]}
+  ],
+  "horizontal_contracts": [
+    {"name": "迁移纪律（_109 往返/保留/外键/漂移门禁）", "status": "passed", "evidence": ["tests/test_gap_batch1_migrations.py::test_alerts_migration_keeps_inference_rows_and_links_alerts"], "subitems": [{"status": "not_run", "item": "PostgreSQL 往返（CI 背书）"}]},
+    {"name": "测试登记", "status": "passed", "evidence": ["week 1 新增 5 模块", "frontend gap_batch_f2a 组 2 文件", "test_suite_manifest 绿"]},
+    {"name": "写接口权限矩阵", "status": "passed", "evidence": ["各测试模块权限用例", "test_api_project_access / test_project_access 回归绿"]},
+    {"name": "页面与帮助同批", "status": "passed", "evidence": ["帮助章 4：预警中心/处置工作台/SOP 维护/模型库·闭环证据总览"]},
+    {"name": "泛化门禁", "status": "passed", "evidence": ["test_genericization_contract 绿"]},
+    {"name": "文档与代码同批", "status": "passed", "evidence": ["技术方案 §9.0 状态 + §9.11 实施修订 19 条"]}
+  ],
+  "full_regressions": {
+    "f2_backend_modules": {"status": "passed", "passed": 70, "subtests": 17},
+    "adjacent_existing_modules": {"status": "passed", "distinct_modules": 27},
+    "frontend_vitest": {"status": "passed", "files": 98, "passed": 624, "skipped": 19, "tsc": "clean"},
+    "backend_run_suite": {"status": "pending", "note": "在 F2 收口提交上以干净 worktree 全量执行，结果由后续回填提交登记（绑定被测提交 SHA）"}
+  },
+  "open_items": [
+    {"status": "not_run", "item": "真实浏览器内渲染与交互（曲线叠加/抽屉/下拉/批量确认）"},
+    {"status": "not_run", "item": "Celery beat 真实巡检节奏（设备 5 分钟、SLA 10 分钟）"},
+    {"status": "not_run", "item": "PostgreSQL 上 _109 往返与外键 DDL"},
+    {"status": "not_run", "item": "MinIO 下证据包下载与模型校验和重算"},
+    {"status": "not_run", "item": "标注员门户内复核任务的指派与标注操作"},
+    {"status": "environment-blocked", "item": "SLA 通知经钉钉/短信/邮件的真实送达"},
+    {"status": "design-limit", "item": "证据总览的切分/主动选样/现场验证标为未接入（第二批已按用户 2026-11-26 指示暂停、第四批门控）；下钻只到页面级"},
+    {"status": "design-limit", "item": "参数超限只评数值特征；波形统计量规格待接入通道保存波形原文后生效"},
+    {"status": "note", "item": "提交时安全扫描器多次未给出完整结论（scanner_enobufs），不据此宣称项目安全"}
+  ],
+  "conclusion": "17 条口径逐条结论均为 passed；第 2/7/8/14 条限定在逻辑层或接口与组件层，带 not_run / environment-blocked 子项且不折算为已验证。后端全量回归待回填。任务完成不等于发布就绪。"
+}

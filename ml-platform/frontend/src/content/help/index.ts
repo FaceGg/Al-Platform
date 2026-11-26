@@ -14,6 +14,7 @@ import qualityRecordsMd from "./quality-production-records.md?raw";
 import qualityAlertsMd from "./quality-alerts.md?raw";
 import qualityDispositionMd from "./quality-disposition.md?raw";
 import qualitySopsMd from "./quality-sops.md?raw";
+import modelEvidenceMd from "./model-evidence.md?raw";
 
 export interface HelpChapter {
   id: string;
@@ -80,6 +81,14 @@ export const HELP_CHAPTERS: HelpChapter[] = [
     order: 10,
     md: qualitySopsMd,
     navPrefixes: ["/quality/sops"],
+  },
+  {
+    id: "model-evidence",
+    titleZh: "模型库 · 闭环证据总览",
+    titleEn: "Model library · closed-loop evidence",
+    order: 11,
+    md: modelEvidenceMd,
+    navPrefixes: ["/models"],
   },
   {
     id: "closed-loop-demo",
