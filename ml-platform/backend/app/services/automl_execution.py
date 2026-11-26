@@ -3090,6 +3090,18 @@ def execute_automl_job(
         ) as dataset_path:
             frame = read_automl_dataset(dataset_path)
         params = dict(job.params or {})
+        # S2a 划分接线（B2-G1）：显式传 dataset_split_id 时按 development 行过滤；
+        # 盲测段永不进训练（发布终验/不回退由 S2b 消费）。缺省 = 现状路径零变化
+        # （20% 随机分层 seed 42 红线）。
+        dataset_split_id = params.get("dataset_split_id")
+        if dataset_split_id:
+            from app.services.dataset_splitting import (
+                filter_frame_by_roles,
+                load_role_indices,
+            )
+
+            split_roles = load_role_indices(db, dataset_split_id)
+            frame = filter_frame_by_roles(frame, split_roles, "development")
         target_column = params.get("target_column")
         task = normalize_task_type(params.get("task", "classification"))
         target_columns = list(params.get("target_columns") or [target_column])

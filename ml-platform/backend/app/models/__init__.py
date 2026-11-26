@@ -120,6 +120,12 @@ from app.models.drift import (
 from app.models.ingest import IngestEvent
 from app.models.approvals import ApprovalRequest
 from app.models.agent_audit import AgentActionAudit, AuditChainState
+from app.models.dataset_splitting import (
+    BlindTestUsage,
+    DatasetSplit,
+    DatasetSplitMember,
+    ModelingRound,
+)
 
 __all__ = [
     "User",
@@ -254,4 +260,8 @@ __all__ = [
     "ApprovalRequest",
     "AgentActionAudit",
     "AuditChainState",
+    "DatasetSplit",
+    "DatasetSplitMember",
+    "ModelingRound",
+    "BlindTestUsage",
 ]

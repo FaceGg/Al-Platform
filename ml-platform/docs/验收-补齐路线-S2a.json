@@ -1,0 +1,24 @@
+{
+  "schema_version": "gap-batch2-s2a/v1",
+  "batch": "补齐路线第二批 S2a（划分与盲测地基）",
+  "date": "2026-11-26",
+  "commits": {"s2a_closeout": "本文件所在提交"},
+  "spec": "ml-platform/docs/技术方案-补齐路线第二批.md#6",
+  "environment": {"platform": "windows-local", "python": "3.11 (.venv)", "database": "sqlite (in-memory + sealed)"},
+  "acceptance_criteria": [
+    {"id": 1, "statement": "轮次启动后划分不可变且落审计", "status": "passed", "evidence": ["无划分更新端点（构造性不可变）", "tests/test_modeling_rounds.py::test_start_round_locks_and_records_audit"]},
+    {"id": 2, "statement": "盲测使用自动进历史台账", "status": "passed", "evidence": ["test_blind_eval_cap_default_two（评估落 blind_test_usages）"]},
+    {"id": 3, "statement": "新轮次无法复用旧盲测", "status": "passed", "evidence": ["test_used_blind_cannot_be_reused_by_new_round（BLIND_REUSE_REJECTED）", "test_new_batch_new_version_can_start_fresh_round"], "note": "样本键集指纹跨版本可比；无键行号回退为划分身份比对（§12.9 限制）"},
+    {"id": 4, "statement": "同一种子重放划分一致", "status": "passed", "evidence": ["tests/test_dataset_splitting.py::test_same_seed_replays_same_split_and_fingerprint"]},
+    {"id": 5, "statement": "三策略划分正确", "status": "passed", "evidence": ["分层/分组整组/时间尾部三用例 + 无效输入拒绝"]},
+    {"id": 6, "statement": "默认路径零变化（兼容红线）", "status": "passed", "evidence": ["automl_execution 仅显式 dataset_split_id 时过滤", "AutoML 回归 81 用例绿（excluded_columns/anomaly/ensemble/multioutput）"]},
+    {"id": 7, "statement": "训练只用 development 行", "status": "passed", "scope": "单元级", "evidence": ["TestTrainingWiring::test_development_filter_excludes_blind_rows"], "subitems": [{"status": "not_run", "item": "split-aware 全链训练任务"}]},
+    {"id": 8, "statement": "盲测复核隐藏模型分数", "status": "passed", "scope": "API 裁剪层", "evidence": ["盲测评估响应不含逐样本分数"], "subitems": [{"status": "deferred", "item": "标注门户复核流程随 S3 多人标注重构"}]}
+  ],
+  "horizontal_contracts": [
+    {"name": "迁移纪律（_114）", "status": "passed", "evidence": ["test_gap_batch2_migrations.py::test_s2a_split_round_tables_upgrade_and_downgrade"]},
+    {"name": "测试登记", "status": "passed", "evidence": ["week 1 新增 2 模块", "test_suite_manifest 绿"]}
+  ],
+  "not_run_or_blocked": ["split-aware 全链训练任务", "PG 往返（CI 背书）", "28 万行成员批插压测"],
+  "conclusion": "S2a 八条口径全部 passed（7/8 带范围限制如实登记）；E03/E04 落地；兼容红线经 AutoML 回归背书。"
+}

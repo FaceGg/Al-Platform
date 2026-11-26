@@ -64,6 +64,9 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_agent_action_audit",
         # S1/R3+R4 统一四眼审批中心：四眼/过期回收+提醒/指纹失效/水位线/执行器/投影（B2-07/B2-10）
         "test_approval_center",
+        # S2a 划分与盲测地基（B2-G1）：三策略划分/指纹重放/轮次锁定/台账/E03 上限
+        "test_dataset_splitting",
+        "test_modeling_rounds",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",

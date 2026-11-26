@@ -50,7 +50,8 @@ class TestGapBatch2Migrations(unittest.TestCase):
 
     def test_s1_migration_is_single_head_chained_on_batch1(self):
         script = ScriptDirectory.from_config(self.config)
-        self.assertEqual(script.get_heads(), [S1_REVISION])
+        # 单头不变式 + 本批迁移链（后续批次追加不随批改常量）
+        self.assertEqual(len(script.get_heads()), 1, script.get_heads())
         by_id = {revision.revision: revision for revision in script.walk_revisions()}
         self.assertEqual(by_id[S1_REVISION].down_revision, PRE_S1_REVISION)
 
@@ -177,6 +178,33 @@ class TestGapBatch2Migrations(unittest.TestCase):
             self.assertTrue(approval_row.trace_id)
             action_row = db.get(AgentActionAudit, action_id)
             self.assertEqual(action_row.repeat_count, 0)
+
+    def test_s2a_split_round_tables_upgrade_and_downgrade(self):
+        """_114（S2a）：划分/成员/轮次/台账四新表；降级移除、既有表不动。"""
+        command.upgrade(self.config, "head")
+        tables = set(sa.inspect(self.engine).get_table_names())
+        self.assertTrue(
+            {"dataset_splits", "dataset_split_members", "modeling_rounds", "blind_test_usages"}
+            .issubset(tables)
+        )
+        checks = {
+            constraint["name"]
+            for constraint in sa.inspect(self.engine).get_check_constraints("dataset_splits")
+        }
+        self.assertIn("ck_dataset_splits_strategy", checks)
+        uniques = {
+            constraint["name"]
+            for constraint in sa.inspect(self.engine).get_unique_constraints("dataset_split_members")
+        }
+        self.assertIn("uq_split_members_row", uniques)
+        command.downgrade(self.config, PRE_S1_REVISION)
+        tables_after = set(sa.inspect(self.engine).get_table_names())
+        self.assertTrue(
+            {"dataset_splits", "dataset_split_members", "modeling_rounds", "blind_test_usages"}
+            .isdisjoint(tables_after)
+        )
+        command.upgrade(self.config, "head")
+        command.check(self.config)
 
 
 if __name__ == "__main__":
