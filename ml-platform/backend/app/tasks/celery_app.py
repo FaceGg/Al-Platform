@@ -24,6 +24,7 @@ celery_app = Celery(
         "app.tasks.kubernetes_tasks",
         "app.tasks.kg_tasks",
         "app.tasks.quality_tasks",
+        "app.tasks.ingest_tasks",
         "app.tasks.recovery",
     ],
     broker=(settings.celery_broker_url.get_secret_value() if settings.celery_broker_url else None),
@@ -138,6 +139,7 @@ from app.tasks import dataset_import_tasks  # noqa: E402,F401
 from app.tasks import annotation_return_tasks  # noqa: E402,F401
 from app.tasks import kubernetes_tasks  # noqa: E402,F401
 from app.tasks import quality_tasks  # noqa: E402,F401
+from app.tasks import ingest_tasks  # noqa: E402,F401
 from app.tasks import recovery  # noqa: E402,F401
 
 # prefork 子进程初始化时重建网关出网 client：httpx.Client 不是 fork 安全的，

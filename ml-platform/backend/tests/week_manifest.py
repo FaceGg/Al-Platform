@@ -48,6 +48,9 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_quality_monitor",
         # 补齐路线第一批 F4：SPC 纯函数统计库（Nelson 1–8 / 控制图 / 能力指数，B1-06）
         "test_spc_statistics",
+        # 补齐路线第一批 F5：接入开放——项目级只读 Key/宽限期轮换 + 三个只读资源 +
+        # 接入契约幂等落库 + 页脚状态三态（B1-13/B1-07）
+        "test_open_api",
         # 补齐路线第一批 F4：SPC 分析接口（两个来源、规格来源标注、判异登记预警，B1-06）
         "test_spc_api",
         # 补齐路线第一批 F4：漂移检测（特征直方图覆盖全部样本、基线、分级批检、接口，B1-09）

@@ -23,6 +23,7 @@ from sqlalchemy.orm import sessionmaker
 from app.config import settings
 from app.models.compute import EdgeDevice
 from app.models.inference_result import InferenceResult
+from app.models.model_registry import InferenceApiKey, InferenceDeployment
 from app.models.notifications import NotificationEndpoint
 from app.models.project import Project
 from app.models.quality_alerts import QualityAlert
@@ -31,8 +32,9 @@ from app.models.user import User
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 PRE_BATCH_REVISION = "20261120_104"
-BATCH_HEAD_REVISION = "20261126_111"
+BATCH_HEAD_REVISION = "20261126_112"
 BATCH_CHAIN = (
+    "20261126_112",
     "20261126_111",
     "20261126_110",
     "20261126_109",
@@ -64,7 +66,8 @@ F4_DRIFT_TABLES = (
     "drift_reports",
     "drift_report_features",
 )
-NEW_TABLES = F1_TABLES + F2_ALERT_TABLES + F4_DRIFT_TABLES
+F5_TABLES = ("ingest_events",)
+NEW_TABLES = F1_TABLES + F2_ALERT_TABLES + F4_DRIFT_TABLES + F5_TABLES
 
 
 def device_name_of(session, row_id):
@@ -196,7 +199,7 @@ class TestGapBatch1Migrations(unittest.TestCase):
         """逐个迁移升级与一步到 head 等价（批内相邻迁移可独立执行）。"""
         for revision in (
             "20261125_105", "20261125_106", "20261125_107", "20261125_108",
-            "20261126_109", "20261126_110", "20261126_111",
+            "20261126_109", "20261126_110", "20261126_111", "20261126_112",
         ):
             command.upgrade(self.config, revision)
         command.check(self.config)
@@ -227,6 +230,85 @@ class TestGapBatch1Migrations(unittest.TestCase):
         self.assertIn("inference_results", tables)
         command.upgrade(self.config, "head")
         command.check(self.config)
+
+    def test_open_keys_and_ingest_events_upgrade(self):
+        """_112（F5）：Key 表加项目归属与宽限期列；ingest_events 新表。"""
+        command.upgrade(self.config, "head")
+        self.assertIn("project_id", self._column_names(self.engine, "inference_api_keys"))
+        self.assertIn("grace_until", self._column_names(self.engine, "inference_api_keys"))
+        self.assertIn("ingest_events", sa.inspect(self.engine).get_table_names())
+
+        session_factory = sessionmaker(bind=self.engine, expire_on_commit=False)
+        with session_factory() as db:
+            user = User(username=f"gap-f5-{uuid.uuid4().hex[:8]}", password_hash="hash")
+            db.add(user)
+            db.flush()
+            project = Project(name="Gap F5", owner_id=user.id)
+            db.add(project)
+            db.flush()
+            deployment = InferenceDeployment(
+                project_id=project.id, name="gap-f5-deploy",
+                model_version_id=self._any_model_version_id(db),
+                created_by_id=user.id,
+            )
+            db.add(deployment)
+            db.flush()
+            db.add(InferenceApiKey(
+                deployment_id=deployment.id, prefix="gapf5prefix1",
+                secret_hash=self._stub_hash(), scopes=[],
+            ))
+            db.commit()
+
+        # 定向降级：新列与 ingest_events 移除（行保留的断言放在升回 head 之后——
+        # 降级态下 ORM 模型与表结构不一致）
+        command.downgrade(self.config, "20261126_111")
+        self.assertNotIn("ingest_events", sa.inspect(self.engine).get_table_names())
+        self.assertNotIn("project_id", self._column_names(self.engine, "inference_api_keys"))
+
+        command.upgrade(self.config, "head")
+        command.check(self.config)
+        with session_factory() as db:
+            prefixes = {row.prefix for row in db.query(InferenceApiKey).all()}
+        self.assertIn("gapf5prefix1", prefixes, "往返后既有 Key 行保留")
+
+    def _stub_hash(self):
+        from app.services.password_hashing import pbkdf2_sha256_hash
+
+        return pbkdf2_sha256_hash("gap-f5-stub-secret")
+
+    def _any_model_version_id(self, db):
+        """取任意模型版本 id；空库则造最小行（platform_joblib 须带模型库引用）。"""
+        from app.models.model_library import ModelLibrary
+        from app.models.model_registry import ModelVersion
+
+        existing = db.query(ModelVersion.id).limit(1).scalar()
+        if existing is not None:
+            return existing
+        library = ModelLibrary(
+            name=f"gap-f5-lib-{uuid.uuid4().hex[:6]}", owner_id=self._owner_id(db),
+            status="completed",
+        )
+        db.add(library)
+        db.flush()
+        version = ModelVersion(
+            registered_model_id=uuid.uuid4(), version_number=999,
+            source_kind="platform_joblib", source_artifact_id=uuid.uuid4(),
+            onnx_artifact_id=uuid.uuid4(), source_model_library_id=library.id,
+        )
+        db.add(version)
+        db.flush()
+        return version.id
+
+    def _owner_id(self, db):
+        from app.models.user import User as UserModel
+
+        owner = db.query(UserModel.id).first()
+        if owner is None:
+            user = User(username=f"gap-f5-owner-{uuid.uuid4().hex[:6]}", password_hash="hash")
+            db.add(user)
+            db.flush()
+            return user.id
+        return owner[0]
 
     def test_alerts_migration_keeps_inference_rows_and_links_alerts(self):
         """_109（F2a）：推理明细行跨降级保留；alert_id 改建外键后可挂预警。"""

@@ -12,6 +12,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
+from app.config import settings
 from app.models.artifact import Artifact
 from app.models.model_registry import (
     InferenceApiKey,
@@ -102,7 +103,7 @@ class TestInferenceApiKeys(unittest.TestCase):
         self.assertIsInstance(listed[0], ApiKeyView)
         safe_fields = {
             "id", "prefix", "scopes", "expires_at", "last_used_at",
-            "revoked_at", "created_at",
+            "revoked_at", "grace_until", "created_at",
         }
         serialized = asdict(listed[0])
         self.assertEqual(set(serialized), safe_fields)
@@ -216,6 +217,7 @@ class TestInferenceApiKeys(unittest.TestCase):
             secret_hash="candidate-hash",
             deployment_id=self.deployment.id,
             revoked_at=None,
+            grace_until=None,
             expires_at=None,
             scopes=["inference.predict"],
             last_used_at=None,
@@ -302,7 +304,12 @@ class TestInferenceApiKeys(unittest.TestCase):
         self.assertEqual(repeated.id, revoked_record.id)
         self.assertEqual(repeated.revoked_at, revoked_record.revoked_at)
 
-    def test_rotation_invalidates_the_previous_plaintext(self):
+    def test_rotation_gives_the_previous_key_a_grace_period(self):
+        """B1-13/D44（C19）：轮换不再立即吊销——旧 Key 在宽限期内可用，期满拒绝。"""
+        from datetime import datetime, timedelta
+
+        from app.config import settings
+
         created = self.service.create(
             self.db,
             self.deployment.id,
@@ -312,6 +319,34 @@ class TestInferenceApiKeys(unittest.TestCase):
         )
         self.db.commit()
         rotated = self.service.rotate(self.db, created.record.id, self.actor.id)
+        self.db.commit()
+        self.assertNotEqual(rotated.plaintext, created.plaintext)
+        # 宽限期内：旧明文仍可验证；新 Key 立即生效；旧 Key 无 revoked 标记
+        record = self.service.verify(self.db, created.plaintext, touch_last_used=False)
+        self.assertIsNone(record.revoked_at)
+        self.assertIsNotNone(record.grace_until)
+        self.service.verify(self.db, rotated.plaintext, touch_last_used=False)
+        # 宽限期已过：验证拒绝，错误码为宽限期满（401 同语义）
+        record.grace_until = datetime.utcnow() - timedelta(minutes=1)
+        self.db.commit()
+        with self.assertRaises(InferenceApiKeyError) as raised:
+            self.service.verify(self.db, created.plaintext)
+        self.assertEqual(raised.exception.code, "INFERENCE_API_KEY_GRACE_EXPIRED")
+
+    def test_rotation_with_zero_grace_keeps_the_legacy_behavior(self):
+        """grace=0 时保持旧行为（立即吊销）——配置回退口径。"""
+        from unittest.mock import patch
+
+        created = self.service.create(
+            self.db,
+            self.deployment.id,
+            self.actor.id,
+            ["inference.predict"],
+            None,
+        )
+        self.db.commit()
+        with patch.object(settings, "api_key_rotation_grace_hours", 0):
+            rotated = self.service.rotate(self.db, created.record.id, self.actor.id)
         self.db.commit()
         self.assertNotEqual(rotated.plaintext, created.plaintext)
         with self.assertRaises(InferenceApiKeyError) as raised:

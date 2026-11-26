@@ -1,0 +1,162 @@
+{
+  "schema_version": "gap-batch1-f5/v1",
+  "batch": "补齐路线第一批 F5（接入开放）",
+  "date": "2026-11-26",
+  "commits": {
+    "f5_closeout": "本文件所在提交"
+  },
+  "spec": "ml-platform/docs/技术方案-补齐路线第一批.md#9A",
+  "acceptance_criteria": [
+    {
+      "id": 1,
+      "statement": "外部脚本持 Key 分页拉取",
+      "status": "passed",
+      "evidence": [
+        "tests/test_open_api.py::test_project_key_reads_all_three_resources_with_pagination"
+      ]
+    },
+    {
+      "id": 2,
+      "statement": "轮换后旧 Key 宽限期内可用",
+      "status": "passed",
+      "evidence": [
+        "tests/test_open_api.py::test_key_management_requires_manage_permission_and_hides_plaintext_once",
+        "tests/test_inference_api_keys.py::test_rotation_gives_the_previous_key_a_grace_period"
+      ]
+    },
+    {
+      "id": 3,
+      "statement": "期满 401",
+      "status": "passed",
+      "evidence": [
+        "tests/test_open_api.py::test_grace_expiry_and_mismatch_are_unauthorized",
+        "tests/test_inference_api_keys.py::test_rotation_with_zero_grace_keeps_the_legacy_behavior"
+      ]
+    },
+    {
+      "id": 4,
+      "statement": "写动词全 405",
+      "status": "passed",
+      "evidence": [
+        "tests/test_open_api.py::test_write_verbs_are_rejected_and_reads_are_audited_free"
+      ]
+    },
+    {
+      "id": 5,
+      "statement": "端到端延迟秒级（Kafka）",
+      "status": "not_run",
+      "reason": "本机无 Kafka 环境；契约/幂等经手动发布端点验证"
+    },
+    {
+      "id": 6,
+      "statement": "重放不重复计数",
+      "status": "passed",
+      "evidence": [
+        "tests/test_open_api.py::test_kafka_replay_from_offsets_is_idempotent",
+        "test_same_id_same_content_is_idempotent_and_same_id_different_content_is_traceable",
+        "test_contract_rejects_invalid_payloads_with_reasons"
+      ]
+    },
+    {
+      "id": 7,
+      "statement": "同键不同内容可追查",
+      "status": "passed",
+      "evidence": [
+        "派生 ID 追查行，原 accepted 行不覆盖"
+      ]
+    },
+    {
+      "id": 8,
+      "statement": "链路状态页脚真实反映",
+      "status": "passed",
+      "scope": "组件层",
+      "evidence": [
+        "tests/test_open_api.py::test_ingest_status_three_states_driven_by_real_heartbeat",
+        "frontend AppLayout IngestStatusFooter"
+      ],
+      "subitems": [
+        {
+          "status": "not_run",
+          "item": "真实浏览器渲染"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "statement": "事件接入契约（E18）",
+      "status": "passed",
+      "evidence": [
+        "pydantic v1 契约 + rejected 原因 + latency_seconds + topic/partition/offset"
+      ]
+    }
+  ],
+  "horizontal_contracts": [
+    {
+      "name": "迁移纪律（_112）",
+      "status": "passed",
+      "evidence": [
+        "tests/test_gap_batch1_migrations.py 8 用例"
+      ]
+    },
+    {
+      "name": "新依赖",
+      "status": "passed",
+      "evidence": [
+        "kafka-python-ng==2.2.3 纯 Python 零强制依赖进 requirements + wheelhouse"
+      ]
+    },
+    {
+      "name": "默认栈不变（C5）",
+      "status": "passed",
+      "evidence": [
+        "kafka / kafka-ingest 均 profiles:[kafka]"
+      ],
+      "subitems": [
+        {
+          "status": "not_run",
+          "item": "docker compose config（本机无 docker，CI 背书）"
+        }
+      ]
+    }
+  ],
+  "full_regressions": {
+    "f5_backend": {
+      "status": "passed",
+      "passed": 18
+    },
+    "adjacent_modules": {
+      "status": "passed",
+      "modules": 12,
+      "passed": 161,
+      "subtests": 115
+    },
+    "frontend_affected": {
+      "status": "passed",
+      "files": 3,
+      "passed": 28
+    },
+    "backend_run_suite": {
+      "status": "pending",
+      "note": "第一批最终提交上干净 worktree 全量执行，结果回填"
+    }
+  },
+  "open_items": [
+    {
+      "status": "not_run",
+      "item": "Kafka 真实链路与消费循环长跑"
+    },
+    {
+      "status": "not_run",
+      "item": "docker compose config 与页脚条真实浏览器渲染"
+    },
+    {
+      "status": "registered",
+      "item": "API 市场页密钥管理界面未做（后端端点已齐）；kafka-ingest 事件归属取首个项目"
+    },
+    {
+      "status": "note",
+      "item": "实施修复 4 项（scope 校验器/幂等哈希/duplicate 不插行/追查行派生 ID），见验收 md §3"
+    }
+  ],
+  "conclusion": "9 条口径：8 passed、1 not_run（Kafka 真实链路）。计划 §2 F5 验收原文（口径 1–4）全部通过。"
+}

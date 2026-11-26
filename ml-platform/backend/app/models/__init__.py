@@ -117,6 +117,7 @@ from app.models.drift import (
     DriftReportFeature,
     InferenceFeatureHistogram,
 )
+from app.models.ingest import IngestEvent
 
 __all__ = [
     "User",
@@ -247,4 +248,5 @@ __all__ = [
     "DriftReport",
     "DriftReportFeature",
     "InferenceFeatureHistogram",
+    "IngestEvent",
 ]

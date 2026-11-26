@@ -1,7 +1,7 @@
 """Lifecycle service for deployment-scoped inference API keys."""
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import secrets
 import threading
@@ -13,7 +13,8 @@ from app.services.password_hashing import PasswordHasher
 from app.models.model_registry import InferenceApiKey
 
 
-ALLOWED_SCOPES = frozenset({"inference.predict"})
+# B1-13/D43：部署级推理 Key 与项目级只读 Key 两型——scope 各一
+ALLOWED_SCOPES = frozenset({"inference.predict", "project.read"})
 USAGE_TOUCH_INTERVAL_SECONDS = 60
 VERIFICATION_CACHE_TTL_SECONDS = 300
 VERIFICATION_CACHE_MAX_ENTRIES = 1024
@@ -49,6 +50,7 @@ class ApiKeyView:
     expires_at: datetime | None
     last_used_at: datetime | None
     revoked_at: datetime | None
+    grace_until: datetime | None
     created_at: datetime | None
 
 
@@ -137,14 +139,16 @@ class InferenceApiKeyService:
             expires_at=record.expires_at,
             last_used_at=record.last_used_at,
             revoked_at=record.revoked_at,
+            grace_until=record.grace_until,
             created_at=record.created_at,
         )
 
-    def create(self, db, deployment_id, actor_id, scopes, expires_at) -> CreatedApiKey:
+    def create(self, db, deployment_id, actor_id, scopes, expires_at, *, project_id=None) -> CreatedApiKey:
         normalized_scopes = self._normalized_scopes(scopes)
         plaintext = "mli_" + secrets.token_urlsafe(32)
         record = InferenceApiKey(
             deployment_id=deployment_id,
+            project_id=project_id,
             prefix=plaintext[:12],
             secret_hash=self._context.hash(plaintext),
             scopes=list(normalized_scopes),
@@ -192,6 +196,12 @@ class InferenceApiKeyService:
         if record.revoked_at is not None:
             raise InferenceApiKeyError("INFERENCE_API_KEY_REVOKED")
         if (
+            record.grace_until is not None
+            and _as_utc_naive(record.grace_until) <= utcnow()
+        ):
+            # 轮换宽限期已过（B1-13/D44，C19）：旧 Key 期满，401 同语义
+            raise InferenceApiKeyError("INFERENCE_API_KEY_GRACE_EXPIRED")
+        if (
             record.expires_at is not None
             and _as_utc_naive(record.expires_at) <= utcnow()
         ):
@@ -229,14 +239,40 @@ class InferenceApiKeyService:
         return record
 
     def rotate(self, db, key_id, actor_id) -> CreatedApiKey:
-        record = self.revoke(db, key_id, actor_id)
+        """轮换（B1-13/D44，C19）：旧 Key 不再立即吊销——进入宽限期
+        （api_key_rotation_grace_hours，默认 24h），期满验证自然拒绝；
+        新 Key 立即生效。旧行为（立即吊销）可用 grace=0 复现。
+        """
+        from app.config import settings as app_settings
+
+        record = self._record(db, key_id)
+        grace_hours = int(app_settings.api_key_rotation_grace_hours)
+        if grace_hours > 0:
+            record.grace_until = utcnow() + timedelta(hours=grace_hours)
+            db.flush()
+        else:
+            record.revoked_at = utcnow()
+            db.flush()
         return self.create(
             db,
             record.deployment_id,
             actor_id,
             record.scopes,
             record.expires_at,
+            project_id=record.project_id,
         )
+
+    def create_project_key(self, db, project_id, actor_id, scopes, expires_at=None) -> CreatedApiKey:
+        """项目级只读 Key（B1-13/D43）：scopes 应只含 project.read。"""
+        return self.create(
+            db, None, actor_id, scopes, expires_at, project_id=project_id,
+        )
+
+    def list_for_project(self, db, project_id) -> list[ApiKeyView]:
+        records = db.query(InferenceApiKey).filter(
+            InferenceApiKey.project_id == project_id,
+        ).order_by(InferenceApiKey.created_at.desc(), InferenceApiKey.id.desc()).all()
+        return [self._view(record) for record in records]
 
     def list_for_deployment(self, db, deployment_id) -> list[ApiKeyView]:
         records = db.query(InferenceApiKey).filter(

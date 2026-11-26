@@ -428,25 +428,40 @@ class InferenceApiKey(Base):
             "length(prefix) = 12",
             name="ck_inference_api_keys_prefix_length",
         ),
+        # B1-13/D43：部署级推理 Key 与项目级只读 Key 两型——恰好一个归属
+        CheckConstraint(
+            "(deployment_id IS NOT NULL) <> (project_id IS NOT NULL)",
+            name="ck_inference_api_keys_owner_exclusive",
+        ),
         Index(
             "ix_inference_api_keys_deployment_prefix",
             "deployment_id",
             "prefix",
             unique=True,
         ),
+        Index("ix_inference_api_keys_project_id", "project_id"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     deployment_id = Column(
         UUID(as_uuid=True),
         ForeignKey("inference_deployments.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+    )
+    # 项目级只读 Key 的归属（B1-13/D43）；部署级 Key 此列为空
+    project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=True,
     )
     prefix = Column(String(12), nullable=False)
     secret_hash = Column(String(512), nullable=False)
     scopes = Column(JSON, nullable=False, default=list)
     expires_at = Column(DateTime, nullable=True)
     revoked_at = Column(DateTime, nullable=True)
+    # 轮换宽限期截止（B1-13/D44）：非空且未过期 = 旧 Key 在宽限期内仍可验证；
+    # 与 revoked_at 互斥使用（轮换不再立即吊销）
+    grace_until = Column(DateTime, nullable=True)
     last_used_at = Column(DateTime, nullable=True)
     created_by_id = Column(
         UUID(as_uuid=True),

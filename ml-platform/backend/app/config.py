@@ -182,6 +182,17 @@ class Settings(BaseSettings):
     drift_baseline_min_samples: int = Field(default=100, ge=10)
     # 单次推理请求累计特征直方图的样本上限（0 = 不限）：限的是落库线程的单次工作量
     inference_histogram_max_records: int = Field(default=2000, ge=0)
+    # API Key 轮换宽限期（B1-13/D44，C19）：轮换后旧 Key 在宽限期内仍可验证，期满 401；
+    # 0 = 立即失效（旧行为）
+    api_key_rotation_grace_hours: int = Field(default=24, ge=0, le=720)
+    # Kafka 实时接入（B1-07/D51）：默认关闭——不配置 Kafka 就完全不启动，
+    # 页脚如实显示「实时链路未启用」（诚实设计⑤）
+    kafka_ingest_enabled: bool = False
+    kafka_bootstrap_servers: str | None = None
+    kafka_ingest_topic: str = Field(default="quality-ingest", min_length=1)
+    kafka_ingest_group_id: str = Field(default="ml-platform-ingest", min_length=1)
+    kafka_ingest_poll_seconds: float = Field(default=2.0, ge=0.5, le=60.0)
+    ingest_heartbeat_stale_seconds: int = Field(default=120, ge=10, le=3600)
 
     annotation_max_samples: int = Field(default=1_000_000, ge=1, le=10_000_000)
     annotation_max_input_columns: int = Field(default=200, ge=1, le=2_000)

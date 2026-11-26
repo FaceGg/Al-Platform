@@ -39,6 +39,9 @@ onnxruntime==1.24.*
 skl2onnx==1.20.*
 onnxmltools==1.16.*
 websockets>=12.0
+# Kafka 实时接入客户端（B1-07，F5）：纯 Python；默认不启用（KAFKA_INGEST_ENABLED=false），
+# compose profile kafka 才启动消费进程——依赖随镜像安装，不加重默认栈的运行时行为
+kafka-python-ng==2.2.3
 httpx==0.28.*
 requests==2.34.*
 mlflow-skinny==3.15.*

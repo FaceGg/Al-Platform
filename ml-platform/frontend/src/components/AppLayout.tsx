@@ -359,6 +359,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <div className="fade-in">{children}</div>
           </main>
         </div>
+        <IngestStatusFooter />
       </div>
 
       {/* Profile Modal */}
@@ -377,4 +378,40 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 function tagLabel(tag: string, zh: boolean) {
   if (tag === "NEW") return zh ? "新" : "NEW";
   return tag;
+}
+
+/** 全站页脚的实时链路状态（B1-07，诚实设计⑤变体，D52）：
+ * 状态由消费心跳驱动——未启用如实说「未启用」，不宣称链路生效。 */
+function IngestStatusFooter() {
+  const { lang } = useI18n();
+  const zh = lang === "zh";
+  const [status, setStatus] = useState<{ state: string; detail: string } | null>(null);
+  useEffect(() => {
+    if (!localStorage.getItem("token")) return;
+    let active = true;
+    const load = () => {
+      apiClient.get("/platform/ingest-status").then((response) => {
+        if (active) setStatus(response.data ?? null);
+      }).catch(() => undefined);
+    };
+    load();
+    const timer = window.setInterval(load, 60_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
+  if (!status || status.state === "disabled") return null;
+  const color = status.state === "ok" ? "#3f8600" : "#cf1322";
+  const label = status.state === "ok" ? (zh ? "实时链路正常" : "Live ingest: OK") : (zh ? "实时链路告警" : "Live ingest: alarm");
+  return (
+    <div
+      data-testid="ingest-status-footer"
+      style={{
+        display: "flex", alignItems: "center", gap: 8,
+        padding: "4px 16px", fontSize: 12, color: "var(--ant-color-text-tertiary, #999)",
+        borderTop: "1px solid var(--ant-color-border-secondary, #333)",
+      }}
+    >
+      <Tag color={status.state === "ok" ? "green" : "red"} style={{ margin: 0 }}>{label}</Tag>
+      <span>{status.detail}</span>
+    </div>
+  );
 }
