@@ -132,6 +132,13 @@ from app.models.release_governance import (
     RolloutReceipt,
     ShadowComparison,
 )
+from app.models.label_quality import (
+    ActiveLearningSelection,
+    AnnotationBlindLabel,
+    ConsistencyRound,
+    LabelArbitration,
+    PseudoLabelBatch,
+)
 
 __all__ = [
     "User",
@@ -274,4 +281,9 @@ __all__ = [
     "ReleaseCheck",
     "ReleasePreauthorization",
     "RolloutReceipt",
+    "ActiveLearningSelection",
+    "ConsistencyRound",
+    "AnnotationBlindLabel",
+    "LabelArbitration",
+    "PseudoLabelBatch",
 ]

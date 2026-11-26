@@ -69,6 +69,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_modeling_rounds",
         # S2b 发布治理链（B2-09/02/03/G2/G3）：门禁五项+不回退+Wilson+预授权四失效+回执
         "test_release_governance",
+        # S3 标注质量链（B2-05/06/G4/E15）：九策略选样+κ仲裁+纯度门禁+伪标签凭证
+        "test_label_quality",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",
