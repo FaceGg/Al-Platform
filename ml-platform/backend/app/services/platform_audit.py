@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models.platform_audit import PlatformAuditEvent
 from app.services.audit import audit_request_context, redact_changes
+from app.services.audit_chain import append as append_chain
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ def record_platform_event(
         changes=redact_changes(intent.changes, allowed=set(intent.changes)),
         error_code=error_code,
     )
+    append_chain(db, "platform_audit_events", event)
     db.add(event)
     return event
 

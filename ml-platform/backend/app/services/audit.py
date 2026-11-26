@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import uuid
 
 from app.models.access import AuditEvent
+from app.services.audit_chain import append as append_chain
 from app.services.project_access import (
     ROLE_PERMISSIONS,
     ProjectAccessError,
@@ -121,7 +122,7 @@ class AuditService:
         error_code,
     ) -> None:
         with self.session_factory() as audit_db:
-            audit_db.add(self._event(
+            event = self._event(
                 intent=intent,
                 actor_id=actor_id,
                 actor_username=actor_username,
@@ -130,7 +131,9 @@ class AuditService:
                 result="failed",
                 changes=changes,
                 error_code=error_code,
-            ))
+            )
+            append_chain(audit_db, "audit_events", event)
+            audit_db.add(event)
             audit_db.commit()
 
     @contextmanager
@@ -153,7 +156,7 @@ class AuditService:
         if access is None:
             raise ProjectAccessError("PROJECT_NOT_FOUND", hidden=True)
         if permission not in ROLE_PERMISSIONS[access.role]:
-            db.add(self._event(
+            denied_event = self._event(
                 intent=intent,
                 actor_id=actor_id,
                 actor_username=actor_username,
@@ -162,13 +165,15 @@ class AuditService:
                 result="denied",
                 changes=changes,
                 error_code="PROJECT_PERMISSION_DENIED",
-            ))
+            )
+            append_chain(db, "audit_events", denied_event)
+            db.add(denied_event)
             db.commit()
             raise ProjectAccessError("PROJECT_PERMISSION_DENIED", hidden=False)
 
         try:
             yield
-            db.add(self._event(
+            success_event = self._event(
                 intent=intent,
                 actor_id=actor_id,
                 actor_username=actor_username,
@@ -176,7 +181,9 @@ class AuditService:
                 source_ip=source_ip,
                 result="success",
                 changes=changes,
-            ))
+            )
+            append_chain(db, "audit_events", success_event)
+            db.add(success_event)
             db.commit()
         except Exception as error:
             db.rollback()

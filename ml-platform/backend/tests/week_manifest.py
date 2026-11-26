@@ -58,6 +58,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         # 补齐路线第二批 S1（2026-11-26 起）：审批与审计底座
         # 迁移合同 _113（两审计表哈希链三列 + 链尾状态 + 动作审计 + 统一审批队列）
         "test_gap_batch2_migrations",
+        # S1/R1 审计哈希链：两表成链、篡改/断链定位、三写入分支挂接、校验端点（B2-08/E10）
+        "test_audit_hash_chain",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",
