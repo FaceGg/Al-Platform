@@ -206,6 +206,28 @@ class TestGapBatch2Migrations(unittest.TestCase):
         command.upgrade(self.config, "head")
         command.check(self.config)
 
+    def test_s2b_release_governance_tables_upgrade_and_downgrade(self):
+        """_115（S2b）：影子报告/门禁/预授权/回执四新表 + role CHECK 加 challenger。"""
+        command.upgrade(self.config, "head")
+        tables = set(sa.inspect(self.engine).get_table_names())
+        self.assertTrue(
+            {"shadow_comparisons", "release_checks", "release_preauthorizations", "rollout_receipts"}
+            .issubset(tables)
+        )
+        checks = {
+            constraint["name"]
+            for constraint in sa.inspect(self.engine).get_check_constraints("deployment_targets")
+        }
+        self.assertIn("ck_deployment_targets_role", checks)
+        command.downgrade(self.config, "20261126_114")
+        tables_after = set(sa.inspect(self.engine).get_table_names())
+        self.assertTrue(
+            {"shadow_comparisons", "release_checks", "release_preauthorizations", "rollout_receipts"}
+            .isdisjoint(tables_after)
+        )
+        command.upgrade(self.config, "head")
+        command.check(self.config)
+
 
 if __name__ == "__main__":
     unittest.main()

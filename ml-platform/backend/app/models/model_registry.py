@@ -309,7 +309,8 @@ class DeploymentTarget(Base):
             name="ck_deployment_targets_weight",
         ),
         CheckConstraint(
-            "role IN ('stable', 'candidate')",
+            # challenger（S2b/B2-09）：影子候选目标，权重恒 0 不进生产路由
+            "role IN ('stable', 'candidate', 'challenger')",
             name="ck_deployment_targets_role",
         ),
         Index("ix_deployment_targets_model_version", "model_version_id"),

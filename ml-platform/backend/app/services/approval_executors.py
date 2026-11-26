@@ -187,13 +187,172 @@ def _disposition_alert(db: Session, payload: dict):
     ).scalar_one_or_none()
 
 
+class ModelReleaseExecutor:
+    """模型发布（B2-03/G2/G3）：批准 → 影子窗口前置 → 预授权或灰度链。
+
+    门禁检查（release_checks）在 release-request 端点创建审批单时已评估落档；
+    本执行器在批准时执行发布动作（create_candidate 灰度链）。
+    """
+
+    def fingerprint(self, db: Session, payload: dict) -> str:
+        from app.services.approvals import fingerprint_payload
+
+        return fingerprint_payload({
+            "deployment_id": payload.get("deployment_id"),
+            "model_version_id": payload.get("model_version_id"),
+        })
+
+    def validate_create(self, db: Session, payload: dict) -> None:
+        from app.services.release_governance import GovernanceError, evaluate_release_gates
+
+        deployment, version = _release_subjects(db, payload)
+        from app.models.approvals import ApprovalRequest
+
+        approval = ApprovalRequest(
+            project_id=deployment.project_id, type="model_release",
+            title="release-gates-probe", payload={},
+            payload_fingerprint="0" * 64,
+            created_by_id=None, expires_at=_datetime_now(),
+        )
+        db.add(approval)
+        db.flush()
+        checks = evaluate_release_gates(db, deployment=deployment, version=version,
+                                        approval=approval)
+        for check in checks:
+            db.delete(check)
+        db.delete(approval)
+        db.flush()
+        failed = [c for c in checks if c.verdict == "failed"]
+        if failed:
+            raise ApprovalError(
+                "RELEASE_GATE_FAILED",
+                "、".join(f"{c.check_key}" for c in failed),
+            )
+
+    def on_reject(self, db: Session, *, approval: ApprovalRequest, note: str) -> None:
+        return None
+
+    def perform(self, db: Session, *, approval: ApprovalRequest, actor_id) -> dict:
+        """批准后发布：预授权命中 → 直接灰度（留痕）；否则按发布单走灰度链。"""
+        from app.services.release_governance import (
+            GovernanceError,
+            check_preauthorization,
+            shadow_window_gate,
+        )
+
+        payload = approval.payload or {}
+        deployment, version = _release_subjects(db, payload)
+        # G3 影子观察窗前置（不足可经 quality.manage 强制接管——在 API 层放行）
+        gate = shadow_window_gate(db, deployment=deployment)
+        if not gate.get("passed"):
+            raise ValueError(
+                "shadow window gate not passed: " + str(gate.get("reason"))
+            )
+        auth_id = payload.get("preauthorization_id")
+        if auth_id:
+            check_preauthorization(
+                db, auth_id=_uuid.UUID(str(auth_id)),
+                deployment_id=deployment.id,
+                gates_fingerprint=str(payload.get("acceptance_gates_fingerprint") or ""),
+                applicant_id=approval.created_by_id,
+            )
+        from app.services.inference_rollout import InferenceRolloutService
+
+        service = InferenceRolloutService(db)
+        rollout = service.create_candidate(
+            deployment_id=deployment.id,
+            model_version_id=version.id,
+            strategy=str(payload.get("strategy") or "canary"),
+            actor_id=actor_id,
+        )
+        return {
+            "rollout_id": str(rollout.id),
+            "released_via": "preauthorization" if auth_id else "approval",
+        }
+
+
+def _release_subjects(db: Session, payload: dict):
+    import uuid as _uuid
+
+    from app.models.model_registry import InferenceDeployment, ModelVersion
+
+    deployment_id = payload.get("deployment_id")
+    version_id = payload.get("model_version_id")
+    if not deployment_id or not version_id:
+        raise ApprovalError("RELEASE_PAYLOAD_INCOMPLETE")
+    deployment = db.get(InferenceDeployment, _uuid.UUID(str(deployment_id)))
+    version = db.get(ModelVersion, _uuid.UUID(str(version_id)))
+    if deployment is None or version is None:
+        raise ApprovalError("RELEASE_SUBJECT_NOT_FOUND")
+    return deployment, version
+
+
+class ExemptionExecutor:
+    """发布豁免（E01）：仅「终验通过、仅不回退未过」可发起；理由≥10 字；
+    豁免人≠发起人（四眼在队列层强制）。其余硬检查不可豁免。"""
+
+    def fingerprint(self, db: Session, payload: dict) -> str:
+        from app.services.approvals import fingerprint_payload
+
+        return fingerprint_payload(payload)
+
+    def validate_create(self, db: Session, payload: dict) -> None:
+        from app.services.approvals import ApprovalError
+
+        note = str(payload.get("reason") or "")
+        if len(note.strip()) < 10:
+            raise ApprovalError("EXEMPTION_REASON_TOO_SHORT")
+        latest = _latest_release_checks(db, payload)
+        if latest is None:
+            raise ApprovalError("EXEMPTION_NO_RELEASE_CHECKS")
+        verdicts = {c.check_key: c.verdict for c in latest}
+        hard_failures = [
+            key for key, verdict in verdicts.items()
+            if verdict == "failed" and key != "no_regression"
+        ]
+        if "blind_final_validation" in verdicts and verdicts["blind_final_validation"] != "passed":
+            raise ApprovalError("EXEMPTION_FINAL_VALIDATION_NOT_PASSED")
+        if hard_failures:
+            raise ApprovalError("EXEMPTION_HARD_CHECKS_FAILED")
+
+    def on_reject(self, db: Session, *, approval: ApprovalRequest, note: str) -> None:
+        return None
+
+    def perform(self, db: Session, *, approval: ApprovalRequest, actor_id) -> dict:
+        return {"exemption_recorded": True,
+                "release_checks_kept": bool((approval.payload or {}).get("release_approval_id"))}
+
+
+def _latest_release_checks(db: Session, payload: dict):
+    import uuid as _uuid
+
+    from app.models.release_governance import ReleaseCheck
+
+    release_approval_id = payload.get("release_approval_id")
+    if not release_approval_id:
+        return None
+    return (
+        db.query(ReleaseCheck)
+        .filter(ReleaseCheck.approval_id == _uuid.UUID(str(release_approval_id)))
+        .all()
+    )
+
+
+def _datetime_now():
+    from datetime import datetime
+
+    return datetime.utcnow()
+
+
 # 类型 → 执行器实例（新类型在此注册一项）
 _EXECUTORS = {
     "retrain_proposal": RetrainProposalExecutor(),
     "disposition": DispositionExecutor(),
+    "model_release": ModelReleaseExecutor(),
+    "exemption": ExemptionExecutor(),
 }
 
-_RESERVED_TYPES = ("model_release", "recipe_change", "exemption")
+_RESERVED_TYPES = ("recipe_change",)
 
 
 def get_executor(approval_type: str):

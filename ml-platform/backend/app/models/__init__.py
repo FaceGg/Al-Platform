@@ -126,6 +126,12 @@ from app.models.dataset_splitting import (
     DatasetSplitMember,
     ModelingRound,
 )
+from app.models.release_governance import (
+    ReleaseCheck,
+    ReleasePreauthorization,
+    RolloutReceipt,
+    ShadowComparison,
+)
 
 __all__ = [
     "User",
@@ -264,4 +270,8 @@ __all__ = [
     "DatasetSplitMember",
     "ModelingRound",
     "BlindTestUsage",
+    "ShadowComparison",
+    "ReleaseCheck",
+    "ReleasePreauthorization",
+    "RolloutReceipt",
 ]

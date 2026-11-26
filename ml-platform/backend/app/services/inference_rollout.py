@@ -632,6 +632,25 @@ class InferenceRolloutService:
         if next_step >= 10000:
             self._check_expected(rollout, expected_lock_version)
             deployment = self._deployment(db, rollout.deployment_id)
+            # G3 无回执不放量（S2b/E12，按 rollout 阈值 opt-in——默认关闭 =
+            # 既有行为零变化；thresholds.min_receipt_scored_count > 0 时，
+            # 全量前要求有效回执打分量达到约定数量）
+            required_receipts = int(
+                (rollout.thresholds or {}).get("min_receipt_scored_count") or 0
+            )
+            if required_receipts > 0:
+                from app.services.release_governance import valid_receipt_volume
+
+                volume = valid_receipt_volume(db, rollout.id)
+                if volume < required_receipts:
+                    self._transition(
+                        db,
+                        rollout,
+                        expected_lock_version,
+                        last_error_code="ROLLOUT_RECEIPT_VOLUME_SHORT",
+                    )
+                    db.commit()
+                    raise InferenceRolloutError("ROLLOUT_RECEIPT_VOLUME_SHORT")
             try:
                 self._replace_legacy_runtime(
                     db,

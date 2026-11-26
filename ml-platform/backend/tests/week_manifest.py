@@ -67,6 +67,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         # S2a 划分与盲测地基（B2-G1）：三策略划分/指纹重放/轮次锁定/台账/E03 上限
         "test_dataset_splitting",
         "test_modeling_rounds",
+        # S2b 发布治理链（B2-09/02/03/G2/G3）：门禁五项+不回退+Wilson+预授权四失效+回执
+        "test_release_governance",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",

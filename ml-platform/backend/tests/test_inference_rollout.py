@@ -487,6 +487,71 @@ class TestInferenceRollout(unittest.TestCase):
             str(rollout.to_revision_id),
         )
 
+    def test_receipt_volume_gate_blocks_full_rollout_until_threshold_met(self):
+        """S2b/G3（E12）：thresholds.min_receipt_scored_count opt-in——有效回执
+        打分量不足时最后一阶不放行（ROLLOUT_RECEIPT_VOLUME_SHORT），补足后放行；
+        不设阈值 = 既有行为零变化（其余用例即证）。"""
+        runtime = FakeRuntime()
+        service = InferenceRolloutService(runtime)
+        candidate = self.make_candidate_revision((9000, 1000))
+        rollout = DeploymentRollout(
+            deployment_id=self.deployment.id,
+            from_revision_id=self.stable_revision.id,
+            to_revision_id=candidate.id,
+            state="progressing",
+            current_step=1000,
+            lock_version=1,
+            step_schedule=[0, 1000, 5000, 10000],
+            thresholds={"max_error_rate": 0.01, "max_p95_ms": 500,
+                        "min_receipt_scored_count": 400},
+        )
+        self.db.add(rollout)
+        self.db.commit()
+
+        # 先推进到 5000（非最后一阶不受回执约束）
+        rollout = service.advance(
+            self.db, rollout.id,
+            expected_lock_version=rollout.lock_version,
+            observation={"error_rate": 0.0, "p95_ms": 1},
+        )
+        self.assertEqual(rollout.current_step, 5000)
+        # 无回执 → 全量被拒
+        with self.assertRaises(InferenceRolloutError) as caught:
+            service.advance(
+                self.db, rollout.id,
+                expected_lock_version=rollout.lock_version,
+                observation={"error_rate": 0.0, "p95_ms": 1},
+            )
+        self.assertEqual(caught.exception.code, "ROLLOUT_RECEIPT_VOLUME_SHORT")
+        # 摘要不符的回执不计入放量
+        from app.services.release_governance import record_rollout_receipt
+
+        record_rollout_receipt(
+            self.db, project_id=self.project.id, rollout_id=rollout.id,
+            effective_alias="rev:ver", scored_count=500,
+            artifact_digest="bad", expected_digest="good",
+        )
+        self.db.commit()
+        with self.assertRaises(InferenceRolloutError):
+            service.advance(
+                self.db, rollout.id,
+                expected_lock_version=rollout.lock_version,
+                observation={"error_rate": 0.0, "p95_ms": 1},
+            )
+        # 有效回执 400 达标 → 全量完成
+        record_rollout_receipt(
+            self.db, project_id=self.project.id, rollout_id=rollout.id,
+            effective_alias="rev:ver", scored_count=400,
+            artifact_digest="good", expected_digest="good",
+        )
+        self.db.commit()
+        completed = service.advance(
+            self.db, rollout.id,
+            expected_lock_version=rollout.lock_version,
+            observation={"error_rate": 0.0, "p95_ms": 1},
+        )
+        self.assertEqual(completed.state, "completed")
+
     def test_reconcile_restores_missing_progressing_alias_before_advance(self):
         runtime = FakeRuntime()
         service = InferenceRolloutService(runtime)

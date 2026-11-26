@@ -90,6 +90,7 @@ from app.api import open_api as open_api_api
 from app.api import agent_audit as agent_audit_api
 from app.api import approvals as approvals_api
 from app.api import splits as splits_api
+from app.api import release_governance as release_governance_api
 from app.api import data_sources as data_sources_api
 from app.api import annotator_internal as annotator_internal_api
 from app.api import annotation_returns as annotation_returns_api
@@ -462,6 +463,7 @@ app.include_router(open_api_api.router)
 app.include_router(agent_audit_api.router)
 app.include_router(approvals_api.router)
 app.include_router(splits_api.router)
+app.include_router(release_governance_api.router)
 app.include_router(data_sources_api.router)
 app.include_router(annotator_internal_api.router)
 
