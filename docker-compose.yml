@@ -486,6 +486,8 @@ services:
         condition: service_completed_successfully
       kafka:
         condition: service_started
+    secrets:
+      - notification_master_key
     restart: unless-stopped
     logging: *default-logging
 

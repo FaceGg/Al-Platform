@@ -201,6 +201,9 @@ class TestInferenceProductionModels(unittest.TestCase):
         self.assertEqual(api_key_columns, {
             "id",
             "deployment_id",
+            # B1-13/D43：项目级只读 Key 的归属与轮换宽限期（F5）
+            "project_id",
+            "grace_until",
             "prefix",
             "secret_hash",
             "scopes",

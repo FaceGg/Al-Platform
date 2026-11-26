@@ -346,7 +346,7 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         self.assertIn("file", secret)
         self.assertNotIn("NOTIFICATION_MASTER_KEY", str(secret))
 
-        for service_name in ("migrate", "backend", "worker", "scheduler", "inference-runtime"):
+        for service_name in ("migrate", "backend", "worker", "scheduler", "inference-runtime", "kafka-ingest"):
             with self.subTest(service=service_name):
                 service = compose["services"][service_name]
                 self.assertEqual(
@@ -419,7 +419,9 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
         )
         self.assertEqual(
             production_services,
-            ["backend", "inference-runtime", "migrate", "scheduler", "worker"],
+            # F5（B1-07/D48）：kafka-ingest 是可选 profile 的生产服务——
+            # 继承 production-environment（含三把必填密钥），默认栈不含它
+            ["backend", "inference-runtime", "kafka-ingest", "migrate", "scheduler", "worker"],
         )
         for service_name in production_services:
             environment = services[service_name]["environment"]
