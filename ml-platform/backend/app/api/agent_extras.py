@@ -825,7 +825,7 @@ def _deploy_s3_champion(
     if dep_service is None:
         from app.config import settings
         from app.services.inference_deployment import InferenceDeploymentService
-        from app.services.inference_runtime import InferenceRuntimeClient
+        from app.services.inference_runtime_client import InferenceRuntimeClient
 
         dep_service = InferenceDeploymentService(
             InferenceRuntimeClient(
@@ -982,7 +982,7 @@ def cast_deployment_status(
     if dep_service is None:
         from app.config import settings
         from app.services.inference_deployment import InferenceDeploymentService
-        from app.services.inference_runtime import InferenceRuntimeClient
+        from app.services.inference_runtime_client import InferenceRuntimeClient
 
         dep_service = InferenceDeploymentService(
             InferenceRuntimeClient(

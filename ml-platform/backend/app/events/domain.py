@@ -22,6 +22,9 @@ SAFE_EVENT_TYPES = frozenset({
     "inference.unknown_condition",
     # 推理结果明细异步落库失败（B1-16/D4）：推理响应不受影响，只告警
     "inference.result_persist_failed",
+    # 预警 SLA 两档（F2a/D21）：临期与超时通知，走 outbox→订阅路由投递
+    "quality.alert.sla_due",
+    "quality.alert.sla_overdue",
     "annotation_return.accepted",
     "annotation_return.returned_for_changes",
     "annotation_comment.replied",
@@ -40,6 +43,11 @@ SAFE_PAYLOAD_KEYS = frozenset({
     "status",
     "condition_column",
     "unknown_values",
+    # 预警 SLA 事件载荷（F2a/D21）
+    "alert_id",
+    "title",
+    "severity",
+    "sla_due_at",
 })
 
 

@@ -1173,6 +1173,27 @@ class DemoLoopService:
                 payload={"error_count": config.error_count, "alert_count": config.alert_count},
             )
             self._notify_admins(config, predicted)
+            # F2a 演示循环并入预警中心（C14/D18）：is_demo=true，站内通知
+            # 原样保留；包在保存点里，并入失败只降级日志，不阻断原告警链。
+            try:
+                from app.services.quality_alerts import relay_demo_alert
+
+                with self.db.begin_nested():
+                    relay_demo_alert(
+                    self.db,
+                    project_id=config.project_id,
+                    demo_config_id=config.id,
+                    source_type="model_risk",
+                    severity="critical",
+                    title=f"演示循环告警：{config.name}（第 {config.alert_count} 次）",
+                    evidence={
+                        "error_count": config.error_count,
+                        "alert_count": config.alert_count,
+                        "predicted": predicted,
+                    },
+                )
+            except Exception:
+                logger.exception("demo alert relay to quality center failed")
             if config.require_review:
                 if config.review_annotator_ids:
                     try:
@@ -1570,6 +1591,23 @@ class DemoLoopService:
                     severity="warning",
                     payload=drift,
                 )
+                # F2a 演示漂移并入预警中心（C14/D18）：source_type=spc_violation
+                try:
+                    from app.services.quality_alerts import relay_demo_alert
+
+                    with self.db.begin_nested():
+                        relay_demo_alert(
+                        self.db,
+                        project_id=config.project_id,
+                        demo_config_id=config.id,
+                        source_type="spc_violation",
+                        severity="warning",
+                        title=f"演示循环分数漂移：PSI={drift.get('psi')}",
+                        risk_score=float(drift.get("psi") or 0.0),
+                        evidence=dict(drift or {}),
+                    )
+                except Exception:
+                    logger.exception("demo psi alert relay to quality center failed")
         if not rows_reached and not psi_reached:
             return
         mode = (getattr(config, "retrain_mode", None) or "engine").strip() or "engine"

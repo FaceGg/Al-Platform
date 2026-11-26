@@ -1,7 +1,8 @@
-"""补齐路线第一批迁移合同（_105–_108）：全新升级、定向降级、旧数据保留、单一头。
+"""补齐路线第一批迁移合同（_105–_109）：全新升级、定向降级、旧数据保留、单一头。
 
 迁移内容：_105 质量领域三新表 + edge_devices 影子两列；_106 推理结果明细两表；
-_107 外部数据源表 + 场景绑定列；_108 通知端点 kind CHECK 约束重建。
+_107 外部数据源表 + 场景绑定列；_108 通知端点 kind CHECK 约束重建；
+_109（F2a）预警处置五新表 + 场景 alert_settings 列 + 推理明细 alert_id 改建外键。
 本地在 SQLite 上跑；PostgreSQL 的往返由 CI 生产集成作业（alembic upgrade /
 current / check）背书。外键强制语义由 test_quality_domain 等用例覆盖，本模块
 只验证结构往返与数据保留。
@@ -20,15 +21,18 @@ from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 from app.models.compute import EdgeDevice
+from app.models.inference_result import InferenceResult
 from app.models.notifications import NotificationEndpoint
 from app.models.project import Project
+from app.models.quality_alerts import QualityAlert
 from app.models.user import User
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 PRE_BATCH_REVISION = "20261120_104"
-BATCH_HEAD_REVISION = "20261125_108"
+BATCH_HEAD_REVISION = "20261126_109"
 BATCH_CHAIN = (
+    "20261126_109",
     "20261125_108",
     "20261125_107",
     "20261125_106",
@@ -36,7 +40,7 @@ BATCH_CHAIN = (
     "20261120_104",
 )
 
-NEW_TABLES = (
+F1_TABLES = (
     "quality_scenes",
     "quality_stations",
     "quality_spec_limits",
@@ -44,6 +48,14 @@ NEW_TABLES = (
     "inference_result_buckets",
     "external_data_sources",
 )
+F2_ALERT_TABLES = (
+    "quality_alerts",
+    "quality_alert_events",
+    "quality_sops",
+    "quality_spc_baselines",
+    "model_evidence_checks",
+)
+NEW_TABLES = F1_TABLES + F2_ALERT_TABLES
 
 
 def device_name_of(session, row_id):
@@ -168,7 +180,10 @@ class TestGapBatch1Migrations(unittest.TestCase):
 
     def test_upgrade_one_step_at_a_time_is_equivalent_to_head(self):
         """逐个迁移升级与一步到 head 等价（批内相邻迁移可独立执行）。"""
-        for revision in ("20261125_105", "20261125_106", "20261125_107", "20261125_108"):
+        for revision in (
+            "20261125_105", "20261125_106", "20261125_107", "20261125_108",
+            "20261126_109",
+        ):
             command.upgrade(self.config, revision)
         command.check(self.config)
         stepwise = self._batch_schema(self.engine)
@@ -183,6 +198,66 @@ class TestGapBatch1Migrations(unittest.TestCase):
             settings.database_url = f"sqlite:///{self.db_path}"
             other_engine.dispose()
         self.assertEqual(stepwise, direct)
+
+    def test_alerts_migration_keeps_inference_rows_and_links_alerts(self):
+        """_109（F2a）：推理明细行跨降级保留；alert_id 改建外键后可挂预警。"""
+        command.upgrade(self.config, "head")
+        session_factory = sessionmaker(bind=self.engine, expire_on_commit=False)
+        request_id = f"gap-f2-{uuid.uuid4().hex[:10]}"
+        with session_factory() as db:
+            user = User(username=f"gap-f2-{uuid.uuid4().hex[:8]}", password_hash="hash")
+            db.add(user)
+            db.flush()
+            project = Project(name="Gap F2 retention", owner_id=user.id)
+            db.add(project)
+            db.flush()
+            alert = QualityAlert(
+                project_id=project.id, source_type="model_risk",
+                severity="warning", title="retained-alert", evidence={},
+                merge_key="model_risk",
+            )
+            db.add(alert)
+            db.flush()
+            result = InferenceResult(
+                request_id=request_id, project_id=project.id,
+                alert_triggered=True, alert_id=alert.id,
+            )
+            db.add(result)
+            db.commit()
+            result_id = result.id
+
+        inspector = sa.inspect(self.engine)
+        self.assertIn("alert_settings", self._column_names(self.engine, "quality_scenes"))
+        alert_foreign_keys = [
+            foreign_key for foreign_key in inspector.get_foreign_keys("inference_results")
+            if foreign_key["constrained_columns"] == ["alert_id"]
+        ]
+        self.assertEqual(len(alert_foreign_keys), 1)
+        self.assertEqual(alert_foreign_keys[0]["referred_table"], "quality_alerts")
+        alert_indexes = {
+            index["name"] for index in inspector.get_indexes("quality_alerts")
+        }
+        self.assertIn("ix_quality_alerts_merge_key", alert_indexes)
+
+        # 定向降级到 _108：五张预警表移除，alert_id 退回字符串占位列，明细行保留
+        command.downgrade(self.config, "20261125_108")
+        self.assertTrue(
+            set(F2_ALERT_TABLES).isdisjoint(set(sa.inspect(self.engine).get_table_names()))
+        )
+        self.assertNotIn("alert_settings", self._column_names(self.engine, "quality_scenes"))
+        with session_factory() as db:
+            retained = db.execute(
+                sa.select(InferenceResult.request_id, InferenceResult.alert_id)
+                .where(InferenceResult.id == result_id)
+            ).one()
+            # 降级后 ORM 仍把 alert_id 当 UUID 读：占位列为空，读到 None
+            self.assertEqual(retained[0], request_id)
+            self.assertIsNone(retained[1])
+
+        command.upgrade(self.config, "head")
+        command.check(self.config)
+        with session_factory() as db:
+            self.assertIsNotNone(db.get(InferenceResult, result_id))
 
 
 if __name__ == "__main__":

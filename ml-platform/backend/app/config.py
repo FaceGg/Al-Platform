@@ -161,6 +161,13 @@ class Settings(BaseSettings):
     inference_result_retention_days: int = Field(default=90, ge=1, le=3650)
     inference_result_daily_cap: int = Field(default=200_000, ge=0)
     inference_snapshot_sample_rate: float = Field(default=0.01, ge=0.0, le=1.0)
+    # 预警规则平台默认（F2a/D14）：场景 alert_settings 缺省时生效。触发下限
+    # 独立于分级阈值（路线 B1-01 对标反面教材——竞品 47.5% 置信度即发预警）。
+    quality_alert_trigger_threshold: float = Field(default=0.70, ge=0.0, le=1.0)
+    quality_alert_high_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
+    quality_alert_critical_threshold: float = Field(default=0.95, ge=0.0, le=1.0)
+    quality_alert_sla_hours: int = Field(default=24, ge=1, le=24 * 30)
+    quality_alert_merge_window_minutes: int = Field(default=30, ge=1, le=1440)
 
     annotation_max_samples: int = Field(default=1_000_000, ge=1, le=10_000_000)
     annotation_max_input_columns: int = Field(default=200, ge=1, le=2_000)

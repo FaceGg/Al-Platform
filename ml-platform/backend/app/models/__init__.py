@@ -104,6 +104,13 @@ from app.models.platform_option import PlatformOption
 from app.models.quality_domain import QualityScene, QualityStation, QualitySpecLimit
 from app.models.inference_result import InferenceResult, InferenceResultBucket
 from app.models.external_data_source import ExternalDataSource
+from app.models.quality_alerts import (
+    QualityAlert,
+    QualityAlertEvent,
+    QualitySop,
+    QualitySpcBaseline,
+    ModelEvidenceCheck,
+)
 
 __all__ = [
     "User",
@@ -225,4 +232,9 @@ __all__ = [
     "InferenceResult",
     "InferenceResultBucket",
     "ExternalDataSource",
+    "QualityAlert",
+    "QualityAlertEvent",
+    "QualitySop",
+    "QualitySpcBaseline",
+    "ModelEvidenceCheck",
 ]

@@ -264,6 +264,9 @@ class InferenceResultRecorder:
                     logger.warning("inference result daily counter unavailable; persist unrestricted")
 
         rows: list[InferenceResult] = []
+        # 成对的 (明细行, 该行特征记录)：预警评估要读特征值（D19）。必须在
+        # 这次遍历里配对——超限降级会跳过正常样本，事后按两个序列对齐会错位
+        detail_pairs: list[tuple[InferenceResult, Mapping]] = []
         buckets: dict[tuple, dict] = {}
         expires_at = now + timedelta(days=retention_days)
         for index in range(record_count):
@@ -299,7 +302,7 @@ class InferenceResultRecorder:
                         condition_value=condition_value,
                         occurred_at=now,
                     )
-                rows.append(InferenceResult(
+                detail_row = InferenceResult(
                     request_id=str(request_id)[:128],
                     sample_key=context_row.sample_key,
                     channel=channel,
@@ -325,6 +328,11 @@ class InferenceResultRecorder:
                     occurred_at=now,
                     expires_at=expires_at,
                     snapshot_uri=snapshot_uri,
+                )
+                rows.append(detail_row)
+                detail_pairs.append((
+                    detail_row,
+                    records[index] if index < len(records) else {},
                 ))
 
             # 聚合桶（永久保留；demo 通道由调用方拦截不进桶）
@@ -351,6 +359,17 @@ class InferenceResultRecorder:
             try:
                 db_session.add_all(rows)
                 db_session.flush()
+                # F2a 预警产生器（model_risk / param_exceed，技术方案 §9.2）：
+                # 与明细同一事务写入，但包在保存点里——评估失败只撤销预警
+                # 这一段（半截预警不得随事务提交，PG 上失败的语句还会中止
+                # 整个事务），明细落库与聚合桶不受影响。
+                try:
+                    with db_session.begin_nested():
+                        from app.services.quality_alerts import evaluate_inference_alerts
+
+                        evaluate_inference_alerts(db_session, detail_pairs)
+                except Exception:
+                    logger.exception("inference alert evaluation failed (persist continues)")
                 for bucket_key, stats in buckets.items():
                     self._upsert_bucket(db_session, project_id=project_id, bucket_key=bucket_key, stats=stats, now=now)
                 db_session.commit()

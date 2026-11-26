@@ -123,10 +123,14 @@ class InferenceResult(Base):
     occurred_at = Column(DateTime, nullable=False, server_default=func.now())
     expires_at = Column(DateTime, nullable=True)
 
-    # 预警标记（F1 由预警规则雏形留空，F2 起写入）
+    # 预警标记（F2 起由预警产生器写入）
     alert_triggered = Column(Boolean, nullable=True)
-    # F2 回填：alerts 表落码时改建 FK
-    alert_id = Column(String(36), nullable=True)
+    # 命中的预警（F2 _109 建 FK；F1 只留占位列）
+    alert_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("quality_alerts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     snapshot_uri = Column(String(512), nullable=True)
     source_uri = Column(String(512), nullable=True)

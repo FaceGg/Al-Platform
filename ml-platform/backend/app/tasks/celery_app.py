@@ -23,6 +23,7 @@ celery_app = Celery(
         "app.tasks.annotation_return_tasks",
         "app.tasks.kubernetes_tasks",
         "app.tasks.kg_tasks",
+        "app.tasks.quality_tasks",
         "app.tasks.recovery",
     ],
     broker=(settings.celery_broker_url.get_secret_value() if settings.celery_broker_url else None),
@@ -107,6 +108,15 @@ celery_app.conf.update(
             "task": "ml_platform.enqueue_due_notifications",
             "schedule": 30.0,
         },
+        # F2a 预警处置主干（D16/D21）：设备心跳巡检与 SLA 两档通知
+        "quality-device-watch": {
+            "task": "ml_platform.watch_quality_devices",
+            "schedule": 300.0,
+        },
+        "quality-alert-sla-watch": {
+            "task": "ml_platform.watch_alert_sla",
+            "schedule": 600.0,
+        },
     },
 )
 
@@ -122,6 +132,7 @@ from app.tasks import model_export_tasks  # noqa: E402,F401
 from app.tasks import dataset_import_tasks  # noqa: E402,F401
 from app.tasks import annotation_return_tasks  # noqa: E402,F401
 from app.tasks import kubernetes_tasks  # noqa: E402,F401
+from app.tasks import quality_tasks  # noqa: E402,F401
 from app.tasks import recovery  # noqa: E402,F401
 
 # prefork 子进程初始化时重建网关出网 client：httpx.Client 不是 fork 安全的，

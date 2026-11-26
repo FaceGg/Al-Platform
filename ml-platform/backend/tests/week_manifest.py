@@ -31,8 +31,17 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_external_data_sources",
         # 通知通道补齐：钉钉 + 短信网关（P5，B1-11/D9）
         "test_notification_channels_dingtalk_sms",
-        # 第一批迁移合同 _105–_108（P6：往返/旧数据保留/单一头/漂移门禁）
+        # 第一批迁移合同 _105–_109（往返/旧数据保留/单一头/漂移门禁）
         "test_gap_batch1_migrations",
+        # 补齐路线第一批 F2a（2026-11-26 起）：预警处置主干
+        # 预警处置链路：确认防呆 / 流转图 / 快照不可变 / 误报回流 / 同因合并（B1-01/B1-02）
+        "test_quality_alerts",
+        # 三类来源接入：模型风险 / 参数超限 / 设备异常 + SLA 通知送达 + 演示并入
+        "test_quality_alert_sources",
+        # SPC 基线冻结与判据链（E08 前移）
+        "test_quality_spc_baselines",
+        # SOP 版本化与处置单快照取数口径（E07）
+        "test_quality_sops",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",

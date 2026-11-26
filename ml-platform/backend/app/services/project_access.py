@@ -38,6 +38,9 @@ PERMISSIONS = frozenset({
     "quality.label",
     "quality.review",
     "quality.manage",
+    # 预警处置动作（F2a/D17）：确认/分配/流转/处置/附件——运营动作，
+    # operator（班组长）必须有；配置类（SOP/基线/规则）仍走 quality.manage
+    "quality.alert_handle",
 })
 
 ROLE_PERMISSIONS = {
@@ -59,6 +62,7 @@ ROLE_PERMISSIONS = {
         "quality.label",
         "quality.review",
         "quality.manage",
+        "quality.alert_handle",
     }),
     ProjectRole.OPERATOR: frozenset({
         "project.read",
@@ -67,6 +71,7 @@ ROLE_PERMISSIONS = {
         "inference.operate",
         "notification.read",
         "quality.label",
+        "quality.alert_handle",
     }),
     ProjectRole.VIEWER: frozenset({"project.read", "notification.read"}),
 }

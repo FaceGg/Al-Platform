@@ -88,6 +88,9 @@ class QualityScene(Base):
     condition_column = Column(String(128), nullable=True)
     # 角色映射 {role: 列名}，role ∈ FIELD_ROLE_KEYS
     field_roles = Column(JSON, nullable=False, default=dict)
+    # 预警规则设置（F2a/D14，nullable=平台默认）：{trigger_threshold,
+    # high_threshold, critical_threshold, sla_hours, merge_window_minutes}
+    alert_settings = Column(JSON, nullable=True)
     # 波形列声明（供 B1-02 曲线叠加把关，F2a 消费）
     waveform_column = Column(String(256), nullable=True)
     # 绑定外部数据源（_107 建表后同批加入：建表与外键必须同迁移）
