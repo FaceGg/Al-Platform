@@ -55,6 +55,9 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_spc_api",
         # 补齐路线第一批 F4：漂移检测（特征直方图覆盖全部样本、基线、分级批检、接口，B1-09）
         "test_drift_detection",
+        # 补齐路线第二批 S1（2026-11-26 起）：审批与审计底座
+        # 迁移合同 _113（两审计表哈希链三列 + 链尾状态 + 动作审计 + 统一审批队列）
+        "test_gap_batch2_migrations",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",

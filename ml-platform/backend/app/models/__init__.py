@@ -118,6 +118,8 @@ from app.models.drift import (
     InferenceFeatureHistogram,
 )
 from app.models.ingest import IngestEvent
+from app.models.approvals import ApprovalRequest
+from app.models.agent_audit import AgentActionAudit, AuditChainState
 
 __all__ = [
     "User",
@@ -249,4 +251,7 @@ __all__ = [
     "DriftReportFeature",
     "InferenceFeatureHistogram",
     "IngestEvent",
+    "ApprovalRequest",
+    "AgentActionAudit",
+    "AuditChainState",
 ]

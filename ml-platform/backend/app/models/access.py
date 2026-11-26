@@ -3,6 +3,7 @@
 import uuid
 
 from sqlalchemy import (
+    BigInteger,
     JSON,
     CheckConstraint,
     Column,
@@ -107,3 +108,8 @@ class AuditEvent(Base):
     changes = Column(JSON, nullable=False, default=dict)
     error_code = Column(String(64), nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
+    # 审计哈希链（补齐路线第二批 S1 E10）：迁移 _113 起；存量行三列保持 NULL
+    # =链前史（校验端点计 unchained，不算断点——历史记录不做回填改写）
+    chain_seq = Column(BigInteger, nullable=True)
+    prev_hash = Column(String(64), nullable=True)
+    entry_hash = Column(String(64), nullable=True)

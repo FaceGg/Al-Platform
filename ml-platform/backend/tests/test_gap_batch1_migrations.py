@@ -32,7 +32,6 @@ from app.models.user import User
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
 PRE_BATCH_REVISION = "20261120_104"
-BATCH_HEAD_REVISION = "20261126_112"
 BATCH_CHAIN = (
     "20261126_112",
     "20261126_111",
@@ -109,7 +108,9 @@ class TestGapBatch1Migrations(unittest.TestCase):
 
     def test_migrations_form_a_single_linear_chain(self):
         script = ScriptDirectory.from_config(self.config)
-        self.assertEqual(script.get_heads(), [BATCH_HEAD_REVISION])
+        # 单头不变式（后续批次继续追加迁移，本断言不随批改常量）；
+        # 本批链路的 down_revision 链单独校验
+        self.assertEqual(len(script.get_heads()), 1, script.get_heads())
         by_id = {revision.revision: revision for revision in script.walk_revisions()}
         for newer, older in zip(BATCH_CHAIN, BATCH_CHAIN[1:]):
             with self.subTest(newer=newer):
@@ -197,11 +198,11 @@ class TestGapBatch1Migrations(unittest.TestCase):
 
     def test_upgrade_one_step_at_a_time_is_equivalent_to_head(self):
         """逐个迁移升级与一步到 head 等价（批内相邻迁移可独立执行）。"""
-        for revision in (
-            "20261125_105", "20261125_106", "20261125_107", "20261125_108",
-            "20261126_109", "20261126_110", "20261126_111", "20261126_112",
-        ):
+        # 批内链路逐个升（老→新）；后续批次的迁移统一在收尾一步到 head，
+        # 使 command.check 的「必须到 head」前提成立且本断言不随批改清单
+        for revision in reversed(BATCH_CHAIN):
             command.upgrade(self.config, revision)
+        command.upgrade(self.config, "head")
         command.check(self.config)
         stepwise = self._batch_schema(self.engine)
         self.assertEqual(len({table for table, _ in stepwise}), len(NEW_TABLES))
