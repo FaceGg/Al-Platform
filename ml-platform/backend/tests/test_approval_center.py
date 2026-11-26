@@ -56,8 +56,8 @@ class ApprovalCenterCase(unittest.TestCase):
             ])
             db.commit()
 
-    def _create(self, approval_type="model_release", payload=None, initiator=None, db=None, ttl_hours=None):
-        """默认用保留类型 model_release（无执行器侧业务校验）测队列机械性；
+    def _create(self, approval_type="recipe_change", payload=None, initiator=None, db=None, ttl_hours=None):
+        """默认用保留类型 recipe_change（无执行器侧业务校验）测队列机械性；
         disposition/retrain 专项测试显式传 type+payload。"""
         own = db is None
         db = db or self.session_factory()
@@ -312,7 +312,7 @@ class TestRetrainWatermark(ApprovalCenterCase):
 
 class TestReservedTypeAndRetrainTrigger(ApprovalCenterCase):
     def test_reserved_type_perform_reports_not_ready(self):
-        approval = self._create(approval_type="model_release", payload={"x": 1})
+        approval = self._create(approval_type="recipe_change", payload={"x": 1})
         with self.session_factory() as db:
             decided = decide_approval(
                 db, approval_id=approval.id, actor_id=self.editor_b.id,

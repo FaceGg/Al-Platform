@@ -203,7 +203,8 @@ class ModelReleaseExecutor:
         })
 
     def validate_create(self, db: Session, payload: dict) -> None:
-        from app.services.release_governance import GovernanceError, evaluate_release_gates
+        from app.services.approvals import ApprovalError
+        from app.services.release_governance import evaluate_release_gates
 
         deployment, version = _release_subjects(db, payload)
         from app.models.approvals import ApprovalRequest
@@ -280,6 +281,7 @@ def _release_subjects(db: Session, payload: dict):
     import uuid as _uuid
 
     from app.models.model_registry import InferenceDeployment, ModelVersion
+    from app.services.approvals import ApprovalError
 
     deployment_id = payload.get("deployment_id")
     version_id = payload.get("model_version_id")
