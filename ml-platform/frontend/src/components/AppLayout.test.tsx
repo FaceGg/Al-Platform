@@ -178,9 +178,27 @@ describe("AppLayout (v2 five-view shell)", () => {
       </MemoryRouter>,
     );
     expect(await sidebarGroups()).toEqual([
-      { label: "Monitoring", items: ["Alert Center", "Disposition Workbench", "Production Records"] },
+      { label: "Monitoring", items: ["Quality Cockpit", "Realtime Monitoring", "Alert Center", "Disposition Workbench", "Production Records"] },
+      { label: "Analysis", items: ["Trends & Pareto"] },
       { label: "Configuration", items: ["Quality Scenes", "Stations & Devices", "SOP Maintenance"] },
     ]);
+  });
+
+  it("shows a persistent demo-data badge when an accessible project has a demo loop (E22)", async () => {
+    apiMocks.get.mockImplementation((url: string) => {
+      if (url === "/demo-loop/presence") {
+        return Promise.resolve({ data: { present: true, projects: [{ id: "p1", name: "演示项目" }] } });
+      }
+      return Promise.reject(new Error("offline"));
+    });
+    // 演示数据存在性只在登录态下请求（与 /auth/me 同一先例）
+    localStorage.setItem("token", "test-token");
+    render(
+      <MemoryRouter initialEntries={["/quality/dashboard"]}>
+        <LangProvider><AppLayout><div>test</div></AppLayout></LangProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByTestId("demo-presence")).toHaveTextContent("Demo data");
   });
 
   it("filters top tabs by the server-resolved visible views (B1 §7.1)", async () => {

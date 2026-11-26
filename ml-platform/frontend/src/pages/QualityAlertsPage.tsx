@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type Key } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   App as AntApp, Button, Card, Col, Empty, Input, List, Modal, Row, Select, Space, Statistic, Switch,
   Table, Tag, Typography,
@@ -24,8 +24,23 @@ interface Filters {
   severity?: string;
   source_type?: string;
   scene_id?: string;
+  station_id?: string;
   sample_key?: string;
   include_demo?: boolean;
+  /** 来自驾驶舱下钻：未关闭（四个阶段） / 不低于某级别 */
+  open?: boolean;
+  min_severity?: string;
+}
+
+/** 驾驶舱 KPI 卡下钻时把口径带在地址参数里，列表条数才与卡片数字一致。 */
+function filtersFromLocation(searchParams: URLSearchParams): Filters {
+  const seeded: Filters = {};
+  for (const key of ["status", "severity", "min_severity", "station_id", "scene_id"] as const) {
+    const value = searchParams.get(key);
+    if (value) seeded[key] = value;
+  }
+  if (searchParams.get("open") === "1") seeded.open = true;
+  return seeded;
 }
 
 const EMPTY_SUMMARY = { open: 0, handling: 0, review: 0, overdue: 0, today: 0 };
@@ -35,6 +50,7 @@ export default function QualityAlertsPage() {
   const { lang } = useI18n();
   const zh = lang === "zh";
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { projects, projectId, setProjectId, scenes, people, sceneName, stationName, userName } =
     useQualityAlertLookups();
   const [rows, setRows] = useState<QualityAlert[]>([]);
@@ -42,7 +58,7 @@ export default function QualityAlertsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
-  const [filters, setFilters] = useState<Filters>({});
+  const [filters, setFilters] = useState<Filters>(() => filtersFromLocation(searchParams));
   const [summary, setSummary] = useState(EMPTY_SUMMARY);
   const [selected, setSelected] = useState<Key[]>([]);
   const [batchTargets, setBatchTargets] = useState<QualityAlert[] | null>(null);

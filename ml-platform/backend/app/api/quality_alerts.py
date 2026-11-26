@@ -28,6 +28,7 @@ from app.models.data_version import DatasetSample, DatasetVersion
 from app.models.quality_alerts import (
     ALERT_STATUSES,
     ALERT_STATUS_FLOW,
+    ALERT_SEVERITIES,
     QualityAlert,
     QualityAlertEvent,
     QualitySop,
@@ -148,6 +149,8 @@ def list_alerts(
     batch_no: str | None = None,
     include_demo: bool = False,
     sla_overdue: bool = False,
+    open: bool = False,
+    min_severity: str | None = None,
     occurred_from: str | None = None,
     occurred_to: str | None = None,
     page: int = 1,
@@ -167,6 +170,17 @@ def list_alerts(
             QualityAlert.sla_due_at < datetime.utcnow(),
             QualityAlert.status.in_(("open", "acknowledged", "processing")),
         )
+    if open:
+        # 「未关闭」= 驾驶舱「待处理」卡的口径（四个未关闭阶段），与只筛 open 状态不同
+        query = query.filter(
+            QualityAlert.status.in_([value for value in ALERT_STATUSES if value != "closed"]),
+        )
+    if min_severity:
+        # 「不低于某级别」= 驾驶舱「高风险」卡的口径（高风险 + 严重）
+        if min_severity not in ALERT_SEVERITIES:
+            raise HTTPException(422, {"code": "SEVERITY_INVALID", "message": "min_severity 须为 warning / high / critical"})
+        floor = ("warning", "high", "critical").index(min_severity)
+        query = query.filter(QualityAlert.severity.in_(("warning", "high", "critical")[floor:]))
     if status:
         query = query.filter(QualityAlert.status == status)
     if severity:

@@ -141,6 +141,20 @@ class TestQualityMonitor(QualityAlertApiCase):
         self.assertEqual(sum(part["alerts"]["confirmed_ng"] for part in parts.values()), 3)
         self.assertEqual(parts[self.station.code]["production"]["total"], 15)
         self.assertEqual(parts[self.station_b.code]["production"]["total"], 0)
+        # KPI 卡下钻后的列表条数 = 卡片数字（验收口径：KPI 与下钻列表严格一致）
+        def listed_total(**params):
+            return self.client.get(
+                f"/api/projects/{self.project.id}/quality-alerts", params={"page_size": 1, **params},
+            ).json()["total"]
+        self.assertEqual(listed_total(open="true"), whole["alerts"]["open"])
+        self.assertEqual(listed_total(min_severity="high"), whole["alerts"]["high_risk"])
+        self.assertEqual(listed_total(status="closed"), whole["alerts"]["closed_in_window"])
+        self.assertEqual(listed_total(sla_overdue="true"), whole["alerts"]["sla_overdue"])
+        self.assertEqual(listed_total(min_severity="high", station_id=str(self.station.id)),
+                         parts[self.station.code]["alerts"]["high_risk"])
+        self.assertEqual(self.client.get(
+            f"/api/projects/{self.project.id}/quality-alerts", params={"min_severity": "urgent"},
+        ).status_code, 422)
 
     def test_scope_narrows_monotonically_through_four_levels(self):
         self._seed_common()

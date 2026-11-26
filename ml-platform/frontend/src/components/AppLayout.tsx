@@ -9,7 +9,7 @@ import {
   PlayCircleOutlined, BookOutlined, ControlOutlined, TagsOutlined, ApartmentOutlined,
   RocketOutlined, CopyOutlined, FileTextOutlined, SettingOutlined,
   NotificationOutlined, BarChartOutlined, SafetyCertificateOutlined, QuestionCircleOutlined,
-  AlertOutlined, ToolOutlined,
+  AlertOutlined, ToolOutlined, DashboardOutlined,
 } from "@ant-design/icons";
 import { SunOutlined, MoonOutlined } from "@ant-design/icons";
 import { useI18n } from "../i18n";
@@ -89,6 +89,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const viewVisible = (view: ViewId) =>
     isAdmin || visibleViews === null || visibleViews.includes(view);
 
+  // 演示态常驻标识（诚实设计⑥ / 技术方案 D33）：可访问的项目里有演示循环配置时，
+  // 顶栏一直显示「含演示数据」——演示样本与预警不计入真实 KPI。
+  const [demoProjects, setDemoProjects] = useState<string[]>([]);
+  useEffect(() => {
+    if (!localStorage.getItem("token")) return;
+    let active = true;
+    apiClient.get("/demo-loop/presence").then((response) => {
+      if (!active) return;
+      const projects = response.data?.projects;
+      if (Array.isArray(projects)) setDemoProjects(projects.map((item: { name?: string }) => String(item?.name ?? "")).filter(Boolean));
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+
   const allViewTabs: { id: ViewId; label: string; tag?: string }[] = [
     { id: "portal", label: sectionName("portal", zh) },
     { id: "algo", label: sectionName("algo", zh) },
@@ -123,9 +137,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     ],
     quality: [
       { label: zh ? "监控" : "Monitoring", items: [
+        { key: "/quality/dashboard", icon: <DashboardOutlined />, label: nav("quality_dashboard") },
+        { key: "/quality/monitor", icon: <MonitorOutlined />, label: nav("quality_monitor") },
         { key: "/quality/alerts", icon: <AlertOutlined />, label: nav("quality_alerts") },
         { key: "/quality/disposition", icon: <ToolOutlined />, label: nav("quality_disposition") },
         { key: "/quality/production-records", icon: <DatabaseOutlined />, label: nav("quality_production_records") },
+      ] },
+      { label: zh ? "分析" : "Analysis", items: [
+        { key: "/quality/trends", icon: <BarChartOutlined />, label: nav("quality_trends") },
       ] },
       { label: zh ? "配置" : "Configuration", items: [
         { key: "/quality/scenes", icon: <AppstoreOutlined />, label: nav("quality_scenes") },
@@ -272,6 +291,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </nav>
           <div className="v2-topright">
             <span className="v2-env-chip" style={{ display: "none" }} />
+            {demoProjects.length > 0 && (
+              <Tag data-testid="demo-presence" color="purple" title={demoProjects.join("、")}>
+                {zh ? "含演示数据" : "Demo data"}
+              </Tag>
+            )}
             <button
               type="button"
               className="v2-seg-btn"

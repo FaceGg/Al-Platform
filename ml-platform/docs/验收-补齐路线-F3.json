@@ -1,0 +1,57 @@
+{
+  "schema_version": "gap-batch1-f3/v1",
+  "batch": "补齐路线第一批 F3（监控驾驶）",
+  "date": "2026-11-26",
+  "commits": {
+    "f3_backend": "86a2daa8",
+    "f3_frontend_and_closeout": "本文件所在提交"
+  },
+  "spec": "ml-platform/docs/技术方案-补齐路线第一批.md#9B",
+  "environment": {
+    "platform": "windows-local",
+    "python": "3.11 (.venv)",
+    "database": "sqlite",
+    "storage": "local-filesystem",
+    "frontend": "vitest/jsdom"
+  },
+  "acceptance_criteria": [
+    {"id": 1, "statement": "KPI 数字与下钻列表严格一致（同一聚合视图）", "status": "passed", "evidence": ["tests/test_quality_monitor.py::test_kpi_equals_station_drilldown_sum_and_trend_total"]},
+    {"id": 2, "statement": "四级范围切换全卡联动", "status": "passed", "evidence": ["tests/test_quality_monitor.py::test_scope_narrows_monotonically_through_four_levels", "frontend QualityMonitorPages.test.tsx passes-the-four-level-scope 用例"]},
+    {"id": 3, "statement": "模拟事件 5 秒内上屏", "status": "passed", "scope": "逻辑层", "evidence": ["tests/test_quality_monitor.py::test_stream_sends_snapshot_then_new_alert_events_within_a_tick", "frontend subscribeMonitorStream 流式读取用例（伪造响应流：跨块半截帧、请求头鉴权、断流降级）", "frontend falls-back-to-polling 用例"], "subitems": [{"status": "not_run", "item": "真实浏览器与网络下的流式时延"}]},
+    {"id": 4, "statement": "设备离线状态准确反映心跳", "status": "passed", "evidence": ["tests/test_quality_monitor.py::test_station_cards_reflect_latest_result_shift_and_device_heartbeat"]},
+    {"id": 5, "statement": "处置运营三指标与处置单明细同源一致", "status": "passed", "evidence": ["tests/test_quality_monitor.py::test_disposition_ops_match_disposition_records"]},
+    {"id": 6, "statement": "命中率口径页内注明", "status": "passed", "evidence": ["frontend QualityMonitorPages.test.tsx six-KPI 用例的脚注断言"]},
+    {"id": 7, "statement": "切换对比维度不扫明细；帕累托各项之和 = 窗内预警发生次数", "status": "passed", "evidence": ["tests/test_quality_monitor.py::test_demo_alerts_never_enter_default_aggregates", "services/quality_aggregates.py 只读聚合桶/预警表/工位台账"]},
+    {"id": 8, "statement": "NG 词表配置化且为唯一来源", "status": "passed", "evidence": ["tests/test_quality_monitor.py::test_pareto_by_defect_maps_labels_through_ng_vocabulary"]},
+    {"id": 9, "statement": "趋势页缺陷计数与日报同数据源同数字", "status": "deferred", "reason": "质量报告 B3-08 属第三批，第三批按用户 2026-11-26 指示暂停；数据源已统一"},
+    {"id": 10, "statement": "陈旧数据自检横幅", "status": "passed", "evidence": ["tests/test_quality_monitor.py::test_stale_banner_three_states", "frontend stale-banner 用例"]},
+    {"id": 11, "statement": "演示数据不计入真实 KPI；全站常驻演示态标识", "status": "passed", "evidence": ["演示预警不进默认聚合（口径 7 同一用例）", "tests/test_quality_monitor.py::test_demo_presence_lists_accessible_projects_with_demo_configs", "frontend AppLayout.test.tsx demo-data badge 用例"], "subitems": [{"status": "not_verified", "item": "演示循环样本是否进入真实训练或标注真值，未逐条核对"}]},
+    {"id": 12, "statement": "确认收到动作留痕", "status": "passed", "evidence": ["tests/test_quality_monitor.py::test_ack_received_confirms_open_alerts_of_that_station_only"]},
+    {"id": 13, "statement": "呼叫质量人员", "status": "passed", "evidence": ["tests/test_quality_monitor.py::test_call_quality_notifies_owner_and_station_responsible"]},
+    {"id": 14, "statement": "推送流按项目鉴权", "status": "passed", "evidence": ["tests/test_quality_monitor.py::test_stream_endpoint_is_scoped_and_uses_event_stream"]}
+  ],
+  "horizontal_contracts": [
+    {"name": "迁移纪律（_110 三个查询索引）", "status": "passed", "evidence": ["tests/test_gap_batch1_migrations.py"]},
+    {"name": "测试登记", "status": "passed", "evidence": ["week 1 新增 test_quality_monitor", "frontend gap_batch_f2a 组登记 QualityMonitorPages.test.tsx"]},
+    {"name": "页面与帮助同批", "status": "passed", "evidence": ["帮助章三篇：质量驾驶舱 / 实时生产监控 / 趋势与帕累托"]},
+    {"name": "导航归属", "status": "passed", "evidence": ["监控组 +2、新分组分析 +1；侧栏分组快照断言同步"]},
+    {"name": "口径单一来源", "status": "passed", "evidence": ["services/quality_aggregates.py", "NG 词表单键", "陈旧数据判定单函数"]},
+    {"name": "接口向后兼容", "status": "passed", "evidence": ["预警列表新增 open / min_severity 可选筛选，默认行为不变"]}
+  ],
+  "full_regressions": {
+    "f3_backend_module": {"status": "passed", "passed": 12},
+    "adjacent_modules": {"status": "passed", "modules": 14, "passed": 182, "subtests": 112},
+    "frontend_affected_files": {"status": "passed", "files": 4, "passed": 43, "note": "不含最后新增的范围联动与流式读取两条用例；两条已随所在文件复跑通过"},
+    "frontend_vitest": {"status": "passed", "files": 99, "passed": 634, "skipped": 19, "tsc": "clean", "note": "新增上述两条用例之前的时点"},
+    "backend_run_suite": {"status": "pending", "note": "第一批最终提交上以干净 worktree 全量执行一次，覆盖 F3–F5，结果回填"}
+  },
+  "open_items": [
+    {"status": "not_run", "item": "真实浏览器内三页渲染、图表与推送流 5 秒上屏（流式读取路径已做伪造响应流的单元验证）"},
+    {"status": "not_run", "item": "反向代理对 SSE 的缓冲与超时行为"},
+    {"status": "not_verified", "item": "演示循环样本是否进入真实训练或标注真值（E22 隔离核对）"},
+    {"status": "deferred", "item": "趋势页与质量报告（B3-08）同数字对账，依赖已暂停的第三批"},
+    {"status": "design-limit", "item": "班次表按项目配置项已预留但暂无维护界面；帕累托并列项按字典序；AI+SPC 预警卡下钻到预警列表首页（不按时间窗筛）"},
+    {"status": "note", "item": "提交时安全扫描器多次未给出完整结论（scanner_enobufs），不据此宣称项目安全"}
+  ],
+  "conclusion": "14 条口径：13 passed、1 deferred（依赖已暂停的第三批）；第 3 条限定逻辑层并带 not_run 子项，第 11 条带未核验子项，均不折算为已验证。后端全量回归待第一批最终提交执行后回填。任务完成不等于发布就绪。"
+}

@@ -15,6 +15,9 @@ import qualityAlertsMd from "./quality-alerts.md?raw";
 import qualityDispositionMd from "./quality-disposition.md?raw";
 import qualitySopsMd from "./quality-sops.md?raw";
 import modelEvidenceMd from "./model-evidence.md?raw";
+import qualityDashboardMd from "./quality-dashboard.md?raw";
+import qualityMonitorMd from "./quality-monitor.md?raw";
+import qualityTrendsMd from "./quality-trends.md?raw";
 
 export interface HelpChapter {
   id: string;
@@ -89,6 +92,30 @@ export const HELP_CHAPTERS: HelpChapter[] = [
     order: 11,
     md: modelEvidenceMd,
     navPrefixes: ["/models"],
+  },
+  {
+    id: "quality-dashboard",
+    titleZh: "质量驾驶舱",
+    titleEn: "Quality cockpit",
+    order: 12,
+    md: qualityDashboardMd,
+    navPrefixes: ["/quality/dashboard"],
+  },
+  {
+    id: "quality-monitor",
+    titleZh: "实时生产监控",
+    titleEn: "Realtime monitoring",
+    order: 13,
+    md: qualityMonitorMd,
+    navPrefixes: ["/quality/monitor"],
+  },
+  {
+    id: "quality-trends",
+    titleZh: "趋势与帕累托",
+    titleEn: "Trends & Pareto",
+    order: 14,
+    md: qualityTrendsMd,
+    navPrefixes: ["/quality/trends"],
   },
   {
     id: "closed-loop-demo",

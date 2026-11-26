@@ -54,6 +54,9 @@ const ProductionRecordsPage = lazy(() => import("./pages/ProductionRecordsPage")
 const QualityAlertsPage = lazy(() => import("./pages/QualityAlertsPage"));
 const QualityDispositionPage = lazy(() => import("./pages/QualityDispositionPage"));
 const QualitySopsPage = lazy(() => import("./pages/QualitySopsPage"));
+const QualityDashboardPage = lazy(() => import("./pages/QualityDashboardPage"));
+const QualityMonitorPage = lazy(() => import("./pages/QualityMonitorPage"));
+const QualityTrendsPage = lazy(() => import("./pages/QualityTrendsPage"));
 const HelpCenterPage = lazy(() => import("./pages/HelpCenterPage"));
 
 const LIGHT_TOKENS = {
@@ -159,6 +162,9 @@ function AppContent() {
             <Route path="/quality/alerts" element={<ProtectedRoute><PageErrorBoundary pageName="预警中心"><QualityAlertsPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/quality/disposition" element={<ProtectedRoute><PageErrorBoundary pageName="处置工作台"><QualityDispositionPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/quality/sops" element={<ProtectedRoute><PageErrorBoundary pageName="SOP 维护"><QualitySopsPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/quality/dashboard" element={<ProtectedRoute><PageErrorBoundary pageName="质量驾驶舱"><QualityDashboardPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/quality/monitor" element={<ProtectedRoute><PageErrorBoundary pageName="实时生产监控"><QualityMonitorPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/quality/trends" element={<ProtectedRoute><PageErrorBoundary pageName="趋势与帕累托"><QualityTrendsPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/help" element={<ProtectedRoute><HelpCenterPage /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

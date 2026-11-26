@@ -137,10 +137,12 @@ const weekTestFiles: Record<number | string, string[]> = {
   gap_batch_f1: [
     "./pages/QualityPages.test.tsx",
   ],
-  // 补齐路线第一批 F2（2026-11-26）：预警中心 / 处置工作台 / SOP 维护 / 闭环证据总览
+  // 补齐路线第一批 F2（2026-11-26）：预警中心 / 处置工作台 / SOP 维护 / 闭环证据总览；
+  // F3：质量驾驶舱 / 实时生产监控 / 趋势与帕累托
   gap_batch_f2a: [
     "./pages/QualityAlertPages.test.tsx",
     "./components/evidence/EvidenceOverviewDrawer.test.tsx",
+    "./pages/QualityMonitorPages.test.tsx",
   ],
 };
 

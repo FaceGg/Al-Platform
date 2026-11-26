@@ -138,6 +138,10 @@ export interface AlertListParams {
   batch_no?: string;
   include_demo?: boolean;
   sla_overdue?: boolean;
+  /** 未关闭（待确认 / 已确认 / 处理中 / 待复核）——与驾驶舱「待处理」卡同口径 */
+  open?: boolean;
+  /** 不低于某级别（warning / high / critical）——与驾驶舱「高风险」卡同口径 */
+  min_severity?: string;
   occurred_from?: string;
   occurred_to?: string;
   page?: number;

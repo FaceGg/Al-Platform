@@ -155,6 +155,7 @@ def trends(
             dimension=dimension, vocabulary=vocabulary,
         ),
         "ng_vocabulary": vocabulary,
+        "stale": agg.stale_state(db, project_id, scope, now=now),
         "generated_at": now.isoformat(),
     }
 
