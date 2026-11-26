@@ -9,7 +9,8 @@
     "826e1873",
     "3968314f",
     "2a93b8a1",
-    "c9048ecb"
+    "c9048ecb",
+    "29a6af8f"
   ],
   "spec": "ml-platform/docs/技术方案-补齐路线第一批.md",
   "environment": {
@@ -34,7 +35,7 @@
     {"name": "新增依赖进离线包", "status": "passed_with_gap", "evidence": ["requirements.txt + wheelhouse（sqlglot 27.29.0 / PyMySQL 1.1.3）", "两轮子零强制运行时依赖"], "gaps": [{"status": "not_run", "reason": "Linux 容器离线闭包演练未在本机执行（平台标签集不可模拟）"}]}
   ],
   "full_regressions": {
-    "backend_run_suite": {"status": "pending", "note": "收口提交后于干净 worktree 全量执行，结果由后续回填提交登记（绑定被测提交 SHA）"},
+    "backend_run_suite": {"status": "passed", "modules_passed": 221, "modules_failed": 0, "modules_total": 221, "tested_commit": "29a6af8f", "executed_at": "2026-11-26 09:03-10:05", "environment": "clean git worktree at 29a6af8f, per-module sealed SQLite"},
     "frontend_vitest": {"status": "passed", "files": 96, "passed": 605, "skipped": 19},
     "automl_regression": {"status": "passed", "count": 226},
     "adjacent_regression": {"status": "passed", "count": 126}
@@ -42,7 +43,7 @@
   "open_items": [
     {"status": "environment-blocked", "item": "真实钉钉/运营商送达；真实外部库连接；PostgreSQL 迁移往返（CI 背书）"},
     {"status": "not_run", "item": "Windows 安装器与 CI 生产栈实跑；Linux 容器离线闭包演练"},
-    {"status": "registered", "item": "api/agent_extras.py:828/:985 import 不可解析（随 F2a 修）"},
+    {"status": "resolved", "item": "api/agent_extras.py:828/:985 import 不可解析——已随 F2a 后端提交 acdb740a 修复"},
     {"status": "note", "item": "M1（真实数据闭环演练 + 全量 CI）为第一批整体收口口径，不随 F1 判定"}
   ],
   "conclusion": "F1 八条口径 8 passed（其中 1 条含 environment-blocked 子项，未折算成功）；横向合同通过；本地全量结果见 full_regressions"
