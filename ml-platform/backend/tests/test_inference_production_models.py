@@ -283,6 +283,9 @@ class TestInferenceProductionModels(unittest.TestCase):
             "limitations",
             "operational_guidance",
             "guidance_revision",
+            # S4（B2-04，迁移 _117）：模型卡 11 章节结构化列 + 内容指纹列
+            "sections_v2",
+            "data_fingerprint",
             "created_at",
             "updated_at",
         })
