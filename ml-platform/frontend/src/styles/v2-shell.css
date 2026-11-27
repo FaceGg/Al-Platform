@@ -147,9 +147,12 @@
 @keyframes agent-dot-wave { 0%, 70%, 100% { opacity: .22; } 35% { opacity: 1; } }
 .agent-worktime { font-variant-numeric: tabular-nums; min-width: 72px; }
 .v2-navtabs { display: flex; gap: 4px; flex: 1; justify-content: center; flex-wrap: wrap; }
-/* 五视图主导航相对视口绝对居中（brand 与右侧用户区不等宽，剩余空间居中会整体偏移）；
-   窄窗口（<900px）回退为流式避免与两侧重叠。 */
-@media (min-width: 900px) {
+/* 五视图时代主导航相对视口绝对居中（brand 与右侧用户区不等宽，剩余空间居中会整体偏移）。
+   六视图（质量管理加入）+ 顶栏全局入口（审批/帮助/演示标识）后右侧用户区显著变宽，
+   中等窗口下居中 nav 的右端会压进用户区（2026-11-27 实测「系统管理」与「含演示数据」
+   重叠）——绝对居中只在足够宽的大屏启用，其余回退 flex 流式（元素互不重叠，nav 中心
+   略偏离视口中心可接受）。 */
+@media (min-width: 1860px) {
   .v2-navtabs { position: absolute; left: 50%; transform: translateX(-50%); flex-wrap: nowrap; }
 }
 .v2-navtab {

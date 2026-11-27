@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Children, isValidElement, type ReactNode } from "react";
 import PageHeading, { type PageHeadingParent, type SectionId } from "./PageHeading";
 
 /**
@@ -31,9 +31,17 @@ export default function V2PageFrame({
   children: ReactNode;
   testId?: string;
 }) {
+  // 兼容历史页面：质量管理板块部分页面在 children 里自渲染 PageHeading（F1 起）。
+  // 检测到直接子级 PageHeading 时不重复渲染框架级标题，避免双重标题
+  //（2026-11-27 用户实测报障）；正确形态仍是 desc/actions 传 V2PageFrame props。
+  const hasInnerHeading = Children.toArray(children).some(
+    (child) => isValidElement(child) && child.type === PageHeading,
+  );
   return (
     <div className="v2-legacy" data-testid={testId}>
-      <PageHeading section={section} title={title} navKey={navKey} parent={parent} desc={desc} actions={actions} />
+      {!hasInnerHeading && (
+        <PageHeading section={section} title={title} navKey={navKey} parent={parent} desc={desc} actions={actions} />
+      )}
       {children}
     </div>
   );

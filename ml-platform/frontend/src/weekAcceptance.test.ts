@@ -155,6 +155,10 @@ const weekTestFiles: Record<number | string, string[]> = {
   gap_batch_b3: [
     "./pages/QualityQmsPages.test.tsx",
   ],
+  // V2PageFrame 标题防重（2026-11-27 用户实测：质量管理板块 20 页双重标题）
+  fix_v2_frame_heading: [
+    "./components/V2PageFrame.test.tsx",
+  ],
 };
 
 const discoveredTestFiles = Object.keys(
