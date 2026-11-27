@@ -242,8 +242,8 @@ export default function QualityTrendsPage() {
         {/* 诚实设计②：口径脚注 */}
         <Typography.Paragraph type="secondary" style={{ marginTop: 12 }} data-testid="trends-footnote">
           {zh
-            ? "口径：NG 率 = 已确认 NG ÷ 产量，按自然日计；已确认 NG 按预警的发生次数计（同因合并后一条预警可代表多个样本）；SPC 超限 = 参数超限与 SPC 判异类预警；产量读小时聚合桶；演示数据不计入。切换对比维度只读预警表，不扫推理明细。"
-            : "NG rate = confirmed NG ÷ produced per calendar day; confirmed NG counts alert occurrences; SPC exceed = parameter-limit and SPC alerts; demo data excluded."}
+            ? "口径：NG 率 = 已确认 NG ÷ 产量，按自然日计；已确认 NG 按预警的发生次数计（同因合并后一条预警可代表多个样本）；SPC 超限 = 参数超限与 SPC 判异类预警；产量读小时聚合桶。切换对比维度只读预警表，不扫推理明细。"
+            : "NG rate = confirmed NG ÷ produced per calendar day; confirmed NG counts alert occurrences; SPC exceed = parameter-limit and SPC alerts."}
         </Typography.Paragraph>
         {data?.pareto?.items?.length === 0 && (
           <Empty description={zh ? "时间窗内没有预警：产生预警后帕累托在此出现" : "No alerts in this window"} />

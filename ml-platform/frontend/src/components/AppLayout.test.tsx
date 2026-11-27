@@ -229,7 +229,7 @@ describe("AppLayout (v2 five-view shell)", () => {
     expect(items.at(-1)).toEqual({ label: "Model operations", items: ["Drift Monitoring"] });
   });
 
-  it("shows a persistent demo-data badge when an accessible project has a demo loop (E22)", async () => {
+  it("hides the demo-data badge by default and shows it only with the internal switch (E22 修订)", async () => {
     apiMocks.get.mockImplementation((url: string) => {
       if (url === "/demo-loop/presence") {
         return Promise.resolve({ data: { present: true, projects: [{ id: "p1", name: "演示项目" }] } });
@@ -238,6 +238,26 @@ describe("AppLayout (v2 five-view shell)", () => {
     });
     // 演示数据存在性只在登录态下请求（与 /auth/me 同一先例）
     localStorage.setItem("token", "test-token");
+    // 默认不渲染（〔修订 2026-11-27〕：标识面向客户演示起反作用，撤出客户视野；
+    // 数据隔离口径不变）
+    render(
+      <MemoryRouter initialEntries={["/quality/dashboard"]}>
+        <LangProvider><AppLayout><div>test</div></AppLayout></LangProvider>
+      </MemoryRouter>,
+    );
+    await screen.findByRole("button", { name: /quality management/i });
+    expect(screen.queryByTestId("demo-presence")).not.toBeInTheDocument();
+  });
+
+  it("shows the demo-data badge only when the internal switch is on (E22)", async () => {
+    apiMocks.get.mockImplementation((url: string) => {
+      if (url === "/demo-loop/presence") {
+        return Promise.resolve({ data: { present: true, projects: [{ id: "p1", name: "演示项目" }] } });
+      }
+      return Promise.reject(new Error("offline"));
+    });
+    localStorage.setItem("token", "test-token");
+    localStorage.setItem("showDemoBadge", "1");
     render(
       <MemoryRouter initialEntries={["/quality/dashboard"]}>
         <LangProvider><AppLayout><div>test</div></AppLayout></LangProvider>

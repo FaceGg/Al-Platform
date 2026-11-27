@@ -338,8 +338,8 @@ export default function QualityAlertsPage() {
         {/* 诚实设计②：风险分口径脚注 */}
         <Typography.Paragraph type="secondary" style={{ marginTop: 12 }} data-testid="risk-footnote">
           {zh
-            ? "风险分口径：有监督模型为预测概率；无监督模型为异常分数（量纲因族而异）或模型直接判异。预警触发下限独立于分级阈值（须满足 触发 ≤ 高 ≤ 严重），调整分级阈值不改变触发判定；触发下限、分级阈值、SLA 时长与合并窗口在「SOP 维护 › 预警规则」里按场景配置。演示数据默认不显示。"
-            : "Risk score: predicted probability for supervised models; anomaly score (family-specific scale) or the model's own flag for unsupervised models. The trigger threshold is independent of severity thresholds (trigger ≤ high ≤ critical). Demo data is hidden by default."}
+            ? "风险分口径：有监督模型为预测概率；无监督模型为异常分数（量纲因族而异）或模型直接判异。预警触发下限独立于分级阈值（须满足 触发 ≤ 高 ≤ 严重），调整分级阈值不改变触发判定；触发下限、分级阈值、SLA 时长与合并窗口在「SOP 维护 › 预警规则」里按场景配置。"
+            : "Risk score: predicted probability for supervised models; anomaly score (family-specific scale) or the model's own flag for unsupervised models. The trigger threshold is independent of severity thresholds (trigger ≤ high ≤ critical)."}
         </Typography.Paragraph>
         <Modal
           open={Boolean(batchTargets)}

@@ -149,7 +149,7 @@ export default function ProductionRecordsPage() {
         <PageHeading
           section="quality"
           navKey="quality_production_records"
-          desc={zh ? "逐样本推理结果明细：按样本键、批次、工位查询；演示数据默认不显示。" : "Per-sample inference results by sample key, batch and station; demo data hidden by default."}
+          desc={zh ? "逐样本推理结果明细：按样本键、批次、工位查询。" : "Per-sample inference results by sample key, batch and station."}
           actions={
             <Space wrap>
               <Select
@@ -232,7 +232,7 @@ export default function ProductionRecordsPage() {
               showSizeChanger: true,
               onChange: (nextPage, nextSize) => { setPage(nextPage); setPageSize(nextSize); },
             }}
-            locale={{ emptyText: <Empty description={zh ? "暂无记录：带上下文的推理请求落库后在此可查（演示通道数据默认隐藏）" : "No records yet"} /> }}
+            locale={{ emptyText: <Empty description={zh ? "暂无记录：带上下文的推理请求落库后在此可查" : "No records yet"} /> }}
           />
         </Card>
       </V2PageFrame>

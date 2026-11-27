@@ -91,8 +91,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const viewVisible = (view: ViewId) =>
     isAdmin || visibleViews === null || visibleViews.includes(view);
 
-  // 演示态常驻标识（诚实设计⑥ / 技术方案 D33）：可访问的项目里有演示循环配置时，
-  // 顶栏一直显示「含演示数据」——演示样本与预警不计入真实 KPI。
+  // 演示态标识（诚实设计⑥ / 技术方案 D33）：可访问的项目里有演示循环配置时提示
+  // 「含演示数据」（演示样本与预警不计入真实 KPI）。
+  // 〔修订 2026-11-27 用户指示〕该标识面向客户演示时起反作用（暴露演示性质）——
+  // 默认不渲染，仅内部验收需要时打开隐藏开关（localStorage.showDemoBadge=1 或
+  // URL ?demoBadge=1）。数据隔离口径不变（后端 is_demo 过滤照旧）。
   const [demoProjects, setDemoProjects] = useState<string[]>([]);
   useEffect(() => {
     if (!localStorage.getItem("token")) return;
@@ -325,7 +328,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </nav>
           <div className="v2-topright">
             <span className="v2-env-chip" style={{ display: "none" }} />
-            {demoProjects.length > 0 && (
+            {demoProjects.length > 0
+              && (localStorage.getItem("showDemoBadge") === "1"
+                || new URLSearchParams(window.location.search).has("demoBadge")) && (
               <Tag data-testid="demo-presence" color="purple" title={demoProjects.join("、")}>
                 {zh ? "含演示数据" : "Demo data"}
               </Tag>

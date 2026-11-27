@@ -217,7 +217,7 @@ export default function QualityDashboardPage() {
         {/* 诚实设计②：口径脚注 */}
         <Typography.Paragraph type="secondary" style={{ marginTop: 12 }} data-testid="dashboard-footnote">
           {zh
-            ? `口径：命中率 = 已确认异常 ÷ 已关闭预警（本窗 ${percentText(alerts?.hit_rate)}）；已确认 NG 按预警的发生次数计；产量读小时聚合桶；演示数据不计入任何数字。每 ${REFRESH_SECONDS} 秒自动刷新。`
+            ? `口径：命中率 = 已确认异常 ÷ 已关闭预警（本窗 ${percentText(alerts?.hit_rate)}）；已确认 NG 按预警的发生次数计；产量读小时聚合桶。每 ${REFRESH_SECONDS} 秒自动刷新。`
             : `Hit rate = confirmed issues ÷ closed alerts (${percentText(alerts?.hit_rate)}). Confirmed NG counts alert occurrences. Demo data is excluded. Auto-refresh every ${REFRESH_SECONDS}s.`}
         </Typography.Paragraph>
       </V2PageFrame>
