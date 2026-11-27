@@ -151,6 +151,10 @@ const weekTestFiles: Record<number | string, string[]> = {
     "./pages/ApprovalCenterPage.test.tsx",
     "./pages/AgentActionAuditPage.test.tsx",
   ],
+  // 补齐路线第三批 T1–T3（2026-11-26/27）：质量体系十页骨架与空态引导
+  gap_batch_b3: [
+    "./pages/QualityQmsPages.test.tsx",
+  ],
 };
 
 const discoveredTestFiles = Object.keys(

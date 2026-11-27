@@ -24,6 +24,7 @@ celery_app = Celery(
         "app.tasks.kubernetes_tasks",
         "app.tasks.kg_tasks",
         "app.tasks.quality_tasks",
+        "app.tasks.qms_tasks",
         "app.tasks.ingest_tasks",
         "app.tasks.approval_tasks",
         "app.tasks.recovery",
@@ -119,6 +120,11 @@ celery_app.conf.update(
             "task": "ml_platform.watch_alert_sla",
             "schedule": 600.0,
         },
+        # 第三批 B3-08（D7）：质量报告定时生成（600s 巡检上一已完结周期，唯一键幂等）
+        "qms-report-scheduler": {
+            "task": "ml_platform.qms_report_scheduled",
+            "schedule": 600.0,
+        },
         # F4 漂移定时批检（D40）：周期可配，默认 300 秒
         "drift-scan": {
             "task": "ml_platform.scan_model_drift",
@@ -145,6 +151,7 @@ from app.tasks import dataset_import_tasks  # noqa: E402,F401
 from app.tasks import annotation_return_tasks  # noqa: E402,F401
 from app.tasks import kubernetes_tasks  # noqa: E402,F401
 from app.tasks import quality_tasks  # noqa: E402,F401
+from app.tasks import qms_tasks  # noqa: E402,F401
 from app.tasks import ingest_tasks  # noqa: E402,F401
 from app.tasks import approval_tasks  # noqa: E402,F401
 from app.tasks import recovery  # noqa: E402,F401

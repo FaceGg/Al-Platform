@@ -93,6 +93,7 @@ from app.api import splits as splits_api
 from app.api import release_governance as release_governance_api
 from app.api import label_quality as label_quality_api
 from app.api import audit_qa as audit_qa_api
+from app.api import qms as qms_api
 from app.api import data_sources as data_sources_api
 from app.api import annotator_internal as annotator_internal_api
 from app.api import annotation_returns as annotation_returns_api
@@ -468,6 +469,7 @@ app.include_router(splits_api.router)
 app.include_router(release_governance_api.router)
 app.include_router(label_quality_api.router)
 app.include_router(audit_qa_api.router)
+app.include_router(qms_api.router)
 app.include_router(data_sources_api.router)
 app.include_router(annotator_internal_api.router)
 

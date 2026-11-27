@@ -10,6 +10,8 @@ import {
   RocketOutlined, CopyOutlined, FileTextOutlined, SettingOutlined,
   NotificationOutlined, BarChartOutlined, SafetyCertificateOutlined, QuestionCircleOutlined,
   AlertOutlined, ToolOutlined, DashboardOutlined, AuditOutlined,
+  FileProtectOutlined, ProfileOutlined, FolderOpenOutlined, FileDoneOutlined,
+  SlidersOutlined, WarningOutlined, ShoppingOutlined,
 } from "@ant-design/icons";
 import { SunOutlined, MoonOutlined } from "@ant-design/icons";
 import { useI18n } from "../i18n";
@@ -154,6 +156,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         { key: "/quality/scenes", icon: <AppstoreOutlined />, label: nav("quality_scenes") },
         { key: "/quality/stations", icon: <ClusterOutlined />, label: nav("quality_stations") },
         { key: "/quality/sops", icon: <FileTextOutlined />, label: nav("quality_sops") },
+      ] },
+      { label: zh ? "质量体系" : "Quality system", items: [
+        { key: "/quality/ncr", icon: <FileProtectOutlined />, label: nav("quality_ncr") },
+        { key: "/quality/d8", icon: <ProfileOutlined />, label: nav("quality_d8") },
+        { key: "/quality/cases", icon: <FolderOpenOutlined />, label: nav("quality_cases") },
+        { key: "/quality/knowledge", icon: <BookOutlined />, label: nav("quality_knowledge") },
+        { key: "/quality/trace", icon: <ApartmentOutlined />, label: nav("quality_trace") },
+        { key: "/quality/reports", icon: <FileDoneOutlined />, label: nav("quality_reports") },
+        { key: "/quality/control-plans", icon: <SlidersOutlined />, label: nav("quality_control_plans") },
+        { key: "/quality/msa", icon: <ExperimentOutlined />, label: nav("quality_msa") },
+        { key: "/quality/fmea", icon: <WarningOutlined />, label: nav("quality_fmea") },
+        { key: "/quality/iqc", icon: <ShoppingOutlined />, label: nav("quality_iqc") },
       ] },
     ],
     agent: [

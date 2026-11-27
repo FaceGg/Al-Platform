@@ -75,6 +75,10 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_audit_qa",
         # M2 五段全链贯通演练：预警→处置→标注→重训→灰度发布→回执（独立验收项）
         "test_gap_m2_drill",
+        # 第三批 QMS（B3-04/03/07/09/10 + B3-08/06/01/02/05）
+        "test_qms_t1",
+        "test_qms_t2_t3",
+        "test_qms_api",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",

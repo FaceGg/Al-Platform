@@ -140,6 +140,22 @@ from app.models.label_quality import (
     PseudoLabelBatch,
 )
 from app.models.audit_qa import AuditReport, ModelTrustScore
+from app.models.qms import (
+    QmsCase,
+    QmsCaseLink,
+    QmsControlPlan,
+    QmsD8Report,
+    QmsFmea,
+    QmsIqcRecord,
+    QmsKnowledgeEntry,
+    QmsMsaStudy,
+    QmsNcrAction,
+    QmsNcrCapa,
+    QmsQualityReport,
+    QmsScar,
+    QmsSupplier,
+    QmsTraceLink,
+)
 
 __all__ = [
     "User",
@@ -289,4 +305,18 @@ __all__ = [
     "PseudoLabelBatch",
     "AuditReport",
     "ModelTrustScore",
+    "QmsNcrCapa",
+    "QmsNcrAction",
+    "QmsD8Report",
+    "QmsCase",
+    "QmsCaseLink",
+    "QmsKnowledgeEntry",
+    "QmsTraceLink",
+    "QmsQualityReport",
+    "QmsControlPlan",
+    "QmsMsaStudy",
+    "QmsFmea",
+    "QmsSupplier",
+    "QmsIqcRecord",
+    "QmsScar",
 ]

@@ -59,6 +59,16 @@ const QualityMonitorPage = lazy(() => import("./pages/QualityMonitorPage"));
 const QualityTrendsPage = lazy(() => import("./pages/QualityTrendsPage"));
 const QualitySpcPage = lazy(() => import("./pages/QualitySpcPage"));
 const DriftMonitorPage = lazy(() => import("./pages/DriftMonitorPage"));
+const QualityNcrPage = lazy(() => import("./pages/QualityNcrPage"));
+const QualityD8Page = lazy(() => import("./pages/QualityD8Page"));
+const QualityCasesPage = lazy(() => import("./pages/QualityCasesPage"));
+const QualityKnowledgePage = lazy(() => import("./pages/QualityKnowledgePage"));
+const QualityTracePage = lazy(() => import("./pages/QualityTracePage"));
+const QualityReportsPage = lazy(() => import("./pages/QualityReportsPage"));
+const QualityControlPlanPage = lazy(() => import("./pages/QualityControlPlanPage"));
+const QualityMsaPage = lazy(() => import("./pages/QualityMsaPage"));
+const QualityFmeaPage = lazy(() => import("./pages/QualityFmeaPage"));
+const QualityIqcPage = lazy(() => import("./pages/QualityIqcPage"));
 const HelpCenterPage = lazy(() => import("./pages/HelpCenterPage"));
 const ApprovalCenterPage = lazy(() => import("./pages/ApprovalCenterPage"));
 const AgentActionAuditPage = lazy(() => import("./pages/AgentActionAuditPage"));
@@ -166,6 +176,16 @@ function AppContent() {
             <Route path="/quality/alerts" element={<ProtectedRoute><PageErrorBoundary pageName="预警中心"><QualityAlertsPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/quality/disposition" element={<ProtectedRoute><PageErrorBoundary pageName="处置工作台"><QualityDispositionPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/quality/sops" element={<ProtectedRoute><PageErrorBoundary pageName="SOP 维护"><QualitySopsPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/quality/ncr" element={<ProtectedRoute><PageErrorBoundary pageName="NCR-CAPA"><QualityNcrPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/quality/d8" element={<ProtectedRoute><PageErrorBoundary pageName="8D 报告"><QualityD8Page /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/quality/cases" element={<ProtectedRoute><PageErrorBoundary pageName="案例中心"><QualityCasesPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/quality/knowledge" element={<ProtectedRoute><PageErrorBoundary pageName="质量知识库"><QualityKnowledgePage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/quality/trace" element={<ProtectedRoute><PageErrorBoundary pageName="批次追溯"><QualityTracePage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/quality/reports" element={<ProtectedRoute><PageErrorBoundary pageName="质量报告"><QualityReportsPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/quality/control-plans" element={<ProtectedRoute><PageErrorBoundary pageName="动态控制计划"><QualityControlPlanPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/quality/msa" element={<ProtectedRoute><PageErrorBoundary pageName="MSA 分析"><QualityMsaPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/quality/fmea" element={<ProtectedRoute><PageErrorBoundary pageName="FMEA"><QualityFmeaPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/quality/iqc" element={<ProtectedRoute><PageErrorBoundary pageName="来料检验与 SCAR"><QualityIqcPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/quality/dashboard" element={<ProtectedRoute><PageErrorBoundary pageName="质量驾驶舱"><QualityDashboardPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/quality/monitor" element={<ProtectedRoute><PageErrorBoundary pageName="实时生产监控"><QualityMonitorPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/quality/trends" element={<ProtectedRoute><PageErrorBoundary pageName="趋势与帕累托"><QualityTrendsPage /></PageErrorBoundary></ProtectedRoute>} />

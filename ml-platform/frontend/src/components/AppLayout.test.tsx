@@ -197,7 +197,7 @@ describe("AppLayout (v2 five-view shell)", () => {
     expect(within(screen.getByTestId("v2-sidebar")).getByText("New task")).toBeInTheDocument();
   });
 
-  it("groups the quality sidebar into monitoring and configuration", async () => {
+  it("groups the quality sidebar into monitoring, analysis, configuration and quality system", async () => {
     const sidebarGroups = async () => Array.from((await screen.findByTestId("v2-sidebar")).children).map((group) => ({
       label: group.querySelector(".v2-side-group")?.textContent,
       items: Array.from(group.querySelectorAll("button")).map((button) => button.textContent),
@@ -211,6 +211,7 @@ describe("AppLayout (v2 five-view shell)", () => {
       { label: "Monitoring", items: ["Quality Cockpit", "Realtime Monitoring", "Alert Center", "Disposition Workbench", "Production Records"] },
       { label: "Analysis", items: ["Trends & Pareto", "SPC Control"] },
       { label: "Configuration", items: ["Quality Scenes", "Stations & Devices", "SOP Maintenance"] },
+      { label: "Quality system", items: ["NCR-CAPA", "8D Reports", "Case Center", "Quality Knowledge", "Traceability", "Quality Reports", "Control Plans", "MSA", "FMEA", "IQC & SCAR"] },
     ]);
   });
 

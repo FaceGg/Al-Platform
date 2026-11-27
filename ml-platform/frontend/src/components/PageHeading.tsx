@@ -69,6 +69,16 @@ export const NAV_FALLBACK: Record<string, { zh: string; en: string }> = {
   quality_alerts: { zh: "预警中心", en: "Alert Center" },
   quality_disposition: { zh: "处置工作台", en: "Disposition Workbench" },
   quality_sops: { zh: "SOP 维护", en: "SOP Maintenance" },
+  quality_ncr: { zh: "NCR-CAPA", en: "NCR-CAPA" },
+  quality_d8: { zh: "8D 报告", en: "8D Reports" },
+  quality_cases: { zh: "案例中心", en: "Case Center" },
+  quality_knowledge: { zh: "质量知识库", en: "Quality Knowledge" },
+  quality_trace: { zh: "批次追溯", en: "Traceability" },
+  quality_reports: { zh: "质量报告", en: "Quality Reports" },
+  quality_control_plans: { zh: "动态控制计划", en: "Control Plans" },
+  quality_msa: { zh: "MSA 分析", en: "MSA" },
+  quality_fmea: { zh: "FMEA", en: "FMEA" },
+  quality_iqc: { zh: "来料检验与 SCAR", en: "IQC & SCAR" },
   help_center: { zh: "帮助中心", en: "Help Center" },
 };
 
