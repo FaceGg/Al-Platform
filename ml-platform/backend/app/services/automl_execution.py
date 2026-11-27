@@ -3102,6 +3102,22 @@ def execute_automl_job(
 
             split_roles = load_role_indices(db, dataset_split_id)
             frame = filter_frame_by_roles(frame, split_roles, "development")
+        # E15 标签质量门（补齐路线第二批）：最近一致性轮 κ 低于阈值 → 停止训练
+        # 并提示疑似标签量（三批复审 U28：门函数此前存在但从未接入训练链路）。
+        # 无一致性轮的项目不拦（向后安全）。
+        from app.services.consistency import label_quality_gate
+
+        label_gate = label_quality_gate(db, project_id=job.project_id)
+        if label_gate.get("stopped"):
+            job.status = "failed"
+            job.error_message = (
+                f"LABEL_QUALITY_GATE_STOPPED: 最近一致性轮 κ={label_gate.get('kappa_average')}"
+                f" 低于阈值 {label_gate.get('kappa_threshold')}"
+                f"，待仲裁 {label_gate.get('pending_arbitrations', 0)} 条"
+                "（round " + str(label_gate.get("round_id")) + "）"
+            )
+            db.commit()
+            return {"stopped_by": "label_quality_gate", **label_gate}
         target_column = params.get("target_column")
         task = normalize_task_type(params.get("task", "classification"))
         target_columns = list(params.get("target_columns") or [target_column])

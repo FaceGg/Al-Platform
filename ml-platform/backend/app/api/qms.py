@@ -47,6 +47,7 @@ from app.services.qms_core import (
 )
 from app.services.qms_tools import (
     QmsToolsError,
+    archive_control_plan,
     compute_grr,
     create_or_replace_plan,
     disable_supplier,
@@ -171,6 +172,7 @@ def _qms_error(error: QmsError) -> None:
 def _tools_error(error: QmsToolsError) -> None:
     status = 404 if error.code.endswith("_NOT_FOUND") else 409 if error.code in {
         "QMS_PLAN_DUAL_ACTIVE", "SUPPLIER_DISABLED", "IQC_COUNT_CONSTRAINT",
+        "QMS_PLAN_ALREADY_ARCHIVED",
     } else 400
     raise HTTPException(status, {"code": error.code, "message": error.message})
 
@@ -749,6 +751,30 @@ def create_plan_endpoint(
             _tools_error(error)
     db.commit()
     return {"id": str(plan.id), "version": plan.version, "status": plan.status}
+
+
+@router.post("/control-plans/{plan_id}/archive")
+def archive_plan_endpoint(
+    project_id: UUID, plan_id: UUID, request: Request,
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """归档生效计划（三批复审缺口：无归档流程则第二版永远建不出来）。"""
+    access = _manage(db, project_id, current_user)
+    with audit_service(db).project_action(
+        db, request=request, actor=current_user, access=access,
+        permission="quality.manage",
+        intent=AuditIntent(project_id=project_id, action="qms.plan.archive",
+                           resource_type="qms_control_plan", resource_id=str(plan_id),
+                           changes={}),
+        allowed_changes=set(),
+    ):
+        try:
+            plan = archive_control_plan(db, plan_id=plan_id, actor_id=current_user.id)
+        except QmsToolsError as error:
+            _tools_error(error)
+    db.commit()
+    return {"id": str(plan.id), "status": plan.status,
+            "archived_at": plan.archived_at.isoformat() if plan.archived_at else None}
 
 
 @router.post("/control-plans/{plan_id}/tightening-evaluation")

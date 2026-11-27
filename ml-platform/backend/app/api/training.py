@@ -99,6 +99,10 @@ class AutoMLRunRequest(BaseModel):
     # （场景 field_roles 换算结果；通用能力不绑场景实体）。None=默认零变化；
     # 目标列不可排除、差集后为空 400。S2a 划分管理复用同一入口。
     excluded_columns: list[str] | None = None
+    # S2a 划分接线（B2-G1）：显式传划分 id 时按 development 行训练、盲测段
+    # 永不进训练（三批复审 U10：此入口此前不存在，接线不可达）。None=默认
+    # 零变化（20% 随机分层 seed 42 红线）。划分不存在 → 404 DATASET_SPLIT_NOT_FOUND
+    dataset_split_id: uuid.UUID | None = None
     task: str = "classification"
     # 无监督（anomaly_detection）专用：预期异常比例先验，宁低勿高，缺省 0.01。
     contamination: float | None = Field(default=None, gt=0.0, le=0.5)
@@ -789,6 +793,13 @@ def start_automl(
             validate_target_columns(frame, task_type, target_columns)
         except (OSError, ValueError) as error:
             raise HTTPException(400, _error("AUTOML_CONFIG_INVALID", str(error))) from error
+        if data.dataset_split_id:
+            # 划分存在性与归属校验（创建时即失败，不等训练期）
+            from app.models.dataset_splitting import DatasetSplit
+
+            split_row = db.get(DatasetSplit, data.dataset_split_id)
+            if split_row is None or str(split_row.project_id) != str(data.project_id):
+                raise HTTPException(404, _error("DATASET_SPLIT_NOT_FOUND"))
         job = TrainingJob(
             id=job_id, project_id=data.project_id, user_id=current_user.id,
             experiment_id=experiment.id, name=data.name, operator_id="automl",
@@ -799,6 +810,8 @@ def start_automl(
                 } if target_columns else {"target_columns": []}),
                 "input_columns": list(data.input_columns) if data.input_columns is not None else None,
                 "excluded_columns": list(data.excluded_columns) if data.excluded_columns else None,
+                # S2a 划分接线入口（B2-G1/U10）：划分不存在 → 404（下述校验）
+                "dataset_split_id": str(data.dataset_split_id) if data.dataset_split_id else None,
                 "task": task_type,
                 **(
                     {

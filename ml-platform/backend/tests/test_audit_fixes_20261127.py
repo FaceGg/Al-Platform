@@ -154,5 +154,86 @@ class TestAuditFixes(QualityAlertApiCase):
         self.assertEqual(after["stage"], "verification")
 
 
+class TestBatchB2Fixes(QualityAlertApiCase):
+    """批次 B 修复（2026-11-27）：E15 质量门接线、自动开案、控制计划归档。"""
+
+    def test_critical_confirmed_close_auto_opens_case(self):
+        """critical 确认异常关闭 → 自动开质量案例（D4/B3-07 补实现）。"""
+        from app.models.qms import QmsCase
+
+        tag = uuid.uuid4().hex[:6]
+        base = f"/api/projects/{self.project.id}"
+        alert = QualityAlert(
+            project_id=self.project.id, source_type="model_risk",
+            severity="critical", title=f"auto-case-{tag}", evidence={},
+            merge_key=f"auto-case-{tag}", status="open", sla_due_at=None,
+        )
+        self.db.add(alert)
+        self.db.commit()
+        self.act_as(self.owner)
+        # F2 流转图：closed 只能从 acknowledged/processing/review_pending 进入
+        ack = self.client.post(
+            f"{base}/quality-alerts/{alert.id}/ack",
+            json={"assignee_id": str(self.owner.id)})
+        self.assertIn(ack.status_code, (200, 201), ack.text[:200])
+        response = self.client.post(
+            f"{base}/quality-alerts/{alert.id}/disposition",
+            json={"resolution": "confirmed_issue", "note": "确认为真实异常",
+                  "form": {"action": "停机检查"}},
+        )
+        self.assertIn(response.status_code, (200, 201), response.text[:200])
+        cases = self.db.query(QmsCase).filter(
+            QmsCase.source_alert_id == alert.id).all()
+        self.assertEqual(len(cases), 1, "critical 确认关闭应自动开案")
+        self.assertEqual(cases[0].severity, "critical")
+        # 对照：非 critical 确认关闭不开案
+        minor = QualityAlert(
+            project_id=self.project.id, source_type="model_risk",
+            severity="warning", title=f"no-case-{tag}", evidence={},
+            merge_key=f"no-case-{tag}", status="open", sla_due_at=None,
+        )
+        self.db.add(minor)
+        self.db.commit()
+        self.client.post(f"{base}/quality-alerts/{minor.id}/ack",
+                         json={"assignee_id": str(self.owner.id)})
+        self.client.post(
+            f"{base}/quality-alerts/{minor.id}/disposition",
+            json={"resolution": "confirmed_issue", "note": "一般异常",
+                  "form": {"action": "调整参数"}},
+        )
+        still_one = self.db.query(QmsCase).filter(
+            QmsCase.source_alert_id == minor.id).all()
+        self.assertEqual(len(still_one), 0, "非 critical 不应自动开案")
+
+    def test_control_plan_archive_enables_next_version(self):
+        """归档端点：归档后可建第二版（三批复审缺口——原实现永远建不出来）。"""
+        from contextlib import suppress
+
+        from app.services.qms_tools import create_or_replace_plan
+
+        tag = uuid.uuid4().hex[:6]
+        base = f"/api/projects/{self.project.id}/qms"
+        plan1 = create_or_replace_plan(self.db, project_id=self.project.id,
+                                       code=f"A-{tag}", quality_points=[])
+        self.db.commit()
+        # 归档前建第二版被拒（409 双生效）
+        with suppress(Exception):
+            blocked = self.client.post(f"{base}/control-plans", json={
+                "code": f"B-{tag}", "quality_points": []})
+            self.assertEqual(blocked.status_code, 409)
+        # 归档
+        archived = self.client.post(f"{base}/control-plans/{plan1.id}/archive")
+        self.assertEqual(archived.status_code, 200, archived.text)
+        self.assertEqual(archived.json()["status"], "archived")
+        # 归档后可建第二版
+        second = self.client.post(f"{base}/control-plans", json={
+            "code": f"B-{tag}", "quality_points": []})
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertEqual(second.json()["version"], 2)
+        # 重复归档被拒
+        again = self.client.post(f"{base}/control-plans/{plan1.id}/archive")
+        self.assertEqual(again.status_code, 409)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -196,6 +196,20 @@ def create_or_replace_plan(db: Session, *, project_id, code: str,
     return plan
 
 
+def archive_control_plan(db: Session, *, plan_id, actor_id=None) -> QmsControlPlan:
+    """归档生效计划（三批复审缺口：原实现只有「双生效拒绝」，无归档流程——
+    用户永远建不出第二版，version_diff 无对象可比）。"""
+    plan = db.get(QmsControlPlan, plan_id)
+    if plan is None:
+        raise QmsToolsError("QMS_PLAN_NOT_FOUND")
+    if plan.status != "active":
+        raise QmsToolsError("QMS_PLAN_ALREADY_ARCHIVED")
+    plan.status = "archived"
+    plan.archived_at = _now()
+    db.flush()
+    return plan
+
+
 def evaluate_tightening(db: Session, *, plan: QmsControlPlan) -> dict:
     """四因子评估抽样加严：漂移/预警/过程能力/复发 → 建议乘数 + 决策流水
     （可复算）；建议乘数经 recipe_change 审批类型进 S1 审批队列。"""
