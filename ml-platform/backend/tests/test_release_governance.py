@@ -3,10 +3,12 @@
 
 验收口径（技术方案 §7.5）。
 """
+import hashlib
 import unittest
 import uuid
 from datetime import datetime, timedelta
 
+import numpy as np
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -43,28 +45,80 @@ from app.services.release_governance import (
 )
 
 
-def _version(db, project, library_owner_id, metrics=None, task=None):
-    from app.models.model_library import ModelLibrary
+def _sealed_predictor_artifact(db, project_id, owner_id, name, labels):
+    """构造密封模型包工件（预测器按序循环输出 labels），返回 (artifact_id, library_id)。"""
+    import tempfile
+    from pathlib import Path
 
-    library = ModelLibrary(
-        name=f"lib-{uuid.uuid4().hex[:8]}", owner_id=library_owner_id,
-        status="completed",
+    import joblib
+
+    from app.models.model_library import ModelLibrary
+    from app.services.artifact_service import build_artifact_service
+    from app.services.model_artifact_sealing import model_seal_metadata
+
+
+    workdir = tempfile.TemporaryDirectory()
+    path = Path(workdir.name) / (name + ".joblib")
+    joblib.dump(_SeqPredictor(labels), path)
+    payload = path.read_bytes()
+    digest = hashlib.sha256(payload).hexdigest()
+    artifact = build_artifact_service(db).create_from_file(
+        project_id, path, name + ".joblib", "model",
+        metadata={**model_seal_metadata(digest), "served_sha256": digest},
     )
+    library = ModelLibrary(name=name, owner_id=owner_id, status="completed",
+                           model_artifact_id=artifact.id)
     db.add(library)
     db.flush()
+    return artifact.id, library.id
+
+
+def _version(db, project, library_owner_id, metrics=None, task=None,
+             feature_schema=None, sealed_labels=None, registered_model_id=None):
+    """造版本；sealed_labels + feature_schema 提供时挂真实密封模型包（盲测打分用）。"""
+    from app.models.model_library import ModelLibrary
+
     conversion = {"task": task} if task else {}
+    source_artifact_id = uuid.uuid4()
+    model_library_id = None
+    if sealed_labels is not None and feature_schema:
+        source_artifact_id, model_library_id = _sealed_predictor_artifact(
+            db, project.id, library_owner_id,
+            f"lib-{uuid.uuid4().hex[:8]}",
+            sealed_labels,
+        )
+    else:
+        library = ModelLibrary(
+            name=f"lib-{uuid.uuid4().hex[:8]}", owner_id=library_owner_id,
+            status="completed",
+        )
+        db.add(library)
+        db.flush()
+        model_library_id = library.id
     version = ModelVersion(
-        registered_model_id=uuid.uuid4(), version_number=100 + np_random(),
-        source_kind="platform_joblib", source_artifact_id=uuid.uuid4(),
+        registered_model_id=registered_model_id or uuid.uuid4(), version_number=100 + np_random(),
+        source_kind="platform_joblib", source_artifact_id=source_artifact_id,
         onnx_artifact_id=uuid.uuid4(),
-        source_model_library_id=library.id,
+        source_model_library_id=model_library_id,
         approval_status="approved",
         metrics=metrics or {},
         conversion_metadata=conversion,
+        feature_schema=feature_schema,
     )
     db.add(version)
     db.flush()
     return version
+
+
+class _SeqPredictor:
+    """按序循环输出预设标签的预测器（模块级：joblib pickle 需要可导入的类）。"""
+
+    def __init__(self, labels):
+        self._labels = list(labels)
+
+    def predict(self, matrix):
+        base = self._labels * (len(matrix) // max(1, len(self._labels)) + 1)
+        return np.array(base[: len(matrix)])
 
 
 def np_random():
@@ -90,10 +144,45 @@ class GovernanceCase(unittest.TestCase):
             self.project = Project(name="发布治理", owner_id=self.owner.id)
             db.add(self.project)
             db.flush()
+            # 盲测数据集（真实 CSV 工件，260 行，target=行号%2）——终验/不回退
+            # 的盲测打分要物化它并对 blind 段真实打分（三批复审重构）
+            import tempfile
+
+            import pandas as pd
+
+            from app.models.data_version import DatasetVersion
+            from app.services.artifact_service import build_artifact_service
+
+            blind_rows = [
+                {"feature_a": index * 0.1, "target": index % 2,
+                 "sample_key": f"sk-{index}"}
+                for index in range(260)
+            ]
+            blind_dir = tempfile.TemporaryDirectory()
+            self.addCleanup(blind_dir.cleanup)
+            blind_csv = blind_dir.name + "/blind-dataset.csv"
+            pd.DataFrame(blind_rows).to_csv(blind_csv, index=False)
+            blind_artifact = build_artifact_service(db).create_from_file(
+                self.project.id, blind_csv, "blind-dataset.csv", "dataset",
+            )
+            self.blind_dataset_version = DatasetVersion(
+                project_id=self.project.id, operator_id=self.owner.id, version=1,
+                status="ready", row_count=260, column_count=3,
+                content_hash=uuid.uuid4().hex, schema_hash=uuid.uuid4().hex,
+                normalized_artifact_id=blind_artifact.id,
+            )
+            db.add(self.blind_dataset_version)
+            db.flush()
+            # champion/challenger 挂真实密封模型包（按序输出每行真值 → 盲测 F1=1.0）
+            truth = [str(index % 2) for index in range(260)]
             self.champion = _version(db, self.project, self.owner.id,
-                                     metrics={"f1": 0.9})
+                                     metrics={"f1": 0.9},
+                                     feature_schema=["feature_a"],
+                                     sealed_labels=truth)
             self.challenger = _version(db, self.project, self.owner.id,
-                                       metrics={"f1": 0.92})
+                                       metrics={"f1": 0.92},
+                                       feature_schema=["feature_a"],
+                                       sealed_labels=truth)
             self.deployment = InferenceDeployment(
                 project_id=self.project.id, name="治理部署",
                 model_version_id=self.champion.id,
@@ -129,16 +218,18 @@ class GovernanceCase(unittest.TestCase):
 
     def _blind_round(self, db, sample_count=250):
         from app.models.dataset_splitting import (
-            BlindTestUsage,
             DatasetSplit,
             DatasetSplitMember,
             ModelingRound,
         )
 
         split = DatasetSplit(
-            project_id=self.project.id, dataset_version_id=uuid.uuid4(),
+            project_id=self.project.id,
+            dataset_version_id=self.blind_dataset_version.id,
             name="盲测划分", strategy="random_stratified",
-            params={}, split_fingerprint="b" * 64,
+            # target_column 供盲测终验/不回退的真实打分（三批复审重构）
+            params={"target_column": "target", "test_size": 0.5, "seed": 42},
+            split_fingerprint="b" * 64,
             created_by_id=self.owner.id,
         )
         db.add(split)
@@ -240,13 +331,18 @@ class TestReleaseGates(GovernanceCase):
                 db, deployment=self.deployment, version=self.challenger,
             )
             self.assertTrue(result["passed"])
-            self.assertIn("same_blind_round", result)
+            # 同批由「同一 blind frame」构造性保证；样本集指纹随 detail 落档
+            self.assertTrue(result["same_blind_samples"])
+            self.assertTrue(result["samples_fingerprint"])
             db.commit()
 
     def test_no_regression_blocks_when_candidate_weaker(self):
         with self.session_factory() as db:
             self._blind_round(db)
-            weaker = _version(db, self.project, self.owner.id, metrics={"f1": 0.7})
+            # 恒预测 1：macro F1 = 0.333 < champion 的 1.0（盲测配对揭穿
+            # 「浅验证集 metrics 更好」的候选——旧实现会放行）
+            weaker = _version(db, self.project, self.owner.id, metrics={"f1": 0.7},
+                              feature_schema=["feature_a"], sealed_labels=[1] * 260)
             result = evaluate_no_regression(
                 db, deployment=self.deployment, version=weaker,
             )

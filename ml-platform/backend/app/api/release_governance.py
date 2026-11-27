@@ -173,11 +173,14 @@ def run_shadow_endpoint(
         raise HTTPException(404, {"code": "MODEL_VERSION_NOT_FOUND"})
     # 影子数据源：部署绑定数据集的 development 行（合成样本池）
     from app.services.dataset_splitting import SplitError
+    from app.services.release_governance import GovernanceError
 
     try:
         frame, feature_columns = _shadow_frame(db, project_id, deployment)
-    except SplitError as error:
-        raise HTTPException(409, {"code": error.code, "message": error.message}) from None
+    except (SplitError, GovernanceError) as error:
+        code = getattr(error, "code", None) or "SHADOW_NO_SAMPLE_POOL"
+        message = getattr(error, "message", None) or str(error)
+        raise HTTPException(409, {"code": code, "message": message}) from None
     with audit_service(db).project_action(
         db, request=request, actor=current_user, access=access,
         permission="deployment.create",
@@ -213,8 +216,6 @@ def run_shadow_endpoint(
 
 def _shadow_frame(db: Session, project_id: UUID, deployment):
     """影子样本池：最近划分的 development 行；无划分则回退版本工件全量前 500 行。"""
-    import pandas as pd
-
     from app.services.dataset_splitting import (
         filter_frame_by_roles,
         load_role_indices,
@@ -242,29 +243,24 @@ def _shadow_frame(db: Session, project_id: UUID, deployment):
 
 
 def _deployment_feature_columns(db: Session, deployment) -> list:
-    from app.models.model_registry import ModelVersion
+    # 单一来源：实现已移入 service 层（终验/不回退的盲测打分共用）
+    from app.services.release_governance import deployment_feature_columns
 
-    stable_version_id = deployment.model_version_id
-    version = db.get(ModelVersion, stable_version_id) if stable_version_id else None
-    columns = list(getattr(version, "feature_schema", None) or []) if version else []
-    return [str(column) for column in columns if column]
+    return deployment_feature_columns(db, deployment)
 
 
 def _materialize_version_frame(db: Session, project_id: UUID, dataset_version_id):
-    import pandas as pd
+    # 单一来源：实现已移入 service 层；原 HTTPException 换为 GovernanceError
+    #（影子端点的调用方已有 GovernanceError 映射，SHADOW_NO_SAMPLE_POOL 不再 500）
+    from app.services.release_governance import (
+        GovernanceError,
+        materialize_version_frame as _materialize,
+    )
 
-    from app.models.data_version import DatasetVersion
-    from app.services.artifact_service import build_artifact_service
-
-    version = db.get(DatasetVersion, dataset_version_id)
-    artifact_id = version.normalized_artifact_id or version.original_artifact_id if version else None
-    if artifact_id is None:
-        raise HTTPException(409, {"code": "DATASET_VERSION_NO_ARTIFACT"})
-    artifact_service = build_artifact_service(db)
-    with artifact_service.materialize(
-        artifact_id, project_id, expected_type="dataset",
-    ) as dataset_path:
-        return pd.read_csv(dataset_path)
+    try:
+        return _materialize(db, project_id, dataset_version_id)
+    except GovernanceError as error:
+        raise HTTPException(409, {"code": error.code, "message": error.message}) from None
 
 
 @router.get("/api/projects/{project_id}/inference-deployments/{deployment_id}/shadow/reports")

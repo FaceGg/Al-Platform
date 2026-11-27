@@ -182,7 +182,7 @@ def _audit(db: Session, *, project_id, actor_id, action: str,
     db.add(event)
 
 
-def _load_candidate_bundle(db: Session, version_id):
+def _load_candidate_bundle(db: Session, version_id, project_id=None):
     """候选模型包加载（密封验签同 serving_deployment 路径）。"""
     from app.models.model_library import ModelLibrary
     from app.models.model_registry import ModelVersion
@@ -190,15 +190,19 @@ def _load_candidate_bundle(db: Session, version_id):
     version = db.get(ModelVersion, version_id)
     if version is None:
         raise GovernanceError("CHALLENGER_VERSION_NOT_FOUND")
-    library = db.get(ModelLibrary, version.registered_model_id)
+    # 三批复审新发现：曾用 registered_model_id 查 ModelLibrary（键型错配）——
+    # 影子/盲测打分在真实链路上恒 CHALLENGER_BUNDLE_MISSING（M2 演练打桩未暴露）
+    library = db.get(ModelLibrary, version.source_model_library_id)
     if library is None or library.model_artifact_id is None:
         raise GovernanceError("CHALLENGER_BUNDLE_MISSING")
     from app.services.artifact_service import build_artifact_service
 
     artifact_service = build_artifact_service(db)
+    # 归属按项目解析：训练产出的模型工件挂项目，owner_id 曾被误当 project 用
+    #（影子/盲测打分在真实链路恒 Artifact not found——三批复审修复时发现）
     artifact = artifact_service.resolve(
         library.model_artifact_id,
-        library.owner_id,
+        project_id if project_id is not None else library.owner_id,
         expected_type="model",
     )
     import io
@@ -261,7 +265,8 @@ def run_shadow_batch(
         sampled = frame.iloc[sorted(rng.choice(total, size=take, replace=False))]
     else:
         sampled = frame
-    bundle = _load_candidate_bundle(db, challenger_version.id)
+    bundle = _load_candidate_bundle(db, challenger_version.id,
+                                    project_id=deployment.project_id)
     labels, confidence = _predict_with_bundle(bundle, sampled, feature_columns)
     champion_bundle = None
     champion_labels = None
@@ -553,66 +558,72 @@ def _recall_pair(db: Session, deployment, version) -> dict | None:
 def evaluate_no_regression(db: Session, *, deployment, version) -> dict | None:
     """E01 不回退：候选与现役冠军在**同一批盲测样本**上的指标配对比较。
 
-    同批校验 = 两次盲测记账的样本集指纹必须一致（盲测集会随新批次增长，
-    不能直接用冠军当时记录的指标）；点估计加容差比较（默认容差 0）。
-    基线缺失（冠军无盲测记账）→ not_applicable——不算通过，进发布单留档。
-    严格模式禁新漏检（逐样本口径）随 S3 盲测复核门户落地（§12.10）。"""
+    三批复审重构：原实现比较两版本各自的 version.metrics（浅验证集口径，
+    等于没有配对）。现在对同一 blind 段用两版本分别真实打分（score_blind_
+    split），同批由「同一 frame」构造性保证；盲测样本集指纹进 detail。
+    记账一次（purpose=no_regression_check，受 E03 上限约束）。无监督任务
+    保持 version.metrics 口径（detail 标注）。基线缺失 → not_applicable。
+    """
+    from app.models.model_registry import ModelVersion
+
     champion_version_id = _stable_version_id(db, deployment)
     if champion_version_id is None:
         return None
-    candidate_key = _primary_metric_key(version, _version_metrics(db, version.id))
-    champion_version = None
-    from app.models.model_registry import ModelVersion
-
+    round_row = _blind_round_for_version(db, deployment)
+    if round_row is None:
+        return None
+    candidate_version = version
     champion_version = db.get(ModelVersion, champion_version_id)
-    champion_key = _primary_metric_key(
-        champion_version, _version_metrics(db, champion_version_id)
-    )
+    candidate_key = _primary_metric_key(candidate_version, _version_metrics(db, candidate_version.id))
+    champion_key = _primary_metric_key(champion_version, _version_metrics(db, champion_version_id))
     if candidate_key != champion_key:
         return {
             "passed": False, "reason": "metric_kind_mismatch",
             "candidate_key": candidate_key, "champion_key": champion_key,
         }
-    round_row = _blind_round_for_version(db, deployment)
-    if round_row is None:
-        return None
-    candidate_fp = _fingerprint({"version": str(version.id), "round": str(round_row.id)})
+    task_kind = str((getattr(candidate_version, "conversion_metadata", None) or {}).get("task")
+                    or (_version_metrics(db, candidate_version.id).get("task") or "classification"))
     from app.services.modeling_rounds import RoundError, record_blind_evaluation
 
+    # 无监督：保持冠军资格口径的配对（version.metrics），detail 如实标注
+    if task_kind in {"anomaly", "anomaly_detection"}:
+        candidate_value = _version_metrics(db, candidate_version.id).get(candidate_key)
+        champion_value = _version_metrics(db, champion_version_id).get(champion_key)
+        if candidate_value is None or champion_value is None:
+            return {"passed": False, "reason": "metric_missing"}
+        tolerance = DEFAULT_NO_REGRESSION_TOLERANCE
+        return {
+            "passed": float(candidate_value) >= float(champion_value) - tolerance,
+            "candidate": {candidate_key: float(candidate_value)},
+            "champion": {champion_key: float(champion_value)},
+            "scored_from": "version_metrics",
+            "note": "无监督冠军资格口径配对，盲测逐样本打分待口径评审",
+        }
+    # 有监督：同一 blind 段两版本分别打分（同批构造性成立）
+    try:
+        candidate_scored = score_blind_split(db, deployment=deployment,
+                                             version=candidate_version, round_row=round_row)
+        champion_scored = score_blind_split(db, deployment=deployment,
+                                            version=champion_version, round_row=round_row)
+    except GovernanceError as error:
+        return {"passed": False, "reason": error.code}
     try:
         record_blind_evaluation(
             db, round_id=round_row.id, purpose="no_regression_check",
-            used_by_id=None, sample_count=_blind_sample_count(db, deployment),
-            samples_fingerprint=candidate_fp,
+            used_by_id=None, sample_count=candidate_scored["sample_count"],
+            samples_fingerprint=candidate_scored["samples_fingerprint"],
         )
     except RoundError:
         return {"passed": False, "reason": "blind_eval_cap_reached"}
-    champion_fp = _fingerprint({"version": str(champion_version_id), "round": str(round_row.id)})
-    usages = (
-        db.query(BlindTestUsage)
-        .filter(
-            BlindTestUsage.round_id == round_row.id,
-            BlindTestUsage.purpose == "no_regression_check",
-        )
-        .order_by(BlindTestUsage.used_at.asc())
-        .all()
-    )
-    candidate_metrics = _version_metrics(db, version.id)
-    champion_metrics = _version_metrics(db, champion_version_id)
-    candidate_value = candidate_metrics.get(candidate_key)
-    champion_value = champion_metrics.get(candidate_key)
-    if candidate_value is None or champion_value is None:
-        return {
-            "passed": False, "reason": "metric_missing",
-            "candidate": candidate_value, "champion": champion_value,
-        }
     tolerance = DEFAULT_NO_REGRESSION_TOLERANCE
     return {
-        "passed": float(candidate_value) >= float(champion_value) - tolerance,
-        "candidate": {candidate_key: float(candidate_value)},
-        "champion": {candidate_key: float(champion_value)},
-        "same_blind_round": str(round_row.id),
-        "fingerprint_pair": [candidate_fp, champion_fp],
+        "passed": candidate_scored["f1"] >= champion_scored["f1"] - tolerance,
+        "candidate": {candidate_key: candidate_scored["f1"]},
+        "champion": {champion_key: champion_scored["f1"]},
+        "same_blind_samples": True,
+        "sample_count": candidate_scored["sample_count"],
+        "samples_fingerprint": candidate_scored["samples_fingerprint"],
+        "tolerance": tolerance,
     }
 
 
@@ -802,28 +813,137 @@ def _blind_sample_count(db: Session, deployment) -> int:
     return int(members)
 
 
+def materialize_version_frame(db: Session, project_id, dataset_version_id) -> pd.DataFrame:
+    """物化数据集版本 frame（B2-02 影子 / B2-03 盲测终验共用取数路径）。"""
+    import pandas as pd
+
+    from app.models.data_version import DatasetVersion
+    from app.services.artifact_service import build_artifact_service
+
+    version = db.get(DatasetVersion, dataset_version_id)
+    artifact_id = (
+        version.normalized_artifact_id or version.original_artifact_id if version else None
+    )
+    if artifact_id is None:
+        raise GovernanceError("DATASET_VERSION_NO_ARTIFACT")
+    artifact_service = build_artifact_service(db)
+    with artifact_service.materialize(
+        artifact_id, project_id, expected_type="dataset",
+    ) as dataset_path:
+        return pd.read_csv(dataset_path)
+
+
+def deployment_feature_columns(db: Session, deployment) -> list:
+    """部署的推理特征列（来自 stable 版本的 feature_schema）。"""
+    from app.models.model_registry import ModelVersion
+
+    stable_version_id = deployment.model_version_id
+    version = db.get(ModelVersion, stable_version_id) if stable_version_id else None
+    columns = list(getattr(version, "feature_schema", None) or []) if version else []
+    return [str(column) for column in columns if column]
+
+
+def score_blind_split(db: Session, *, deployment, version, round_row) -> dict:
+    """对锁定盲测段用指定版本模型打分（三批复审重构：终验与不回退共用）。
+
+    原 `_blind_final_metrics` 直接取 `version.metrics`（与浅验证集同源，等于
+    没有盲测终验）；`evaluate_no_regression` 比较的也是各版本自己的指标而非
+    同批配对——两条都是本阶段对标竞品的核心卖点，复审判 failed。本函数是
+    修复的基座：物化轮次数据集版本 → 取 blind 段 → 密封验签加载模型包 →
+    真实打分 → 与 target 真值比对。
+
+    返回 {"f1", "sample_count", "samples_fingerprint"}；无监督任务由调用方
+    保持 version.metrics 口径（detail 标注），不进入本函数。
+    """
+    from sklearn.metrics import f1_score
+
+    from app.models.dataset_splitting import DatasetSplit
+    from app.services.dataset_splitting import filter_frame_by_roles, load_role_indices
+
+    split = db.get(DatasetSplit, round_row.split_id)
+    target_column = (split.params or {}).get("target_column") if split else None
+    if not target_column:
+        raise GovernanceError("BLIND_TARGET_COLUMN_MISSING")
+    frame = materialize_version_frame(db, deployment.project_id, round_row.dataset_version_id)
+    roles = load_role_indices(db, round_row.split_id)
+    blind_frame = filter_frame_by_roles(frame, roles, "blind")
+    if blind_frame.empty:
+        raise GovernanceError("BLIND_EMPTY_FRAME")
+    feature_columns = deployment_feature_columns(db, deployment)
+    missing = [column for column in feature_columns if column not in blind_frame.columns]
+    if missing:
+        raise GovernanceError("BLIND_FEATURE_COLUMNS_MISSING")
+    if target_column not in blind_frame.columns:
+        raise GovernanceError("BLIND_TARGET_COLUMN_MISSING")
+    bundle = _load_candidate_bundle(db, version.id, project_id=deployment.project_id)
+    labels, _confidence = _predict_with_bundle(bundle, blind_frame, feature_columns)
+    truth = [str(value) for value in blind_frame[target_column].tolist()]
+    predicted = [str(value) for value in labels]
+    sample_keys = [
+        str(value) for value in (
+            blind_frame["sample_key"].tolist() if "sample_key" in blind_frame.columns
+            else blind_frame.index.tolist()
+        )
+    ]
+    fingerprint = _fingerprint({"blind_sample_keys": sample_keys})
+    return {
+        "f1": float(f1_score(truth, predicted, average="macro")),
+        "sample_count": len(blind_frame),
+        "samples_fingerprint": fingerprint,
+    }
+
+
 def _blind_final_metrics(db: Session, deployment, version, options) -> dict | None:
-    """终验指标只能取自锁定盲测（经 record_blind_evaluation 记账，E03 上限约束）。"""
+    """终验指标：有监督任务对锁定盲测段真实打分（经记账受 E03 上限约束）；
+    无监督保持 version.metrics 冠军资格口径（detail 标注 scored_from）。"""
     round_row = _blind_round_for_version(db, deployment)
     if round_row is None:
         return None
     metrics = _version_metrics(db, version.id)
     primary_key = _primary_metric_key(version, metrics)
-    value = metrics.get(primary_key)
-    if value is None:
-        return None
+    task_kind = str((getattr(version, "conversion_metadata", None) or {}).get("task")
+                    or metrics.get("task") or "classification")
+    is_anomaly = task_kind in {"anomaly", "anomaly_detection"}
+    blind_count = _blind_sample_count(db, deployment)
+    if is_anomaly:
+        value = metrics.get(primary_key)
+        if value is None:
+            return None
+        from app.services.modeling_rounds import RoundError, record_blind_evaluation
+
+        try:
+            record_blind_evaluation(
+                db, round_id=round_row.id, purpose="release_final_validation",
+                used_by_id=None, sample_count=blind_count,
+                samples_fingerprint=_fingerprint({"version": str(version.id),
+                                                  "key": primary_key,
+                                                  "value": float(value)}),
+            )
+        except RoundError:
+            return None
+        return {primary_key: float(value),
+                "scored_from": "version_metrics",
+                "note": "无监督冠军资格口径（合成基准），盲测逐样本打分待无监督口径评审"}
     from app.services.modeling_rounds import RoundError, record_blind_evaluation
 
     try:
+        scored = score_blind_split(db, deployment=deployment, version=version,
+                                   round_row=round_row)
+    except GovernanceError as error:
+        _audit(db, project_id=deployment.project_id, actor_id=None,
+               action="blind_final_validation.failed",
+               resource_type="modeling_round", resource_id=str(round_row.id),
+               changes={"reason": error.code})
+        return None
+    try:
         record_blind_evaluation(
-            db, round_id=round_row.id,
-            purpose="release_final_validation",
-            used_by_id=None,
-            sample_count=_blind_sample_count(db, deployment),
-            samples_fingerprint=_fingerprint({"version": str(version.id),
-                                              "key": primary_key,
-                                              "value": float(value)}),
+            db, round_id=round_row.id, purpose="release_final_validation",
+            used_by_id=None, sample_count=scored["sample_count"],
+            samples_fingerprint=scored["samples_fingerprint"],
         )
     except RoundError:
         return None
-    return {primary_key: float(value)}
+    return {primary_key: scored["f1"],
+            "scored_from": "blind_split",
+            "sample_count": scored["sample_count"],
+            "samples_fingerprint": scored["samples_fingerprint"]}

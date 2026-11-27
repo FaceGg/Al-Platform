@@ -6,6 +6,9 @@
 前一环节的产物是后一环节的输入。
 """
 import unittest
+
+import hashlib
+import numpy as np
 import uuid
 from datetime import datetime, timedelta
 from unittest.mock import patch
@@ -22,6 +25,7 @@ from app.models.dataset_splitting import (
     DatasetSplitMember,
     ModelingRound,
 )
+from app.models.data_version import DatasetVersion
 from app.models.demo_loop import DemoLoopConfig
 from app.models.drift import DriftReport
 from app.models.model_registry import (
@@ -39,6 +43,17 @@ from app.models.release_governance import (
     ShadowComparison,
 )
 from app.models.user import User
+
+
+class _SeqPredictor:
+    """按序循环输出每行真值的预测器（模块级：joblib pickle 需要可导入的类）。"""
+
+    def __init__(self, expected):
+        self._expected = list(expected)
+
+    def predict(self, matrix):
+        base = self._expected * (len(matrix) // max(1, len(self._expected)) + 1)
+        return np.array(base[: len(matrix)])
 
 
 class TestM2FiveSegmentDrill(unittest.TestCase):
@@ -76,15 +91,64 @@ class TestM2FiveSegmentDrill(unittest.TestCase):
             )
             db.add(registered)
             db.flush()
-            library = ModelLibrary(name=f"drill-lib-{uuid.uuid4().hex[:6]}",
-                                   owner_id=self.initiator.id, status="completed")
-            db.add(library)
+            # 盲测数据集（真实 CSV 工件，260 行 target=行号%2）+ 密封模型包：
+            # 三批复审后盲测终验/不回退对 blind 段真实打分，假数据集会诚实失败
+            import tempfile
+
+            import joblib
+            import pandas as pd
+            from pathlib import Path
+
+            from app.services.artifact_service import build_artifact_service
+            from app.services.model_artifact_sealing import model_seal_metadata
+
+            artifact_service = build_artifact_service(db)
+            blind_rows = [
+                {"f1": index * 0.1, "target": index % 2,
+                 "sample_key": f"sk-{index}"}
+                for index in range(260)
+            ]
+            blind_dir = tempfile.TemporaryDirectory()
+            self.addCleanup(blind_dir.cleanup)
+            blind_csv = blind_dir.name + "/drill-blind.csv"
+            pd.DataFrame(blind_rows).to_csv(blind_csv, index=False)
+            blind_artifact = artifact_service.create_from_file(
+                self.project.id, blind_csv, "drill-blind.csv", "dataset",
+            )
+            self.dataset_version = DatasetVersion(
+                project_id=self.project.id, operator_id=self.initiator.id,
+                version=1, status="ready", row_count=260, column_count=3,
+                content_hash=uuid.uuid4().hex, schema_hash=uuid.uuid4().hex,
+                normalized_artifact_id=blind_artifact.id,
+            )
+            db.add(self.dataset_version)
             db.flush()
+            truth = [str(index % 2) for index in range(260)]
+
+            def _sealed_library(name, labels):
+
+                bundle_path = Path(blind_dir.name) / (name + ".joblib")
+                joblib.dump(_SeqPredictor(labels), bundle_path)
+                payload = bundle_path.read_bytes()
+                digest = hashlib.sha256(payload).hexdigest()
+                artifact = artifact_service.create_from_file(
+                    self.project.id, bundle_path, name + ".joblib", "model",
+                    metadata={**model_seal_metadata(digest), "served_sha256": digest},
+                )
+                model_library = ModelLibrary(name=name, owner_id=self.initiator.id,
+                                             status="completed",
+                                             model_artifact_id=artifact.id)
+                db.add(model_library)
+                db.flush()
+                return model_library.id
+
+            champion_library_id = _sealed_library(
+                f"drill-champ-{uuid.uuid4().hex[:6]}", truth)
             self.champion_version = ModelVersion(
                 registered_model_id=registered.id, version_number=1,
                 source_kind="platform_joblib", source_artifact_id=uuid.uuid4(),
                 onnx_artifact_id=uuid.uuid4(),
-                source_model_library_id=library.id,
+                source_model_library_id=champion_library_id,
                 approval_status="approved", metrics={"f1": 0.9},
                 feature_schema=["f1"],
             )
@@ -92,8 +156,10 @@ class TestM2FiveSegmentDrill(unittest.TestCase):
                 registered_model_id=registered.id, version_number=2,
                 source_kind="platform_joblib", source_artifact_id=uuid.uuid4(),
                 onnx_artifact_id=uuid.uuid4(),
-                source_model_library_id=library.id,
+                source_model_library_id=_sealed_library(
+                    f"drill-cand-{uuid.uuid4().hex[:6]}", truth),
                 approval_status="approved", metrics={"f1": 0.93},
+                feature_schema=["f1"],
             )
             db.add_all([self.champion_version, self.candidate_version])
             db.flush()
@@ -117,10 +183,12 @@ class TestM2FiveSegmentDrill(unittest.TestCase):
                 revision_id=revision.id, model_version_id=self.champion_version.id,
                 weight_bps=10000, role="stable",
             ))
-            # 盲测轮（供发布门禁的盲测记账）
+            # 盲测轮（真实数据集 + target_column：终验/不回退对 blind 段真实打分）
             split = DatasetSplit(
-                project_id=self.project.id, dataset_version_id=uuid.uuid4(),
-                name="演练盲测", strategy="random_stratified", params={},
+                project_id=self.project.id,
+                dataset_version_id=self.dataset_version.id,
+                name="演练盲测", strategy="random_stratified",
+                params={"target_column": "target", "test_size": 0.5, "seed": 42},
                 split_fingerprint="d" * 64, created_by_id=self.initiator.id,
             )
             db.add(split)
