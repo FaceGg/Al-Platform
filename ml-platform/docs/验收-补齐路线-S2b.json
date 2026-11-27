@@ -1,0 +1,145 @@
+{
+  "schema_version": "gap-batch2-s2b/v1",
+  "batch": "补齐路线第二批 S2b（发布治理链）",
+  "date": "2026-11-26",
+  "commits": {
+    "s2b_closeout": "40351d9f"
+  },
+  "spec": "ml-platform/docs/技术方案-补齐路线第二批.md#7",
+  "environment": {
+    "platform": "windows-local",
+    "database": "sqlite (in-memory)"
+  },
+  "acceptance_criteria": [
+    {
+      "id": 1,
+      "statement": "双模型同集打分一致率报告可导出；影子不写预警表",
+      "status": "failed",
+      "evidence": [],
+      "note": "技术方案 §7.4 要求的 tests/test_shadow_compare.py 不存在——零测试；traffic_mirror 未实现（只对整个 frame 打分，不关联 champion 行）"
+    },
+    {
+      "id": 2,
+      "statement": "通过单可追溯全部检查值（release_checks）",
+      "status": "failed",
+      "note": "默认 cap=2 时归档的 blind_final_validation 与 no_regression 必为 failed（探测评估先耗尽 cap）；测试与 M2 演练手工把 cap 设成 5/6 绕开"
+    },
+    {
+      "id": 3,
+      "statement": "终验指标只能取自 S2a 锁定盲测",
+      "status": "failed",
+      "note": "_blind_final_metrics 直接取 version.metrics，与 metric_floor 同源同阈值（services/release_governance.py:805-829）"
+    },
+    {
+      "id": 4,
+      "statement": "候选与现役冠军在同一批盲测样本上配对盲评（不回退）",
+      "status": "failed",
+      "note": "evaluate_no_regression 比较两版本各自的 version.metrics；指纹从未被比较；usages 查询后未使用（:553-616）"
+    },
+    {
+      "id": 5,
+      "statement": "Challenger 注册/退役留痕；别名切换沿用 stable 语义",
+      "status": "passed",
+      "note": "退役不存退役计划，留下孤儿 draft revision"
+    },
+    {
+      "id": 6,
+      "statement": "有效授权发布免逐单审批且留痕（G2）",
+      "status": "failed",
+      "note": "预授权只在已批准的 model_release 单执行时被检查，仍需四眼批准——无免审路径"
+    },
+    {
+      "id": 7,
+      "statement": "预授权发布执行",
+      "status": "failed",
+      "note": "ReleaseExecutor.perform 使用未导入的 _uuid（approval_executors.py:256），带 preauthorization_id 的发布必 NameError；payload 不含 acceptance_gates_fingerprint"
+    },
+    {
+      "id": 8,
+      "statement": "授权人=申请人被拒；过期/超次/撤销/质量门变更不再命中",
+      "status": "passed",
+      "scope": "check_preauthorization 服务层",
+      "note": "比对的指纹是客户端自报字符串，无服务端推导"
+    },
+    {
+      "id": 9,
+      "statement": "低 F1/漂移超阈/样本不足/无盲测四拦截 + Wilson 下界",
+      "status": "passed",
+      "scope": "函数级",
+      "note": "Wilson 在真实链路永不评估（release-request 不传 options）；所需指标键无生产者；无监督只看 synthetic_auc"
+    },
+    {
+      "id": 10,
+      "statement": "产物摘要不符的回执被拒绝（G3）",
+      "status": "failed",
+      "note": "服务层 digest_mismatch 正确，但回执 API 不传 expected_digest 也无时间窗字段——API 上不可达"
+    },
+    {
+      "id": 11,
+      "statement": "无回执不放量（最后一阶前置回执条件）",
+      "status": "passed",
+      "scope": "opt-in",
+      "note": "thresholds.min_receipt_scored_count 显式设置才启用（§12.11）"
+    },
+    {
+      "id": 12,
+      "statement": "窗口超时可接管（审计留痕）",
+      "status": "failed",
+      "note": "force_shadow_gate 是死字段，无任何读取方"
+    },
+    {
+      "id": 13,
+      "statement": "豁免三约束",
+      "status": "failed",
+      "note": "约束分支逻辑成立，但 perform 是空操作——豁免批准后仍无路可发；且无任何 exemption 用例"
+    },
+    {
+      "id": 14,
+      "statement": "E13 场景矩阵端到端用例",
+      "status": "failed",
+      "note": "回退豁免/影子回放/发布回滚三场景用例 0 个"
+    }
+  ],
+  "horizontal_contracts": [
+    {
+      "name": "迁移纪律（_115）",
+      "status": "passed",
+      "evidence": [
+        "四新表 + role CHECK 重建"
+      ]
+    },
+    {
+      "name": "测试登记",
+      "status": "passed",
+      "evidence": [
+        "test_release_governance 登记 week 1"
+      ]
+    },
+    {
+      "name": "页面与帮助同批交付（§6-11）",
+      "status": "failed",
+      "note": "S2b 前端完全未落地"
+    },
+    {
+      "name": "新增写接口纳入权限测试矩阵（§6-4）",
+      "status": "failed",
+      "note": {
+        "write_endpoints_not_registered_in_PROJECT_WRITE_ACTIONS": "三批 78 个新写端点（12 个模块）均未登记，不受 TestProjectWriteAuditCompleteness 回归保护；已运行验证鉴权本身正确（viewer/operator 对写端点 403 PROJECT_PERMISSION_DENIED）"
+      }
+    }
+  ],
+  "not_run_or_blocked": [
+    "真实模型包端到端影子打分",
+    "业务回退自动触发接线",
+    "PG 往返（CI 背书）"
+  ],
+  "conclusion_original_2026_11_26": "十四条口径全部 passed（口径 1/12/14 带范围限制）。",
+  "audit_review_2026_11_27": {
+    "systemic_root_cause": "验收测试几乎全部在服务层直接调函数、不经 HTTP 路径，造成两类假绿：①事务边界不一致——测试里被拦的异常不触发回滚，生产路径经 audit_service.project_action 的 except 分支 db.rollback() 撤销状态；②异常映射未覆盖——执行器异常在 try/except 之外且无全局处理器，HTTP 返回 500 而非 409。",
+    "verification_method": "代码级逐项核对（三个只读代理，85 个核对点）+ 运行验证（4 组探针，用后即删）",
+    "falsified_claims": "「跨项目越权写（IDOR）」经 QMS 与第二批共 19 个端点运行验证全部 404 PROJECT_NOT_FOUND（路径参数 {project_id} 先过 require_project_access）——不成立，不采纳。",
+    "result": "14 条口径中 10 条 failed（#1/#2/#3/#4/#6/#7/#10/#12/#13/#14），4 条 passed（#5/#8/#9/#11）。盲测终验与不回退两项核心门禁名存实亡；前端完全未落地。",
+    "corrected_conclusion": "S2b 未达成。盲测门禁与不回退检查名存实亡——本阶段对标竞品的核心价值未落地。",
+    "detail": "验收-补齐路线-S2b.md §5"
+  }
+}

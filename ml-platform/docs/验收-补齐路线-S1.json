@@ -50,5 +50,19 @@
     "未绑定闭环重训配置的部署：批准重训提案如实执行失败（提示需闭环绑定）",
     "存量投影的模型版本源经部署关联（未部署版本不进投影，技术方案 §12.8）"
   ],
-  "conclusion": "S1 范围 13 条口径全部 passed（口径 3/7/11/13 带范围限制如实登记）；E05/E06 增补口径各有专测。任务完成不等于发布就绪。"
+  "conclusion": "S1 范围 13 条口径全部 passed（口径 3/7/11/13 带范围限制如实登记）；E05/E06 增补口径各有专测。任务完成不等于发布就绪。",
+  "audit_review_2026_11_27": {
+    "systemic_root_cause": "验收测试几乎全部在服务层直接调函数、不经 HTTP 路径，造成两类假绿：①事务边界不一致——测试里被拦的异常不触发回滚，生产路径经 audit_service.project_action 的 except 分支 db.rollback() 撤销状态；②异常映射未覆盖——执行器异常在 try/except 之外且无全局处理器，HTTP 返回 500 而非 409。",
+    "verification_method": "代码级逐项核对（三个只读代理，85 个核对点）+ 运行验证（4 组探针，用后即删）",
+    "falsified_claims": "「跨项目越权写（IDOR）」经 QMS 与第二批共 19 个端点运行验证全部 404 PROJECT_NOT_FOUND（路径参数 {project_id} 先过 require_project_access）——不成立，不采纳。",
+    "result": "13 条口径维持 passed 但边界问题：保留类型经 HTTP 批准返回 500（非 409，影响所有保留类型审批）；决策不检查 expires_at；无 FOR UPDATE；角标数是成员项目全部 pending；动作审计脱敏可被列表嵌套绕过；13 处既有审计写入点不在哈希链内；E05 水位线锚点不一致。",
+    "regressions_backfill": {
+      "backend_run_suite": {
+        "status": "passed",
+        "modules_total": 244,
+        "tested_commit": "3abc28ec"
+      }
+    },
+    "detail": "验收-补齐路线-S1.md"
+  }
 }

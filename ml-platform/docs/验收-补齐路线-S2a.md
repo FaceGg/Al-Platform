@@ -36,3 +36,30 @@
 ## 4. 结论
 
 S2a 八条口径全部 passed（口径 7/8 带范围限制如实登记）；E03/E04 落地；兼容红线经 AutoML 回归背书。任务完成不等于发布就绪。
+
+## 〔审核更正 2026-11-27〕三批复审结论
+
+> 原表原结论保留不改写，以本节为准。
+
+### P0：训练接线不可达
+
+- **`dataset_split_id` 没有任何入口能传进来**：`AutoMLRunRequest` 是 `extra="forbid"` 且无此字段（`api/training.py:89-127`），params 组装也不含（:795-824）；全后端只有 `automl_execution.py:3096` 一处读取。**划分训练接线在真实链路上不可达**——验收口径 5「AutoML 全量回归通过、既有任务结果可复现」的「零变化」因此空洞成立。
+- 「默认路径零变化」用例是**空断言**：`tests/test_modeling_rounds.py:200-205` 只断言一个字典的 `.get()` 为 None。
+- 划分创建用 `pd.read_csv`（`api/splits.py:98`），训练用 `read_automl_dataset`（Excel 走 read_excel）——**Excel 数据集的行号对不上**。
+
+### P0：盲测复用检测名存实亡（验收口径 3 标 passed）
+
+原文「同批样本换版本仍能撞出台账」**不成立**（内存库复核）：
+- 台账查询**只限同一 `dataset_version_id`**（`services/modeling_rounds.py:55-77`）——同一批样本换版本、同种子，blind 指纹完全相同，新轮次仍被允许。
+- 比对是**整集指纹相等**，不是「交集非空」——同版本换种子后，12 行盲测里 3 行与已用盲测重叠，仍放行。
+
+### P1：其余
+
+- 三策略是**自写近似**，不是文档说的镜像 `train_test_split` / `GroupShuffleSplit`。
+- 迁移里 `blind_eval_cap` 无 DB 默认值、`purpose` 无 CHECK，只有 ORM 层。
+- `GET /dataset-splits/{id}/summary` 端点不存在；§6.6 说的「路由面断言」用例不存在。
+- 盲测台账的 `sample_count` 与 `samples_fingerprint` 由**客户端自报**，不与划分核对。
+
+### 前端
+
+三级样本量看板与划分控件未落地（原文「随 S2b 交付」，S2b 未交付）。4 个写端点未登记 `PROJECT_WRITE_ACTIONS`。

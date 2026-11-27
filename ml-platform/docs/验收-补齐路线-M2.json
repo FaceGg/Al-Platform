@@ -1,0 +1,78 @@
+{
+  "schema_version": "gap-batch2-m2/v1",
+  "batch": "补齐路线第二批 M2（收口门）",
+  "date": "2026-11-26",
+  "commits": {
+    "m2_closeout": "7b98647b",
+    "post_drill_fix": "9b798f9c"
+  },
+  "spec": "ml-platform/docs/技术方案-补齐路线第二批.md#10",
+  "environment": {
+    "platform": "windows-local",
+    "database": "sqlite (in-memory)"
+  },
+  "gates": [
+    {
+      "id": 1,
+      "statement": "五段全链贯通演练（独立验收项）",
+      "status": "failed",
+      "note": "降级为服务函数级串测——重训被 patch 成空操作（test_gap_m2_drill.py:252-255），发布候选预置，影子报告手工插行，回执放量门未在链上触发。各段输入均为手工构造"
+    },
+    {
+      "id": 2,
+      "statement": "发布治理链全链演练",
+      "status": "failed",
+      "note": "分段本身名存实亡（见 S2b）"
+    },
+    {
+      "id": 3,
+      "statement": "S3 标注重构回归全绿",
+      "status": "passed",
+      "evidence": [
+        "标注邻接 77 用例不改一字全绿"
+      ]
+    },
+    {
+      "id": 4,
+      "statement": "后端全量 run_suite",
+      "status": "passed",
+      "evidence": [
+        "244 模块全过 @ 3abc28ec（干净 worktree）"
+      ]
+    },
+    {
+      "id": 5,
+      "statement": "前端全量",
+      "status": "passed",
+      "evidence": [
+        "102 文件 651 passed + 19 skipped"
+      ],
+      "note": "与 S1 时点完全相同——S1 之后第二批无新增前端文件"
+    },
+    {
+      "id": 6,
+      "statement": "全量 CI 全 job 全绿",
+      "status": "not_run",
+      "note": "轻量门禁（push，仅 Quality 两 job）@ 1d7a43c6 与 @ 0050a126 success；全量六 job 从未在第二批代码上执行（Production integration / Chromium acceptance / Security & release verification 均未跑）"
+    }
+  ],
+  "not_run_or_blocked": [
+    {
+      "status": "environment-blocked",
+      "item": "真实数据五段演练（无真实场景数据与业务账号）"
+    },
+    {
+      "status": "not_run",
+      "item": "S2b/S3/S4 前端（M2 已收口而未补）"
+    }
+  ],
+  "conclusion_original_2026_11_26": "M2 门三项全 passed（全量回归数字回填后即为收官）。",
+  "audit_review_2026_11_27": {
+    "systemic_root_cause": "验收测试几乎全部在服务层直接调函数、不经 HTTP 路径，造成两类假绿：①事务边界不一致——测试里被拦的异常不触发回滚，生产路径经 audit_service.project_action 的 except 分支 db.rollback() 撤销状态；②异常映射未覆盖——执行器异常在 try/except 之外且无全局处理器，HTTP 返回 500 而非 409。",
+    "verification_method": "代码级逐项核对（三个只读代理，85 个核对点）+ 运行验证（4 组探针，用后即删）",
+    "falsified_claims": "「跨项目越权写（IDOR）」经 QMS 与第二批共 19 个端点运行验证全部 404 PROJECT_NOT_FOUND（路径参数 {project_id} 先过 require_project_access）——不成立，不采纳。",
+    "result": "6 条口径中 2 条 failed（#1/#2），3 条 passed（#3/#4/#5）。门项 1 降级为服务函数级串测；门项 2 各分段名存实亡。",
+    "corrected_conclusion": "M2 未达成。",
+    "detail": "验收-补齐路线-M2.md §5"
+  }
+}

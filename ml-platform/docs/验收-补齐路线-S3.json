@@ -1,0 +1,147 @@
+{
+  "schema_version": "gap-batch2-s3/v1",
+  "batch": "补齐路线第二批 S3（标注质量链）",
+  "date": "2026-11-26",
+  "commits": {
+    "s3_closeout": "4283c868"
+  },
+  "spec": "ml-platform/docs/技术方案-补齐路线第二批.md#8",
+  "environment": {
+    "platform": "windows-local",
+    "database": "sqlite (in-memory)"
+  },
+  "acceptance_criteria": [
+    {
+      "id": 1,
+      "statement": "九策略各有单测；混合按权重出样",
+      "status": "failed",
+      "note": "测试只覆盖 7 个（boundary / business_priority 无用例）；hybrid 不支持 boundary/rarity/business_priority"
+    },
+    {
+      "id": 2,
+      "statement": "选样结果可接标注任务",
+      "status": "failed",
+      "note": "选样 API 用假 bundle（客户端 probability 拼 [1-p,p]，不加载模型）；结果无任何消费方"
+    },
+    {
+      "id": 3,
+      "statement": "Cohen's Kappa 计算 + 冲突自动进仲裁",
+      "status": "passed",
+      "scope": "服务层",
+      "note": "只算硬编码的 'label' 键，多列按列算未实现"
+    },
+    {
+      "id": 4,
+      "statement": "仲裁人 ≠ 盲标人强制",
+      "status": "failed",
+      "note": "比较 str(user UUID) 与自由字符串 subject_id，身份空间不同，正常使用下永不相等（consistency.py:204）"
+    },
+    {
+      "id": 5,
+      "statement": "仲裁终审值写回规范通道",
+      "status": "passed",
+      "scope": "由调用方经既有 save_labels 执行（§12.13）",
+      "note": "API 自身不调 save_labels"
+    },
+    {
+      "id": 6,
+      "statement": "低纯度群无法整簇提交",
+      "status": "failed",
+      "note": "validate_cluster_submission 全后端无调用方——真实整簇提交路径未挂此门"
+    },
+    {
+      "id": 7,
+      "statement": "三类视图（代表/边界/偏离）",
+      "status": "passed",
+      "scope": "簇内序次近似",
+      "note": "按行序切三段，不读簇中心"
+    },
+    {
+      "id": 8,
+      "statement": "门户零回归",
+      "status": "passed",
+      "evidence": [
+        "标注邻接 77 用例不改一字全绿"
+      ]
+    },
+    {
+      "id": 9,
+      "statement": "E15 标签质量门（κ 不足停训）",
+      "status": "failed",
+      "note": "start_training_guard / LABEL_QUALITY_GATE_STOPPED 在 app 代码里不存在；用例名含 stops_training 但无任何训练动作。原文同格标 passed 与 not_run 自相矛盾"
+    },
+    {
+      "id": 10,
+      "statement": "E15 样本用途标记 sample_usage",
+      "status": "failed",
+      "note": "sample_usage 在 backend/tests/alembic/frontend 出现 0 次——未实现，原文未列此项"
+    },
+    {
+      "id": 11,
+      "statement": "伪标签每类限量 + 降权",
+      "status": "passed",
+      "scope": "服务层",
+      "note": "API 硬编码 labeled_counts={} 使每类配额退化为恒 1"
+    },
+    {
+      "id": 12,
+      "statement": "开发验证比较选择器（未胜出不选用）",
+      "status": "failed",
+      "note": "compare_on_dev_validation 无 API 端点，winner 恒为 0"
+    },
+    {
+      "id": 13,
+      "statement": "伪标签红线：永不进开发验证与独立盲测",
+      "status": "passed",
+      "scope": "空洞成立",
+      "note": "没有任何训练或评估路径消费 pseudo_label_batches；生成时不排除 blind 角色行"
+    },
+    {
+      "id": 14,
+      "statement": "凭证导出与库内一致",
+      "status": "passed",
+      "scope": "服务层"
+    },
+    {
+      "id": 15,
+      "statement": "多人标注（B2-06）",
+      "status": "passed",
+      "scope": "并行一致性通道（§12.13）",
+      "note": "盲标 subject_id 来自请求体不绑定登录用户，一人可替所有标注位提交"
+    }
+  ],
+  "horizontal_contracts": [
+    {
+      "name": "迁移纪律（_116）",
+      "status": "passed",
+      "evidence": [
+        "五新表"
+      ]
+    },
+    {
+      "name": "页面与帮助同批交付（§6-11）",
+      "status": "failed",
+      "note": "选样/Kappa/伪标签在数据标注页的承载未落地"
+    },
+    {
+      "name": "新增写接口纳入权限测试矩阵（§6-4）",
+      "status": "failed",
+      "note": {
+        "write_endpoints_not_registered_in_PROJECT_WRITE_ACTIONS": "三批 78 个新写端点（12 个模块）均未登记，不受 TestProjectWriteAuditCompleteness 回归保护；已运行验证鉴权本身正确（viewer/operator 对写端点 403 PROJECT_PERMISSION_DENIED）"
+      }
+    }
+  ],
+  "not_run_or_blocked": [
+    "真实标注任务端到端一致性轮",
+    "簇中心精确边界带计算"
+  ],
+  "conclusion_original_2026_11_26": "十五条口径全部 passed（口径 8/13/14 带范围限制）。",
+  "audit_review_2026_11_27": {
+    "systemic_root_cause": "验收测试几乎全部在服务层直接调函数、不经 HTTP 路径，造成两类假绿：①事务边界不一致——测试里被拦的异常不触发回滚，生产路径经 audit_service.project_action 的 except 分支 db.rollback() 撤销状态；②异常映射未覆盖——执行器异常在 try/except 之外且无全局处理器，HTTP 返回 500 而非 409。",
+    "verification_method": "代码级逐项核对（三个只读代理，85 个核对点）+ 运行验证（4 组探针，用后即删）",
+    "falsified_claims": "「跨项目越权写（IDOR）」经 QMS 与第二批共 19 个端点运行验证全部 404 PROJECT_NOT_FOUND（路径参数 {project_id} 先过 require_project_access）——不成立，不采纳。",
+    "result": "15 条口径中 7 条 failed（#1/#2/#4/#6/#9/#10/#12），8 条 passed（#3/#5/#7/#8/#11/#13/#14/#15）。κ 计算、并行盲标通道、伪标签服务层成立；纯度门禁未挂载、E15 未实现、选样无消费方。",
+    "corrected_conclusion": "S3 部分达成：κ 计算、并行盲标通道、伪标签服务层成立；纯度门禁未挂载、E15 未实现、选样无消费方。",
+    "detail": "验收-补齐路线-S3.md §5"
+  }
+}

@@ -20,5 +20,12 @@
     {"name": "测试登记", "status": "passed", "evidence": ["week 1 新增 2 模块", "test_suite_manifest 绿"]}
   ],
   "not_run_or_blocked": ["split-aware 全链训练任务", "PG 往返（CI 背书）", "28 万行成员批插压测"],
-  "conclusion": "S2a 八条口径全部 passed（7/8 带范围限制如实登记）；E03/E04 落地；兼容红线经 AutoML 回归背书。"
+  "conclusion": "S2a 八条口径全部 passed（7/8 带范围限制如实登记）；E03/E04 落地；兼容红线经 AutoML 回归背书。",
+  "audit_review_2026_11_27": {
+    "systemic_root_cause": "验收测试几乎全部在服务层直接调函数、不经 HTTP 路径，造成两类假绿：①事务边界不一致——测试里被拦的异常不触发回滚，生产路径经 audit_service.project_action 的 except 分支 db.rollback() 撤销状态；②异常映射未覆盖——执行器异常在 try/except 之外且无全局处理器，HTTP 返回 500 而非 409。",
+    "verification_method": "代码级逐项核对（三个只读代理，85 个核对点）+ 运行验证（4 组探针，用后即删）",
+    "falsified_claims": "「跨项目越权写（IDOR）」经 QMS 与第二批共 19 个端点运行验证全部 404 PROJECT_NOT_FOUND（路径参数 {project_id} 先过 require_project_access）——不成立，不采纳。",
+    "result": "口径 3「新轮次无法复用旧盲测」不成立（台账查询只限同一 dataset_version_id，比对是整集指纹相等而非交集）；dataset_split_id 无任何入口可传，训练接线不可达；「零变化」用例是空断言。",
+    "detail": "验收-补齐路线-S2a.md"
+  }
 }

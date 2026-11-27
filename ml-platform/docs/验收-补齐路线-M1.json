@@ -1,0 +1,16 @@
+{
+  "schema_version": "gap-batch1-m1/v1",
+  "batch": "补齐路线第一批 M1（收口门）",
+  "date": "2026-11-27",
+  "note": "计划 §2 F5 明文要求的 M1 验收文档此前一直缺失（只在台账里一句话登记 environment-blocked）；本文档于三批复审时补立。",
+  "spec": "ml-platform/docs/superpowers/plans/2026-11-19-gap-closure-roadmap.md#2",
+  "gates": [
+    {"id": 1, "statement": "真实数据闭环演练（事件产生→预警→处置→误报回流标注）全链留痕", "status": "environment-blocked", "reason": "代理无真实场景接入数据；本机栈内只有演示循环数据与合成数据，按口径不折算"},
+    {"id": 2, "statement": "至少一名业务侧真实账号完成 确认 → 处置 → 关闭", "status": "environment-blocked", "reason": "无业务侧真实账号"},
+    {"id": 3, "statement": "先行接入的预警来源（模型风险/参数超限/设备异常）各走通一条", "status": "passed", "scope": "机制层，合成数据", "evidence": ["test_quality_alert_sources.py 等"], "subitems": [{"status": "environment-blocked", "item": "真实数据下的走通（随门项 1）"}]},
+    {"id": 4, "statement": "全量 CI 全 job 全绿", "status": "not_run", "reason": "最后一次全量六 job 全绿是 run 45378564638 @ 9f27b78f（2026-11-24，开工前置），早于 F1–F5 全部代码；此后三批所有提交只跑过轻量门禁（仅 Quality 两 job）。Production integration / Chromium acceptance / Security & release verification 从未在补齐路线的任何代码上执行", "light_gates": {"487bf986": "success", "1d7a43c6": "success", "0050a126": "success"}}
+  ],
+  "gate_deviation": "第二批启动门控写的是「第一批 M1 达成」；实际 M1 为 environment-blocked，按用户 2026-11-25/26 跨批授权开工（计划 §8 已登记）",
+  "correction_2026_11_27": "此前台账与计划 §8 多处把 push 触发的轻量门禁写作「全量 CI」（如「推送后全量 CI run 45793956846 @ 487bf986」）——该 run 是 event=push 的轻量门禁，只跑了 Quality 两 job。补齐路线三批从未跑过全量六 job。",
+  "conclusion": "M1 未达成：门项 1/2 environment-blocked，门项 3 passed（机制层），门项 4 not_run。第一批开发完成不等于 M1 达成。"
+}

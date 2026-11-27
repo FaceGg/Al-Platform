@@ -46,5 +46,12 @@
     {"status": "resolved", "item": "api/agent_extras.py:828/:985 import 不可解析——已随 F2a 后端提交 acdb740a 修复"},
     {"status": "note", "item": "M1（真实数据闭环演练 + 全量 CI）为第一批整体收口口径，不随 F1 判定"}
   ],
-  "conclusion": "F1 八条口径 8 passed（其中 1 条含 environment-blocked 子项，未折算成功）；横向合同通过；本地全量结果见 full_regressions"
+  "conclusion": "F1 八条口径 8 passed（其中 1 条含 environment-blocked 子项，未折算成功）；横向合同通过；本地全量结果见 full_regressions",
+  "audit_review_2026_11_27": {
+    "systemic_root_cause": "验收测试几乎全部在服务层直接调函数、不经 HTTP 路径，造成两类假绿：①事务边界不一致——测试里被拦的异常不触发回滚，生产路径经 audit_service.project_action 的 except 分支 db.rollback() 撤销状态；②异常映射未覆盖——执行器异常在 try/except 之外且无全局处理器，HTTP 返回 500 而非 409。",
+    "verification_method": "代码级逐项核对（三个只读代理，85 个核对点）+ 运行验证（4 组探针，用后即删）",
+    "falsified_claims": "「跨项目越权写（IDOR）」经 QMS 与第二批共 19 个端点运行验证全部 404 PROJECT_NOT_FOUND（路径参数 {project_id} 先过 require_project_access）——不成立，不采纳。",
+    "result": "8 条口径维持 passed（结构最扎实）；边界问题：聚合桶跨项目串桶、工位码解析无项目过滤、日量上限按请求而非按行、field_roles→排除列只在前端换算、轮换工具 --scope all 会中途崩溃、钉钉送达不读 errcode。",
+    "detail": "验收-补齐路线-F1.md §6"
+  }
 }

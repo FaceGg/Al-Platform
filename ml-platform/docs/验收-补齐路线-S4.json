@@ -1,0 +1,125 @@
+{
+  "schema_version": "gap-batch2-s4/v1",
+  "batch": "补齐路线第二批 S4（智能应用）",
+  "date": "2026-11-26",
+  "commits": {
+    "s4_closeout": "f9e6afc1"
+  },
+  "spec": "ml-platform/docs/技术方案-补齐路线第二批.md#9",
+  "environment": {
+    "platform": "windows-local",
+    "database": "sqlite (in-memory)"
+  },
+  "acceptance_criteria": [
+    {
+      "id": 1,
+      "statement": "十类审计模板各有结构化取数",
+      "status": "failed",
+      "note": "只有 4 种取数；agent_actions 与 model 两个模板不按项目过滤（跨项目泄漏）"
+    },
+    {
+      "id": 2,
+      "statement": "叙述生成（LLM 经网关）",
+      "status": "failed",
+      "note": "_narrative 恒返回固定回退文案，API 不调网关——chat_completion 出现 0 次。原文「真实网关调用 not_run」实为从未实现"
+    },
+    {
+      "id": 3,
+      "statement": "引用编号全局唯一 + 生成后校验",
+      "status": "failed",
+      "note": "「引用提示与证据清单同表」校验未实现"
+    },
+    {
+      "id": 4,
+      "statement": "报告导出 Markdown + HTML；历史可重开",
+      "status": "failed",
+      "note": "GET /audit-reports/{id} 与 export.md 端点不存在"
+    },
+    {
+      "id": 5,
+      "statement": "问数只走指标注册表；未命中拒绝",
+      "status": "passed",
+      "scope": "注册表层",
+      "note": "内置八条属实，SQL 只来自模板；但注册表是硬编码字典，PlatformOption qa.metric_registry 未接线"
+    },
+    {
+      "id": 6,
+      "statement": "LLM 意图识别与参数抽取；不生成 SQL",
+      "status": "failed",
+      "note": "意图识别是别名子串匹配，无 LLM；params 全为空——时间条件被静默丢弃"
+    },
+    {
+      "id": 7,
+      "statement": "七因子可信度评分 + A–D 档",
+      "status": "failed",
+      "note": "因子 6、7 是全局存在性查询（不按版本/项目过滤）；泄漏因子无数据时得满分且 leakage_hits 无生产者——「泄漏命中直接 D」不可达"
+    },
+    {
+      "id": 8,
+      "statement": "CBPE 估计 + 置信区间 + 脚注",
+      "status": "passed",
+      "scope": "近似口径",
+      "note": "宏 F1 近似未实现；端点忽略路径 version_id"
+    },
+    {
+      "id": 9,
+      "statement": "模型卡 11 章节草拟",
+      "status": "failed",
+      "note": "至少 6 节是静态文案；release_checks 与盲测台账未参与填充；预期用途/局限从 version 读而列在 ModelCard 上，永远显示未提供"
+    },
+    {
+      "id": 10,
+      "statement": "数据指纹变化触发重建回 pending",
+      "status": "passed",
+      "scope": "显式刷新端点",
+      "note": "用例在测试内重写了重建逻辑，未调端点"
+    },
+    {
+      "id": 11,
+      "statement": "单样本解释",
+      "status": "failed",
+      "note": "方向取原始值符号（全正特征恒 up），非方案写的 符号(value−均值)；无测试"
+    },
+    {
+      "id": 12,
+      "statement": "每次 LLM 调用自动入审计",
+      "status": "failed",
+      "note": "无实现支撑——本阶段无任何 LLM 调用"
+    }
+  ],
+  "horizontal_contracts": [
+    {
+      "name": "迁移纪律（_117）",
+      "status": "passed",
+      "evidence": [
+        "两新表"
+      ],
+      "note": "模型卡新增两列未同步 test_inference_production_models 列白名单（第二批遗留，3abc28ec 修复）"
+    },
+    {
+      "name": "页面与帮助同批交付（§6-11）",
+      "status": "failed",
+      "note": "审计问答页、模型库可信度/模型卡面板未落地"
+    },
+    {
+      "name": "新增写接口纳入权限测试矩阵（§6-4）",
+      "status": "failed",
+      "note": {
+        "write_endpoints_not_registered_in_PROJECT_WRITE_ACTIONS": "三批 78 个新写端点（12 个模块）均未登记，不受 TestProjectWriteAuditCompleteness 回归保护；已运行验证鉴权本身正确（viewer/operator 对写端点 403 PROJECT_PERMISSION_DENIED）"
+      }
+    }
+  ],
+  "not_run_or_blocked": [
+    "PDF 导出",
+    "单样本解释端到端真模型"
+  ],
+  "conclusion_original_2026_11_26": "十二条口径全部 passed（口径 8/11/12 带范围限制）。",
+  "audit_review_2026_11_27": {
+    "systemic_root_cause": "验收测试几乎全部在服务层直接调函数、不经 HTTP 路径，造成两类假绿：①事务边界不一致——测试里被拦的异常不触发回滚，生产路径经 audit_service.project_action 的 except 分支 db.rollback() 撤销状态；②异常映射未覆盖——执行器异常在 try/except 之外且无全局处理器，HTTP 返回 500 而非 409。",
+    "verification_method": "代码级逐项核对（三个只读代理，85 个核对点）+ 运行验证（4 组探针，用后即删）",
+    "falsified_claims": "「跨项目越权写（IDOR）」经 QMS 与第二批共 19 个端点运行验证全部 404 PROJECT_NOT_FOUND（路径参数 {project_id} 先过 require_project_access）——不成立，不采纳。",
+    "result": "12 条口径中 9 条 failed（#1/#2/#3/#4/#6/#7/#9/#11/#12），3 条 passed（#5/#8/#10）。「智能应用」的智能部分（LLM）从未实现。",
+    "corrected_conclusion": "S4 未达成。「智能应用」的智能部分（LLM）从未实现，仅指标注册表与 CBPE 近似口径成立。",
+    "detail": "验收-补齐路线-S4.md §5"
+  }
+}

@@ -1,0 +1,216 @@
+{
+  "schema_version": "gap-batch3-b3/v1",
+  "batch": "补齐路线第三批 B3（QMS 合规长尾）",
+  "date": "2026-11-27",
+  "commits": {
+    "draft": "未提交（起草）",
+    "closeout": "3f349a4e",
+    "s4_whitelist_fix": "3abc28ec",
+    "backfill": "f49c4c1f"
+  },
+  "spec": "ml-platform/docs/技术方案-补齐路线第三批.md",
+  "environment": {
+    "platform": "windows-local",
+    "database": "sqlite (in-memory)"
+  },
+  "domain_caveat": "IATF 16949 / 8D / MSA 领域口径待质量专家评审（上线前外部门槛，持续登记）",
+  "acceptance_criteria": [
+    {
+      "id": 1,
+      "statement": "三周期未满关闭被拒（NCR 关闭门禁）",
+      "status": "failed",
+      "evidence": [
+        "运行验证：HTTP 连续 5 次 transition 均 409，verification_cycles 恒 0"
+      ],
+      "note": "经 HTTP 永远关不掉——project_action except 分支 db.rollback() 撤销自增；且周期之间无时间间隔校验。测试不经 HTTP 且在 assertRaises 外继续用同 session，假绿"
+    },
+    {
+      "id": 2,
+      "statement": "从预警转入自动带证据链",
+      "status": "failed",
+      "note": "只存 source_alert_id，不自动带出 scene/station，详情不含预警证据载荷；前端 source_alert_id 是手输 UUID，无「从预警页转 NCR」入口"
+    },
+    {
+      "id": 3,
+      "statement": "驳回留理由 + 早期阶段限制",
+      "status": "passed"
+    },
+    {
+      "id": 4,
+      "statement": "跳步被拒；D6 未通过不得结案",
+      "status": "failed",
+      "note": "顺序推进无目标参数（跳步在结构上不可能，无「被拒」路径）；d6_passed 可在任意步登记，测试自身在第 8 步登记"
+    },
+    {
+      "id": 5,
+      "statement": "LLM 草稿进动作审计",
+      "status": "failed",
+      "note": "装饰器在但调用未传 actor，审计行 actor_id/project_id 为空、agent_type 落 other；测试未断言审计行。草稿把同一整段 reply 写进 D1–D5 且推进时被 {} 覆盖"
+    },
+    {
+      "id": 6,
+      "statement": "预警→自动开案→关联全链 + 状态重推",
+      "status": "failed",
+      "note": "open_case 唯一调用方是手工端点；transition_alert 关闭分支无钩子；测试是手工调 open_case。NCR/8D 链接只能手工建；无链接的案例重推即被置 closed"
+    },
+    {
+      "id": 7,
+      "statement": "症状查询 Top5 带匹配原因",
+      "status": "passed",
+      "scope": "关键词层",
+      "note": "分词只按空格/中文逗号/句号切——中文整句输入基本无命中；无任何 RAG/向量调用"
+    },
+    {
+      "id": 8,
+      "statement": "单样本四对象串联",
+      "status": "failed",
+      "note": "QmsTraceLink 全仓只在测试中实例化，无生产写入方——trace_links 与 ncr_ids 生产恒空；测试只断言不存在样本键的空结构"
+    },
+    {
+      "id": "8b",
+      "statement": "批次概览",
+      "status": "failed",
+      "note": "sample_count 等全部派生自 QmsTraceLink，生产恒 0"
+    },
+    {
+      "id": 9,
+      "statement": "报告数字与趋势页同源一致",
+      "status": "failed",
+      "note": "趋势页 NG 率 = 已确认 NG ÷ 产量；报告 NG 率 = 已确认异常 ÷ 已关闭预警——分子分母都不同。cpk_pass_rate 恒 None、top_defects 恒 []（后者未登记）"
+    },
+    {
+      "id": 10,
+      "statement": "定时任务真实产出",
+      "status": "passed",
+      "scope": "注册层",
+      "note": "beat 注册属实但无测试锁定；真实调度节奏 not_run"
+    },
+    {
+      "id": "10b",
+      "statement": "报告导出 HTML/JSON",
+      "status": "passed"
+    },
+    {
+      "id": 11,
+      "statement": "同项目双生效计划被拒",
+      "status": "passed",
+      "note": "但无归档流程，第二版建不出来"
+    },
+    {
+      "id": 12,
+      "statement": "决策流水可复算乘数；乘数变更走 S1 审批",
+      "status": "failed",
+      "note": "evaluate_tightening 不创建审批单，tightening_multiplier 全仓无写入——乘数永不生效；四因子里过程能力恒 0、复发实为未结 NCR 数；四因子测试只跑过全零场景"
+    },
+    {
+      "id": 13,
+      "statement": "相邻版本逐项 diff",
+      "status": "failed",
+      "note": "服务与端点存在，但生产上第二版建不出来，无对象可比；前端 diff 结果不可见"
+    },
+    {
+      "id": 14,
+      "statement": "%GRR/ndc 与通行口径一致",
+      "status": "failed",
+      "note": "EV 用极差均方根且 d2 恒 1.128（仅对 2 次重复成立）；AV 缺 −EV²/(n·r) 项；PV 常数不随零件数变。测试只断言分级边界，无已知算例对照，conditional 档无测试"
+    },
+    {
+      "id": 15,
+      "statement": "RPN 服务端计算防篡改",
+      "status": "passed"
+    },
+    {
+      "id": 16,
+      "statement": "措施同步生成待审批变更",
+      "status": "failed",
+      "note": "创建的 recipe_change 类型无执行器——批准后 APPROVAL_EXECUTOR_NOT_READY，且经 HTTP 返回 500（S1 更正 U1）。永远落不了地"
+    },
+    {
+      "id": 17,
+      "statement": "数量约束校验",
+      "status": "passed"
+    },
+    {
+      "id": 18,
+      "statement": "一检验一 SCAR 唯一性",
+      "status": "failed",
+      "note": "唯一约束在；但「重触发复用」不可达（每次新建检验记录，existing 查询恒 None）。SCAR 无处理/关闭端点"
+    },
+    {
+      "id": 19,
+      "statement": "停用供应商新来料被拒",
+      "status": "passed"
+    }
+  ],
+  "horizontal_contracts": [
+    {
+      "name": "迁移纪律（_118）",
+      "status": "passed",
+      "note": "往返 + alembic check 零漂移属实；引用的 temp_test/m118_check.py 被 gitignore，仓库内不可复现"
+    },
+    {
+      "name": "测试登记",
+      "status": "passed",
+      "evidence": [
+        "test_qms_t1(8) / test_qms_t2_t3(14) / test_qms_api(5) 共 27 用例"
+      ]
+    },
+    {
+      "name": "页面与帮助同批交付（§6-11）",
+      "status": "failed",
+      "note": "质量体系十页帮助章节全部缺失（帮助中心 19 章里第三批零覆盖）"
+    },
+    {
+      "name": "新增写接口纳入权限测试矩阵（§6-4）",
+      "status": "failed",
+      "note": {
+        "write_endpoints_not_registered_in_PROJECT_WRITE_ACTIONS": "三批 78 个新写端点（12 个模块）均未登记，不受 TestProjectWriteAuditCompleteness 回归保护；已运行验证鉴权本身正确（viewer/operator 对写端点 403 PROJECT_PERMISSION_DENIED）"
+      }
+    }
+  ],
+  "frontend_caveat": "十页前端测试只做渲染与空态断言，零交互测试；四处在说没有的功能（「或从预警转入」「新版生效旧版自动归档」「批准后落控制计划」「critical 预警关闭时自动开案」）",
+  "not_run_or_blocked": [
+    {
+      "status": "not_run",
+      "item": "beat 真实调度节奏"
+    },
+    {
+      "status": "not_run",
+      "item": "MSA 真实读数批量导入（前端以合成矩阵演示）"
+    },
+    {
+      "status": "not_run",
+      "item": "向量检索 RAG 挂接"
+    },
+    {
+      "status": "not_run",
+      "item": "栈内端到端"
+    },
+    {
+      "status": "not_run",
+      "item": "8D 复发检测/提示重开（无代码）"
+    }
+  ],
+  "full_regressions": {
+    "backend_run_suite": {
+      "status": "passed",
+      "modules_total": 244,
+      "tested_commit": "3abc28ec"
+    },
+    "frontend_vitest": {
+      "status": "passed",
+      "files": 103,
+      "passed": 661,
+      "skipped": 19
+    }
+  },
+  "conclusion_closeout_2026_11_27": "22 条口径全部 passed（5 条带范围限制）。",
+  "audit_review_2026_11_27": {
+    "systemic_root_cause": "验收测试几乎全部在服务层直接调函数、不经 HTTP 路径，造成两类假绿：①事务边界不一致——测试里被拦的异常不触发回滚，生产路径经 audit_service.project_action 的 except 分支 db.rollback() 撤销状态；②异常映射未覆盖——执行器异常在 try/except 之外且无全局处理器，HTTP 返回 500 而非 409。",
+    "verification_method": "代码级逐项核对（三个只读代理，85 个核对点）+ 运行验证（4 组探针，用后即删）",
+    "falsified_claims": "「跨项目越权写（IDOR）」经 QMS 与第二批共 19 个端点运行验证全部 404 PROJECT_NOT_FOUND（路径参数 {project_id} 先过 require_project_access）——不成立，不采纳。",
+    "result": "21 条口径中 13 条 failed（#1/#2/#4/#5/#6/#8/#8b/#9/#12/#13/#14/#16/#18），8 条 passed（#3/#7/#10/#10b/#11/#15/#17/#19）。口径 1 为 failed（经 HTTP 永远关不掉），其余 failed 为机制名义存在但真实链路不可用；原文 §4 称 22 条，实为 21 条（计数笔误）。",
+    "corrected_conclusion": "B3 未达成。表结构与页面骨架真实存在，但闭环内聚件的核心机制（关闭门禁、自动开案、追溯、控制计划替换、审批落地、MSA 公式）在真实链路上不可用。IATF/8D/MSA 口径待专家评审持续登记。",
+    "detail": "验收-补齐路线-B3.md §6"
+  }
+}

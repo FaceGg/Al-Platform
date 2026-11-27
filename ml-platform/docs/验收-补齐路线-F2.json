@@ -60,5 +60,12 @@
     {"status": "design-limit", "item": "参数超限只评数值特征；波形统计量规格待接入通道保存波形原文后生效"},
     {"status": "note", "item": "提交时安全扫描器多次未给出完整结论（scanner_enobufs），不据此宣称项目安全"}
   ],
-  "conclusion": "17 条口径逐条结论均为 passed；第 2/7/8/14 条限定在逻辑层或接口与组件层，带 not_run / environment-blocked 子项且不折算为已验证。后端全量回归 226 模块全过 @ bc932754。任务完成不等于发布就绪。"
+  "conclusion": "17 条口径逐条结论均为 passed；第 2/7/8/14 条限定在逻辑层或接口与组件层，带 not_run / environment-blocked 子项且不折算为已验证。后端全量回归 226 模块全过 @ bc932754。任务完成不等于发布就绪。",
+  "audit_review_2026_11_27": {
+    "systemic_root_cause": "验收测试几乎全部在服务层直接调函数、不经 HTTP 路径，造成两类假绿：①事务边界不一致——测试里被拦的异常不触发回滚，生产路径经 audit_service.project_action 的 except 分支 db.rollback() 撤销状态；②异常映射未覆盖——执行器异常在 try/except 之外且无全局处理器，HTTP 返回 500 而非 409。",
+    "verification_method": "代码级逐项核对（三个只读代理，85 个核对点）+ 运行验证（4 组探针，用后即删）",
+    "falsified_claims": "「跨项目越权写（IDOR）」经 QMS 与第二批共 19 个端点运行验证全部 404 PROJECT_NOT_FOUND（路径参数 {project_id} 先过 require_project_access）——不成立，不采纳。",
+    "result": "17 条口径中口径 10「可用所记基线版本复算」不成立（σ 判据用当前活动基线）；「不并存两套预警」不成立（演示循环原告警链未撤）；「判据优先级链」不是短路链。证据总览切分环节状态已过期。",
+    "detail": "验收-补齐路线-F2.md §6"
+  }
 }

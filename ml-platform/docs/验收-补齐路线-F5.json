@@ -170,5 +170,12 @@
       "item": "实施修复 4 项（scope 校验器/幂等哈希/duplicate 不插行/追查行派生 ID），见验收 md §3"
     }
   ],
-  "conclusion": "9 条口径：8 passed、1 not_run（Kafka 真实链路）。计划 §2 F5 验收原文（口径 1–4）全部通过。"
+  "conclusion": "9 条口径：8 passed、1 not_run（Kafka 真实链路）。计划 §2 F5 验收原文（口径 1–4）全部通过。",
+  "audit_review_2026_11_27": {
+    "systemic_root_cause": "验收测试几乎全部在服务层直接调函数、不经 HTTP 路径，造成两类假绿：①事务边界不一致——测试里被拦的异常不触发回滚，生产路径经 audit_service.project_action 的 except 分支 db.rollback() 撤销状态；②异常映射未覆盖——执行器异常在 try/except 之外且无全局处理器，HTTP 返回 500 而非 409。",
+    "verification_method": "代码级逐项核对（三个只读代理，85 个核对点）+ 运行验证（4 组探针，用后即删）",
+    "falsified_claims": "「跨项目越权写（IDOR）」经 QMS 与第二批共 19 个端点运行验证全部 404 PROJECT_NOT_FOUND（路径参数 {project_id} 先过 require_project_access）——不成立，不采纳。",
+    "result": "演示预警经开放 API「检验结果」外泄（运行验证，违反合同 §6-9）；/api/platform/ingest-status 未鉴权（运行验证匿名 200）；「平台级 Key」不存在；接入事件写后无人读、kafka_ingest_loop 是死代码；页脚心跳可被手动发布刷新。",
+    "detail": "验收-补齐路线-F5.md"
+  }
 }

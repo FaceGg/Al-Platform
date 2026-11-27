@@ -44,3 +44,50 @@
 ## 4. 结论
 
 S2b 十四条口径全部 passed（口径 1/12/14 带范围限制如实登记）；E01/E02/E11/E12 增补落地；既有 rollout 行为零变化经回归背书。任务完成不等于发布就绪。
+
+## 5. 〔审核更正 2026-11-27〕三批复审结论——§4「十四条口径全部 passed」不成立
+
+> 取证：代码级逐项核对 + 运行验证。**原表原结论保留不改写，以本节为准。** 本阶段是第二批对标竞品的核心价值所在（堵「F1 0.999 浅验证集放行」漏洞），复审发现两条核心门禁名存实亡。
+
+### 5.1 P0：核心门禁在真实链路上名存实亡（原标 passed）
+
+| # | 原声明 | 实际 | 代码事实 |
+|---|---|---|---|
+| 1 | 「终验指标**只能取自 S2a 锁定盲测**」 | **不成立** | `_blind_final_metrics`（`services/release_governance.py:805-829`）直接取 `version.metrics`，与 metric_floor 同源同阈值；额外条件只是「项目里存在锁定轮次且 cap 未满」，轮次选取是「项目最近一个锁定轮次」（:430-440），与被发布版本无关联 |
+| 2 | 「候选与现役冠军在**同一批盲测样本**上配对盲评」 | **不成立** | `evaluate_no_regression`（:553-616）比较两个版本各自的 `version.metrics`；指纹是 `{version, round}` 的哈希，**从未被比较**；`usages` 查询后未使用 |
+| 3 | 默认配置下发布可用 | **默认 cap=2 时归档门禁必 failed** | 探测评估（`approval_executors.py:205-232`）先消耗 2 次 cap，正式评估得到 `blind_final_validation=failed(no_blind_metrics)`、`no_regression=failed(blind_eval_cap_reached)`。**测试与 M2 演练都手工把 cap 设成 5 或 6 绕开了** |
+| 4 | 「有效授权发布**免逐单审批**」（G2） | **不成立** | 预授权只在已批准的 model_release 单执行时才被检查，仍需另一人四眼批准；无免审路径 |
+| 5 | 预授权发布执行 | **必 NameError** | `ReleaseExecutor.perform`（`approval_executors.py:256`）使用未导入的 `_uuid`（该函数作用域内无 `import uuid as _uuid`）；带 `preauthorization_id` 的发布从未可用。release-request 的 payload 也不含 `acceptance_gates_fingerprint`，必 `PREAUTH_GATES_CHANGED` |
+| 6 | 「产物摘要不符的回执被拒绝」（G3） | **API 上不可达** | 回执端点不传 `expected_digest`（`api/release_governance.py:408-416`），请求体也无时间窗字段；服务层 digest_mismatch 逻辑正确但 API 永远产不出 mismatch |
+| 7 | 豁免三约束（E01） | **约束在，效果无** | 三分支逻辑成立（`approval_executors.py:306-323`），但 `perform` 是空操作（:328-330），不创建灰度、不解除拦截；model_release 创建时只要有失败项就拒（:227-232），**豁免批准后仍无路可发**。且 `test_release_governance.py` 无任何 exemption 用例——验收 #13 无证据 |
+| 8 | 「窗口超时可接管」 | **未实现** | `force_shadow_gate` 只被接收和存入 payload，无任何读取方；置 True 且无报告时仍 failed |
+
+### 5.2 P1：测试缺口（原未登记）
+
+- **E13 场景矩阵端到端用例 0 个**——技术方案 §7.5 第 6 条明文要求「回退豁免/影子回放/发布回滚」三场景端到端用例；tests 目录无任何引用。验收 14 条口径与遗留节均未提。
+- **影子对照零测试**——技术方案 §7.4 测试矩阵明文要求 `test_shadow_compare.py`，**该文件不存在**；验收 #1、#2 无用例支撑。
+- `traffic_mirror`（流量镜像）未实现——只是对整个 frame 打分，不关联 champion 行。
+- 影子种子是时间派生，API 无 seed 参数；无样本池时抛 `GovernanceError` 但端点只接 `SplitError` → 500。
+- 下游消费未过滤 `channel`：水位线计数与 `business_alert_ratio` 都会把影子行算进去。
+
+### 5.3 P1：其余名义化
+
+- Wilson 门禁在真实链路永不评估：release-request 端点不传 options；所需的 `recall_minority_true_positive` / `total_positive` 键全后端无生产者。
+- 无监督口径只看 `synthetic_auc ≥ 0.5`，`normal_fpr`、`stability` 未检查。
+- drift 的「未消解」等于「未提案」——点一下提案即放行。
+- 预授权比对的指纹是**客户端自报字符串**，没有服务端推导，「质量门变更拦截」是名义的。
+- `GET .../release-preauthorizations` 端点不存在；`GET /dataset-splits/{id}/summary` 不存在。
+- Challenger 退役不存退役计划，留下孤儿 draft revision。
+- 验收 #5 引用的 `TestNoRegression` 类不存在（实为 `TestReleaseGates` 的三个方法）；#12「三态」只测了一态。
+
+### 5.4 P2：前端
+
+**S2b 前端完全未落地**——计划 §10 导航归属「影子推理归算法平台·模型运营」「发布门禁/别名在模型库详情承载」全部为空；对 challenger / release-governance / preauthorization / release-request / receipts 等关键词在前端源码（除测试）命中均为 0。原文登记「API 先行，UI 随 M2 补」，**但 M2 已收口而 UI 没补**（见 M2 更正）。
+
+### 5.5 更正后的口径状态
+
+十四条口径中 **10 条 failed、4 条 passed**。failed：#1（影子零测试）、#2（默认 cap 下归档必 failed）、#3（终验取 version.metrics）、#4（不回退非同批配对）、#6（免审不成立）、#7（执行器 NameError）、#10（回执 API 不可达）、#12（接管未实现）、#13（豁免无效果）、#14（E13 用例 0 个）。passed：#5（Challenger）、#8（预授权四失效，服务层）、#9（门禁四拦截 + Wilson，函数级）、#11（回执放量 opt-in）。结构化结论见 [验收-补齐路线-S2b.json](验收-补齐路线-S2b.json)。**7 个写端点未登记 `PROJECT_WRITE_ACTIONS`、API 级测试零越权断言**（实测鉴权本身正确）。
+
+### 5.6 已证伪（留痕）
+
+- 「跨项目越权（影子报告导出、回执）」：实测对无成员关系项目的端点返回 `404 PROJECT_NOT_FOUND`，**不成立**。
