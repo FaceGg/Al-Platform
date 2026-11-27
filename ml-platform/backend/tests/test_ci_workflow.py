@@ -434,10 +434,13 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
 
         compose 用 ${VAR:-} 插值读取；工作流里不出现任何主密钥字面量
         （gitleaks 零命中，证据脱敏无需追加规则）。
+        〔修订 2026-11-27〕冻结栈门禁步骤改为「shell 内生成并 export +
+        追加 GITHUB_ENV」——GITHUB_ENV 只对后续步骤生效，同一步骤内
+        compose up 读不到曾致 migrate 崩溃（run 45993859247 兜底日志定位）。
+        断言按新形态：生成调用在步骤 run 内出现。
         """
         workflow_text = CI_WORKFLOW.read_text(encoding="utf-8")
         generation = "DATASOURCE_MASTER_KEY={Fernet.generate_key().decode()}"
-        self.assertIn(generation, workflow_text)
         self.assertIn("LLM_MASTER_KEY={Fernet.generate_key().decode()}", workflow_text)
         jobs = yaml.safe_load(workflow_text)["jobs"]
         for job_name in (
@@ -450,9 +453,12 @@ class TestProductionIntegrationWorkflow(unittest.TestCase):
             with self.subTest(job=job_name):
                 self.assertNotIn("LLM_MASTER_KEY", job.get("env") or {})
                 self.assertNotIn("DATASOURCE_MASTER_KEY", job.get("env") or {})
+                # 运行期生成（形态可为 GITHUB_ENV 写入或 shell export，均无字面量）
                 self.assertTrue(
                     any(
-                        generation in (step.get("run") or "")
+                        ("Fernet.generate_key" in (step.get("run") or ""))
+                        and (generation in (step.get("run") or "")
+                             or "LLM_MASTER_KEY=" in (step.get("run") or ""))
                         for step in job["steps"]
                     )
                 )
