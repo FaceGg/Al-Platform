@@ -57,9 +57,10 @@ export default function QualityDashboardPage() {
     { key: "ok", title: zh ? "正常数" : "OK", value: production?.ok ?? 0, to: "/quality/production-records" },
     { key: "confirmed_ng", title: zh ? "已确认 NG" : "Confirmed NG", value: alerts?.confirmed_ng ?? 0, to: "/quality/alerts?status=closed", danger: true },
     { key: "alerts", title: zh ? "AI+SPC 预警" : "AI+SPC alerts", value: alerts?.alerts_in_window ?? 0, to: "/quality/alerts" },
-    // 下钻链接与卡片数字同口径：待处理 = 未关闭（四个阶段），高风险 = 高风险 + 严重
+    // 下钻链接与卡片数字同口径：待处理 = 未关闭（四个阶段），高风险 = 未关闭 ∧ 高风险 + 严重
+    //（三批复审：high 卡此前缺 open=1，下钻会混入已关闭项，与卡片数字对不上）
     { key: "open", title: zh ? "待处理" : "Open", value: alerts?.open ?? 0, to: "/quality/alerts?open=1", danger: true },
-    { key: "high", title: zh ? "高风险" : "High risk", value: alerts?.high_risk ?? 0, to: "/quality/alerts?min_severity=high", danger: true },
+    { key: "high", title: zh ? "高风险" : "High risk", value: alerts?.high_risk ?? 0, to: "/quality/alerts?min_severity=high&open=1", danger: true },
   ];
 
   const trendOption = useMemo(() => {

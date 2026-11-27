@@ -50,6 +50,7 @@ from app.schemas.quality_alerts import (
 from app.services.audit import AuditIntent, AuditService
 from app.services.project_access import ProjectAccess
 from app.services import quality_alerts as alert_service
+from app.services.quality_aggregates import OPEN_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -164,11 +165,12 @@ def list_alerts(
     if not include_demo:
         query = query.filter(QualityAlert.is_demo.is_(False))
     if sla_overdue:
-        # SLA 已超时且仍未处置完（驾驶舱「超时」口径与此同源）
+        # SLA 已超时且仍未处置完（驾驶舱「超时」口径与此同源）。
+        # 三批复审：此处曾漏 review_pending——卡片算它、列表不算，点卡下钻对不上数
         query = query.filter(
             QualityAlert.sla_due_at.isnot(None),
             QualityAlert.sla_due_at < datetime.utcnow(),
-            QualityAlert.status.in_(("open", "acknowledged", "processing")),
+            QualityAlert.status.in_(OPEN_STATUSES),
         )
     if open:
         # 「未关闭」= 驾驶舱「待处理」卡的口径（四个未关闭阶段），与只筛 open 状态不同

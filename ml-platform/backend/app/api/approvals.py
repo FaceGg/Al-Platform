@@ -191,10 +191,12 @@ def _decide_endpoint(
                 decision=decision,
                 note=payload_in.note,
             )
+            if decision == "approve" and approval.status == "approved":
+                # 执行器错误与决策错误同通道映射：保留类型无执行器 → 409
+                # APPROVAL_EXECUTOR_NOT_READY，而非 500（三批复审 U1）
+                perform_approved(db, approval=approval, actor_id=current_user.id)
         except ApprovalError as error:
             _raise_approval_error(error)
-        if decision == "approve" and approval.status == "approved":
-            perform_approved(db, approval=approval, actor_id=current_user.id)
     return _approval_view(db, approval, can_approve=False)
 
 

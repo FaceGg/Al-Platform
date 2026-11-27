@@ -76,41 +76,83 @@ class TestNcr(T1Case):
         self.assertEqual(rejected.stage, "rejected")
 
     def test_three_cycle_close_gate(self):
+        """〔三批复审重构〕时间窗语义：验证期须满 21 天方可关闭。
+
+        旧语义（调用计数 +1）在 HTTP 路径上被 project_action 的回滚撤销——
+        经 HTTP 永远关不掉（运行验证坐实）；新判定只读时间与预警，被拦请求
+        回滚无害，且「点三次」无法绕过时间要求。
+        """
+        from datetime import timedelta
+
         ncr = self._ncr()
         for _ in range(3):
             transition_ncr(self.db, ncr_id=ncr.id, actor_id=self.user.id)
         self.assertEqual(ncr.stage, "verification")
-        # 第一周期尝试关闭：无复发计数 +1 但未达 3 → BLOCKED
+        # 刚进入 verification（0 天）：关闭被拒
         with self.assertRaises(QmsError) as caught:
             transition_ncr(self.db, ncr_id=ncr.id, actor_id=self.user.id)
         self.assertEqual(caught.exception.code, "NCR_CLOSE_BLOCKED")
-        self.assertEqual(ncr.verification_cycles, 1)
-        # 第二周期同
-        with self.assertRaises(QmsError):
-            transition_ncr(self.db, ncr_id=ncr.id, actor_id=self.user.id)
-        # 第三周期：达标 → closed
-        transition_ncr(self.db, ncr_id=ncr.id, actor_id=self.user.id)
-        self.assertEqual(ncr.stage, "closed")
+        self.assertEqual(ncr.stage, "verification")
+        # 反复点击不能「攒次数」：仍 BLOCKED
+        for _ in range(3):
+            with self.assertRaises(QmsError):
+                transition_ncr(self.db, ncr_id=ncr.id, actor_id=self.user.id)
+        self.assertEqual(ncr.stage, "verification")
+        # 把验证起点回拨 22 天（≥3×7 天）且验证期内无新预警 → 关闭成功
+        from app.models.qms import QmsNcrAction
 
-    def test_recurrence_resets_cycles(self):
-        from datetime import datetime
-
-        alert = QualityAlert(
-            project_id=self.project.id, source_type="model_risk",
-            severity="warning", title="复发预警", evidence={}, merge_key="x",
-        )
-        self.db.add(alert)
+        started = self.db.query(QmsNcrAction).filter(
+            QmsNcrAction.ncr_id == ncr.id, QmsNcrAction.phase == "verification",
+        ).order_by(QmsNcrAction.created_at.asc()).first()
+        started.created_at = started.created_at - timedelta(days=22)
         self.db.commit()
+        transition_ncr(self.db, ncr_id=ncr.id, actor_id=self.user.id)
+        self.db.commit()
+        self.db.expire_all()
+        fresh = self.db.get(type(ncr), ncr.id)
+        self.assertEqual(fresh.stage, "closed")
+        self.assertEqual(fresh.verification_cycles, 3)
+
+    def test_recurrence_during_verification_blocks_close(self):
+        """验证期内（起点之后）出现新预警 → 判复发、关闭被拒。
+
+        旧实现的窗口是「近 7 天」——进入 verification **之前**的旧预警也会
+        被判复发；新语义以验证期起点为窗口起点。
+        """
+        from datetime import timedelta
+
+        from app.models.qms import QmsNcrAction
+
         ncr = create_ncr(self.db, project_id=self.project.id, code="NCR-REC",
-                         title="复发样例", source_alert_id=alert.id,
-                         created_by_id=self.user.id)
+                         title="复发样例", created_by_id=self.user.id)
         for _ in range(3):
             transition_ncr(self.db, ncr_id=ncr.id, actor_id=self.user.id)
-        # 项目内有新预警（无 scene/station 绑定时视为复发）→ 清零并 BLOCKED
+        # 验证起点回拨 22 天；在起点之后 1 天种一条新预警（同项目视为复发）
+        started = self.db.query(QmsNcrAction).filter(
+            QmsNcrAction.ncr_id == ncr.id, QmsNcrAction.phase == "verification",
+        ).order_by(QmsNcrAction.created_at.asc()).first()
+        started.created_at = started.created_at - timedelta(days=22)
+        from datetime import datetime
+
+        self.db.add(QualityAlert(
+            project_id=self.project.id, source_type="model_risk",
+            severity="warning", title="验证期复发", evidence={}, merge_key="rec-x",
+            created_at=datetime.utcnow() - timedelta(days=21),
+        ))
+        self.db.commit()
         with self.assertRaises(QmsError) as caught:
             transition_ncr(self.db, ncr_id=ncr.id, actor_id=self.user.id)
         self.assertEqual(caught.exception.code, "NCR_CLOSE_BLOCKED")
-        self.assertEqual(ncr.verification_cycles, 0)
+        self.assertEqual(ncr.stage, "verification")
+        # 对照：起点之前的预警不判复发（旧实现会）——清掉验证期预警后关闭成功
+        self.db.query(QualityAlert).filter(
+            QualityAlert.title == "验证期复发").delete()
+        self.db.commit()
+        transition_ncr(self.db, ncr_id=ncr.id, actor_id=self.user.id)
+        self.db.commit()
+        self.db.expire_all()
+        fresh = self.db.get(type(ncr), ncr.id)
+        self.assertEqual(fresh.stage, "closed")
 
 
 class TestD8(T1Case):

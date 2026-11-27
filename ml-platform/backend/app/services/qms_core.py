@@ -100,14 +100,30 @@ def reject_ncr(db: Session, *, ncr_id, actor_id, reason: str) -> QmsNcrCapa:
     return ncr
 
 
-def evaluate_recurrence(db: Session, *, ncr: QmsNcrCapa, window_days: int = VERIFICATION_CYCLE_DAYS) -> bool:
-    """复发判定：验证窗口内同场景+同工位有新预警或 SPC 判异预警。"""
+def verification_started_at(db: Session, *, ncr: QmsNcrCapa) -> datetime | None:
+    """进入 verification 的时刻：轨迹里第一条 verification 行的 created_at。"""
+    row = (
+        db.query(QmsNcrAction)
+        .filter(QmsNcrAction.ncr_id == ncr.id, QmsNcrAction.phase == "verification")
+        .order_by(QmsNcrAction.created_at.asc())
+        .first()
+    )
+    return row.created_at if row is not None else None
+
+
+def evaluate_recurrence(db: Session, *, ncr: QmsNcrCapa,
+                        since: datetime | None = None) -> bool:
+    """复发判定：`since`（默认=进入 verification 之后）同场景+同工位有新预警。
+
+    三批复审更正：原实现回看「近 7 天」且不含 verification 起点约束——进入
+    verification 之前的旧预警也会被判成复发；现以验证期起点为窗口起点。
+    """
     from app.models.quality_alerts import QualityAlert
 
-    since = _now() - timedelta(days=window_days)
+    start = since or verification_started_at(db, ncr=ncr) or _now()
     query = db.query(QualityAlert).filter(
         QualityAlert.project_id == ncr.project_id,
-        QualityAlert.created_at >= since,
+        QualityAlert.created_at > start,
     )
     if ncr.scene_id is not None:
         query = query.filter(QualityAlert.scene_id == ncr.scene_id)
@@ -116,27 +132,44 @@ def evaluate_recurrence(db: Session, *, ncr: QmsNcrCapa, window_days: int = VERI
     return bool(query.first())
 
 
-def close_ncr(db: Session, *, ncr: QmsNcrCapa, actor_id, note: str | None = None) -> QmsNcrCapa:
-    """关闭门禁：连续三个验证周期无复发（每周期=7 天无同场景+同工位新预警）。"""
+def close_ncr(db: Session, *, ncr: QmsNcrCapa, actor_id, note: str | None = None,
+              now: datetime | None = None) -> QmsNcrCapa:
+    """关闭门禁（三批复审重构）：**时间窗判定**。
+
+    进入 verification 后须连续三个验证周期（每周期 7 天，共 21 天）同场景+
+    同工位无新预警方可关闭。判定是只读的——旧实现「调用一次计数 +1，不满
+    3 次抛错」在 HTTP 路径上会被 project_action 的回滚撤销（计数恒 0，永远
+    关不掉，三批复审 P0-1 运行验证坐实）；时间窗判定天然免疫该问题，且
+    「点三次」无法再绕过时间要求。
+    """
     if ncr.stage != "verification":
         raise QmsError("NCR_CLOSE_STAGE_INVALID")
-    if evaluate_recurrence(db, ncr=ncr):
-        ncr.verification_cycles = 0
+    started = verification_started_at(db, ncr=ncr)
+    if started is None:
+        # 理论不可达：stage=verification 必经 transition 写入轨迹；防御保留
+        raise QmsError("NCR_CLOSE_STAGE_INVALID")
+    reference = now or _now()
+    if evaluate_recurrence(db, ncr=ncr, since=started):
         db.add(QmsNcrAction(ncr_id=ncr.id, phase="verification",
-                            action="验证期检出复发，周期计数清零", actor_id=actor_id))
+                            action="验证期检出复发，重新计数", actor_id=actor_id))
+        # 复发即重置验证起点：把本条轨迹时间作为新起点不可行（新预警可能早于
+        # 此刻）——直接拒绝，由处置流程解决预警后重新进入 verification
         db.flush()
         raise QmsError("NCR_CLOSE_BLOCKED")
-    ncr.verification_cycles += 1
-    if ncr.verification_cycles < REQUIRED_VERIFICATION_CYCLES:
+    elapsed_days = (reference - started).total_seconds() / 86400.0
+    required = REQUIRED_VERIFICATION_CYCLES * VERIFICATION_CYCLE_DAYS
+    if elapsed_days < required:
+        remaining = round(required - elapsed_days, 1)
         db.add(QmsNcrAction(ncr_id=ncr.id, phase="verification",
-                            action=f"无复发周期 {ncr.verification_cycles}/{REQUIRED_VERIFICATION_CYCLES}",
+                            action=f"验证期 {elapsed_days:.1f}/{required} 天，尚需 {remaining} 天",
                             actor_id=actor_id))
         db.flush()
         raise QmsError("NCR_CLOSE_BLOCKED")
     ncr.stage = "closed"
-    ncr.closed_at = _now()
-    db.add(QmsNcrAction(ncr_id=ncr.id, phase="closed", action="三周期无复发，关闭",
-                        actor_id=actor_id))
+    ncr.closed_at = reference
+    ncr.verification_cycles = REQUIRED_VERIFICATION_CYCLES
+    db.add(QmsNcrAction(ncr_id=ncr.id, phase="closed",
+                        action=f"验证期 {required} 天无复发，关闭", actor_id=actor_id))
     db.flush()
     return ncr
 

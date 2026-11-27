@@ -47,6 +47,7 @@ from app.models.quality_alerts import (
 )
 from app.models.quality_domain import QualityScene, QualitySpecLimit, QualityStation
 from app.services.notification_outbox import OutboxDomainEventRecorder
+from app.services.quality_aggregates import OPEN_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -1386,7 +1387,9 @@ def watch_sla(db: Session, *, now: datetime | None = None) -> dict:
     pending = (
         db.query(QualityAlert)
         .filter(
-            QualityAlert.status.in_(("open", "acknowledged", "processing")),
+            # 单一口径（三批复审）：review_pending 也是未关闭状态，SLA 巡检此前漏掉
+            # 它——该状态的预警收不到任何 SLA 通知，且与驾驶舱「超时」卡不一致
+            QualityAlert.status.in_(OPEN_STATUSES),
             QualityAlert.sla_due_at.isnot(None),
             QualityAlert.sla_notify_level < 2,
             QualityAlert.is_demo.is_(False),

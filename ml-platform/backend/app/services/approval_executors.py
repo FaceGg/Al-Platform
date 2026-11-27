@@ -236,6 +236,7 @@ class ModelReleaseExecutor:
 
     def perform(self, db: Session, *, approval: ApprovalRequest, actor_id) -> dict:
         """批准后发布：预授权命中 → 直接灰度（留痕）；否则按发布单走灰度链。"""
+        import uuid as _uuid  # 预授权分支解析 auth_id 用（三批复审 U2：缺此导入曾 NameError）
         from app.services.release_governance import (
             GovernanceError,
             check_preauthorization,

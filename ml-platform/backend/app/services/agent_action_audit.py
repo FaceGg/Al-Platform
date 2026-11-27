@@ -74,7 +74,11 @@ def _truncate(value: Any) -> Any:
 
 
 def _mask(value: Any) -> Any:
-    """七键脱敏 + 长度封顶（复用 audit.py 的递归替换机制，键清单独立）。"""
+    """七键脱敏 + 长度封顶（复用 audit.py 的递归替换机制，键清单独立）。
+
+    递归必须覆盖列表内的 dict：`{"messages":[{"api_key": …}]}` 形态曾绕过
+    脱敏直接落库（三批复审 U18，内存库复核坐实）。
+    """
     masked: Any
     if isinstance(value, dict):
         masked = {}
@@ -85,6 +89,11 @@ def _mask(value: Any) -> Any:
             else:
                 masked[str(key)] = _mask(item)
         return masked
+    if isinstance(value, (list, tuple)):
+        items = [_mask(item) for item in value[:_LIST_CAP]]
+        if len(value) > _LIST_CAP:
+            items.append(f"…[truncated {len(value) - _LIST_CAP} more]")
+        return items
     return _truncate(value)
 
 

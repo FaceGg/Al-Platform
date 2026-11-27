@@ -57,7 +57,7 @@ S2b 十四条口径全部 passed（口径 1/12/14 带范围限制如实登记）
 | 2 | 「候选与现役冠军在**同一批盲测样本**上配对盲评」 | **不成立** | `evaluate_no_regression`（:553-616）比较两个版本各自的 `version.metrics`；指纹是 `{version, round}` 的哈希，**从未被比较**；`usages` 查询后未使用 |
 | 3 | 默认配置下发布可用 | **默认 cap=2 时归档门禁必 failed** | 探测评估（`approval_executors.py:205-232`）先消耗 2 次 cap，正式评估得到 `blind_final_validation=failed(no_blind_metrics)`、`no_regression=failed(blind_eval_cap_reached)`。**测试与 M2 演练都手工把 cap 设成 5 或 6 绕开了** |
 | 4 | 「有效授权发布**免逐单审批**」（G2） | **不成立** | 预授权只在已批准的 model_release 单执行时才被检查，仍需另一人四眼批准；无免审路径 |
-| 5 | 预授权发布执行 | **必 NameError** | `ReleaseExecutor.perform`（`approval_executors.py:256`）使用未导入的 `_uuid`（该函数作用域内无 `import uuid as _uuid`）；带 `preauthorization_id` 的发布从未可用。release-request 的 payload 也不含 `acceptance_gates_fingerprint`，必 `PREAUTH_GATES_CHANGED` |
+| 5 | 预授权发布执行 | **必 NameError** | `ReleaseExecutor.perform`（`approval_executors.py:256`）使用未导入的 `_uuid` **〔导入已修 2026-11-27〕**；免审路径与指纹推导仍未修（该函数作用域内无 `import uuid as _uuid`）；带 `preauthorization_id` 的发布从未可用。release-request 的 payload 也不含 `acceptance_gates_fingerprint`，必 `PREAUTH_GATES_CHANGED` |
 | 6 | 「产物摘要不符的回执被拒绝」（G3） | **API 上不可达** | 回执端点不传 `expected_digest`（`api/release_governance.py:408-416`），请求体也无时间窗字段；服务层 digest_mismatch 逻辑正确但 API 永远产不出 mismatch |
 | 7 | 豁免三约束（E01） | **约束在，效果无** | 三分支逻辑成立（`approval_executors.py:306-323`），但 `perform` 是空操作（:328-330），不创建灰度、不解除拦截；model_release 创建时只要有失败项就拒（:227-232），**豁免批准后仍无路可发**。且 `test_release_governance.py` 无任何 exemption 用例——验收 #13 无证据 |
 | 8 | 「窗口超时可接管」 | **未实现** | `force_shadow_gate` 只被接收和存入 payload，无任何读取方；置 True 且无报告时仍 failed |

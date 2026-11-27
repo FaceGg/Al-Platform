@@ -154,6 +154,9 @@ def open_inspection_results(
         QualityAlert.project_id == project_id,
         QualityAlert.status == "closed",
         QualityAlert.resolution == "confirmed_issue",
+        # 合同 §6-9：演示数据不进任何对外视图（三批复审：演示预警曾随本端点外泄，
+        # 运行验证坐实后修复——docstring 所称「演示预警默认排除」自此才有实现）
+        QualityAlert.is_demo.is_(False),
     )
     if scene_id:
         query = query.filter(QualityAlert.scene_id == _uuid(scene_id))
@@ -415,8 +418,13 @@ def ingest_publish(
 @router.get("/api/platform/ingest-status")
 def ingest_status(
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """全站页脚的实时链路状态（公开只读；诚实设计⑤变体，D52）。"""
+    """全站页脚的实时链路状态（诚实设计⑤变体，D52）。
+
+    登录即可见（页脚在登录后的主界面）：匿名可读会向未认证方暴露链路启用状态
+    与心跳时间（三批复审：曾实测匿名 200）。
+    """
     from app.services.ingest import ingest_status as compute_status
 
     return compute_status(db)
