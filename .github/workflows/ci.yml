@@ -976,8 +976,16 @@ jobs:
           trap cleanup EXIT
 
           docker compose --project-name "$COMPOSE_PROJECT_NAME" config -q
-          docker compose --project-name "$COMPOSE_PROJECT_NAME" up --detach --wait --no-build \
-            postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime migrate backend worker scheduler
+          # 起栈失败时先留诊断再退出（与 production-integration 同款兜底）：2026-11-27 全量 CI
+          # run 45970685910 的 migrate 容器 exit 1，但 cleanup 直接 down 掉容器、日志里
+          # 只剩一行「didn't complete successfully」，无法定位——一次性任务（migrate）的
+          # 容器内输出不会出现在 compose up 的流里，必须显式采集。
+          if ! docker compose --project-name "$COMPOSE_PROJECT_NAME" up --detach --wait --no-build \
+            postgres redis minio minio-init mlflow tensorboard-gateway inference-runtime migrate backend worker scheduler; then
+            docker compose --project-name "$COMPOSE_PROJECT_NAME" ps --all || true
+            docker compose --project-name "$COMPOSE_PROJECT_NAME" logs --no-color --tail 200 migrate backend worker scheduler postgres mlflow || true
+            exit 1
+          fi
           verify_scanned_service_image() {
             local service="$1"
             local expected_image_id="$2"
