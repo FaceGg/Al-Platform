@@ -79,6 +79,9 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_qms_t1",
         "test_qms_t2_t3",
         "test_qms_api",
+        # 三批复审修复（2026-11-27）：盲测打分基座 + 批次 A/B 缺陷修复的 HTTP 级回归
+        "test_blind_scoring",
+        "test_audit_fixes_20261127",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",
