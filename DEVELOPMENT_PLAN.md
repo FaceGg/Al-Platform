@@ -2098,3 +2098,18 @@ PageHeading desc / 内嵌说明条删除：①智能体中心→知识中心 tab
 **2026-11-24 追加二（用户反馈「实体列表文字竖着显示」）**：右栏「实体列表」每行塞了类型标签+名称+来源标签+出处文档+两个文字按钮，名称被挤成一字一行竖排、底部有横向滚动条。重排：类型标签居左，名称独占一行超出省略（悬停看全名），来源·出处收成第二行小字，操作改右侧两个紧凑图标按钮（详情/删除带悬停提示）；列表头加「显示 N / M（按当前视图采样）」计数——画布按视图上限采样，列表只画采样节点；浅/深主题各自分隔线/悬停/选中配色；空态改「未抽取」引导文案（原先恒显示加载中）。实测双主题截图+程序化断言（「点焊标准法规」696 实体：100 行、横向溢出 0、折行名称 0、无接口报错）；tsc/KG 用例/前端全量 589 passed/构建通过；frontend 镜像重建部署。
 
 **2026-11-24 追加三（仓库卫生，用户确认）**：`.gitignore` 补 `.trae/`、`.trae-html-share-packages/`、`.zcode/`、`ml-platform/backend/data/`（向量库运行缓存 vs_*.pkl，曾 24 个误提交）与 `temp_login.json`/`temp_token.txt`（本地栈调试凭据快照，一律不入库）；删除两个过期的登录凭据文件。git status 不再长期挂 6 项未跟踪，打包前的人工排查负担消除。
+
+## 2026-11-27：Mimosa 深度扫描复核（二三批收官后）+ 第二三批推送
+
+**②Mimosa 深度扫描复核（scan-2026-11-27T03-28-41.808Z-33deb27671aa，seal sha256:b9e7d711…c4f，deep，296 findings）**：本会话三次 commit/push 均遇 `scanner_enobufs`（扫描器内存不足未出完整结论，兼容放行）——按用户指令补跑完整深扫。296 条中 **247 条为噪音副本**（temp_test/test-suite 历史运行副本、temp_test/frontend-dist 构建产物、competition/ 竞赛材料——用户裁定非产品代码），**真仓 app 43 条**（high 106/medium 184/low 6 为全量分布）逐类复核全部对应既有处置或误报，**无新增真缺口**：
+
+- **反序列化族（约 30 条，占真仓大头）**：joblib/pickle 为模型工件端口契约核心形态；**HMAC 密封验签防线在位**（2026-11-03 落地三防线之二，S2b `release_governance.py:186` 注释明示「密封验签同 serving_deployment 路径」且影子打分有验签先于 joblib 的专测）；`python_script_runtime` 的 read_pickle 为父进程自产自销的算子数据通道（进程隔离临时文件），非不可信外部数据。同 11-07 复核结论：pickle→安全格式迁移留独立批次。
+- **python_script_runtime exec（:70）**：python_script 算子设计内功能——独立子进程 + 最小 env（运维批次已修 SECRET_KEY 泄漏）+ 超时 + 临时目录，11-03/11-07 两次归档同族。
+- **路径穿越族**：`operators.py` 上传双重防线（词法剔除+commonpath，注释直接引用 11-03 处置）、vector_store 结构白名单（11-03）；python_script_runtime :375/:377 为 tempfile 临时目录内自建路径误报。
+- **SQL 注入 3 条全误报**：`database.py:62` f-string 插入的是服务端配置常量（PRAGMA busy_timeout，无外部输入通道）；`knowledge_graph_extraction.py:191/:193` 为 ORM `insert(模型).values(...)` 批量插入全参数绑定（历史「uuid+DB 查询」同款误报）。
+- **不安全随机数（low，inference_results.py ×2）**：`random.random() < sample_rate` 为 F1 B1-16 快照采样率决策（设计参数），非凭据/令牌用途，正当。
+- **business 假设 1 条**（agentCenter 前端「发布无权限检查」）：路径在 temp_test/frontend-dist 构建产物副本、`verdictEffect=none`、报告自身列 10 条未绑定 guard 的 proof gaps——真实入口走 get_current_user 依赖与角色中间件（鉴权面有专测），噪音。
+
+登记批次先例：11-03 处置批次（3 真缺口全修+16 误报归档）、11-07 复核（无新增真缺口）、本次复核（无新增真缺口）。
+
+**①二、三批补齐路线推送（2026-11-27，用户当轮同意）**：`487bf986 → f49c4c1f` 共 16 提交上 origin/main——第二批 S1–S4+M2（迁移 `_113`–`_117`）、第三批 T1–T3 收口（`3f349a4e`，迁移 `_118` 十四表+beat 定时报告+技术方案 §3 缺口补齐+质量体系十页前端）、S4 遗留模型卡白名单修复（`3abc28ec`）、终值回填（`f49c4c1f`）。验证终值：后端全量 run_suite **244 模块全过 @ `3abc28ec`**（干净 worktree；首跑 243/244 暴露的 S4 遗留已修）、前端全量 **103 文件 661 passed+19 skipped**、tsc 零错误。推送触发的 CI 后台监视中（轻量门禁，结论下批顺带登记）。
