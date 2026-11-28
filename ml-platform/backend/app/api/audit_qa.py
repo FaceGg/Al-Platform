@@ -282,7 +282,8 @@ def explain_sample_endpoint(
     feature_columns = [str(c) for c in (version.feature_schema or [])]
     try:
         return explain_sample(
-            db, version=version, row=row_data, feature_columns=feature_columns,
+            db, version=version, project_id=project_id,
+            row=row_data, feature_columns=feature_columns,
         )
     except TrustError as error:
         raise HTTPException(409, {"code": error.code, "message": error.message}) from None

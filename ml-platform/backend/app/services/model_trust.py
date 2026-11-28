@@ -232,16 +232,16 @@ def data_fingerprint_of_version(version) -> str:
     ).hexdigest()
 
 
-def explain_sample(db: Session, *, version, row: dict, feature_columns: list) -> dict:
+def explain_sample(db: Session, *, version, project_id=None, row: dict, feature_columns: list) -> dict:
     """单样本解释：feature_importances_ × 标准化值方向（口径脚注：重要性×
-    偏离近似，非 SHAP）。"""
-    from app.models.model_library import ModelLibrary
+    偏离近似，非 SHAP）。
+
+    三批复审同族修复：曾用 `version.registered_model_id`（registered_models.id
+    外键）查 ModelLibrary——键型错配致真实链路恒 EXPLAIN_BUNDLE_MISSING；
+    工件解析统一走 `_load_candidate_bundle`（source_model_library_id + 按项目）。"""
     from app.services.release_governance import _load_candidate_bundle
 
-    library = db.get(ModelLibrary, version.registered_model_id)
-    if library is None or library.model_artifact_id is None:
-        raise TrustError("EXPLAIN_BUNDLE_MISSING")
-    bundle = _load_candidate_bundle(db, version.id)
+    bundle = _load_candidate_bundle(db, version.id, project_id=project_id)
     importances = getattr(bundle, "feature_importances_", None)
     if importances is None and hasattr(bundle, "coef_"):
         importances = np.abs(np.array(bundle.coef_).ravel())

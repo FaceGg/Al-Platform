@@ -11,10 +11,13 @@
 - 动作审计脱敏覆盖列表内 dict（曾绕过）
 - NCR 关闭门禁经 HTTP 可达（曾因回滚永远关不掉）+ 点三次不能绕过时间窗
 """
+import hashlib
 import json
 import unittest
 import uuid
 from datetime import datetime, timedelta
+
+import numpy as np
 
 from app.config import settings
 from app.models.qms import QmsNcrCapa
@@ -22,6 +25,20 @@ from app.models.quality_alerts import QualityAlert
 from app.services.qms_core import create_d8, create_ncr
 from app.services.qms_tools import create_or_replace_plan, normalize_fmea_items
 from tests.quality_alert_fixtures import QualityAlertApiCase
+
+
+class _SeqPredictor:
+    """按序循环输出预设标签的预测器（模块级：joblib pickle 需要可导入的类）；
+    可选 feature_importances_ 供 explain_sample 使用。"""
+
+    def __init__(self, expected, weights=None):
+        self._expected = list(expected)
+        if weights is not None:
+            self.feature_importances_ = list(weights)
+
+    def predict(self, matrix):
+        base = self._expected * (len(matrix) // max(1, len(self._expected)) + 1)
+        return np.array(base[: len(matrix)])
 
 
 class TestAuditFixes(QualityAlertApiCase):
@@ -233,6 +250,190 @@ class TestBatchB2Fixes(QualityAlertApiCase):
         # 重复归档被拒
         again = self.client.post(f"{base}/control-plans/{plan1.id}/archive")
         self.assertEqual(again.status_code, 409)
+
+
+class TestSecondReviewFixes(unittest.TestCase):
+    """第二轮复审（2026-11-28）三项同族修复：影子 champion 工件归属、
+    explain_sample 键错配、自动开案保存点隔离。"""
+
+    def setUp(self):
+        import tempfile
+
+        import joblib
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        from app.database import Base
+        from app.models.model_library import ModelLibrary
+        from app.models.model_registry import (
+            DeploymentRevision,
+            DeploymentTarget,
+            InferenceDeployment,
+            ModelVersion,
+            RegisteredModel,
+        )
+        from app.models.project import Project
+        from app.models.user import User
+        from app.services.artifact_service import build_artifact_service
+        from app.services.model_artifact_sealing import model_seal_metadata
+
+        self.engine = create_engine("sqlite://",
+                                    connect_args={"check_same_thread": False},
+                                    poolclass=StaticPool)
+        Base.metadata.create_all(self.engine)
+        self.db = sessionmaker(bind=self.engine, expire_on_commit=False)()
+        tag = uuid.uuid4().hex[:6]
+        self.owner = User(username=f"sr-{tag}", password_hash="hash")
+        self.db.add(self.owner)
+        self.db.flush()
+        self.project = Project(name=f"sr-{tag}", owner_id=self.owner.id)
+        self.db.add(self.project)
+        self.db.flush()
+        self.artifacts = build_artifact_service(self.db)
+        self._workdir = tempfile.TemporaryDirectory()
+
+        def _sealed_library(name, labels, importances=None):
+            bundle = _SeqPredictor(labels, importances)
+            path = self._workdir.name + f"/{name}.joblib"
+            joblib.dump(bundle, path)
+            payload = open(path, "rb").read()
+            digest = hashlib.sha256(payload).hexdigest()
+            artifact = self.artifacts.create_from_file(
+                self.project.id, path, f"{name}.joblib", "model",
+                metadata={**model_seal_metadata(digest), "served_sha256": digest},
+            )
+            library = ModelLibrary(name=name, owner_id=self.owner.id,
+                                   status="completed",
+                                   model_artifact_id=artifact.id)
+            self.db.add(library)
+            self.db.flush()
+            return library.id
+
+        registered = RegisteredModel(project_id=self.project.id,
+                                     name=f"sr-model-{tag}",
+                                     created_by_id=self.owner.id)
+        self.db.add(registered)
+        self.db.flush()
+        champion_lib_id = _sealed_library(
+            f"sr-champ-{tag}", [0, 1] * 130, importances=[0.7])
+        self.champion = ModelVersion(
+            registered_model_id=registered.id, version_number=1,
+            source_kind="platform_joblib", source_artifact_id=uuid.uuid4(),
+            onnx_artifact_id=uuid.uuid4(),
+            source_model_library_id=champion_lib_id,
+            approval_status="approved", metrics={"f1": 0.9},
+            feature_schema=["f1"],
+        )
+        self.db.add(self.champion)
+        self.db.flush()
+        self.deployment = InferenceDeployment(
+            project_id=self.project.id, name="第二轮复审部署",
+            model_version_id=self.champion.id, created_by_id=self.owner.id,
+        )
+        self.db.add(self.deployment)
+        self.db.flush()
+        revision = DeploymentRevision(
+            deployment_id=self.deployment.id, revision_number=1,
+            strategy="immediate", status="stable", created_by_id=self.owner.id,
+        )
+        self.db.add(revision)
+        self.db.flush()
+        self.db.add(DeploymentTarget(
+            revision_id=revision.id, model_version_id=self.champion.id,
+            weight_bps=10000, role="stable",
+        ))
+        self.db.commit()
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+        self._workdir.cleanup()
+
+    def test_shadow_champion_comparison_resolves_project_artifact(self):
+        """影子 champion 对照按项目解析工件（曾漏传 project_id 恒降级 None）。"""
+        import pandas as pd
+
+        from app.services.release_governance import run_shadow_batch
+
+        frame = pd.DataFrame({
+            "f1": [index * 0.1 for index in range(6)],
+            "sample_key": [f"sk-{i}" for i in range(6)],
+        })
+        scored = run_shadow_batch(
+            self.db, deployment=self.deployment,
+            challenger_version=self.champion, frame=frame,
+            feature_columns=["f1"], sample_source="random_sample",
+            sample_size=6, actor_id=self.owner.id,
+        )
+        self.assertGreater(scored, 0)
+        from app.models.inference_result import InferenceResult
+
+        rows = self.db.query(InferenceResult).filter(
+            InferenceResult.channel == "shadow").all()
+        self.assertGreater(len(rows), 0)
+        # champion 对照值非空 = 工件按 project_id 解析成功（修复前恒 None）
+        with_champion = [r for r in rows if r.extra.get("champion_label") is not None]
+        self.assertTrue(with_champion, "champion 对照值不应静默降级")
+
+    def test_explain_sample_resolves_bundle_via_source_library(self):
+        """单样本解释按 source_model_library_id + 项目解析工件（曾键型错配
+        恒 EXPLAIN_BUNDLE_MISSING）。"""
+        from app.services.model_trust import explain_sample
+
+        result = explain_sample(self.db, version=self.champion,
+                                project_id=self.project.id,
+                                row={"f1": 1.0}, feature_columns=["f1"])
+        self.assertTrue(result.get("contributions"), result)
+
+    def test_auto_case_failure_isolated_by_savepoint(self):
+        """自动开案失败（保存点隔离）不反噬处置流：会话可用、预警已关闭、
+        正常路径仍成功开案。"""
+        from unittest.mock import patch
+
+        from app.services import quality_alerts as alert_service
+        from app.services.qms_core import open_case
+
+        tag = uuid.uuid4().hex[:6]
+        alert = QualityAlert(
+            project_id=self.project.id, source_type="model_risk",
+            severity="critical", title=f"savepoint-{tag}", evidence={},
+            merge_key=f"savepoint-{tag}", status="acknowledged", sla_due_at=None,
+            assigned_to_id=self.owner.id,
+        )
+        self.db.add(alert)
+        self.db.commit()
+        # open_case 抛错（保存点隔离）→ 处置流完成、会话可用、无 auto_case_id
+        #（quality_alerts 在调用时才 import，patch 须打在源模块上）
+        with patch("app.services.qms_core.open_case",
+                   side_effect=RuntimeError("simulated flush failure")):
+            outcome = alert_service.submit_disposition(
+                self.db, alert, actor_id=self.owner.id,
+                form={"action": "停机检查"}, resolution="confirmed_issue",
+                note="确认为真实异常",
+            )
+            self.db.commit()
+        self.assertNotIn("auto_case_id", outcome)
+        self.db.commit()  # 会话可用（保存点隔离的核心语义）
+        self.db.expire_all()
+        row = self.db.get(type(alert), alert.id)
+        self.assertEqual(row.status, "closed", "处置结论不得被开案失败回滚")
+        # 正常路径：另一条 critical 关闭 → 自动开案成功
+        alert2 = QualityAlert(
+            project_id=self.project.id, source_type="model_risk",
+            severity="critical", title=f"savepoint-ok-{tag}", evidence={},
+            merge_key=f"savepoint-ok-{tag}", status="acknowledged", sla_due_at=None,
+            assigned_to_id=self.owner.id,
+        )
+        self.db.add(alert2)
+        self.db.commit()
+        outcome2 = alert_service.submit_disposition(
+            self.db, alert2, actor_id=self.owner.id,
+            form={"action": "停机检查"}, resolution="confirmed_issue",
+            note="确认为真实异常",
+        )
+        self.db.commit()
+        self.assertIn("auto_case_id", outcome2)
 
 
 if __name__ == "__main__":

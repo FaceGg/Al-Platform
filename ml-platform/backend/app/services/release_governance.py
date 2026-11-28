@@ -38,6 +38,10 @@ DEFAULT_BLIND_SAMPLE_FLOOR = 200
 # Wilson 下界开关与容差（E02/E01）
 DEFAULT_WILSON_ENABLED = False
 DEFAULT_NO_REGRESSION_TOLERANCE = 0.0
+# 影子样本来源（B2-02/E14）：第二批复审新发现——该常量自 40351d9f 起被引用但
+# 从未定义（run_shadow_batch 首次调用必 NameError，影子运行端点从未可用；
+# M2 演练影子报告为手工插行、无测试调用，两轮审核均漏，2026-11-28 新测试抓出）
+SHADOW_SAMPLE_SOURCES = ("random_sample", "traffic_mirror")
 # 影子窗口默认阈值：一致率低于该值不放量（G3 影子观察窗）
 DEFAULT_SHADOW_AGREEMENT_FLOOR = 0.9
 # 业务回退（E12）：灰度期影子/生产预警率相对基线倍数上限
@@ -273,8 +277,11 @@ def run_shadow_batch(
     champion_confidence = None
     if sample_source == "random_sample":
         try:
+            # champion 对照同按项目解析工件（三批复审残留项：曾漏传 project_id
+            # 走 owner_id 兜底，真实链路对照恒静默降级 None）
             champion_bundle = _load_candidate_bundle(
-                db, _stable_version_id(db, deployment)
+                db, _stable_version_id(db, deployment),
+                project_id=deployment.project_id,
             )
             champion_labels, champion_confidence = _predict_with_bundle(
                 champion_bundle, sampled, feature_columns

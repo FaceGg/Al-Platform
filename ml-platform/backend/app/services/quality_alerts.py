@@ -1051,20 +1051,22 @@ def submit_disposition(
         except Exception:
             logger.exception("bucket ng_confirmed writeback failed for alert %s", alert.id)
         # critical 确认异常 → 自动开质量案例（第三批 D4/B3-07；三批复审发现自动
-        # 开案从未接线，验收口径 6 标 passed 不成立——现为补实现）。失败只告警，
-        # 不反噬处置流。
+        # 开案从未接线，验收口径 6 标 passed 不成立——现为补实现）。保存点隔离
+        #（与误报回流同纪律）：open_case 内有 flush，裸 try/except 在 flush 失败
+        # 时会话进失败态、PendingRollbackError 会反噬处置流。
         if alert.severity == "critical":
             try:
                 from app.services.qms_core import open_case
 
-                case = open_case(
-                    db, project_id=alert.project_id,
-                    code=f"CASE-{uuid.uuid4().hex[:8].upper()}",
-                    title=f"自动开案：{alert.title}",
-                    severity="critical", source_alert_id=alert.id,
-                    keywords=alert.source_type,
-                    created_by_id=actor_id,
-                )
+                with db.begin_nested():
+                    case = open_case(
+                        db, project_id=alert.project_id,
+                        code=f"CASE-{uuid.uuid4().hex[:8].upper()}",
+                        title=f"自动开案：{alert.title}",
+                        severity="critical", source_alert_id=alert.id,
+                        keywords=alert.source_type,
+                        created_by_id=actor_id,
+                    )
                 outcome["auto_case_id"] = str(case.id)
             except Exception:
                 logger.exception("auto case open failed for alert %s", alert.id)
