@@ -30,6 +30,13 @@ from app.services.model_trust import (
 
 router = APIRouter(tags=["audit-qa"])
 
+# 写端点审计登记（横向合同 §6-4；第三轮复审 2026-11-28 补齐）。ask-metrics
+# 只走指标注册表的 SELECT（只读语义的 POST），不属写动作不登记。
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects/{project_id}/audit-reports": "audit_report.create",
+    "POST /api/projects/{project_id}/model-versions/{version_id}/model-card/refresh": "model_card.refresh",
+}
+
 
 class ReportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")

@@ -34,6 +34,18 @@ from app.services.release_governance import (
 
 router = APIRouter(tags=["release-governance"])
 
+# 写端点审计登记（横向合同 §6-4；第三轮复审 2026-11-28 补齐）。回执端点
+# （POST /rollouts/{id}/receipts）按 X-Api-Key 外部鉴权、无项目级审计，
+# 不在本登记范围。
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects/{project_id}/inference-deployments/{deployment_id}/challenger": "challenger.register",
+    "DELETE /api/projects/{project_id}/inference-deployments/{deployment_id}/challenger": "challenger.retire",
+    "POST /api/projects/{project_id}/inference-deployments/{deployment_id}/shadow/runs": "shadow.run",
+    "POST /api/projects/{project_id}/release-preauthorizations": "release_preauthorization.grant",
+    "DELETE /api/projects/{project_id}/release-preauthorizations/{auth_id}": "release_preauthorization.revoke",
+    "POST /api/projects/{project_id}/model-versions/{version_id}/release-request": "release.request",
+}
+
 
 class ChallengerRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -459,8 +471,34 @@ def create_release_request(
                 initiator_id=current_user.id,
             )
         except ApprovalError as error:
+            # E01 豁免依据落档（第三轮复审 2026-11-28）：审计上下文的回滚已
+            # 撤销探测产物——此处重评估一次并把 failed checks 落档为 rejected
+            # 存档单（豁免单 payload.release_approval_id 指向它；盲测记账经
+            # 幂等保护不重复消耗 cap）。曾即造即删——门禁失败的发布单建不出
+            # 来，豁免永远 EXEMPTION_NO_RELEASE_CHECKS，链路不可达。
+            from datetime import datetime as _dt
+
+            from app.models.approvals import ApprovalRequest
+            from app.services.release_governance import evaluate_release_gates
+
+            db.rollback()
+            archived = ApprovalRequest(
+                project_id=project_id, type="model_release",
+                title=(f"发布申请存档（门禁未过）：部署 {str(payload_in.deployment_id)[:8]}"
+                       f" 版本 {str(version_id)[:8]}"),
+                payload={"deployment_id": str(payload_in.deployment_id),
+                         "model_version_id": str(version_id), "probe": True},
+                payload_fingerprint="0" * 64, status="rejected",
+                created_by_id=current_user.id, expires_at=_dt.utcnow(),
+            )
+            db.add(archived)
+            db.flush()
+            evaluate_release_gates(db, deployment=deployment, version=version,
+                                   approval=archived)
+            db.commit()
             raise HTTPException(
-                409, {"code": error.code, "message": error.message}
+                409, {"code": error.code, "message": error.message,
+                      "rejected_request_id": str(archived.id)}
             ) from None
         checks = evaluate_release_gates(
             db, deployment=deployment, version=version, approval=approval

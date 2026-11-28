@@ -165,7 +165,16 @@ class DispositionExecutor:
             resolution=resolution,
             note="审批通过关闭（" + str(approval.id) + "）",
         )
-        return {"alert_id": str(alert.id), "closed": True}
+        result = {"alert_id": str(alert.id), "closed": True}
+        # 〔第三轮复审 2026-11-28〕审批关闭与处置流同一钩子：critical 确认异常
+        # 关闭自动开案（曾只挂在 submit_disposition——经审批关闭不开案）。
+        if resolution == "confirmed_issue":
+            from app.services.quality_alerts import auto_open_case_for_critical
+
+            auto_case_id = auto_open_case_for_critical(db, alert=alert, actor_id=actor_id)
+            if auto_case_id:
+                result["auto_case_id"] = auto_case_id
+        return result
 
 
 def _disposition_alert(db: Session, payload: dict):
@@ -225,6 +234,17 @@ class ModelReleaseExecutor:
         db.delete(approval)
         db.flush()
         failed = [c for c in checks if c.verdict == "failed"]
+        if failed:
+            # E01 回退豁免（第三轮复审 2026-11-28 接线——豁免曾「批准后无路
+            # 可发」）：存在已批准豁免时仅 no_regression 失败放行，其余硬失败
+            # 仍然拦截（豁免范围不可扩大）。豁免**依据**（failed checks）由
+            # release-request 端点在 409 分支回滚后重新评估落档为 rejected
+            # 存档单——探测对象在本层即造即删，且端点审计上下文的回滚会撤销
+            # 本层落档（project_action except 分支 db.rollback，三批复审根因）。
+            if _has_approved_no_regression_exemption(
+                db, deployment_id=deployment.id, version_id=version.id,
+            ):
+                failed = [c for c in failed if c.check_key != "no_regression"]
         if failed:
             raise ApprovalError(
                 "RELEASE_GATE_FAILED",
@@ -327,8 +347,38 @@ class ExemptionExecutor:
         return None
 
     def perform(self, db: Session, *, approval: ApprovalRequest, actor_id) -> dict:
-        return {"exemption_recorded": True,
-                "release_checks_kept": bool((approval.payload or {}).get("release_approval_id"))}
+        """豁免批准（第三轮复审 2026-11-28 补实现——曾空操作，「批准后无路
+        可发」）：放行判定在 ModelReleaseExecutor 的门禁探测——查「同部署+
+        版本存在已批准豁免」时跳过 no_regression 失败；本方法锁定豁免生效
+        对象并返回结果。"""
+        payload = approval.payload or {}
+        return {
+            "exemption_granted": True,
+            "deployment_id": str(payload.get("deployment_id") or ""),
+            "model_version_id": str(payload.get("model_version_id") or ""),
+            "exempted_check": "no_regression",
+            "reason": str(payload.get("reason") or "")[:200],
+        }
+
+
+def _has_approved_no_regression_exemption(db: Session, *, deployment_id, version_id) -> bool:
+    """同部署+同版本存在**已批准**的豁免单 → 不回退失败可放行（E01）。"""
+    from sqlalchemy import select
+
+    from app.models.approvals import ApprovalRequest
+
+    rows = db.execute(
+        select(ApprovalRequest).where(
+            ApprovalRequest.type == "exemption",
+            ApprovalRequest.status == "approved",
+        )
+    ).scalars().all()
+    for row in rows:
+        payload = row.payload or {}
+        if (str(payload.get("deployment_id") or "") == str(deployment_id)
+                and str(payload.get("model_version_id") or "") == str(version_id)):
+            return True
+    return False
 
 
 def _latest_release_checks(db: Session, payload: dict):

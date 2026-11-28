@@ -84,6 +84,8 @@ WEEK_TEST_MODULES: dict[int, list[str]] = {
         "test_audit_fixes_20261127",
         # 第三轮复审修复（2026-11-28）：wave1 核验收尾 + S4 IDOR + cap 幂等记账
         "test_wave2_fixes_20261128",
+        # E13 场景矩阵端到端（S2b §7.5）：回退豁免/影子回放/发布回滚全链
+        "test_e13_scenarios",
         "test_agents",
         "test_api_annotations",
         "test_schemas_validation",

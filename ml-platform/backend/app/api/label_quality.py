@@ -33,6 +33,17 @@ from app.services.consistency import (
 
 router = APIRouter(tags=["label-quality"])
 
+# 写端点审计登记（横向合同 §6-4；第三轮复审 2026-11-28 补齐——盲标提交
+# PUT labels 曾无审计，随登记同批补上 audit_service 包装）
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects/{project_id}/active-learning/selections": "active_learning.selection",
+    "POST /api/projects/{project_id}/consistency-rounds": "consistency_round.open",
+    "PUT /api/projects/{project_id}/consistency-rounds/{round_id}/labels": "consistency_round.label_submit",
+    "POST /api/projects/{project_id}/consistency-rounds/{round_id}/compute": "consistency_round.compute",
+    "POST /api/projects/{project_id}/arbitrations/{arbitration_id}/decide": "arbitration.decide",
+    "POST /api/projects/{project_id}/pseudo-labels/batches": "pseudo_label.batch",
+}
+
 
 class SelectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -233,18 +244,29 @@ def submit_blind_label_endpoint(
     project_id: UUID,
     round_id: UUID,
     payload_in: BlindLabelRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """盲标提交（round 成员；每样本每标注员一票；subject=登录用户 id）。"""
-    require_project_access(db, project_id, current_user.id, "quality.label")
-    try:
-        row = submit_blind_label(
-            db, round_id=round_id, subject_id=str(current_user.id),
-            sample_id=payload_in.sample_id, values=payload_in.values,
-        )
-    except ConsistencyError as error:
-        _consistency_error(error)
+    access = require_project_access(db, project_id, current_user.id, "quality.label")
+    with audit_service(db).project_action(
+        db, request=request, actor=current_user, access=access,
+        permission="quality.label",
+        intent=AuditIntent(
+            project_id=project_id, action="consistency_round.label_submit",
+            resource_type="consistency_round", resource_id=str(round_id),
+            changes={"sample_id": payload_in.sample_id},
+        ),
+        allowed_changes={"sample_id"},
+    ):
+        try:
+            row = submit_blind_label(
+                db, round_id=round_id, subject_id=str(current_user.id),
+                sample_id=payload_in.sample_id, values=payload_in.values,
+            )
+        except ConsistencyError as error:
+            _consistency_error(error)
     db.commit()
     return {"id": str(row.id)}
 

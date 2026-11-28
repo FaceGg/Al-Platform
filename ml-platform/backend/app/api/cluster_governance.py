@@ -30,6 +30,16 @@ from app.services.storage_mounts import validate_binding
 
 router = APIRouter(prefix="/api/cluster-governance", tags=["cluster-governance"])
 
+# 写端点审计登记（横向合同 §6-4；第三轮复审 2026-11-28 补齐）。usage/collect
+# 为读型触发的用量采集（project.read），不属写动作不登记。
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/cluster-governance/routing-policies": "governance.routing.create",
+    "DELETE /api/cluster-governance/routing-policies/{policy_id}": "governance.routing.delete",
+    "POST /api/cluster-governance/storage-bindings": "governance.binding.create",
+    "POST /api/cluster-governance/quota-policies": "governance.quota.create",
+    "PATCH /api/cluster-governance/quota-policies/{quota_id}": "governance.quota.update",
+}
+
 
 def _echo(request: Request, response: Response) -> None:
     request_id = request.headers.get("X-Request-ID")

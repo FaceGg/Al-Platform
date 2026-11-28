@@ -35,6 +35,17 @@ from pydantic import BaseModel, ConfigDict, Field
 
 router = APIRouter(tags=["data_sources"])
 
+# 写端点审计登记（横向合同 §6-4；第三轮复审 2026-11-28 补齐）。test/preview/
+# import 三端点的 action 字面量经 _audit_query 位置参数传入。
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects/{project_id}/data-sources": "data_source.create",
+    "PUT /api/projects/{project_id}/data-sources/{source_id}": "data_source.update",
+    "DELETE /api/projects/{project_id}/data-sources/{source_id}": "data_source.delete",
+    "POST /api/projects/{project_id}/data-sources/{source_id}/test": "data_source.test",
+    "POST /api/projects/{project_id}/data-sources/{source_id}/preview": "data_source.preview",
+    "POST /api/projects/{project_id}/data-sources/{source_id}/import": "data_source.import",
+}
+
 ALLOWED_DB_TYPES = ("postgresql", "mysql")
 ALLOWED_SSL_MODES = ("disable", "prefer", "require", "verify-full")
 

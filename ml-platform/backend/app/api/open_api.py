@@ -41,6 +41,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["open-api"])
 
+# 写端点审计登记（横向合同 §6-4；第三轮复审 2026-11-28 补齐）。
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects/{project_id}/open-api-keys": "open_api_key.create",
+    "POST /api/projects/{project_id}/open-api-keys/{key_id}/rotate": "open_api_key.rotate",
+    "POST /api/projects/{project_id}/open-api-keys/{key_id}/revoke": "open_api_key.revoke",
+    "POST /api/projects/{project_id}/ingest/publish": "ingest.publish",
+}
+
 OPEN_READ_SCOPE = "project.read"
 
 

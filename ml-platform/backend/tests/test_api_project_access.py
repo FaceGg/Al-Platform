@@ -532,7 +532,37 @@ class TestProjectWriteAuditCompleteness(unittest.TestCase):
             "qms.supplier.create",
             "qms.supplier.disable",
         },
-
+        # 补齐路线三批写端点登记（第三轮复审 2026-11-28——横向合同 §6-4：
+        # 以下模块此前不在对账合同内，越权回归无保护）
+        "splits": {
+            "dataset_split.create", "modeling_round.start",
+            "modeling_round.blind_evaluation", "modeling_round.close",
+        },
+        "release_governance": {
+            "challenger.register", "challenger.retire", "shadow.run",
+            "release_preauthorization.grant", "release_preauthorization.revoke",
+            "release.request",
+        },
+        "label_quality": {
+            "active_learning.selection", "consistency_round.open",
+            "consistency_round.label_submit", "consistency_round.compute",
+            "arbitration.decide", "pseudo_label.batch",
+        },
+        "audit_qa": {"audit_report.create", "model_card.refresh"},
+        "cluster_governance": {
+            "governance.routing.create", "governance.routing.delete",
+            "governance.binding.create", "governance.quota.create",
+            "governance.quota.update",
+        },
+        "open_api": {
+            "open_api_key.create", "open_api_key.rotate",
+            "open_api_key.revoke", "ingest.publish",
+        },
+        "data_sources": {
+            "data_source.create", "data_source.update", "data_source.delete",
+            "data_source.test", "data_source.preview", "data_source.import",
+        },
+        "spc": {"quality.spc.raise_alerts"},
     }
 
     def test_every_project_write_module_declares_audited_actions(self):

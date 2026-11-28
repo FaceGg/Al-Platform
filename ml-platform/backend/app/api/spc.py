@@ -22,6 +22,11 @@ from app.services.project_access import ProjectAccess
 
 router = APIRouter(tags=["spc"])
 
+# 写端点审计登记（横向合同 §6-4；第三轮复审 2026-11-28 补齐）。
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects/{project_id}/spc/analyze": "quality.spc.raise_alerts",
+}
+
 
 class SpcAnalyzeRequest(BaseModel):
     source: Literal["dataset", "inference"] = "dataset"

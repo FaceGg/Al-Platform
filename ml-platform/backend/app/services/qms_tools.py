@@ -499,12 +499,24 @@ def record_iqc(db: Session, *, project_id, supplier_id, arrival_count: int,
     db.add(record)
     db.flush()
     if defect_count > 0:
+        # D11「重触发复用同一 SCAR」（第三轮复审 2026-11-28 修复可达性）：曾按
+        # **本条新记录**查 iqc_record_id——恒 None，复用分支不可达。现改为同
+        # 供应商存在**未关闭** SCAR 即复用（质量问题尚在处理中不叠加新单；
+        # 关闭后新不合格开新单——一检验一 SCAR 由唯一约束继续保证）。
         existing = (
             db.query(QmsScar)
-            .filter(QmsScar.iqc_record_id == record.id)
+            .join(QmsIqcRecord, QmsIqcRecord.id == QmsScar.iqc_record_id)
+            .filter(
+                QmsScar.project_id == project_id,
+                QmsIqcRecord.supplier_id == supplier_id,
+                QmsScar.closed_at.is_(None),
+            )
             .first()
         )
-        if existing is None:
+        if existing is not None:
+            record.scar_id = existing.id
+            db.flush()
+        else:
             scar = QmsScar(project_id=project_id, iqc_record_id=record.id)
             db.add(scar)
             db.flush()

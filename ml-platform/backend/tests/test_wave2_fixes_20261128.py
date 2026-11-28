@@ -587,8 +587,8 @@ class TestReportSameSource(Wave2FixCase):
                 merge_key=f"report-{self.case_key}-{title[:8]}-{is_demo}",
                 status="closed", resolution="confirmed_issue", is_demo=is_demo,
                 occurrence_count=occurrence,
-                created_at=now - timedelta(days=3),
-                closed_at=now - timedelta(days=2),
+                created_at=created_at,
+                closed_at=closed_at,
             ))
         self.db.commit()
         report = generate_report(self.db, project_id=self.project.id,
@@ -613,6 +613,89 @@ class TestReportSameSource(Wave2FixCase):
         self.assertEqual(content["confirmed_ng"], trend["totals"]["confirmed_ng"])
         self.assertEqual(content["produced_total"], trend["totals"]["total"])
         self.assertEqual(content["ng_rate"], trend["totals"]["ng_rate"])
+
+
+class TestApprovalCloseAutoCase(Wave2FixCase):
+    def test_critical_closed_via_approval_opens_case(self):
+        """口径 6 残余修复：critical 经**审批**关闭也自动开案——钩子曾只挂
+        submit_disposition，DispositionExecutor.perform 直调 transition_alert
+        不经处置流。"""
+        from app.models.qms import QmsCase
+
+        alert = self.make_alert(title=f"审批开案-{self.case_key}",
+                                merge_key=f"appr-case-{self.case_key}",
+                                severity="critical")
+        # closed 只能从 acknowledged/processing 进入（F2 流转图）：先认领
+        acked = self.ack(alert.id)
+        self.assertEqual(acked.status_code, 200, acked.text)
+        self.act_as(self.owner)
+        approval = self.client.post(
+            f"/api/projects/{self.project.id}/approvals", json={
+                "type": "disposition",
+                "title": "critical 关闭审批",
+                "payload": {"alert_id": str(alert.id),
+                            "resolution": "confirmed_issue"},
+            }).json()
+        self.assertIsNotNone(approval.get("id"), approval)
+        from app.models.access import ProjectMember
+        from sqlalchemy import update
+
+        self.db.execute(update(ProjectMember)
+                        .where(ProjectMember.project_id == self.project.id,
+                               ProjectMember.user_id == self.operator.id)
+                        .values(role="editor"))
+        self.db.commit()
+        self.act_as(self.operator)
+        decided = self.client.post(
+            f"/api/projects/{self.project.id}/approvals/{approval['id']}/approve",
+            json={"note": "确认严重异常"})
+        self.assertEqual(decided.status_code, 200, decided.text)
+        self.db.expire_all()
+        case = self.db.query(QmsCase).filter(
+            QmsCase.project_id == self.project.id,
+            QmsCase.source_alert_id == alert.id).first()
+        self.assertIsNotNone(case, "审批关闭 critical 应自动开案")
+
+
+class TestIqcScarReuse(Wave2FixCase):
+    def test_retrigger_reuses_open_scar_and_new_scar_after_close(self):
+        """D11「重触发复用同一 SCAR」修复可达性：曾按本条新记录查——恒 None。
+        现同供应商未关闭 SCAR 复用；关闭后新不合格开新单。"""
+        from app.models.qms import QmsScar
+        from app.services.qms_tools import record_iqc
+
+        self.act_as(self.owner)
+        supplier_id = self.client.post(
+            f"/api/projects/{self.project.id}/qms/suppliers",
+            json={"code": f"SUP-R-{self.case_key}", "name": "复用来料商"}).json()["id"]
+        first = record_iqc(self.db, project_id=self.project.id,
+                           supplier_id=uuid.UUID(supplier_id),
+                           arrival_count=10, inspected_count=10, defect_count=2,
+                           created_by_id=self.owner.id)
+        self.db.commit()
+        second = record_iqc(self.db, project_id=self.project.id,
+                            supplier_id=uuid.UUID(supplier_id),
+                            arrival_count=10, inspected_count=10, defect_count=1,
+                            created_by_id=self.owner.id)
+        self.db.commit()
+        self.assertIsNotNone(first.scar_id)
+        self.assertIsNotNone(second.scar_id)
+        self.assertEqual(first.scar_id, second.scar_id,
+                         "同供应商未关闭 SCAR 应被复用（重触发不叠加新单）")
+        # 关闭后再触发 → 新 SCAR
+        scar = self.db.get(QmsScar, first.scar_id)
+        scar.correction = "换批"
+        scar.verification = "复检合格"
+        scar.closed_at = datetime.utcnow()
+        self.db.commit()
+        third = record_iqc(self.db, project_id=self.project.id,
+                           supplier_id=uuid.UUID(supplier_id),
+                           arrival_count=10, inspected_count=10, defect_count=1,
+                           created_by_id=self.owner.id)
+        self.db.commit()
+        self.assertIsNotNone(third.scar_id)
+        self.assertNotEqual(third.scar_id, first.scar_id,
+                            "关闭后新不合格应开新 SCAR")
 
 
 if __name__ == "__main__":

@@ -33,6 +33,15 @@ from app.services.modeling_rounds import (
 
 router = APIRouter(tags=["dataset-splits"])
 
+# 写端点审计登记（横向合同 §6-4；第三轮复审 2026-11-28 补齐——S2a 模块
+# 此前不在 PROJECT_WRITE_ACTIONS 对账合同内，越权回归无保护）
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects/{project_id}/dataset-splits": "dataset_split.create",
+    "POST /api/projects/{project_id}/modeling-rounds": "modeling_round.start",
+    "POST /api/projects/{project_id}/modeling-rounds/{round_id}/blind-evaluations": "modeling_round.blind_evaluation",
+    "POST /api/projects/{project_id}/modeling-rounds/{round_id}/close": "modeling_round.close",
+}
+
 
 class SplitCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
