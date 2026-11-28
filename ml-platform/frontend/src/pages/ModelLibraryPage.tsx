@@ -31,6 +31,7 @@ import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
 import FleetShardPanel from "../components/loop/FleetShardPanel";
 import EvidenceOverviewDrawer from "../components/evidence/EvidenceOverviewDrawer";
+import ModelTrustPanel from "../components/ModelTrustPanel";
 import {
   DeviceRecalibratePanel, LabelRecalibratePanel, type AnomalyArtifactOption,
 } from "../components/model/AnomalyRecalibrationPanels";
@@ -83,6 +84,9 @@ export default function ModelLibraryPage() {
   const [anomalyPanel, setAnomalyPanel] = useState<{ kind: "m6" | "m9"; version: ModelVersion } | null>(null);
   // 闭环证据总览（补齐路线 B1-12）：从版本列表打开某个版本的 12 环节与上线检查
   const [evidenceVersion, setEvidenceVersion] = useState<ModelVersion>();
+  // 可信度面板（补齐路线第二批 B2-04，导航归属 §10.2「模型库——模型详情内，
+  // 不新增菜单」）：版本行入口，GET trust-score 即计算并落历史
+  const [trustVersion, setTrustVersion] = useState<ModelVersion>();
   const [anomalyDeploymentId, setAnomalyDeploymentId] = useState<string | null>(null);
   const [registerForm] = Form.useForm();
   const [modelForm] = Form.useForm();
@@ -692,6 +696,17 @@ export default function ModelLibraryPage() {
       canManage={canRegister}
       onClose={() => setEvidenceVersion(undefined)}
     />
+    {/* 可信度面板抽屉（B2-04）：七因子评分 / CBPE / 模型卡 / 单样本解释 */}
+    <Drawer title={trustVersion ? `可信度 · v${trustVersion.version_number}` : "可信度"} open={Boolean(trustVersion)} onClose={() => setTrustVersion(undefined)} width={640} destroyOnHidden>
+      {projectId && trustVersion && (
+        <ModelTrustPanel
+          projectId={projectId}
+          versionId={trustVersion.id}
+          versionNumber={trustVersion.version_number}
+          canManage={canRegister}
+        />
+      )}
+    </Drawer>
     <Drawer title={versionModel ? `${versionModel.name} ${copy.versions}` : copy.versions} open={Boolean(versionModel)} onClose={() => setVersionModel(undefined)} width={680}>
       <Table rowKey="id" pagination={false} dataSource={versionModel ? versions[versionModel.id] || [] : []} columns={[
         { title: copy.version, dataIndex: "version_number", render: (value: number) => `v${value}` },
@@ -700,6 +715,8 @@ export default function ModelLibraryPage() {
         { title: t.model.actions, render: (_: unknown, row: ModelVersion) => <Space>
           {/* 证据总览是只读入口：所有项目成员可见（后端要求 project.read） */}
           <Button size="small" aria-label={`证据总览 版本 ${row.version_number}`} onClick={() => setEvidenceVersion(row)}>证据总览</Button>
+          {/* 可信度面板（B2-04）：GET 评分全员可见；模型卡重建按钮按 canManage 门控 */}
+          <Button size="small" aria-label={`可信度 版本 ${row.version_number}`} data-testid={`trust-${row.version_number}`} onClick={() => setTrustVersion(row)}>可信度</Button>
           {versionModel && canRegister && row.approval_status === "pending" && <><Button color="green" variant="outlined" icon={<CheckOutlined />} aria-label={`${copy.approve} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => void approve(versionModel, row)}>{copy.approve}</Button><Button danger aria-label={`${copy.reject} ${copy.version.toLowerCase()} ${row.version_number}`} onClick={() => reject(versionModel, row)}>{copy.reject}</Button></>}
           {versionModel && canRegister && row.approval_status === "approved" && <><Button loading={exportBusy === `${row.id}:predict`} aria-label={`${copy.exportPredict} ${row.version_number}`} onClick={() => void exportVersion(row, "predict")}>{copy.exportPredict}</Button><Button loading={exportBusy === `${row.id}:annotate`} aria-label={`${copy.exportAnnotate} ${row.version_number}`} onClick={() => void exportVersion(row, "annotate")}>{copy.exportAnnotate}</Button></>}
           {/* 异常检测重标定入口（技术方案 §3.2）：approved + task=anomaly 才显示。

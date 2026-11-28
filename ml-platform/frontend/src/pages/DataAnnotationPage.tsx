@@ -10,6 +10,7 @@ import DeleteConfirmation from "../components/DeleteConfirmation";
 import TableRowAction from "../components/TableRowAction";
 import LegacyRunsTable from "../components/annotation/LegacyRunsTable";
 import TaskOperationsPanel from "../components/annotation/TaskOperationsPanel";
+import LabelQualityPanel from "../components/annotation/LabelQualityPanel";
 import LabelSchemaEditor, { createLabelColumn, defaultLabelColumns, type LabelColumnDraft } from "../components/LabelSchemaEditor";
 import AutomaticAnnotationStrategyEditor, {
   createAutomaticStrategyDraft,
@@ -478,7 +479,7 @@ export default function DataAnnotationPage() {
   const [runsPageSize, setRunsPageSize] = useState(20);
   const [runsTotal, setRunsTotal] = useState(0);
   const [genericTasks, setGenericTasks] = useState<AnnotationTask[]>([]);
-  const [taskListTab, setTaskListTab] = useState<"all" | "active" | "legacy">("all");
+  const [taskListTab, setTaskListTab] = useState<"all" | "active" | "legacy" | "quality">("all");
   const [annotationOperations, setAnnotationOperations] = useState<AnnotationOperation[]>([]);
   const [annotationOperationsCursor, setAnnotationOperationsCursor] = useState<string | null>(null);
   const [commentTaskId, setCommentTaskId] = useState<string | null>(null);
@@ -2350,10 +2351,16 @@ export default function DataAnnotationPage() {
                 { label: lang === "zh" ? "全部任务" : "All tasks", value: "all" },
                 { label: `${lang === "zh" ? "进行中" : "Active"} ${activeGenericTasks.length}`, value: "active" },
                 { label: `${lang === "zh" ? "历史任务" : "Legacy"} ${runs.length}`, value: "legacy" },
+                { label: lang === "zh" ? "标注质量" : "Label quality", value: "quality" },
               ]}
             />
           </div>
-          {taskListTab !== "legacy" && (taskListTab === "all" ? genericTasks.length > 0 : activeGenericTasks.length > 0) && <div className="data-annotation__generic-tasks" role="region" aria-label={copy.genericTasks}>
+          {taskListTab === "quality" && (
+            projectId
+              ? <LabelQualityPanel projectId={projectId} />
+              : <Empty description={lang === "zh" ? "先选择项目" : "Select a project first"} />
+          )}
+          {taskListTab !== "legacy" && taskListTab !== "quality" && (taskListTab === "all" ? genericTasks.length > 0 : activeGenericTasks.length > 0) && <div className="data-annotation__generic-tasks" role="region" aria-label={copy.genericTasks}>
             <Table<AnnotationTask>
               rowKey="id"
               size="small"
@@ -2391,8 +2398,8 @@ export default function DataAnnotationPage() {
             />
             {genericTasksCursor && <div className="table-row-actions"><button type="button" className="ant-btn ant-btn-sm" onClick={() => { void loadMoreGenericTasks(); }} disabled={genericTaskLoading}>{copy.loadMoreTasks}</button></div>}
           </div>}
-          {taskListTab !== "legacy" && (taskListTab === "all" ? genericTasks.length === 0 : activeGenericTasks.length === 0) && !genericTaskLoading && <Empty description={copy.noTasks} />}
-          {taskListTab !== "active" && runs.length > 0 && (
+          {taskListTab !== "legacy" && taskListTab !== "quality" && (taskListTab === "all" ? genericTasks.length === 0 : activeGenericTasks.length === 0) && !genericTaskLoading && <Empty description={copy.noTasks} />}
+          {taskListTab !== "quality" && taskListTab !== "active" && runs.length > 0 && (
             <LegacyRunsTable
               sectionTitle={copy.legacySection}
               emptyText={copy.noTasks}

@@ -29,8 +29,8 @@ interface SideGroup { label: string; items: SideEntry[] }
 /** Route prefix -> owning view. Longest prefix wins when resolving. */
 const VIEW_ROUTES: Record<ViewId, string[]> = {
   portal: ["/"],
-  algo: ["/algo", "/projects", "/workspace", "/template", "/models", "/data", "/data-annotation", "/automl", "/training", "/orchestration", "/demo-loop", "/annotations", "/algorithms", "/api-marketplace", "/algo/drift"],
-  agent: ["/agent", "/knowledge-center", "/prompt-templates", "/knowledge", "/knowledge-graph", "/chat"],
+  algo: ["/algo", "/projects", "/workspace", "/template", "/models", "/data", "/data-annotation", "/automl", "/training", "/orchestration", "/demo-loop", "/annotations", "/algorithms", "/api-marketplace", "/algo/drift", "/algo/release-governance"],
+  agent: ["/agent", "/knowledge-center", "/prompt-templates", "/knowledge", "/knowledge-graph", "/chat", "/agent/audit-qa"],
   quality: ["/quality"],
   infra: ["/infra", "/kubernetes", "/notebooks", "/images", "/cluster-governance", "/monitor", "/compute"],
   admin: ["/llm-gateway", "/admin/llm-usage", "/admin/users", "/admin/announcements", "/admin/audit", "/admin/settings"],
@@ -141,6 +141,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       ] },
       { label: zh ? "模型运营" : "Model operations", items: [
         { key: "/algo/drift", icon: <CloudServerOutlined />, label: nav("drift_monitor") },
+        { key: "/algo/release-governance", icon: <SafetyCertificateOutlined />, label: nav("release_governance") },
       ] },
     ],
     quality: [
@@ -184,6 +185,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         { key: "/prompt-templates", icon: <CopyOutlined />, label: nav("prompt_templates") },
         { key: "/chat", icon: <MessageOutlined />, label: nav("chat") },
         { key: "/knowledge-graph", icon: <ApartmentOutlined />, label: t.knowledge?.graph || "Graph" },
+        { key: "/agent/audit-qa", icon: <AuditOutlined />, label: nav("audit_qa") },
       ] },
     ],
     infra: [

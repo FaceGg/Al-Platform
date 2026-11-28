@@ -356,6 +356,81 @@ class E13ScenarioCase(unittest.TestCase):
         self.assertIn(str(cls.champion_version.id), versions,
                       "回滚应恢复冠军为 stable")
 
+    def test_d_traffic_mirror_scores_recent_production_traffic(self):
+        """场景 D：traffic_mirror——影子样本镜像近期生产流量的 sample_key
+        （2026-11-28 落地：曾按「全量 frame」静默兜底，来源语义名存实亡）。"""
+        from datetime import datetime, timedelta
+
+        cls = type(self)
+        cls.act_as(cls.owner)
+        base = self._base()
+        deployment_id = str(cls.deployment_c.id)
+        now = datetime.utcnow()
+        # 生产流量：sk-5 较旧、sk-3 最新（最近优先）；sk-77 不在样本池
+        cls.db.add_all([
+            InferenceResult(request_id=f"tm-old-{uuid.uuid4().hex[:8]}",
+                            project_id=cls.project.id, deployment_id=cls.deployment_c.id,
+                            channel="online", sample_key="sk-5",
+                            predicted_label="a", occurred_at=now - timedelta(minutes=10)),
+            InferenceResult(request_id=f"tm-new-{uuid.uuid4().hex[:8]}",
+                            project_id=cls.project.id, deployment_id=cls.deployment_c.id,
+                            channel="online", sample_key="sk-3",
+                            predicted_label="a", occurred_at=now),
+            InferenceResult(request_id=f"tm-out-{uuid.uuid4().hex[:8]}",
+                            project_id=cls.project.id, deployment_id=cls.deployment_c.id,
+                            channel="online", sample_key="sk-not-in-pool",
+                            predicted_label="b", occurred_at=now - timedelta(minutes=1)),
+        ])
+        cls.db.commit()
+        response = self.client.post(
+            f"{base}/inference-deployments/{deployment_id}/shadow/runs",
+            json={"model_version_id": str(cls.candidate_version.id),
+                  "sample_source": "traffic_mirror"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["sample_count"], 2, f"应只镜像命中样本池的 2 条流量：{body}")
+        cls.db.expire_all()
+        rows = cls.db.query(InferenceResult).filter(
+            InferenceResult.deployment_id == cls.deployment_c.id,
+            InferenceResult.channel == "shadow",
+        ).all()
+        keys = [row.sample_key for row in rows]
+        self.assertEqual(sorted(keys), ["sk-3", "sk-5"], f"影子样本应为流量键：{keys}")
+        # 最近优先：sk-3 的影子明细先落（流量顺序）
+        ordered = [row for row in sorted(rows, key=lambda item: item.occurred_at)]
+        self.assertEqual(ordered[0].sample_key, "sk-3")
+        # 报告来源与 champion 对照
+        report = self.client.get(
+            f"{base}/inference-deployments/{deployment_id}/shadow/reports")
+        self.assertEqual(report.status_code, 200, report.text)
+        latest = report.json()["items"][0]
+        self.assertEqual(latest["sample_source"], "traffic_mirror")
+        self.assertEqual(latest["sample_count"], 2)
+        self.assertIsNotNone(latest["agreement_rate"], "traffic_mirror 也应做 champion 对照")
+
+    def test_d_traffic_mirror_without_traffic_fails_honestly(self):
+        """场景 D 反例：无生产流量 → 409 SHADOW_NO_TRAFFIC（诚实失败，
+        不静默退化为全量样本池）。"""
+        from app.models.model_registry import InferenceDeployment
+
+        cls = type(self)
+        cls.act_as(cls.owner)
+        bare = InferenceDeployment(
+            project_id=cls.project.id, name="E13 无流量部署",
+            model_version_id=cls.champion_version.id,
+            created_by_id=cls.owner.id,
+        )
+        cls.db.add(bare)
+        cls.db.commit()
+        response = self.client.post(
+            f"{self._base()}/inference-deployments/{bare.id}/shadow/runs",
+            json={"model_version_id": str(cls.candidate_version.id),
+                  "sample_source": "traffic_mirror"},
+        )
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "SHADOW_NO_TRAFFIC")
+
 
 if __name__ == "__main__":
     unittest.main()

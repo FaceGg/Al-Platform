@@ -103,4 +103,7 @@ S2b 十四条口径全部 passed（口径 1/12/14 带范围限制如实登记）
 - **#13 豁免无效果——已修**（`6f1c5b3c`）：豁免执行器真实生效；被拒发布申请存档落档为豁免依据（曾即造即删，豁免永远无据）；门禁探测对已批准豁免仅放行 no_regression 失败，硬失败仍拦。豁免 HTTP 级端到端见 E13 场景 A。
 - **#14 E13 用例 0 个——已补**（`6f1c5b3c`）：`tests/test_e13_scenarios.py` 三场景全链 HTTP（回退豁免/影子回放/发布回滚）。
 - **#1 影子零测试——部分补**：`test_audit_fixes_20261127.py` champion 对照 + E13 场景 B 影子回放 HTTP；专项 `test_shadow_compare.py` 仍未建。
-- **仍开放**：#6 预授权免审路径与指纹推导、#10 回执 API expected_digest/时间窗、#12 影子窗人工接管、#9 门禁四拦截 Wilson 真实链路、traffic_mirror、S2b 前端治理面板。
+- **traffic_mirror（流量镜像）——已落地**（2026-11-28 第四波）：`traffic_mirror_keys` 镜像该部署近期真实生产推理流量（online/batch）的 sample_key（最近优先、去重保序），影子样本由真实流量驱动；无生产流量或样本池无命中 → 409 `SHADOW_NO_TRAFFIC` 诚实失败（曾按「全量 frame」静默兜底，来源语义名存实亡）；champion 对照两种来源均做（曾仅 random_sample）；HTTP 级 E13 场景 D 两用例（流量命中/无流量拒绝）。
+- **仍开放（2026-11-28 第四波后）**：#6 预授权免审路径与指纹推导、#10 回执 API expected_digest/时间窗、#12 影子窗人工接管、#9 门禁四拦截 Wilson 真实链路（traffic_mirror 与前端治理面板已落地，见上）。
+- **写端点豁免文档化——已登记**（2026-11-28 第四波）：回执端点（POST `/inference-deployments/{id}/rollouts/{id}/receipts`）不登记 `PROJECT_WRITE_ACTIONS` 的依据为「登录会话 + inference.operate 权限 + 服务层 `record_rollout_receipt` 内 `_audit` + 回执行 reported_by_id/status/digest_mismatch 落列即不可变台账，属服务层审计形态」（原注释「按 X-Api-Key 外部鉴权」表述失实，已更正）；豁免位置：`app/api/release_governance.py` PROJECT_WRITE_ACTIONS 注释 + 本节 + 技术方案第二批 §12.A。
+- **S2b 前端治理面板——已落地**（2026-11-28 第四波，导航归属计划 §10.2「算法平台 · 模型运营」独立菜单）：`ReleaseGovernancePage`（`/algo/release-governance`）承载部署域治理——challenger 注册/退役、影子打分（随机抽样/流量镜像两来源）、影子报告列表 + CSV 导出、预授权授予/按 ID 吊销、发布申请（门禁 checks 展示）；无 challenger 读取端点故不显示候选现状（诚实设计，页面文案说明）；测试 `ReleaseGovernancePage.test.tsx`。

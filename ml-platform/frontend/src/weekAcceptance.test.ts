@@ -159,6 +159,14 @@ const weekTestFiles: Record<number | string, string[]> = {
   fix_v2_frame_heading: [
     "./components/V2PageFrame.test.tsx",
   ],
+  // 补齐路线第四波前端三阶段（2026-11-28）：S2b 发布治理面板 /
+  // S4 审计问答页 + B2-04 可信度面板 / S3 标注质量面板（标注页内页签）
+  gap_wave4_frontends: [
+    "./pages/ReleaseGovernancePage.test.tsx",
+    "./pages/AuditQaPage.test.tsx",
+    "./components/ModelTrustPanel.test.tsx",
+    "./components/annotation/LabelQualityPanel.test.tsx",
+  ],
 };
 
 const discoveredTestFiles = Object.keys(

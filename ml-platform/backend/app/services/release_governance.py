@@ -240,6 +240,36 @@ def _predict_with_bundle(bundle, frame: pd.DataFrame, feature_columns: list[str]
     return labels, None
 
 
+def traffic_mirror_keys(db: Session, *, deployment, limit: int = 500) -> list[str]:
+    """traffic_mirror 样本源（B2-02/E14）：镜像该部署近期真实生产推理流量的
+    sample_key（online/batch；最近优先、去重保序）——影子样本由真实流量驱动，
+    而非从样本池随机抽。"""
+    from app.models.inference_result import InferenceResult
+
+    rows = (
+        db.query(InferenceResult.sample_key)
+        .filter(
+            InferenceResult.deployment_id == deployment.id,
+            InferenceResult.channel.in_(("online", "batch")),
+            InferenceResult.sample_key.isnot(None),
+            InferenceResult.sample_key != "",
+        )
+        .order_by(InferenceResult.occurred_at.desc())
+        .limit(max(limit, 1) * 4)  # 去重冗余：多取一些再按序去重
+        .all()
+    )
+    keys: list[str] = []
+    seen: set[str] = set()
+    for (key,) in rows:
+        if key in seen:
+            continue
+        seen.add(key)
+        keys.append(key)
+        if len(keys) >= limit:
+            break
+    return keys
+
+
 def run_shadow_batch(
     db: Session,
     *,
@@ -252,7 +282,9 @@ def run_shadow_batch(
     actor_id=None,
 ) -> int:
     """B2-02 影子打分：候选对同一批样本打分，channel='shadow' 逐行落明细
-    （extra 带 champion 对照值）；不写预警表。随机抽样记种子（E14）。"""
+    （extra 带 champion 对照值）；不写预警表。random_sample 记种子（E14）；
+    traffic_mirror 镜像近期生产流量的 sample_key（无流量或样本池无命中 →
+    SHADOW_NO_TRAFFIC，诚实失败）。"""
     import joblib
 
     from app.models.inference_result import InferenceResult
@@ -268,26 +300,41 @@ def run_shadow_batch(
         rng = np.random.RandomState(seed)
         sampled = frame.iloc[sorted(rng.choice(total, size=take, replace=False))]
     else:
-        sampled = frame
+        # traffic_mirror（2026-11-28 落地）：曾按「全量 frame」静默兜底——
+        # 来源语义名存实亡（第二批复审开放项）。现按键命中流量样本；样本池
+        # 缺 sample_key 列同样报 SHADOW_NO_TRAFFIC。
+        if "sample_key" not in frame.columns:
+            raise GovernanceError("SHADOW_NO_TRAFFIC")
+        keys = traffic_mirror_keys(
+            db, deployment=deployment, limit=int(sample_size or 500)
+        )
+        if not keys:
+            raise GovernanceError("SHADOW_NO_TRAFFIC")
+        rank = {key: index for index, key in enumerate(keys)}
+        mask = frame["sample_key"].astype(str).map(lambda value: value in rank)
+        matched = frame[mask]
+        if matched.empty:
+            raise GovernanceError("SHADOW_NO_TRAFFIC")
+        sampled = matched.assign(_rank=matched["sample_key"].astype(str).map(rank)) \
+            .sort_values("_rank").drop(columns="_rank")
     bundle = _load_candidate_bundle(db, challenger_version.id,
                                     project_id=deployment.project_id)
     labels, confidence = _predict_with_bundle(bundle, sampled, feature_columns)
     champion_bundle = None
     champion_labels = None
     champion_confidence = None
-    if sample_source == "random_sample":
-        try:
-            # champion 对照同按项目解析工件（三批复审残留项：曾漏传 project_id
-            # 走 owner_id 兜底，真实链路对照恒静默降级 None）
-            champion_bundle = _load_candidate_bundle(
-                db, _stable_version_id(db, deployment),
-                project_id=deployment.project_id,
-            )
-            champion_labels, champion_confidence = _predict_with_bundle(
-                champion_bundle, sampled, feature_columns
-            )
-        except GovernanceError:
-            champion_labels = [None] * len(sampled)
+    try:
+        # champion 对照同按项目解析工件（三批复审残留项：曾漏传 project_id
+        # 走 owner_id 兜底，真实链路对照恒静默降级 None）；两种样本来源均对照
+        champion_bundle = _load_candidate_bundle(
+            db, _stable_version_id(db, deployment),
+            project_id=deployment.project_id,
+        )
+        champion_labels, champion_confidence = _predict_with_bundle(
+            champion_bundle, sampled, feature_columns
+        )
+    except GovernanceError:
+        champion_labels = [None] * len(sampled)
     rows = []
     for offset, (row_index, row) in enumerate(sampled.iterrows()):
         rows.append(InferenceResult(

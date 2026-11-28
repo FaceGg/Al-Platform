@@ -66,6 +66,8 @@ export const NAV_FALLBACK: Record<string, { zh: string; en: string }> = {
   quality_trends: { zh: "趋势与帕累托", en: "Trends & Pareto" },
   quality_spc: { zh: "SPC 过程控制", en: "SPC Control" },
   drift_monitor: { zh: "漂移监控", en: "Drift Monitoring" },
+  release_governance: { zh: "发布治理与影子", en: "Release Governance & Shadow" },
+  audit_qa: { zh: "审计问答", en: "Audit QA" },
   quality_alerts: { zh: "预警中心", en: "Alert Center" },
   quality_disposition: { zh: "处置工作台", en: "Disposition Workbench" },
   quality_sops: { zh: "SOP 维护", en: "SOP Maintenance" },

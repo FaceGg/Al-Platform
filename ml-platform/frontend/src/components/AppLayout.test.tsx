@@ -155,7 +155,7 @@ describe("AppLayout (v2 five-view shell)", () => {
       { label: "数据", items: ["数据管理", "数据标注"] },
       { label: "建模", items: ["自动建模", "模型训练", "模型库"] },
       { label: "服务", items: ["闭环自动化", "应用编排", "API市场"] },
-      { label: "模型运营", items: ["漂移监控"] },
+      { label: "模型运营", items: ["漂移监控", "发布治理与影子"] },
     ]);
     zhView.unmount();
 
@@ -226,7 +226,7 @@ describe("AppLayout (v2 five-view shell)", () => {
       </MemoryRouter>,
     );
     const items = await groups();
-    expect(items.at(-1)).toEqual({ label: "Model operations", items: ["Drift Monitoring"] });
+    expect(items.at(-1)).toEqual({ label: "Model operations", items: ["Drift Monitoring", "Release Governance & Shadow"] });
   });
 
   it("hides the demo-data badge by default and shows it only with the internal switch (E22 修订)", async () => {

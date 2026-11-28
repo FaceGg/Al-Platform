@@ -34,9 +34,14 @@ from app.services.release_governance import (
 
 router = APIRouter(tags=["release-governance"])
 
-# 写端点审计登记（横向合同 §6-4；第三轮复审 2026-11-28 补齐）。回执端点
-# （POST /rollouts/{id}/receipts）按 X-Api-Key 外部鉴权、无项目级审计，
-# 不在本登记范围。
+# 写端点审计登记（横向合同 §6-4；第三轮复审 2026-11-28 补齐）。
+# 豁免登记（2026-11-28 文档化）：回执端点（POST
+# /inference-deployments/{id}/rollouts/{id}/receipts）不在本登记范围——
+# 它要求登录会话 + inference.operate 项目权限（require_project_access），
+# 审计在服务层 record_rollout_receipt 内完成（_audit + 回执行
+# reported_by_id/status/digest_mismatch 落列，回执行本身即不可变台账），
+# 与 data_sources 的 _audit_query 同属「服务层审计」形态，无端点级
+# AuditIntent 可声明。
 PROJECT_WRITE_ACTIONS = {
     "POST /api/projects/{project_id}/inference-deployments/{deployment_id}/challenger": "challenger.register",
     "DELETE /api/projects/{project_id}/inference-deployments/{deployment_id}/challenger": "challenger.retire",

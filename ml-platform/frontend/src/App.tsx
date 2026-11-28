@@ -59,6 +59,8 @@ const QualityMonitorPage = lazy(() => import("./pages/QualityMonitorPage"));
 const QualityTrendsPage = lazy(() => import("./pages/QualityTrendsPage"));
 const QualitySpcPage = lazy(() => import("./pages/QualitySpcPage"));
 const DriftMonitorPage = lazy(() => import("./pages/DriftMonitorPage"));
+const ReleaseGovernancePage = lazy(() => import("./pages/ReleaseGovernancePage"));
+const AuditQaPage = lazy(() => import("./pages/AuditQaPage"));
 const QualityNcrPage = lazy(() => import("./pages/QualityNcrPage"));
 const QualityD8Page = lazy(() => import("./pages/QualityD8Page"));
 const QualityCasesPage = lazy(() => import("./pages/QualityCasesPage"));
@@ -152,6 +154,7 @@ function AppContent() {
             <Route path="/knowledge" element={<ProtectedRoute><KnowledgeBasePage /></ProtectedRoute>} />
             <Route path="/knowledge/:kbId" element={<ProtectedRoute><KnowledgeDetailPage /></ProtectedRoute>} />
             <Route path="/knowledge-graph" element={<ProtectedRoute><KnowledgeGraphPage /></ProtectedRoute>} />
+            <Route path="/agent/audit-qa" element={<ProtectedRoute><PageErrorBoundary pageName="审计问答"><AuditQaPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/automl" element={<ProtectedRoute><PageErrorBoundary pageName="自动建模"><AutoMLPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/automl/task/:taskId" element={<ProtectedRoute><PageErrorBoundary pageName="自动建模任务"><AutoMLTaskPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/training" element={<ProtectedRoute><TrainingJobsPage /></ProtectedRoute>} />
@@ -191,6 +194,7 @@ function AppContent() {
             <Route path="/quality/trends" element={<ProtectedRoute><PageErrorBoundary pageName="趋势与帕累托"><QualityTrendsPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/quality/spc" element={<ProtectedRoute><PageErrorBoundary pageName="SPC 过程控制"><QualitySpcPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/algo/drift" element={<ProtectedRoute><PageErrorBoundary pageName="漂移监控"><DriftMonitorPage /></PageErrorBoundary></ProtectedRoute>} />
+            <Route path="/algo/release-governance" element={<ProtectedRoute><PageErrorBoundary pageName="发布治理与影子"><ReleaseGovernancePage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/help" element={<ProtectedRoute><HelpCenterPage /></ProtectedRoute>} />
             <Route path="/approvals" element={<ProtectedRoute><PageErrorBoundary pageName="审批中心"><ApprovalCenterPage /></PageErrorBoundary></ProtectedRoute>} />
             <Route path="/admin/agent-audit" element={<ProtectedRoute><PageErrorBoundary pageName="动作审计"><AgentActionAuditPage /></PageErrorBoundary></ProtectedRoute>} />
