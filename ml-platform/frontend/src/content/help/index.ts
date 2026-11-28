@@ -22,6 +22,16 @@ import qualitySpcMd from "./quality-spc.md?raw";
 import driftMonitorMd from "./drift-monitor.md?raw";
 import approvalCenterMd from "./approval-center.md?raw";
 import agentActionAuditMd from "./agent-action-audit.md?raw";
+import qualityNcrMd from "./quality-ncr.md?raw";
+import qualityD8Md from "./quality-d8.md?raw";
+import qualityCasesMd from "./quality-cases.md?raw";
+import qualityKnowledgeMd from "./quality-knowledge.md?raw";
+import qualityTraceMd from "./quality-trace.md?raw";
+import qualityReportsMd from "./quality-reports.md?raw";
+import qualityControlPlansMd from "./quality-control-plans.md?raw";
+import qualityMsaMd from "./quality-msa.md?raw";
+import qualityFmeaMd from "./quality-fmea.md?raw";
+import qualityIqcMd from "./quality-iqc.md?raw";
 
 export interface HelpChapter {
   id: string;
@@ -152,6 +162,86 @@ export const HELP_CHAPTERS: HelpChapter[] = [
     order: 18,
     md: agentActionAuditMd,
     navPrefixes: ["/admin/agent-audit"],
+  },
+  {
+    id: "quality-ncr",
+    titleZh: "NCR-CAPA",
+    titleEn: "NCR-CAPA",
+    order: 19,
+    md: qualityNcrMd,
+    navPrefixes: ["/quality/ncr"],
+  },
+  {
+    id: "quality-d8",
+    titleZh: "8D 报告",
+    titleEn: "8D reports",
+    order: 20,
+    md: qualityD8Md,
+    navPrefixes: ["/quality/d8"],
+  },
+  {
+    id: "quality-cases",
+    titleZh: "案例中心",
+    titleEn: "Case center",
+    order: 21,
+    md: qualityCasesMd,
+    navPrefixes: ["/quality/cases"],
+  },
+  {
+    id: "quality-knowledge",
+    titleZh: "质量知识库",
+    titleEn: "Quality knowledge",
+    order: 22,
+    md: qualityKnowledgeMd,
+    navPrefixes: ["/quality/knowledge"],
+  },
+  {
+    id: "quality-trace",
+    titleZh: "批次追溯",
+    titleEn: "Traceability",
+    order: 23,
+    md: qualityTraceMd,
+    navPrefixes: ["/quality/trace"],
+  },
+  {
+    id: "quality-reports",
+    titleZh: "质量报告",
+    titleEn: "Quality reports",
+    order: 24,
+    md: qualityReportsMd,
+    navPrefixes: ["/quality/reports"],
+  },
+  {
+    id: "quality-control-plans",
+    titleZh: "动态控制计划",
+    titleEn: "Control plans",
+    order: 25,
+    md: qualityControlPlansMd,
+    navPrefixes: ["/quality/control-plans"],
+  },
+  {
+    id: "quality-msa",
+    titleZh: "MSA 分析",
+    titleEn: "MSA",
+    order: 26,
+    md: qualityMsaMd,
+    navPrefixes: ["/quality/msa"],
+  },
+  {
+    id: "quality-fmea",
+    titleZh: "FMEA",
+    titleEn: "FMEA",
+    order: 27,
+    md: qualityFmeaMd,
+    navPrefixes: ["/quality/fmea"],
+  },
+  {
+    id: "quality-iqc",
+    titleZh: "来料检验与 SCAR",
+    titleEn: "IQC & SCAR",
+    order: 28,
+    md: qualityIqcMd,
+    navPrefixes: ["/quality/iqc"],
   },
   {
     id: "closed-loop-demo",
