@@ -73,6 +73,7 @@
     "falsified_claims": "「跨项目越权写（IDOR）」经 QMS 与第二批共 19 个端点运行验证全部 404 PROJECT_NOT_FOUND（路径参数 {project_id} 先过 require_project_access）——不成立，不采纳。",
     "result": "6 条口径中 2 条 failed（#1/#2），3 条 passed（#3/#4/#5）。门项 1 降级为服务函数级串测；门项 2 各分段名存实亡。",
     "corrected_conclusion": "M2 未达成。",
-    "detail": "验收-补齐路线-M2.md §5"
+    "detail": "验收-补齐路线-M2.md §5",
+    "fix_status": "本节记录 2026-11-27 复审时点结论。门项 2 引用的 S2b 分段中终验/同批配对/预授权导入已修复（c14af2a1/8898aa6b）；门项 1（服务函数级串测）与门项 2 整体结论维持。"
   }
 }

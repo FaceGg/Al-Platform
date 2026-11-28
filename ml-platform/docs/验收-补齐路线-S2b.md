@@ -53,11 +53,11 @@ S2b 十四条口径全部 passed（口径 1/12/14 带范围限制如实登记）
 
 | # | 原声明 | 实际 | 代码事实 |
 |---|---|---|---|
-| 1 | 「终验指标**只能取自 S2a 锁定盲测**」 | **不成立** | `_blind_final_metrics`（`services/release_governance.py:805-829`）直接取 `version.metrics`，与 metric_floor 同源同阈值；额外条件只是「项目里存在锁定轮次且 cap 未满」，轮次选取是「项目最近一个锁定轮次」（:430-440），与被发布版本无关联 |
-| 2 | 「候选与现役冠军在**同一批盲测样本**上配对盲评」 | **不成立** | `evaluate_no_regression`（:553-616）比较两个版本各自的 `version.metrics`；指纹是 `{version, round}` 的哈希，**从未被比较**；`usages` 查询后未使用 |
-| 3 | 默认配置下发布可用 | **默认 cap=2 时归档门禁必 failed** | 探测评估（`approval_executors.py:205-232`）先消耗 2 次 cap，正式评估得到 `blind_final_validation=failed(no_blind_metrics)`、`no_regression=failed(blind_eval_cap_reached)`。**测试与 M2 演练都手工把 cap 设成 5 或 6 绕开了** |
+| 1 | 「终验指标**只能取自 S2a 锁定盲测**」 | **不成立** | `_blind_final_metrics`（`services/release_governance.py:805-829`）直接取 `version.metrics`，与 metric_floor 同源同阈值；额外条件只是「项目里存在锁定轮次且 cap 未满」，轮次选取是「项目最近一个锁定轮次」（:430-440），与被发布版本无关联。**〔已修复 2026-11-27 `c14af2a1`〕**：有监督任务对锁定盲测段真实打分（`score_blind_split`：物化→blind 过滤→密封验签→打分→与 target 比对，`scored_from=blind_split`）；无监督保持 version.metrics 冠军资格口径并 detail 如实标注 |
+| 2 | 「候选与现役冠军在**同一批盲测样本**上配对盲评」 | **不成立** | `evaluate_no_regression`（:553-616）比较两个版本各自的 `version.metrics`；指纹是 `{version, round}` 的哈希，**从未被比较**；`usages` 查询后未使用。**〔已修复 2026-11-27 `c14af2a1`〕**：候选与冠军对同一 blind 段分别打分，同批配对由「同一 frame」构造性保证，样本集指纹随 detail 落档（`same_blind_samples=True`） |
+| 3 | 默认配置下发布可用 | **默认 cap=2 时归档门禁必 failed** | 探测评估（`approval_executors.py:205-232`）先消耗 2 次 cap，正式评估得到 `blind_final_validation=failed(no_blind_metrics)`、`no_regression=failed(blind_eval_cap_reached)`。**测试与 M2 演练都手工把 cap 设成 5 或 6 绕开了**。〔待复核 2026-11-28〕随 #1 修复终验改走盲测打分，cap 消耗语义变化需重估（探测评估的记账次数）|
 | 4 | 「有效授权发布**免逐单审批**」（G2） | **不成立** | 预授权只在已批准的 model_release 单执行时才被检查，仍需另一人四眼批准；无免审路径 |
-| 5 | 预授权发布执行 | **必 NameError** | `ReleaseExecutor.perform`（`approval_executors.py:256`）使用未导入的 `_uuid` **〔导入已修 2026-11-27〕**；免审路径与指纹推导仍未修（该函数作用域内无 `import uuid as _uuid`）；带 `preauthorization_id` 的发布从未可用。release-request 的 payload 也不含 `acceptance_gates_fingerprint`，必 `PREAUTH_GATES_CHANGED` |
+| 5 | 预授权发布执行 | **必 NameError** | `ReleaseExecutor.perform`（`approval_executors.py:256`）使用未导入的 `_uuid` **〔导入已修 2026-11-27 `8898aa6b`；原句「作用域内无 import」随修复作废〕**；免审路径与指纹推导仍开放；带 `preauthorization_id` 的发布从未可用。release-request 的 payload 也不含 `acceptance_gates_fingerprint`，必 `PREAUTH_GATES_CHANGED` |
 | 6 | 「产物摘要不符的回执被拒绝」（G3） | **API 上不可达** | 回执端点不传 `expected_digest`（`api/release_governance.py:408-416`），请求体也无时间窗字段；服务层 digest_mismatch 逻辑正确但 API 永远产不出 mismatch |
 | 7 | 豁免三约束（E01） | **约束在，效果无** | 三分支逻辑成立（`approval_executors.py:306-323`），但 `perform` 是空操作（:328-330），不创建灰度、不解除拦截；model_release 创建时只要有失败项就拒（:227-232），**豁免批准后仍无路可发**。且 `test_release_governance.py` 无任何 exemption 用例——验收 #13 无证据 |
 | 8 | 「窗口超时可接管」 | **未实现** | `force_shadow_gate` 只被接收和存入 payload，无任何读取方；置 True 且无报告时仍 failed |
@@ -69,6 +69,7 @@ S2b 十四条口径全部 passed（口径 1/12/14 带范围限制如实登记）
 - `traffic_mirror`（流量镜像）未实现——只是对整个 frame 打分，不关联 champion 行。
 - 影子种子是时间派生，API 无 seed 参数；无样本池时抛 `GovernanceError` 但端点只接 `SplitError` → 500。
 - 下游消费未过滤 `channel`：水位线计数与 `business_alert_ratio` 都会把影子行算进去。
+- **〔复审后新发现并修复 2026-11-27/28〕**：①打分链路两处键错配（`_load_candidate_bundle` 曾用 `registered_model_id` 查 ModelLibrary、工件归属曾取 owner_id 当 project_id——影子/盲测打分恒失败，`c14af2a1` 修复；champion 对照调用点漏传随第二轮复审补 `6492de79`）；②**`SHADOW_SAMPLE_SOURCES` 常量自 40351d9f 被引用但从未定义**——`run_shadow_batch` 首次调用必 NameError，影子运行端点从未可用（M2 演练影子报告手工插行、无测试调用，两轮审核均漏，2026-11-28 新测试首次真实调用抓出，`6492de79` 补定义）；③影子端点 `SHADOW_NO_SAMPLE_POOL` 曾 500，已修（GovernanceError 映射，`c14af2a1`）。
 
 ### 5.3 P1：其余名义化
 
@@ -86,7 +87,7 @@ S2b 十四条口径全部 passed（口径 1/12/14 带范围限制如实登记）
 
 ### 5.5 更正后的口径状态
 
-十四条口径中 **10 条 failed、4 条 passed**。failed：#1（影子零测试）、#2（默认 cap 下归档必 failed）、#3（终验取 version.metrics）、#4（不回退非同批配对）、#6（免审不成立）、#7（执行器 NameError）、#10（回执 API 不可达）、#12（接管未实现）、#13（豁免无效果）、#14（E13 用例 0 个）。passed：#5（Challenger）、#8（预授权四失效，服务层）、#9（门禁四拦截 + Wilson，函数级）、#11（回执放量 opt-in）。结构化结论见 [验收-补齐路线-S2b.json](验收-补齐路线-S2b.json)。**7 个写端点未登记 `PROJECT_WRITE_ACTIONS`、API 级测试零越权断言**（实测鉴权本身正确）。
+十四条口径中 **10 条 failed、4 条 passed**（2026-11-27 复审时点；修复进度：#3/#4 已修 `c14af2a1`、#7 已修 `8898aa6b`、#5 部分修，见 §5.1 标注）。failed：#1（影子零测试）、#2（默认 cap 下归档必 failed）、#3（终验取 version.metrics）、#4（不回退非同批配对）、#6（免审不成立）、#7（执行器 NameError）、#10（回执 API 不可达）、#12（接管未实现）、#13（豁免无效果）、#14（E13 用例 0 个）。passed：#5（Challenger）、#8（预授权四失效，服务层）、#9（门禁四拦截 + Wilson，函数级）、#11（回执放量 opt-in）。结构化结论见 [验收-补齐路线-S2b.json](验收-补齐路线-S2b.json)。**7 个写端点未登记 `PROJECT_WRITE_ACTIONS`、API 级测试零越权断言**（实测鉴权本身正确）。
 
 ### 5.6 已证伪（留痕）
 

@@ -140,6 +140,7 @@
     "falsified_claims": "「跨项目越权写（IDOR）」经 QMS 与第二批共 19 个端点运行验证全部 404 PROJECT_NOT_FOUND（路径参数 {project_id} 先过 require_project_access）——不成立，不采纳。",
     "result": "14 条口径中 10 条 failed（#1/#2/#3/#4/#6/#7/#10/#12/#13/#14），4 条 passed（#5/#8/#9/#11）。盲测终验与不回退两项核心门禁名存实亡；前端完全未落地。",
     "corrected_conclusion": "S2b 未达成。盲测门禁与不回退检查名存实亡——本阶段对标竞品的核心价值未落地。",
-    "detail": "验收-补齐路线-S2b.md §5"
+    "detail": "验收-补齐路线-S2b.md §5",
+    "fix_status": "本节与 acceptance_criteria 记录 2026-11-27 复审时点（修复前）结论。批次 A/B 修复后：#3（终验取 version.metrics）/#4（非同批配对）已修复（c14af2a1，score_blind_split 真实盲测打分+同批配对构造性成立）；#7（执行器 _uuid NameError）已修复（8898aa6b）；#5 部分修复（导入已修，免审路径与指纹推导仍开放）；其余条目仍开放，见对应验收 md 更正节与后续 fix_status 更新。"
   }
 }

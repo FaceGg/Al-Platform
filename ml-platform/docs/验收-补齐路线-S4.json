@@ -120,6 +120,7 @@
     "falsified_claims": "「跨项目越权写（IDOR）」经 QMS 与第二批共 19 个端点运行验证全部 404 PROJECT_NOT_FOUND（路径参数 {project_id} 先过 require_project_access）——不成立，不采纳。",
     "result": "12 条口径中 9 条 failed（#1/#2/#3/#4/#6/#7/#9/#11/#12），3 条 passed（#5/#8/#10）。「智能应用」的智能部分（LLM）从未实现。",
     "corrected_conclusion": "S4 未达成。「智能应用」的智能部分（LLM）从未实现，仅指标注册表与 CBPE 近似口径成立。",
-    "detail": "验收-补齐路线-S4.md §5"
+    "detail": "验收-补齐路线-S4.md §5",
+    "fix_status": "本节记录 2026-11-27 复审时点结论。批次 A/B 未覆盖 S4 口径；第二轮复审（2026-11-28）另发现并修复 explain_sample 同型键错配（6492de79）——#11 的「端到端真模型」部分改善，其余仍开放。"
   }
 }
