@@ -36,6 +36,18 @@ from app.services.project_access import ProjectAccess
 
 router = APIRouter(tags=["quality-domain"])
 
+# 写端点 → 审计动作映射（合同 §6-4：新增写接口纳入既有项目访问权限测试矩阵）
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects/{project_id}/quality-scenes": "quality.scene.create",
+    "PUT /api/projects/{project_id}/quality-scenes/{scene_id}": "quality.scene.update",
+    "PUT /api/projects/{project_id}/quality-scenes/{scene_id}/field-roles": "quality.scene.field_roles.replace",
+    "DELETE /api/projects/{project_id}/quality-scenes/{scene_id}": "quality.scene.delete",
+    "POST /api/projects/{project_id}/quality-stations": "quality.station.create",
+    "PUT /api/projects/{project_id}/quality-stations/{station_id}": "quality.station.update",
+    "DELETE /api/projects/{project_id}/quality-stations/{station_id}": "quality.station.delete",
+}
+
+
 
 def _audit_service(db: Session) -> AuditService:
     return AuditService(sessionmaker(bind=db.get_bind()))

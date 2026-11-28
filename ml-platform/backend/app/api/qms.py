@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.api.auth import get_current_user
 from app.api.project_security import audit_service, require_project_access
 from app.database import get_db
+from app.services.approvals import ApprovalError
 from app.models.qms import (
     QmsCase,
     QmsCaseLink,
@@ -61,6 +62,34 @@ from app.services.qms_tools import (
 )
 
 router = APIRouter(prefix="/api/projects/{project_id}/qms", tags=["qms"])
+
+# 写端点 → 审计动作映射（合同 §6-4：新增写接口纳入既有项目访问权限测试矩阵）
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects/{project_id}/qms/ncr-capa": "qms.ncr.create",
+    "POST /api/projects/{project_id}/qms/ncr-capa/{ncr_id}/transition": "qms.ncr.transition",
+    "POST /api/projects/{project_id}/qms/ncr-capa/{ncr_id}/reject": "qms.ncr.reject",
+    "POST /api/projects/{project_id}/qms/d8": "qms.d8.create",
+    "POST /api/projects/{project_id}/qms/d8/{d8_id}/advance": "qms.d8.advance",
+    "POST /api/projects/{project_id}/qms/d8/{d8_id}/draft-llm": "qms.d8.draft",
+    "POST /api/projects/{project_id}/qms/d8/{d8_id}/close": "qms.d8.close",
+    "POST /api/projects/{project_id}/qms/d8/{d8_id}/evidence": "qms.d8.evidence_export",
+    "POST /api/projects/{project_id}/qms/cases": "qms.case.create",
+    "POST /api/projects/{project_id}/qms/cases/{case_id}/links": "qms.case.link",
+    "POST /api/projects/{project_id}/qms/cases/{case_id}/repush": "qms.case.repush",
+    "POST /api/projects/{project_id}/qms/knowledge": "qms.knowledge.create",
+    "POST /api/projects/{project_id}/qms/quality-reports": "qms.report.create",
+    "POST /api/projects/{project_id}/qms/control-plans": "qms.plan.create",
+    "POST /api/projects/{project_id}/qms/control-plans/{plan_id}/archive": "qms.plan.archive",
+    "POST /api/projects/{project_id}/qms/control-plans/{plan_id}/tightening-evaluation": "qms.plan.tightening",
+    "POST /api/projects/{project_id}/qms/msa-studies": "qms.msa.create",
+    "POST /api/projects/{project_id}/qms/fmeas": "qms.fmea.create",
+    "POST /api/projects/{project_id}/qms/fmeas/{fmea_id}/sync-control-plan": "qms.fmea.sync",
+    "POST /api/projects/{project_id}/qms/scars/{scar_id}": "qms.scar.update",
+    "POST /api/projects/{project_id}/qms/suppliers": "qms.supplier.create",
+    "POST /api/projects/{project_id}/qms/suppliers/{supplier_id}/disable": "qms.supplier.disable",
+    "POST /api/projects/{project_id}/qms/iqc-records": "qms.iqc.create",
+}
+
 
 
 class NcrCreate(BaseModel):
@@ -393,7 +422,8 @@ def draft_d8_endpoint(
                            resource_type="qms_d8", resource_id=str(d8_id), changes={}),
         allowed_changes=set(),
     ):
-        result = draft_d8_with_llm(db, d8_id=d8_id, context=payload_in.context)
+        result = draft_d8_with_llm(db, d8_id=d8_id, context=payload_in.context,
+                                   actor_id=current_user.id)
     db.commit()
     return result
 
@@ -723,10 +753,28 @@ def list_control_plans(
         .limit(50)
         .all()
     )
-    return {"items": [{"id": str(r.id), "code": r.code, "version": r.version,
-                       "status": r.status,
-                       "tightening_multiplier": r.tightening_multiplier,
-                       "quality_points": r.quality_points or []} for r in rows]}
+    return {"items": [_plan_view(r) for r in rows]}
+
+
+def _plan_view(plan: QmsControlPlan) -> dict:
+    """控制计划视图：质量点附**生效抽样量**（基础抽样量 × 加严乘数）——
+    〔第三轮复审 2026-11-28 补乘数执行层〕乘数曾只存得进、看得见，无任何
+    执行消费方（B3 口径 12「乘数生效」止步于字段写回）。sample 为空的质量
+    点 effective_sample 同为 null。"""
+    multiplier = float(plan.tightening_multiplier or 1.0)
+    points = []
+    for point in plan.quality_points or []:
+        row = dict(point) if isinstance(point, dict) else {"name": str(point)}
+        sample = row.get("sample")
+        row["effective_sample"] = (
+            round(float(sample) * multiplier, 2)
+            if isinstance(sample, (int, float)) else None
+        )
+        points.append(row)
+    return {"id": str(plan.id), "code": plan.code, "version": plan.version,
+            "status": plan.status,
+            "tightening_multiplier": plan.tightening_multiplier,
+            "quality_points": points}
 
 
 @router.post("/control-plans")
@@ -795,7 +843,15 @@ def tightening_endpoint(
         plan = db.get(QmsControlPlan, plan_id)
         if plan is None:
             raise HTTPException(404, {"code": "QMS_PLAN_NOT_FOUND"})
-        decision = evaluate_tightening(db, plan=plan, actor_id=current_user.id)
+        # 〔第三轮复审 2026-11-28〕归档计划不再评估加严（评估服务于下一步
+        # 加严，归档计划无下一步）；执行器校验抛 ApprovalError 映射 409——
+        # 曾无捕获直接 500。
+        if plan.status != "active":
+            raise HTTPException(409, {"code": "QMS_PLAN_NOT_ACTIVE"})
+        try:
+            decision = evaluate_tightening(db, plan=plan, actor_id=current_user.id)
+        except ApprovalError as exc:
+            raise HTTPException(409, {"code": str(exc)}) from exc
     db.commit()
     return decision
 

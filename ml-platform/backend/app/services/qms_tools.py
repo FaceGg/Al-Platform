@@ -75,7 +75,12 @@ def _monthly_key(reference: datetime) -> str:
 def generate_report(db: Session, *, project_id, period: str, period_key: str,
                     generated_by: str = "manual", created_by_id=None) -> QmsQualityReport:
     from app.models.quality_alerts import QualityAlert
-    from app.services.quality_aggregates import MonitorScope, scoped_alerts
+    from app.services.quality_aggregates import (
+        MonitorScope,
+        alert_series,
+        production_by_day,
+        scoped_alerts,
+    )
 
     if period not in {"daily", "weekly", "monthly"}:
         raise QmsToolsError("REPORT_PERIOD_INVALID")
@@ -99,32 +104,57 @@ def generate_report(db: Session, *, project_id, period: str, period_key: str,
                             QualityAlert.created_at < window_end)
 
     period_alerts = in_window(scoped_alerts(db, project_id, scope))
-    closed_alerts = period_alerts.filter(QualityAlert.status == "closed").count()
-    confirmed = period_alerts.filter(QualityAlert.status == "closed",
-                                     QualityAlert.resolution == "confirmed_issue").count()
-    ng_rate = round(confirmed / closed_alerts, 4) if closed_alerts else None
-    alerts_total = in_window(
-        db.query(QualityAlert).filter(QualityAlert.project_id == project_id)
-    ).count()
+    # 〔第三轮复审 2026-11-28 口径 9 同源〕NG 率直接复用趋势页同一对聚合函数
+    # （production_by_day + alert_series）：分子=窗口关闭的确认 NG（含合并计数），
+    # 分母=聚合桶产量——曾「确认异常÷已关闭预警」，与趋势页「确认 NG÷产量」
+    # 分子分母皆不同；alert_total 同改走 scoped_alerts（曾无演示过滤）。
+    production = production_by_day(db, project_id, scope,
+                                   since=window_start, until=window_end)
+    alerts_by_day = alert_series(db, project_id, scope,
+                                 since=window_start, until=window_end)
+    produced_total = sum(int(value.get("total", 0)) for value in production.values())
+    confirmed_ng = sum(int(value.get("confirmed_ng", 0)) for value in alerts_by_day.values())
+    alerts_total = sum(int(value.get("alerts", 0)) for value in alerts_by_day.values())
+    ng_rate = round(confirmed_ng / produced_total, 4) if produced_total else None
+    # Top 缺陷：窗口内确认异常按标题聚合 Top5（曾恒 []）
+    defect_counts: dict[str, int] = {}
+    for title, occurrence in period_alerts.filter(
+        QualityAlert.status == "closed",
+        QualityAlert.resolution == "confirmed_issue",
+    ).with_entities(QualityAlert.title, QualityAlert.occurrence_count).all():
+        key = (title or "").strip()[:64] or "未命名"
+        defect_counts[key] = defect_counts.get(key, 0) + int(occurrence or 1)
+    top_defects = [
+        {"defect": name, "count": count}
+        for name, count in sorted(defect_counts.items(), key=lambda item: (-item[1], item[0]))[:5]
+    ]
     content = {
         "window": [window_start.isoformat(), window_end.isoformat()],
         "alert_total": alerts_total,
+        "produced_total": produced_total,
+        "confirmed_ng": confirmed_ng,
         "ng_rate": ng_rate,
         "cpk_pass_rate": None,  # Cpk 达标率随 SPC 基线评估接入（B1-06 同源），缺失如实标注
-        "top_defects": [],
+        "top_defects": top_defects,
         "ncr_open": (
             db.query(QmsNcrCapa)
             .filter(QmsNcrCapa.project_id == project_id,
                     QmsNcrCapa.stage.notin_(("closed", "rejected")))
             .count()
         ),
-        "footnote": ("窗口 [起,止) UTC；NG 率从 quality_aggregates.scoped_alerts "
-                     "单一聚合口径取数（与趋势页同源）；已确认异常÷已关闭"),
+        "footnote": ("窗口 [起,止) UTC；NG 率=确认 NG÷产量，与趋势页共用 "
+                     "quality_aggregates 的 production_by_day+alert_series 同源取数；"
+                     "演示预警不入统计；top_defects 为窗口内确认异常按标题聚合 Top5"),
     }
+    defects_text = "、".join(
+        f"{item['defect']}×{item['count']}" for item in top_defects
+    ) or "无"
     html = (
         f"<h1>质量报告 {period}/{period_key}</h1>"
-        f"<p>预警总量 {content['alert_total']}；NG 率 {content['ng_rate']}；"
+        f"<p>预警总量 {content['alert_total']}；产量 {content['produced_total']}；"
+        f"确认 NG {content['confirmed_ng']}；NG 率 {content['ng_rate']}；"
         f"Cpk 达标率 {content['cpk_pass_rate']}；未决 NCR {content['ncr_open']}</p>"
+        f"<p>Top 缺陷：{defects_text}</p>"
     )
     report = QmsQualityReport(
         project_id=project_id, period=period, period_key=period_key,

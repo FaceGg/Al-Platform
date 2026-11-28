@@ -127,6 +127,7 @@ def build_report(
     ))
     narrative = _narrative(
         db, project_id=project_id, template_key=template_key, evidence=evidence,
+        actor_id=created_by_id,
     )
     content = _render_markdown(template_key, evidence, narrative)
     citation_errors = validate_citations(content, evidence)
@@ -219,10 +220,12 @@ def _collect_evidence(db: Session, *, project_id, template_key: str, params: dic
     return items
 
 
-def _narrative(db: Session, *, project_id, template_key: str, evidence: list[dict]) -> str:
+def _narrative(db: Session, *, project_id, template_key: str, evidence: list[dict],
+               actor_id=None) -> str:
     """叙述生成（三批复审补实现——曾恒返回回退文案，「LLM 叙述 not_run」实为
     未实现）：LLM 经网关（自动入 B2-08 动作审计，purpose=audit_report）；
-    不可用回退纯数据版。"""
+    不可用回退纯数据版。actor_id 随调用传入——〔第三轮复审 2026-11-28〕
+    曾不传 actor 致审计行 actor_id/project_id 空（口径 5 同族）。"""
     summary_lines = [
         f"- [{item.get('table')}] {item.get('summary')}"
         for item in evidence[:10]
@@ -244,6 +247,7 @@ def _narrative(db: Session, *, project_id, template_key: str, evidence: list[dic
             db, config=config,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2, max_tokens=400, purpose="audit_report",
+            actor=actor_id,
         )
         if reply and reply.strip():
             return reply.strip()
@@ -273,6 +277,13 @@ def ask_metrics(db: Session, *, project_id, question: str, override_registry: di
     for alias, metric_names in _METRIC_ALIASES.items():
         if alias in question_text:
             candidates.extend(metric_names)
+    # 〔第三轮复审 2026-11-28〕注册表键名（含 PlatformOption 自定义指标）
+    # 本身出现在问题里也命中——曾只走固定别名表，option 注册的自定义指标
+    # 即使接线也永远问不到。
+    candidates.extend(
+        name for name in registry
+        if isinstance(name, str) and name and name in question_text
+    )
     candidates = [name for name in candidates if name in registry]
     if not candidates:
         return {

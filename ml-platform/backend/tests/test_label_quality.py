@@ -44,6 +44,10 @@ def _proba_frame(rows: int = 40) -> pd.DataFrame:
         "f1": rng.normal(size=rows),
         "f2": rng.normal(size=rows),
         "sample_key": [f"sk-{i}" for i in range(rows)],
+        # 〔第三轮复审 2026-11-28〕boundary / business_priority 两策略此前
+        # 零用例（九策略只测七个）——夹具补齐它们依赖的列
+        "cluster": [f"c-{i % 4}" for i in range(rows)],
+        "priority": [float(i % 5) for i in range(rows)],
     })
     return frame
 
@@ -81,7 +85,9 @@ class TestNineStrategies(unittest.TestCase):
         for name, extra in (
             ("entropy", {}), ("margin", {}), ("least_confidence", {}),
             ("rarity", {}), ("diversity", {}), ("random", {"seed": 7}),
-            ("cluster_diversity", {"cluster_column": "sample_key"}),
+            ("cluster_diversity", {"cluster_column": "cluster"}),
+            ("boundary", {"cluster_column": "cluster"}),
+            ("business_priority", {"priority_column": "priority"}),
         ):
             with self.subTest(strategy=name):
                 picks, stats = select_samples(

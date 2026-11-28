@@ -414,6 +414,7 @@ class RecipeChangeExecutor:
                 "multiplier": plan.tightening_multiplier,
                 "factors": payload.get("factors") or {},
             })
+            plan.decision_log = decision_log
             db.flush()
             return {"plan_id": str(plan.id), "multiplier": plan.tightening_multiplier}
 

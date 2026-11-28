@@ -34,6 +34,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["evidence-chain"])
 
+# 写端点 → 审计动作映射（合同 §6-4：新增写接口纳入既有项目访问权限测试矩阵）
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects/{project_id}/model-versions/{version_id}/evidence-checks": "quality.evidence.check",
+    "POST /api/projects/{project_id}/evidence-exports": "quality.evidence.export",
+}
+
+
 _CHECK_LABELS = {
     "model_file": ("模型文件", "Model file"),
     "checksum": ("校验和", "Checksum"),

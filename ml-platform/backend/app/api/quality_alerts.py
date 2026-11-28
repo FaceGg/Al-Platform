@@ -56,6 +56,21 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["quality-alerts"])
 
+# 写端点 → 审计动作映射（合同 §6-4：新增写接口纳入既有项目访问权限测试矩阵）
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects/{project_id}/api/projects/{project_id}/quality-alerts/{alert_id}/ack": "quality.alert.ack",
+    "POST /api/projects/{project_id}/api/projects/{project_id}/quality-alerts/{alert_id}/assign": "quality.alert.assign",
+    "POST /api/projects/{project_id}/api/projects/{project_id}/quality-alerts/{alert_id}/transition": "quality.alert.close_approval_requested",
+    "POST /api/projects/{project_id}/api/projects/{project_id}/quality-alerts/{alert_id}/disposition": "quality.alert.disposition",
+    "POST /api/projects/{project_id}/api/projects/{project_id}/quality-alerts/{alert_id}/transfer": "quality.alert.transfer",
+    "POST /api/projects/{project_id}/api/projects/{project_id}/quality-alerts/{alert_id}/request-review": "quality.alert.request_review",
+    "POST /api/projects/{project_id}/api/projects/{project_id}/quality-alerts/{alert_id}/attachments": "quality.alert.attachment",
+    "PUT /api/projects/{project_id}/api/projects/{project_id}/quality-scenes/{scene_id}/alert-settings": "quality.scene.alert_settings",
+    "POST /api/projects/{project_id}/api/projects/{project_id}/quality-sops": "quality.sop.create",
+    "POST /api/projects/{project_id}/api/projects/{project_id}/quality-scenes/{scene_id}/spc-baselines": "quality.spc_baseline.freeze",
+}
+
+
 _CSV_COLUMNS = [
     "id", "source_type", "severity", "status", "title", "sample_key",
     "batch_no", "condition_value", "assigned_to", "occurrence_count",

@@ -179,10 +179,21 @@ CARD_SECTIONS = (
 
 def build_card_sections(db: Session, *, version) -> dict:
     """模型卡 11 章节（C6 在 ModelCard 骨架上扩展）：由血缘+metrics+
-    release_checks+盲测台账填充；缺失=「未提供」如实标注。"""
+    release_checks+盲测台账填充；缺失=「未提供」如实标注。
+
+    〔第三轮复审 2026-11-28 修复〕预期用途/局限/运维指引在 **ModelCard** 上
+    （intended_use/limitations/operational_guidance），曾从 version 读不存在
+    的属性——永远「未提供」。"""
     metrics = _metrics_of(version)
     conversion = getattr(version, "conversion_metadata", None) or {}
     primary_key = "synthetic_auc" if str(conversion.get("task") or metrics.get("task") or "classification") in {"anomaly", "anomaly_detection"} else "f1"
+    from app.models.model_registry import ModelCard
+
+    card = (
+        db.query(ModelCard)
+        .filter(ModelCard.model_version_id == version.id)
+        .first()
+    )
     sections = {
         "概述": f"模型版本 v{version.version_number}（{conversion.get('task') or 'classification'}）",
         "训练数据": (
@@ -190,9 +201,10 @@ def build_card_sections(db: Session, *, version) -> dict:
             f"特征数 {len(version.feature_schema or [])}"
         ),
         "评估": json_metrics_summary(metrics, primary_key),
-        "预期用途": getattr(version, "intended_use", None) or "未提供（建议在模型卡运维指导中补充）",
-        "局限": getattr(version, "limitations", None) or "未提供",
-        "运维指引": getattr(version, "ops_guidance", None) or "未提供",
+        "预期用途": (getattr(card, "intended_use", None) or "").strip()
+        or "未提供（建议在模型卡运维指导中补充）",
+        "局限": (getattr(card, "limitations", None) or "").strip() or "未提供",
+        "运维指引": (getattr(card, "operational_guidance", None) or "").strip() or "未提供",
         "公平性与偏差": "未提供（评估集类分布与少数类召回见评估章节）",
         "可解释性": (
             "特征重要性见评估产物（importance 键）"

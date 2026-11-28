@@ -28,6 +28,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["drift"])
 
+# 写端点 → 审计动作映射（合同 §6-4：新增写接口纳入既有项目访问权限测试矩阵）
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects/{project_id}/api/projects/{project_id}/drift/reports/{report_id}/propose-retrain": "drift.propose_retrain",
+    "POST /api/projects/{project_id}/api/projects/{project_id}/drift/scan": "drift.scan",
+}
+
+
 
 def _audit_service(db: Session) -> AuditService:
     return AuditService(sessionmaker(bind=db.get_bind()))

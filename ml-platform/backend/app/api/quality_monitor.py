@@ -40,6 +40,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["quality-monitor"])
 
+# 写端点 → 审计动作映射（合同 §6-4：新增写接口纳入既有项目访问权限测试矩阵）
+PROJECT_WRITE_ACTIONS = {
+    "PUT /api/projects/{project_id}/quality-monitor/ng-vocabulary": "quality.ng_vocabulary.update",
+    "POST /api/projects/{project_id}/quality-stations/{station_id}/ack-received": "quality.station.ack_received",
+    "POST /api/projects/{project_id}/quality-stations/{station_id}/call-quality": "quality.station.call_quality",
+}
+
+
 # SSE：轮询周期 2 秒（满足「新事件 5 秒内上屏」），每 15 秒发一个心跳注释帧
 STREAM_POLL_SECONDS = 2.0
 STREAM_HEARTBEAT_SECONDS = 15.0

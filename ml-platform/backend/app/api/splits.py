@@ -301,8 +301,19 @@ def close_modeling_round(
     current_user: User = Depends(get_current_user),
 ):
     access = require_project_access(db, project_id, current_user.id, "model.register")
-    try:
-        round_row = close_round(db, round_id=round_id, actor_id=current_user.id)
-    except RoundError as error:
-        _raise_round_error(error)
+    with audit_service(db).project_action(
+        db, request=request, actor=current_user, access=access,
+        permission="model.register",
+        intent=AuditIntent(
+            project_id=project_id,
+            action="modeling_round.close",
+            resource_type="modeling_round", resource_id=str(round_id),
+            changes={},
+        ),
+        allowed_changes=set(),
+    ):
+        try:
+            round_row = close_round(db, round_id=round_id, actor_id=current_user.id)
+        except RoundError as error:
+            _raise_round_error(error)
     return _round_view(round_row)

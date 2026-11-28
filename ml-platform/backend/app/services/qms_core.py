@@ -105,18 +105,34 @@ def create_ncr(db: Session, *, project_id, code: str, title: str,
             actor_id=created_by_id,
         ))
     # 追溯链写入（B3-09；三批复审：QmsTraceLink 曾无生产写入方，追溯恒空）：
-    # 从预警转入时把 样本键/批次/预警/NCR 串进追溯表
+    # 从预警转入时把 样本键/批次/预警/NCR 串进追溯表。预警产生时已落过一行
+    # （quality_alerts.create_alert），这里更新该行补 NCR 指针——同一「预警→
+    # NCR」流转只留一行（第三轮复审 2026-11-28：曾叠加新行造成追溯双行）。
     if source_alert_id is not None:
         from app.models.quality_alerts import QualityAlert
 
         alert = db.get(QualityAlert, source_alert_id)
         if alert is not None and (alert.sample_key or alert.batch_no):
-            db.add(QmsTraceLink(
-                project_id=project_id,
-                sample_key=alert.sample_key or f"alert-{alert.id}",
-                batch_no=alert.batch_no,
-                alert_id=alert.id, ncr_id=ncr.id,
-            ))
+            sample_key = alert.sample_key or f"alert-{alert.id}"
+            existing_links = (
+                db.query(QmsTraceLink)
+                .filter(QmsTraceLink.project_id == project_id,
+                        QmsTraceLink.alert_id == alert.id,
+                        QmsTraceLink.ncr_id.is_(None))
+                .all()
+            )
+            if existing_links:
+                for link in existing_links:
+                    link.ncr_id = ncr.id
+                    if link.sample_key == sample_key:
+                        link.batch_no = alert.batch_no
+            else:
+                db.add(QmsTraceLink(
+                    project_id=project_id,
+                    sample_key=sample_key,
+                    batch_no=alert.batch_no,
+                    alert_id=alert.id, ncr_id=ncr.id,
+                ))
     db.flush()
     return ncr
 
@@ -181,6 +197,11 @@ def evaluate_recurrence(db: Session, *, ncr: QmsNcrCapa,
     query = db.query(QualityAlert).filter(
         QualityAlert.project_id == ncr.project_id,
         QualityAlert.created_at > start,
+        # 〔第三轮复审 2026-11-28〕复发=真问题重现：已判定误报的预警不算
+        # （否则验证期内一条误报就让 NCR 永久 NCR_CLOSE_BLOCKED，生产无解锁
+        # 手段——处置流把误报回流本就是正常路径）；演示预警不入真实判定。
+        QualityAlert.resolution.isnot("false_positive"),
+        QualityAlert.is_demo.is_(False),
     )
     if ncr.scene_id is not None:
         query = query.filter(QualityAlert.scene_id == ncr.scene_id)
@@ -256,8 +277,14 @@ def advance_d8(db: Session, *, d8_id, actor_id, step_content: dict | None = None
     if d6_passed is not None and d8.current_step != 6:
         raise QmsError("D8_D6_STEP_MISMATCH")
     steps = dict(d8.steps or {})
+    existing = dict(steps.get(str(d8.current_step)) or {})
+    # 〔第三轮复审 2026-11-28〕推进改为**合并**而非整步替换：LLM 草稿
+    # （draft 键）在确认推进后保留——前端推进传 {} 曾把草稿整步清空
+    # （口径 5：草稿被推进覆盖）。
+    merged_content = dict(existing.get("content") or {})
+    merged_content.update(step_content or {})
     steps[str(d8.current_step)] = {
-        "content": step_content or {},
+        "content": merged_content,
         "confirmed_at": _now().isoformat(),
         "actor_id": str(actor_id) if actor_id else None,
     }
@@ -285,8 +312,15 @@ def close_d8(db: Session, *, d8_id, actor_id) -> QmsD8Report:
     return d8
 
 
-def draft_d8_with_llm(db: Session, *, d8_id, context: str) -> dict:
-    """LLM 起草 D1–D5 初稿（经网关——自动入 B2-08 动作审计）；失败回退骨架。"""
+def draft_d8_with_llm(db: Session, *, d8_id, context: str, actor_id=None) -> dict:
+    """LLM 起草 D1–D5 初稿（经网关——自动入 B2-08 动作审计）；失败回退骨架。
+
+    〔第三轮复审 2026-11-28 两处修复〕①actor_id 随调用传入（曾不传致审计行
+    actor/project 空，口径 5 同族）；②输出按「D1: …」分步解析落各自步骤——
+    曾把同一整段 reply 原样写进 D1–D5 五步。解析不出分步标记时整段只落 D1、
+    其余步如实标注，不再复制粘贴。"""
+    import re
+
     d8 = db.get(QmsD8Report, d8_id)
     if d8 is None:
         raise QmsError("D8_NOT_FOUND")
@@ -297,14 +331,35 @@ def draft_d8_with_llm(db: Session, *, d8_id, context: str) -> dict:
         reply, _usage, _reasoning = chat_completion(
             db, config=config,
             messages=[{"role": "user", "content":
-                       f"为 8D 报告《{d8.title}》起草 D1–D5 每步 1-2 句中文初稿。背景：{context[:800]}"}],
+                       (f"为 8D 报告《{d8.title}》起草 D1–D5 初稿。输出格式必须为五段，"
+                        f"每段以「D1:」「D2:」…「D5:」开头、每段 1-2 句中文，"
+                        f"不要输出其他内容。背景：{context[:800]}")}],
             temperature=0.3, max_tokens=600, purpose="d8_draft",
+            actor=actor_id,
         )
         if reply and reply.strip():
+            sections: dict[str, str] = {}
+            current: str | None = None
+            for line in reply.strip().splitlines():
+                stripped = line.strip()
+                matched = re.match(r"^D([1-5])\s*[:：]\s*", stripped)
+                if matched:
+                    current = matched.group(1)
+                    sections[current] = stripped[matched.end():].strip()
+                elif current and stripped:
+                    sections[current] = (sections[current] + " " + stripped).strip()
             steps = dict(d8.steps or {})
-            for step in range(1, 6):
-                steps.setdefault(str(step), {"content": {"draft": reply.strip()[:400]},
-                                             "drafted": True})
+            if sections:
+                for step in range(1, 6):
+                    draft_text = sections.get(str(step)) or "（LLM 未输出该步，待补）"
+                    steps.setdefault(str(step), {"content": {"draft": draft_text[:400]},
+                                                 "drafted": True})
+            else:
+                # 模型未按分步格式输出：整段只落 D1，其余步如实标注待补
+                for step in range(1, 6):
+                    draft_text = reply.strip()[:400] if step == 1 else "（LLM 未分步输出，见 D1）"
+                    steps.setdefault(str(step), {"content": {"draft": draft_text},
+                                                 "drafted": step == 1})
             d8.steps = steps
             db.flush()
             return {"drafted": True, "via": "llm"}

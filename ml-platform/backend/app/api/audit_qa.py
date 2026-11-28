@@ -52,8 +52,22 @@ class ExplainRequest(BaseModel):
 
 
 def _version_or_404(db: Session, project_id: UUID, version_id: UUID) -> ModelVersion:
+    """版本存在**且归属本项目**（经部署关联）方可操作。
+
+    〔第三轮复审 2026-11-28〕曾不校验归属——对路径 pid 持有权限即可对任意
+    version_id 读取指标/打可信度、甚至把他项目模型卡打回 pending（跨项目
+    IDOR，#36 同族）。ModelLibrary 是 owner 级无 project_id，版本归属项目的
+    唯一桥梁是 InferenceDeployment。"""
     version = db.get(ModelVersion, version_id)
     if version is None:
+        raise HTTPException(404, {"code": "MODEL_VERSION_NOT_FOUND"})
+    deployed = (
+        db.query(InferenceDeployment.id)
+        .filter(InferenceDeployment.project_id == project_id,
+                InferenceDeployment.model_version_id == version_id)
+        .first()
+    )
+    if deployed is None:
         raise HTTPException(404, {"code": "MODEL_VERSION_NOT_FOUND"})
     return version
 
@@ -119,6 +133,52 @@ def list_audit_reports(
     return {"items": [_report_view(row) for row in rows]}
 
 
+@router.get("/api/projects/{project_id}/audit-reports/{report_id}")
+def get_audit_report(
+    project_id: UUID,
+    report_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """报告详情可重开（行永存可查；〔第三轮复审 2026-11-28〕补齐——此前详情
+    端点缺失，历史报告只能整列表取回）。"""
+    require_project_access(db, project_id, current_user.id, "audit.read")
+    report = (
+        db.query(AuditReport)
+        .filter(AuditReport.project_id == project_id, AuditReport.id == report_id)
+        .first()
+    )
+    if report is None:
+        raise HTTPException(404, {"code": "AUDIT_REPORT_NOT_FOUND"})
+    return _report_view(report)
+
+
+@router.get("/api/projects/{project_id}/audit-reports/{report_id}/export.md")
+def export_audit_report(
+    project_id: UUID,
+    report_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """markdown 导出（附件下载；接 B3 报告导出先例）。"""
+    require_project_access(db, project_id, current_user.id, "audit.read")
+    report = (
+        db.query(AuditReport)
+        .filter(AuditReport.project_id == project_id, AuditReport.id == report_id)
+        .first()
+    )
+    if report is None:
+        raise HTTPException(404, {"code": "AUDIT_REPORT_NOT_FOUND"})
+    from fastapi import Response
+
+    filename = f"audit-report-{report.template_key}-{report.id}.md"
+    return Response(
+        content=report.content_markdown or "",
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/api/projects/{project_id}/ask-metrics")
 def ask_metrics_endpoint(
     project_id: UUID,
@@ -126,10 +186,22 @@ def ask_metrics_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """自然语言问数（只走指标注册表；LLM 不生成 SQL）。"""
+    """自然语言问数（只走指标注册表；LLM 不生成 SQL）。
+
+    〔第三轮复审 2026-11-28 接线〕PlatformOption `qa.metric_registry` 的项目
+    自定义指标曾不生效（override_registry 无入口）——现随请求并入；结构不
+    合法（非 dict）时忽略，内置注册表兜底。"""
     require_project_access(db, project_id, current_user.id, "project.read")
+    from app.models.platform_option import get_option
+
+    option_registry = get_option(db, "qa.metric_registry") or {}
+    if not isinstance(option_registry, dict):
+        option_registry = {}
     try:
-        result = ask_metrics(db, project_id=project_id, question=payload_in.question)
+        result = ask_metrics(
+            db, project_id=project_id, question=payload_in.question,
+            override_registry=option_registry,
+        )
     except AuditQAError as error:
         raise HTTPException(400, {"code": error.code, "message": error.message}) from None
     db.commit()
@@ -143,7 +215,24 @@ def list_metric_registry(
     current_user: User = Depends(get_current_user),
 ):
     require_project_access(db, project_id, current_user.id, "project.read")
-    return {"items": registry_metrics()}
+    from app.models.platform_option import get_option
+
+    option_registry = get_option(db, "qa.metric_registry") or {}
+    if not isinstance(option_registry, dict):
+        option_registry = {}
+    items = registry_metrics()
+    known = {row.get("name") for row in items}
+    for name, spec in option_registry.items():
+        if not isinstance(spec, dict) or not spec.get("sql"):
+            continue
+        items.append({
+            "name": str(name),
+            "footnote": str(spec.get("footnote") or ""),
+            "source": "option",
+        })
+    return {"items": items, "custom_names": [
+        str(name) for name in option_registry if name not in known]}
+
 
 
 @router.get("/api/projects/{project_id}/model-versions/{version_id}/trust-score")
@@ -176,6 +265,7 @@ def list_trust_scores(
     current_user: User = Depends(get_current_user),
 ):
     require_project_access(db, project_id, current_user.id, "project.read")
+    _version_or_404(db, project_id, version_id)
     rows = (
         db.query(ModelTrustScore)
         .filter(ModelTrustScore.model_version_id == version_id)
@@ -200,20 +290,31 @@ def cbpe_estimate_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """CBPE（估计口径 + 强制脚注）。"""
+    """CBPE（估计口径 + 强制脚注）。
+
+    〔第三轮复审 2026-11-28 修复〕路径 version_id 曾被完全忽略、deployment_id
+    传入时不校验归属——跨项目部署可被估 CBPE。现统一校验：版本须归属本项目；
+    deployment_id 缺省取本项目部署该版本的部署，显式传入时校验归属与版本一致。
+    """
     require_project_access(db, project_id, current_user.id, "project.read")
+    _version_or_404(db, project_id, version_id)
     if deployment_id is None:
         deployment = (
             db.query(InferenceDeployment)
-            .filter(InferenceDeployment.project_id == project_id)
+            .filter(InferenceDeployment.project_id == project_id,
+                    InferenceDeployment.model_version_id == version_id)
             .first()
         )
-        if deployment is None:
-            raise HTTPException(404, {"code": "DEPLOYMENT_NOT_FOUND"})
     else:
         deployment = db.get(InferenceDeployment, deployment_id)
-        if deployment is None:
+        if (
+            deployment is not None
+            and (deployment.project_id != project_id
+                 or deployment.model_version_id != version_id)
+        ):
             raise HTTPException(404, {"code": "DEPLOYMENT_NOT_FOUND"})
+    if deployment is None:
+        raise HTTPException(404, {"code": "DEPLOYMENT_NOT_FOUND"})
     return estimate_cbpe(db, deployment=deployment)
 
 

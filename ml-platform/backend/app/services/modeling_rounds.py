@@ -152,7 +152,12 @@ def record_blind_evaluation(
     ref: dict | None = None,
     note: str | None = None,
 ) -> BlindTestUsage:
-    """记录一次盲测评估：先判上限（E03）后落账 + 轮次计数。"""
+    """记录一次盲测评估：先判上限（E03）后落账 + 轮次计数。
+
+    〔第三轮复审 2026-11-28 幂等化〕同轮次+同样本指纹+同用途的重复评估
+    （发布探测评估与端点正式评估双跑）返回既有台账行、不再消耗 cap——
+    曾双重记账致默认 cap=2 下发布门禁必 blind_eval_cap_reached（S2b #16：
+    探测 2 次 + 正式 2 次 ≥ cap）。"""
     if purpose not in BLIND_PURPOSES:
         raise RoundError("BLIND_PURPOSE_INVALID")
     round_row = db.get(ModelingRound, round_id)
@@ -160,6 +165,17 @@ def record_blind_evaluation(
         raise RoundError(NOT_FOUND)
     if round_row.status != "locked":
         raise RoundError(STATE_CONFLICT)
+    existing = (
+        db.query(BlindTestUsage)
+        .filter(
+            BlindTestUsage.round_id == round_row.id,
+            BlindTestUsage.purpose == purpose,
+            BlindTestUsage.samples_fingerprint == samples_fingerprint,
+        )
+        .first()
+    )
+    if existing is not None:
+        return existing
     if round_row.blind_eval_count >= round_row.blind_eval_cap:
         raise RoundError(CAP_REACHED)
     round_row.blind_eval_count += 1

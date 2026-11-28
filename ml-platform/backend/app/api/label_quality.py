@@ -57,7 +57,9 @@ class RoundRequest(BaseModel):
 class BlindLabelRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    subject_id: str
+    # 〔第三轮复审 2026-11-28〕subject_id 不再来自请求体——一律绑定登录用户
+    # （曾为自由字符串：一人可用不同 subject 替全部标注位提交，且与仲裁人
+    # 的 UUID 身份空间不一致，ARBITER_SAME_AS_BLIND_ANNOTATOR 形同虚设）。
     sample_id: str
     values: dict
 
@@ -234,11 +236,11 @@ def submit_blind_label_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """盲标提交（round 成员；每样本每标注员一票）。"""
+    """盲标提交（round 成员；每样本每标注员一票；subject=登录用户 id）。"""
     require_project_access(db, project_id, current_user.id, "quality.label")
     try:
         row = submit_blind_label(
-            db, round_id=round_id, subject_id=payload_in.subject_id,
+            db, round_id=round_id, subject_id=str(current_user.id),
             sample_id=payload_in.sample_id, values=payload_in.values,
         )
     except ConsistencyError as error:

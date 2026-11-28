@@ -665,14 +665,16 @@ class TestWave1Fixes(unittest.TestCase):
             QmsTraceLink.alert_id == alert.id).first()
         self.assertIsNotNone(link)
         self.assertEqual(link.batch_no, "B-1")
-        # NCR 从预警转入 → 追溯链补 ncr_id
+        # NCR 从预警转入 → 更新预警已有追溯行补 ncr_id（第三轮复审 2026-11-28：
+        # 曾叠加新行，同一「预警→NCR」流转在追溯表落两行）
         ncr = create_ncr(self.db, project_id=self.project.id,
                          code="NCR-TR", title="追溯NCR",
                          source_alert_id=alert.id, created_by_id=self.user.id)
-        link2 = self.db.query(QmsTraceLink).filter(
-            QmsTraceLink.ncr_id == ncr.id).first()
-        self.assertIsNotNone(link2)
-        self.assertEqual(link2.sample_key, "sk-1")
+        rows_for_alert = self.db.query(QmsTraceLink).filter(
+            QmsTraceLink.alert_id == alert.id).all()
+        self.assertEqual(len(rows_for_alert), 1, "同一流转只留一行追溯")
+        self.assertEqual(rows_for_alert[0].ncr_id, ncr.id)
+        self.assertEqual(rows_for_alert[0].sample_key, "sk-1")
 
     # --- 审计报告：LLM 回退 + 跨项目泄漏修复 ---
 
@@ -726,9 +728,10 @@ class TestWave1Http(QualityAlertApiCase):
             "inspected_count": 10, "defect_count": 2}).json()
         self.assertIsNotNone(iqc.get("scar_id"))
         scar_id = iqc["scar_id"]
-        # 未登记纠正/验证即关闭 → 409
+        # 未登记纠正/验证即关闭 → 409（第三轮复审 2026-11-28：补错误码断言）
         early = self.client.post(f"{base}/qms/scars/{scar_id}", json={"close": True})
         self.assertEqual(early.status_code, 409, early.text)
+        self.assertEqual(early.json()["detail"]["code"], "QMS_SCAR_CLOSE_INCOMPLETE")
         # 登记 + 关闭 → 200
         updated = self.client.post(f"{base}/qms/scars/{scar_id}", json={
             "cause": "来料批次不良", "correction": "供应商换批",

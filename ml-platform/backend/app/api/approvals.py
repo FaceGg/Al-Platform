@@ -31,6 +31,15 @@ from app.services.project_access import ROLE_PERMISSIONS
 
 router = APIRouter(tags=["approvals"])
 
+# 写端点 → 审计动作映射（合同 §6-4：新增写接口纳入既有项目访问权限测试矩阵）
+PROJECT_WRITE_ACTIONS = {
+    "POST /api/projects/{project_id}/api/projects/{project_id}/approvals": "approval.create",
+    "POST /api/projects/{project_id}/api/projects/{project_id}/approvals/{approval_id}/approve": "approval.approve",
+    "POST /api/projects/{project_id}/api/projects/{project_id}/approvals/{approval_id}/reject": "approval.reject",
+    "POST /api/projects/{project_id}/api/projects/{project_id}/approvals/{approval_id}/cancel": "approval.cancel",
+}
+
+
 
 class ApprovalCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")

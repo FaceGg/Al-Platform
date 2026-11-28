@@ -57,13 +57,31 @@ class ApprovalCenterCase(unittest.TestCase):
             db.commit()
 
     def _create(self, approval_type="recipe_change", payload=None, initiator=None, db=None, ttl_hours=None):
-        """默认用保留类型 recipe_change（无执行器侧业务校验）测队列机械性；
-        disposition/retrain 专项测试显式传 type+payload。"""
+        """默认用 recipe_change 加严形态（validate_create 只要求 plan 存在）
+        测队列机械性——〔第三轮复审 2026-11-28〕recipe_change 已注册执行器
+        （wave1 5dc6baea），空 payload 会被 QMS_SYNC_TARGET_NOT_FOUND 拒绝，
+        故默认造一条 active 控制计划；disposition/retrain 专项测试显式传
+        type+payload。"""
         own = db is None
         db = db or self.session_factory()
         kwargs = {}
         if ttl_hours is not None:
             kwargs["ttl_hours"] = ttl_hours
+        if approval_type == "recipe_change" and not payload:
+            from app.models.qms import QmsControlPlan
+
+            db.add(QmsControlPlan(
+                project_id=self.project.id,
+                code=f"PL-{uuid.uuid4().hex[:8]}",
+                version=1, status="active",
+                quality_points=[], tightening_multiplier=1.0,
+                decision_log=[], created_by_id=(initiator or self.owner).id,
+            ))
+            db.flush()
+            plan = db.query(QmsControlPlan).filter(
+                QmsControlPlan.project_id == self.project.id,
+            ).order_by(QmsControlPlan.created_at.desc()).first()
+            payload = {"plan_id": str(plan.id), "suggested_multiplier": 1.0}
         try:
             approval = create_approval(
                 db,
@@ -311,18 +329,40 @@ class TestRetrainWatermark(ApprovalCenterCase):
 
 
 class TestReservedTypeAndRetrainTrigger(ApprovalCenterCase):
-    def test_reserved_type_perform_reports_not_ready(self):
-        approval = self._create(approval_type="recipe_change", payload={"x": 1})
+    def test_recipe_change_multiplier_perform_applies_plan(self):
+        """〔第三轮复审 2026-11-28 改造〕recipe_change 已注册执行器（wave1），
+        旧断言 409 EXECUTOR_NOT_READY 的「保留类型」语义随之退役——保留类型
+        清零（approval_executors._RESERVED_TYPES = ()）后该分支对合法类型不可达。
+        本用例改为锁定加严形态的真实执行：批准 → 乘数写回控制计划。"""
+        from app.models.qms import QmsControlPlan
+        from app.services.approvals import perform_approved
+
+        with self.session_factory() as db:
+            plan = QmsControlPlan(
+                project_id=self.project.id,
+                code=f"PL-{uuid.uuid4().hex[:8]}",
+                version=1, status="active",
+                quality_points=[], tightening_multiplier=1.0,
+                decision_log=[], created_by_id=self.owner.id,
+            )
+            db.add(plan)
+            db.commit()
+            plan_id = plan.id
+        approval = self._create(
+            approval_type="recipe_change",
+            payload={"plan_id": str(plan_id), "suggested_multiplier": 1.25},
+        )
         with self.session_factory() as db:
             decided = decide_approval(
                 db, approval_id=approval.id, actor_id=self.editor_b.id,
                 decision="approve",
             )
-            from app.services.approvals import ApprovalError, perform_approved
-
-            with self.assertRaises(ApprovalError) as caught:
-                perform_approved(db, approval=decided, actor_id=self.editor_b.id)
-            self.assertEqual(caught.exception.code, "APPROVAL_EXECUTOR_NOT_READY")
+            result = perform_approved(db, approval=decided, actor_id=self.editor_b.id)
+            db.commit()
+            plan = db.get(QmsControlPlan, uuid.UUID(result["plan_id"]))
+            self.assertEqual(plan.tightening_multiplier, 1.25)
+            sources = [row.get("source") for row in (plan.decision_log or [])]
+            self.assertIn("tightening_approval", sources)
 
     def test_retrain_perform_invokes_loop_config_trigger(self):
         from unittest.mock import patch
