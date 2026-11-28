@@ -35,8 +35,8 @@
     {
       "id": 4,
       "statement": "全量 CI 全 job 全绿",
-      "status": "executed_not_green",
-      "reason": "2026-11-27/28 全量 mode=full 已执行四次（run 45970685910 失败于 Security/冻结栈 migrate——GITHUB_ENV 同步骤不可见，已修 ea2b02ab+ad5b9c71 日志兜底；45993859247 失败于 Quality/test_suite_manifest——新测试模块 week_manifest 缺登记，已修 5275924a；46012191800 于 11-27 15:04 快照 5 绿+Security 进行中，终态待确认；另有 2026-11-28 第五次触发随批次修复验证）。Production integration（PostgreSQL 迁移往返）与 Chromium acceptance 已多次绿",
+      "status": "passed",
+      "reason": "run 46012191800 @ 5275924a 六 job 全绿（2026-11-28 确认）——补齐路线代码首次全量六绿，含批次 A/B 修复。此前两次失败已定位修复（ea2b02ab GITHUB_ENV 同步骤不可见 / 5275924a week_manifest 登记）",
       "light_gates": {
         "487bf986": "success",
         "1d7a43c6": "success",
