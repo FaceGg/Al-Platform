@@ -104,10 +104,13 @@ export default function QualityD8Page() {
                 onClick={() => void run(() => advanceD8(projectId!, row.id, {}), zh ? "已推进一步" : "Advanced")}>
                 {zh ? "推进" : "Advance"}
               </Button>
-              <Button size="small" loading={busy}
-                onClick={() => void run(() => advanceD8(projectId!, row.id, { d6_passed: true }), zh ? "D6 已登记通过" : "D6 passed")}>
-                {zh ? "D6 通过" : "D6 pass"}
-              </Button>
+              {/* D6 验证结论只在第 6 步可登记（后端 D8_D6_STEP_MISMATCH 门禁同步） */}
+              {row.current_step === 6 && (
+                <Button size="small" loading={busy}
+                  onClick={() => void run(() => advanceD8(projectId!, row.id, { d6_passed: true }), zh ? "D6 已登记通过" : "D6 passed")}>
+                  {zh ? "D6 通过" : "D6 pass"}
+                </Button>
+              )}
               <Button size="small" onClick={() => { setDraftTarget(row); draftForm.resetFields(); setDraftOpen(true); }}>
                 {zh ? "LLM 起草" : "LLM draft"}
               </Button>

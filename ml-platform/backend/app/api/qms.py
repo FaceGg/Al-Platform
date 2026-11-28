@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
@@ -794,7 +795,7 @@ def tightening_endpoint(
         plan = db.get(QmsControlPlan, plan_id)
         if plan is None:
             raise HTTPException(404, {"code": "QMS_PLAN_NOT_FOUND"})
-        decision = evaluate_tightening(db, plan=plan)
+        decision = evaluate_tightening(db, plan=plan, actor_id=current_user.id)
     db.commit()
     return decision
 
@@ -976,6 +977,54 @@ def list_scars(
                        "cause": r.cause,
                        "closed_at": r.closed_at.isoformat() if r.closed_at else None}
                       for r in rows]}
+
+
+class ScarUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    cause: str | None = Field(default=None, max_length=2000)
+    correction: str | None = Field(default=None, max_length=2000)
+    verification: str | None = Field(default=None, max_length=2000)
+    close: bool = False
+
+
+@router.post("/scars/{scar_id}")
+def update_scar_endpoint(
+    project_id: UUID, scar_id: UUID, payload_in: ScarUpdate, request: Request,
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    """SCAR 整改登记与关闭（三批复审缺口：SCAR 曾只能自动生成、无法处理）。"""
+    access = _manage(db, project_id, current_user)
+    with audit_service(db).project_action(
+        db, request=request, actor=current_user, access=access,
+        permission="quality.manage",
+        intent=AuditIntent(project_id=project_id, action="qms.scar.update",
+                           resource_type="qms_scar", resource_id=str(scar_id),
+                           changes={"close": payload_in.close}),
+        allowed_changes={"close"},
+    ):
+        scar = db.get(QmsScar, scar_id)
+        if scar is None or str(scar.project_id) != str(project_id):
+            raise HTTPException(404, {"code": "QMS_SCAR_NOT_FOUND"})
+        if payload_in.cause is not None:
+            scar.cause = payload_in.cause
+        if payload_in.correction is not None:
+            scar.correction = payload_in.correction
+        if payload_in.verification is not None:
+            scar.verification = payload_in.verification
+        if payload_in.close:
+            if scar.closed_at is not None:
+                raise HTTPException(409, {"code": "QMS_SCAR_ALREADY_CLOSED"})
+            if not (scar.correction and scar.verification):
+                raise HTTPException(409, {
+                    "code": "QMS_SCAR_CLOSE_INCOMPLETE",
+                    "message": "关闭前须登记纠正措施（correction）与验证（verification）",
+                })
+            scar.closed_at = func.now()
+        db.flush()
+    db.commit()
+    return {"id": str(scar.id), "cause": scar.cause,
+            "correction": scar.correction, "verification": scar.verification,
+            "closed_at": scar.closed_at.isoformat() if scar.closed_at else None}
 
 
 @router.post("/suppliers")

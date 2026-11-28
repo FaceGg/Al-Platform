@@ -297,6 +297,18 @@ def create_alert(
     )
     db.add(alert)
     db.flush()
+    # 追溯链写入（B3-09；三批复审：QmsTraceLink 曾无生产写入方，追溯恒空）——
+    # 新预警携样本键/批次时登记 预警↔样本↔批次 链；演示预警不进追溯（§6-9）。
+    if not is_demo and (sample_key or batch_no):
+        from app.models.qms import QmsTraceLink
+
+        db.add(QmsTraceLink(
+            project_id=project_id,
+            sample_key=sample_key or f"alert-{alert.id}",
+            batch_no=batch_no,
+            alert_id=alert.id,
+        ))
+        db.flush()
     append_event(db, alert, "created", actor_id=actor_id, created_at=now)
     return alert, True
 

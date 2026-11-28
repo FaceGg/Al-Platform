@@ -147,6 +147,13 @@ def create_split(
 ) -> DatasetSplit:
     """创建划分（成员持久化、指纹计算）；E04：创建后不可变（无更新路径）。"""
     params = dict(params or {})
+    # E15 样本用途标记（三批复审：sample_usage 曾完全未实现）：development 段
+    # 供训练、blind 段供发布终验/不回退——登记进划分 params（与划分不可变
+    # 语义一致；显式传入覆盖缺省）。
+    params.setdefault("sample_usage", {
+        "development": "training",
+        "blind": "release_validation",
+    })
     roles = assign_roles(
         frame, strategy=strategy, params=params,
         target_column=params.get("target_column"),

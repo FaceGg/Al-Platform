@@ -210,7 +210,8 @@ def archive_control_plan(db: Session, *, plan_id, actor_id=None) -> QmsControlPl
     return plan
 
 
-def evaluate_tightening(db: Session, *, plan: QmsControlPlan) -> dict:
+def evaluate_tightening(db: Session, *, plan: QmsControlPlan,
+                        actor_id=None) -> dict:
     """四因子评估抽样加严：漂移/预警/过程能力/复发 → 建议乘数 + 决策流水
     （可复算）；建议乘数经 recipe_change 审批类型进 S1 审批队列。"""
     from app.models.drift import DriftReport
@@ -250,6 +251,33 @@ def evaluate_tightening(db: Session, *, plan: QmsControlPlan) -> dict:
         "suggested_multiplier": round(min(suggested, 3.0), 2),
         "note": "乘数变更须经审批（recipe_change 进 S1 审批队列）",
     }
+    # 建议乘数 > 1.0 → 建 recipe_change 审批单（B3-06/D8；三批复审：曾只返回
+    # 建议值，乘数永不生效）。同计划已有待批单则不重复建（幂等）。
+    if decision["suggested_multiplier"] > 1.0:
+        from app.models.approvals import ApprovalRequest
+
+        pending_same_plan = [
+            row for row in db.query(ApprovalRequest).filter(
+                ApprovalRequest.type == "recipe_change",
+                ApprovalRequest.status == "pending",
+            ).all()
+            if (row.payload or {}).get("plan_id") == str(plan.id)
+        ]
+        if not pending_same_plan:
+            from app.services.approvals import create_approval
+
+            approval = create_approval(
+                db, project_id=plan.project_id, approval_type="recipe_change",
+                title=(f"控制计划加严：{plan.code} v{plan.version}"
+                       f" 建议乘数 {decision['suggested_multiplier']}"),
+                payload={
+                    "plan_id": str(plan.id),
+                    "suggested_multiplier": decision["suggested_multiplier"],
+                    "factors": factors,
+                },
+                initiator_id=actor_id,
+            )
+            decision["approval_id"] = str(approval.id)
     log = list(plan.decision_log or [])
     log.append(decision)
     plan.decision_log = log
@@ -290,37 +318,72 @@ def plan_version_diff(db: Session, *, plan_id) -> dict:
 
 # ---------------- MSA（B3-01；均值极差法，标注待专家评审） ----------------
 
-def compute_grr(data: dict) -> dict:
-    """均值极差法 %GRR/ndc/分级（AIAG 通行口径；专家评审标注）。
+# d2 常数表（AIAG MSA 手册，子组容量 2–15）。三批复审：原实现 EV/AV/PV 恒除
+# 1.128（仅对 2 次重复成立）且 AV 缺 −EV²/(n·r) 项——按本表随子组容量取值。
+_D2_TABLE = {
+    2: 1.128, 3: 1.693, 4: 2.059, 5: 2.326, 6: 2.534, 7: 2.704, 8: 2.847,
+    9: 2.970, 10: 3.078, 11: 3.173, 12: 3.256, 13: 3.332, 14: 3.402, 15: 3.466,
+}
 
-    data = {"parts": n, "operators": k, "trials": r,
-            "readings": [[操作者][零件][重复] 数值], "tolerance": TV}
+
+def _d2(subgroup: int) -> float:
+    value = _D2_TABLE.get(int(subgroup))
+    if value is None:
+        raise QmsToolsError("MSA_SHAPE_OUT_OF_TABLE")
+    return value
+
+
+def compute_grr(data: dict) -> dict:
+    """均值极差法 %GRR/ndc/分级（AIAG MSA 手册通行口径；专家评审标注）。
+
+    data = {"readings": [[操作者][零件][重复] 数值], "tolerance": TV（可缺省）}
+
+    - EV（重复性）= R̄ / d2(重复次数)
+    - AV（再现性）= sqrt((X̄diff / d2(操作者))² − EV²/(零件×重复))，根号内非负截 0
+    - PV（零件间）= Rp / d2(零件数)；零件数 > 15 超出 d2 表 → 改用零件均值样本
+      标准差（σp）近似并在 detail 标注
+    - TV 缺省 = sqrt(GRR² + PV²)（总变异，非原实现的 PV 或 1.0）
+    - %GRR = GRR/TV×100；ndc = 1.41×PV/GRR
     """
     readings = data.get("readings") or []
     tolerance = float(data.get("tolerance") or 0.0)
     if not readings:
         raise QmsToolsError("MSA_DATA_REQUIRED")
+    operators = len(readings)
+    parts = len(readings[0]) if readings else 0
+    trials = len(readings[0][0]) if readings and readings[0] else 0
+    if parts < 1 or trials < 1 or trials > 15 or operators > 15:
+        raise QmsToolsError("MSA_SHAPE_OUT_OF_TABLE")
+    detail_extra: dict = {}
     ev_ranges = []
-    part_means = []
-    operator_means = []
+    part_means = []  # part_means[操作者][零件] = 该格均值
     for operator_series in readings:
-        operator_part_means = []
+        op_part_means = []
         for part_series in operator_series:
             values = [float(v) for v in part_series]
             ev_ranges.append(max(values) - min(values))
-            operator_part_means.append(sum(values) / len(values))
-        operator_means.append(sum(operator_part_means) / len(operator_part_means))
-        part_means.append(operator_part_means)
-    parts = len(readings[0])
-    reps = len(readings[0][0]) if readings[0] else 1
-    ev = (sum(r * r for r in ev_ranges) / len(ev_ranges)) ** 0.5 / 1.128 if ev_ranges else 0.0
-    range_of_means = max(operator_means) - min(operator_means) if operator_means else 0.0
-    av = range_of_means / 1.128 if reps else 0.0
+            op_part_means.append(sum(values) / len(values))
+        part_means.append(op_part_means)
+    r_bar = sum(ev_ranges) / len(ev_ranges)
+    ev = r_bar / _d2(trials)
+    operator_means = [sum(pm) / parts for pm in part_means]
+    x_diff = max(operator_means) - min(operator_means)
+    av = 0.0
+    if operators >= 2:
+        inner = (x_diff / _d2(operators)) ** 2 - (ev * ev) / (parts * trials)
+        av = inner ** 0.5 if inner > 0 else 0.0
     grr = (ev * ev + av * av) ** 0.5
-    grand = [sum(part_means[o][p] for o in range(len(readings))) / len(readings)
+    grand = [sum(part_means[o][p] for o in range(operators)) / operators
              for p in range(parts)]
-    pv = (max(grand) - min(grand)) / 1.128 if parts else 0.0
-    tv = tolerance if tolerance > 0 else (pv if pv > 0 else 1.0)
+    rp = max(grand) - min(grand)
+    if parts <= 15:
+        pv = rp / _d2(parts)
+    else:
+        # 零件数超 d2 表：零件均值样本标准差近似 σp（detail 标注，待专家评审）
+        mean_of_grand = sum(grand) / parts
+        pv = (sum((value - mean_of_grand) ** 2 for value in grand) / (parts - 1)) ** 0.5
+        detail_extra["pv_method"] = "part_mean_sample_std"
+    tv = tolerance if tolerance > 0 else ((grr * grr + pv * pv) ** 0.5)
     grr_percent = round(grr / tv * 100.0, 2) if tv else None
     ndc = int(1.41 * pv / grr) if grr > 0 else None
     if grr_percent is None:
@@ -334,8 +397,11 @@ def compute_grr(data: dict) -> dict:
     return {
         "ev": round(ev, 6), "av": round(av, 6), "grr": round(grr, 6),
         "pv": round(pv, 6), "tv": round(tv, 6),
+        "r_bar": round(r_bar, 6),
+        "operators": operators, "parts": parts, "trials": trials,
+        **detail_extra,
         "grr_percent": grr_percent, "ndc": ndc, "grade": grade,
-        "footnote": "均值极差法（AIAG 通行口径）；待质量专家评审",
+        "footnote": "均值极差法（AIAG MSA 手册，d2 随子组容量取值）；待质量专家评审",
     }
 
 

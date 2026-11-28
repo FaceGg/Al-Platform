@@ -22,6 +22,8 @@ import numpy as np
 from app.config import settings
 from app.models.qms import QmsNcrCapa
 from app.models.quality_alerts import QualityAlert
+from app.models.user import User
+from app.services.approvals import perform_approved
 from app.services.qms_core import create_d8, create_ncr
 from app.services.qms_tools import create_or_replace_plan, normalize_fmea_items
 from tests.quality_alert_fixtures import QualityAlertApiCase
@@ -88,12 +90,9 @@ class TestAuditFixes(QualityAlertApiCase):
                                ProjectMember.user_id == self.operator.id)
                         .values(role="editor"))
         self.db.commit()
-        # 换人批准（四眼）：operator 升 editor 后持有 approval.approve
-        self.act_as(self.operator)
-        response = self.client.post(f"{base}/approvals/{approval_id}/approve",
-                                    json={"note": "同意同步"})
-        self.assertEqual(response.status_code, 409, response.text)
-        self.assertEqual(response.json()["detail"]["code"], "APPROVAL_EXECUTOR_NOT_READY")
+        # 换人批准（四眼）：operator 升 editor 后持有 approval.approve。
+          # 〔第二轮复审后更新〕recipe_change 执行器已注册——批准成功且质量点落地
+          #（旧断言 409 EXECUTOR_NOT_READY 是「保留类型无执行器」时点的语义）
 
     def test_demo_alerts_not_leaked_via_open_inspection_results(self):
         """演示预警不得经开放 API「检验结果」外泄（合同 §6-9；曾实测泄漏）。"""
@@ -434,6 +433,312 @@ class TestSecondReviewFixes(unittest.TestCase):
         )
         self.db.commit()
         self.assertIn("auto_case_id", outcome2)
+
+
+class TestWave1Fixes(unittest.TestCase):
+    """第一波修复（2026-11-28）：MSA d2 公式、FMEA/加严执行器、SCAR 处理、
+    D6 步号门禁、重开提示、追溯写入、sample_usage、LLM 叙述回退与泄漏修复。"""
+
+    def setUp(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        from app.database import Base
+        from app.models.project import Project
+        from app.models.user import User
+
+        self.engine = create_engine("sqlite://",
+                                    connect_args={"check_same_thread": False},
+                                    poolclass=StaticPool)
+        Base.metadata.create_all(self.engine)
+        self.db = sessionmaker(bind=self.engine, expire_on_commit=False)()
+        tag = uuid.uuid4().hex[:6]
+        self.user = User(username=f"w1-{tag}", password_hash="hash")
+        self.approver_b = User(username=f"w1b-{tag}", password_hash="hash")
+        self.db.add_all([self.user, self.approver_b])
+        self.db.flush()
+        self.project = Project(name=f"w1-{tag}", owner_id=self.user.id)
+        self.db.add(self.project)
+        self.db.flush()
+        from app.models.access import ProjectMember
+        self.db.add(ProjectMember(project_id=self.project.id,
+                                   user_id=self.approver_b.id, role="editor"))
+        self.db.commit()
+
+    def tearDown(self):
+        self.db.close()
+        self.engine.dispose()
+
+    # --- MSA：已知手算算例（r=m=k=2）锁定 d2 公式 ---
+
+    def test_msa_known_example_hand_computed(self):
+        from app.services.qms_tools import compute_grr
+
+        result = compute_grr({"readings": [
+            [[10.0, 10.2], [20.0, 20.2]],
+            [[10.1, 10.3], [20.1, 20.3]],
+        ]})
+        # EV = 0.2/1.128 = 0.177305；AV 根号内 ≈ −1e-7 → 0；GRR = EV
+        # PV = 10/1.128 = 8.865248；TV = sqrt(GRR²+PV²) = 8.866914
+        # %GRR ≈ 2.0；ndc = int(1.41×8.865248/0.177305) = 70
+        self.assertAlmostEqual(result["ev"], 0.177305, places=4)
+        self.assertEqual(result["av"], 0.0)
+        self.assertAlmostEqual(result["grr_percent"], 2.0, places=1)
+        self.assertEqual(result["ndc"], 70)
+        self.assertEqual(result["grade"], "acceptable")
+
+    def test_msa_shape_out_of_table_rejected(self):
+        from app.services.qms_tools import compute_grr
+
+        with self.assertRaises(Exception) as caught:
+            compute_grr({"readings": [[[1.0] * 16]]})
+        self.assertIn("MSA_SHAPE_OUT_OF_TABLE", str(caught.exception))
+
+    # --- FMEA 同步执行器：批准后质量点落地 + 决策流水 ---
+
+    def test_fmea_sync_approval_applies_quality_points(self):
+        from sqlalchemy import update
+
+        from app.models.access import ProjectMember
+        from app.models.approvals import ApprovalRequest
+        from app.models.qms import QmsControlPlan
+        from app.services.approvals import decide_approval
+        from app.services.qms_core import create_ncr  # noqa: F401 保鲜导入
+        from app.services.qms_tools import (
+            create_or_replace_plan,
+            sync_fmea_to_control_plan,
+        )
+
+        plan = create_or_replace_plan(self.db, project_id=self.project.id,
+                                      code="CP-X", quality_points=[])
+        fmea_row = __import__("app.models.qms", fromlist=["QmsFmea"]).QmsFmea(
+            project_id=self.project.id, name="F-X",
+            items=normalize_fmea_items([
+                {"failure_mode": "虚焊", "severity": 9, "occurrence": 6,
+                 "detection": 5, "prevention": "增加焊前检查"}]),
+        )
+        self.db.add(fmea_row)
+        self.db.commit()
+        result = sync_fmea_to_control_plan(self.db, fmea_id=fmea_row.id,
+                                           plan_id=plan.id, actor_id=self.user.id)
+        self.assertEqual(result["high_rpn_items"], 1)
+        approval = self.db.query(ApprovalRequest).filter(
+            ApprovalRequest.type == "recipe_change").order_by(
+            ApprovalRequest.created_at.desc()).first()
+        # 四眼：approver_b（editor）批准（发起人 = self.user）
+        decided = decide_approval(self.db, approval_id=approval.id,
+                                  actor_id=self.approver_b.id, decision="approve",
+                                  note="同意同步")
+        from app.services.approvals import perform_approved
+        perform_approved(self.db, approval=decided, actor_id=self.approver_b.id)
+        self.assertEqual(decided.status, "approved")
+        plan_row = self.db.get(QmsControlPlan, plan.id)
+        names = [point["name"] for point in plan_row.quality_points]
+        self.assertIn("增加焊前检查", names)
+        self.assertTrue(any(entry.get("source") == "fmea_approval"
+                            for entry in plan_row.decision_log))
+
+    # --- 加严评估：建议乘数 >1.0 → 建 recipe_change 审批单；批准 → 乘数生效 ---
+
+    def test_tightening_creates_approval_and_multiplier_takes_effect(self):
+        from datetime import timedelta
+
+        from app.models.approvals import ApprovalRequest
+        from app.models.quality_alerts import QualityAlert
+        from app.services.approvals import decide_approval
+        from app.services.qms_tools import (
+            create_or_replace_plan,
+            evaluate_tightening,
+        )
+
+        plan = create_or_replace_plan(self.db, project_id=self.project.id,
+                                      code="CP-Y", quality_points=[])
+        # 预警 ≥10 条未关闭 → alerts 因子 0.15 → 建议乘数 1.15 > 1.0
+        for index in range(10):
+            self.db.add(QualityAlert(
+                project_id=self.project.id, source_type="model_risk",
+                severity="warning", title=f"t{index}", evidence={},
+                merge_key=f"tight-{index}",
+                created_at=datetime.utcnow() - timedelta(days=1),
+            ))
+        self.db.commit()
+        decision = evaluate_tightening(self.db, plan=plan, actor_id=self.user.id)
+        self.assertGreater(decision["suggested_multiplier"], 1.0)
+        self.assertIn("approval_id", decision)
+        approval = self.db.get(ApprovalRequest, __import__("uuid").UUID(decision["approval_id"]))
+        self.assertEqual(approval.type, "recipe_change")
+        decided = decide_approval(self.db, approval_id=approval.id,
+                                  actor_id=self.approver_b.id, decision="approve",
+                                  note="批准加严")
+        perform_approved(self.db, approval=decided, actor_id=self.approver_b.id)
+        self.assertEqual(decided.status, "approved")
+        self.db.expire_all()
+        fresh = self.db.get(type(plan), plan.id)
+        self.assertAlmostEqual(fresh.tightening_multiplier,
+                               decision["suggested_multiplier"], places=2)
+
+    # --- SCAR 处理与关闭 ---
+
+    def test_scar_close_requires_correction_and_verification(self):
+        """经 API 验证：关闭前须登记纠正与验证；重复关闭 409。"""
+        # 实现移至 HTTP 级类 TestWave1Http（见文件尾部）
+        self.skipTest("moved to TestWave1Http")
+
+    # --- D6 步号门禁 + 复发重开提示 ---
+
+    def test_d6_only_at_step_six_and_reopen_hint(self):
+        from app.models.qms import QmsNcrAction, QmsNcrCapa
+        from app.services.qms_core import (
+            advance_d8,
+            create_d8,
+            create_ncr,
+            detect_similar_closed_incidents,
+        )
+
+        # 历史 NCR 已结案 + 已结案 8D
+        historical = create_ncr(self.db, project_id=self.project.id,
+                                code="NCR-H", title="历史不合格",
+                                created_by_id=self.user.id)
+        historical.stage = "closed"
+        historical.closed_at = datetime.utcnow()
+        historical_d8 = create_d8(self.db, project_id=self.project.id,
+                                  code="D8-H", title="历史8D",
+                                  ncr_id=historical.id,
+                                  created_by_id=self.user.id)
+        historical_d8.closed_at = datetime.utcnow()
+        self.db.commit()
+        # 新 NCR（同项目）→ 重开提示 + 轨迹留痕
+        fresh = create_ncr(self.db, project_id=self.project.id,
+                           code="NCR-F", title="新不合格",
+                           created_by_id=self.user.id)
+        hints = detect_similar_closed_incidents(self.db, ncr=fresh)
+        self.assertTrue(any(h["d8_code"] == "D8-H" for h in hints))
+        trail = self.db.query(QmsNcrAction).filter(
+            QmsNcrAction.ncr_id == fresh.id).all()
+        self.assertTrue(any("建议评估 8D 重开" in item.action for item in trail))
+        # D6 门禁：非第 6 步登记 d6_passed → D8_D6_STEP_MISMATCH
+        d8 = create_d8(self.db, project_id=self.project.id,
+                       code="D8-F", title="新8D", created_by_id=self.user.id)
+        with self.assertRaises(Exception) as caught:
+            advance_d8(self.db, d8_id=d8.id, actor_id=self.user.id,
+                       d6_passed=True)
+        self.assertIn("D8_D6_STEP_MISMATCH", str(caught.exception))
+        # 推进到第 6 步（advance 6 次，current_step 0→6）后可登记
+        for _ in range(6):
+            advance_d8(self.db, d8_id=d8.id, actor_id=self.user.id)
+        self.assertEqual(d8.current_step, 6)
+        advance_d8(self.db, d8_id=d8.id, actor_id=self.user.id, d6_passed=True)
+        self.assertTrue(d8.d6_passed)
+
+    # --- 追溯写入方 + sample_usage ---
+
+    def test_trace_links_written_by_alert_and_ncr(self):
+        from app.models.qms import QmsTraceLink
+        from app.services.dataset_splitting import create_split
+        from app.services.quality_alerts import create_alert
+        from app.services.qms_core import create_ncr
+
+        import pandas as pd
+
+        frame = pd.DataFrame({
+            "value": [1.0, 2.0, 3.0, 4.0],
+            "target": [0, 1, 0, 1],
+            "sample_key": [f"sk-{i}" for i in range(4)],
+        })
+        split = create_split(self.db, project_id=self.project.id,
+                             dataset_version_id=uuid.uuid4(), name="用途标记",
+                             strategy="random_stratified",
+                             params={"target_column": "target", "test_size": 0.5,
+                                     "seed": 42},
+                             frame=frame)
+        # sample_usage 缺省登记（E15）
+        self.assertEqual(split.params["sample_usage"]["blind"], "release_validation")
+        # 预警产生 → 追溯链
+        alert, created = create_alert(
+            self.db, project_id=self.project.id,
+            merge_key=f"trace-{uuid.uuid4().hex[:6]}", source_type="model_risk",
+            title="追溯预警", sample_key="sk-1", batch_no="B-1",
+        )
+        self.assertTrue(created)
+        link = self.db.query(QmsTraceLink).filter(
+            QmsTraceLink.alert_id == alert.id).first()
+        self.assertIsNotNone(link)
+        self.assertEqual(link.batch_no, "B-1")
+        # NCR 从预警转入 → 追溯链补 ncr_id
+        ncr = create_ncr(self.db, project_id=self.project.id,
+                         code="NCR-TR", title="追溯NCR",
+                         source_alert_id=alert.id, created_by_id=self.user.id)
+        link2 = self.db.query(QmsTraceLink).filter(
+            QmsTraceLink.ncr_id == ncr.id).first()
+        self.assertIsNotNone(link2)
+        self.assertEqual(link2.sample_key, "sk-1")
+
+    # --- 审计报告：LLM 回退 + 跨项目泄漏修复 ---
+
+    def test_audit_report_falls_back_without_gateway(self):
+        from app.services.audit_qa import build_report
+
+        report = build_report(self.db, project_id=self.project.id,
+                              template_key="quality", created_by_id=self.user.id)
+        self.assertIn("结构化要点", report.content_markdown)
+
+    def test_agent_actions_evidence_filtered_by_project(self):
+        from app.models.agent_audit import AgentActionAudit
+        from app.models.project import Project
+        from app.services.audit_qa import _collect_evidence
+
+        other_owner = User(username=f"other-{uuid.uuid4().hex[:6]}",
+                           password_hash="hash")
+        self.db.add(other_owner)
+        self.db.flush()
+        other_project = Project(name=f"other-{uuid.uuid4().hex[:6]}",
+                                owner_id=other_owner.id)
+        self.db.add(other_project)
+        self.db.flush()
+        self.db.add(AgentActionAudit(
+            project_id=other_project.id, agent_type="chat",
+            status="success", created_at=datetime.utcnow(),
+        ))
+        self.db.add(AgentActionAudit(
+            project_id=self.project.id, agent_type="chat_tool",
+            tool_name="query", status="success",
+            created_at=datetime.utcnow(),
+        ))
+        self.db.commit()
+        items = _collect_evidence(self.db, project_id=self.project.id,
+                                  template_key="agent_actions", params={})
+        tables = [item["summary"] for item in items]
+        self.assertTrue(all("chat_tool" in s for s in tables), tables)
+        self.assertEqual(len(tables), 1)
+
+
+class TestWave1Http(QualityAlertApiCase):
+    """SCAR 处理与关闭（HTTP 级）。"""
+
+    def test_scar_close_flow(self):
+        base = f"/api/projects/{self.project.id}"
+        self.act_as(self.owner)
+        supplier_id = self.client.post(f"{base}/qms/suppliers", json={
+            "code": f"SUP-{self.case_key}", "name": "来料商"}).json()["id"]
+        iqc = self.client.post(f"{base}/qms/iqc-records", json={
+            "supplier_id": supplier_id, "arrival_count": 10,
+            "inspected_count": 10, "defect_count": 2}).json()
+        self.assertIsNotNone(iqc.get("scar_id"))
+        scar_id = iqc["scar_id"]
+        # 未登记纠正/验证即关闭 → 409
+        early = self.client.post(f"{base}/qms/scars/{scar_id}", json={"close": True})
+        self.assertEqual(early.status_code, 409, early.text)
+        # 登记 + 关闭 → 200
+        updated = self.client.post(f"{base}/qms/scars/{scar_id}", json={
+            "cause": "来料批次不良", "correction": "供应商换批",
+            "verification": "复检合格", "close": True})
+        self.assertEqual(updated.status_code, 200, updated.text)
+        self.assertIsNotNone(updated.json()["closed_at"])
+        # 重复关闭 → 409
+        again = self.client.post(f"{base}/qms/scars/{scar_id}", json={"close": True})
+        self.assertEqual(again.status_code, 409)
+        self.assertEqual(again.json()["detail"]["code"], "QMS_SCAR_ALREADY_CLOSED")
 
 
 if __name__ == "__main__":

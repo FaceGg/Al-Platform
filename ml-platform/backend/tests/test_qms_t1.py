@@ -170,9 +170,17 @@ class TestD8(T1Case):
         with self.assertRaises(QmsError) as caught:
             close_d8(self.db, d8_id=d8.id, actor_id=self.user.id)
         self.assertEqual(caught.exception.code, "D6_GATE_NOT_PASSED")
-        # D6 通过后可结案：重走 D6 登记步（步序回到 8 → 推进到 9 → 关闭）
+        # D6 验证结论只在第 6 步可登记（三批复审：曾可在任意步登记——
+        # 测试自身在第 8 步登记仍通过，属假绿；新门禁 D8_D6_STEP_MISMATCH）
         d8.current_step = 8
+        with self.assertRaises(QmsError) as caught:
+            advance_d8(self.db, d8_id=d8.id, actor_id=self.user.id, d6_passed=True)
+        self.assertEqual(caught.exception.code, "D8_D6_STEP_MISMATCH")
+        # 回到第 6 步登记 D6 通过 → 走完 7/8 步 → 结案
+        d8.current_step = 6
         advance_d8(self.db, d8_id=d8.id, actor_id=self.user.id, d6_passed=True)
+        d8.current_step = 8
+        advance_d8(self.db, d8_id=d8.id, actor_id=self.user.id)
         close_d8(self.db, d8_id=d8.id, actor_id=self.user.id)
         self.assertIsNotNone(d8.closed_at)
 

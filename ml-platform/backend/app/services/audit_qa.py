@@ -125,7 +125,9 @@ def build_report(
     evidence = _citation_renumber(_collect_evidence(
         db, project_id=project_id, template_key=template_key, params=params,
     ))
-    narrative = _narrative(template_key=template_key, evidence=evidence)
+    narrative = _narrative(
+        db, project_id=project_id, template_key=template_key, evidence=evidence,
+    )
     content = _render_markdown(template_key, evidence, narrative)
     citation_errors = validate_citations(content, evidence)
     report = AuditReport(
@@ -143,6 +145,7 @@ def build_report(
 def _collect_evidence(db: Session, *, project_id, template_key: str, params: dict) -> list[dict]:
     """按模板聚合证据行（引用清单：表名+记录 id+摘要）。"""
     from app.models.agent_audit import AgentActionAudit
+    from app.models.approvals import ApprovalRequest
     from app.models.quality_alerts import QualityAlert
     from app.models.release_governance import ReleaseCheck
 
@@ -161,16 +164,33 @@ def _collect_evidence(db: Session, *, project_id, template_key: str, params: dic
                 "summary": f"[{alert.severity}] {alert.title}（{alert.status}）",
             })
     if template_key in {"agent_actions"}:
-        rows = db.query(AgentActionAudit).order_by(
-            AgentActionAudit.created_at.desc()
-        ).limit(10).all()
+        # 按项目过滤（三批复审：曾全表查询把他项目动作写进本项目报告）
+        rows = (
+            db.query(AgentActionAudit)
+            .filter(AgentActionAudit.project_id == project_id)
+            .order_by(AgentActionAudit.created_at.desc())
+            .limit(10)
+            .all()
+        )
         for row in rows:
             items.append({
                 "table": "agent_action_audits", "record_id": str(row.id),
                 "summary": f"{row.agent_type}/{row.tool_name} {row.status} {row.duration_ms}ms",
             })
     if template_key in {"model"}:
-        checks = db.query(ReleaseCheck).limit(10).all()
+        # 按项目过滤（ModelLibrary 无 project_id，经本项目的 model_release
+        # 审批单关联——与 S1 存量投影口径一致）
+        checks = (
+            db.query(ReleaseCheck)
+            .filter(ReleaseCheck.approval_id.in_(
+                db.query(ApprovalRequest.id).filter(
+                    ApprovalRequest.project_id == project_id,
+                    ApprovalRequest.type == "model_release",
+                )
+            ))
+            .limit(10)
+            .all()
+        )
         for check in checks:
             items.append({
                 "table": "release_checks", "record_id": str(check.id),
@@ -199,10 +219,37 @@ def _collect_evidence(db: Session, *, project_id, template_key: str, params: dic
     return items
 
 
-def _narrative(template_key: str, evidence: list[dict]) -> str:
-    """叙述生成：LLM 经网关（自动入 B2-08 动作审计）；不可用回退纯数据版。
-    网关调用需要 session——由 API 层以 db 调用本函数的包装完成；此处纯回退。"""
-    return "（叙述生成回退：LLM 叙述由 API 层追加，以下为结构化要点）"
+def _narrative(db: Session, *, project_id, template_key: str, evidence: list[dict]) -> str:
+    """叙述生成（三批复审补实现——曾恒返回回退文案，「LLM 叙述 not_run」实为
+    未实现）：LLM 经网关（自动入 B2-08 动作审计，purpose=audit_report）；
+    不可用回退纯数据版。"""
+    summary_lines = [
+        f"- [{item.get('table')}] {item.get('summary')}"
+        for item in evidence[:10]
+    ]
+    fallback = (
+        f"（LLM 叙述不可用，以下为结构化要点）模板 {template_key} 共 "
+        f"{len(evidence)} 条证据：\n" + "\n".join(summary_lines)
+    )
+    try:
+        from app.services.llm_gateway import chat_completion, resolve_profile
+
+        config = resolve_profile(db, purpose="audit_report")
+        prompt = (
+            f"你是质量审计助手。基于以下结构化证据，为「{template_key}」审计报告"
+            f"写 3–5 句中文概述（先结论后依据；引用证据时使用 [E编号] 格式；"
+            f"不要编造证据清单之外的数字）：\n" + "\n".join(summary_lines)
+        )
+        reply, _usage, _reasoning = chat_completion(
+            db, config=config,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2, max_tokens=400, purpose="audit_report",
+        )
+        if reply and reply.strip():
+            return reply.strip()
+    except Exception:  # noqa: BLE001 - 网关不可用回退结构化要点
+        pass
+    return fallback
 
 
 def _render_markdown(template_key: str, evidence: list, narrative: str) -> str:

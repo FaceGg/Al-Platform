@@ -352,15 +352,115 @@ def _datetime_now():
     return datetime.utcnow()
 
 
+class RecipeChangeExecutor:
+    """工艺配方变更（B3-10/D10，第三批 FMEA 同步）：批准 → 高 RPN 项写入
+    控制计划质量点并记决策流水。
+
+    payload（来自 services/qms_tools.sync_fmea_to_control_plan）：
+    {fmea_id, plan_id, items: [{failure_mode, rpn, prevention}]}。
+    三批复审：该类型曾是保留类型——审批批准后 APPROVAL_EXECUTOR_NOT_READY，
+    「同步到控制计划」从未落地（6492de79 报告；本执行器补实现）。
+    """
+
+    def fingerprint(self, db: Session, payload: dict) -> str:
+        from app.services.approvals import fingerprint_payload
+
+        return fingerprint_payload({
+            "plan_id": payload.get("plan_id"),
+            "fmea_id": payload.get("fmea_id"),
+            "items": payload.get("items") or [],
+        })
+
+    def validate_create(self, db: Session, payload: dict) -> None:
+        import uuid as _uuid
+
+        from app.models.qms import QmsControlPlan
+        from app.services.approvals import ApprovalError
+
+        plan_id = payload.get("plan_id")
+        plan = db.get(QmsControlPlan, _uuid.UUID(str(plan_id))) if plan_id else None
+        if plan is None:
+            raise ApprovalError("QMS_SYNC_TARGET_NOT_FOUND")
+        if plan.status != "active":
+            raise ApprovalError("QMS_SYNC_TARGET_ARCHIVED")
+        # 两种变更形态：FMEA 质量点同步（items）或 加严乘数（suggested_multiplier）
+        if payload.get("suggested_multiplier") is not None:
+            return
+        if not (payload.get("items") or []):
+            raise ApprovalError("QMS_SYNC_ITEMS_EMPTY")
+
+    def on_reject(self, db: Session, *, approval: ApprovalRequest, note: str) -> None:
+        return None
+
+    def perform(self, db: Session, *, approval: ApprovalRequest, actor_id) -> dict:
+        """批准：FMEA 形态 → 高 RPN 项并入质量点；加严形态 → 乘数生效。
+        两种形态均记决策流水。"""
+        import uuid as _uuid
+
+        from app.models.qms import QmsControlPlan
+
+        payload = approval.payload or {}
+        plan = db.get(QmsControlPlan, _uuid.UUID(str(payload["plan_id"])))
+        decision_log = list(plan.decision_log or [])
+
+        if payload.get("suggested_multiplier") is not None:
+            # 加严形态：建议乘数生效（B3-06/D8——乘数曾永不生效，6492de79 报告）
+            multiplier = float(payload["suggested_multiplier"])
+            plan.tightening_multiplier = round(multiplier, 2)
+            decision_log.append({
+                "at": _datetime_now().isoformat(),
+                "source": "tightening_approval",
+                "approval_id": str(approval.id),
+                "multiplier": plan.tightening_multiplier,
+                "factors": payload.get("factors") or {},
+            })
+            db.flush()
+            return {"plan_id": str(plan.id), "multiplier": plan.tightening_multiplier}
+
+        points = list(plan.quality_points or [])
+        existing = {str(point.get("name") or "") for point in points}
+        added = updated = 0
+        for item in payload.get("items") or []:
+            name = str(item.get("prevention") or item.get("failure_mode") or "").strip()
+            if not name:
+                continue
+            point = {
+                "name": name[:64],
+                "sample": None,
+                "from_fmea": item.get("failure_mode"),
+                "rpn": item.get("rpn"),
+            }
+            if name[:64] in existing:
+                for point_row in points:
+                    if str(point_row.get("name") or "") == name[:64]:
+                        point_row.update(point)
+                updated += 1
+            else:
+                points.append(point)
+                existing.add(name[:64])
+                added += 1
+        plan.quality_points = points
+        decision_log.append({
+            "at": _datetime_now().isoformat(),
+            "source": "fmea_approval",
+            "approval_id": str(approval.id),
+            "added": added, "updated": updated,
+        })
+        plan.decision_log = decision_log
+        db.flush()
+        return {"plan_id": str(plan.id), "added": added, "updated": updated}
+
+
 # 类型 → 执行器实例（新类型在此注册一项）
 _EXECUTORS = {
     "retrain_proposal": RetrainProposalExecutor(),
     "disposition": DispositionExecutor(),
     "model_release": ModelReleaseExecutor(),
     "exemption": ExemptionExecutor(),
+    "recipe_change": RecipeChangeExecutor(),
 }
 
-_RESERVED_TYPES = ("recipe_change",)
+_RESERVED_TYPES = tuple()
 
 
 def get_executor(approval_type: str):

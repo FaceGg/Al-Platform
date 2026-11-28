@@ -48,6 +48,42 @@ def _now() -> datetime:
 
 # ---------------- NCR / CAPA（B3-04） ----------------
 
+def detect_similar_closed_incidents(db: Session, *, ncr: QmsNcrCapa,
+                                    window_days: int = 90) -> list:
+    """D3 复发重开提示（三批复审：曾无实现）：同项目、同场景+同工位（绑定
+    缺失时同项目）、90 天内结案的历史 NCR——若其链接了已结案的 8D，提示
+    「建议评估重开」。轨迹留痕由 create_ncr 调用方写入。"""
+    closed = (
+        db.query(QmsNcrCapa)
+        .filter(
+            QmsNcrCapa.project_id == ncr.project_id,
+            QmsNcrCapa.stage == "closed",
+            QmsNcrCapa.id != ncr.id,
+            QmsNcrCapa.closed_at >= _now() - timedelta(days=window_days),
+        )
+        .all()
+    )
+    hints = []
+    for historical in closed:
+        if ncr.scene_id is not None and historical.scene_id is not None \
+                and historical.scene_id != ncr.scene_id:
+            continue
+        if ncr.station_id is not None and historical.station_id is not None \
+                and historical.station_id != ncr.station_id:
+            continue
+        d8 = (
+            db.query(QmsD8Report)
+            .filter(QmsD8Report.ncr_id == historical.id,
+                    QmsD8Report.closed_at.isnot(None))
+            .first()
+        )
+        if d8 is not None:
+            hints.append({"ncr_code": historical.code, "d8_code": d8.code,
+                          "d8_id": str(d8.id), "closed_at":
+                              historical.closed_at.isoformat() if historical.closed_at else None})
+    return hints
+
+
 def create_ncr(db: Session, *, project_id, code: str, title: str,
                source_alert_id=None, scene_id=None, station_id=None,
                created_by_id=None) -> QmsNcrCapa:
@@ -60,6 +96,27 @@ def create_ncr(db: Session, *, project_id, code: str, title: str,
     db.flush()
     db.add(QmsNcrAction(ncr_id=ncr.id, phase="draft", action="登记不合格",
                         actor_id=created_by_id))
+    # D3 复发重开提示（三批复审补实现）：同类历史 8D 已结案 → 轨迹留痕
+    for hint in detect_similar_closed_incidents(db, ncr=ncr):
+        db.add(QmsNcrAction(
+            ncr_id=ncr.id, phase="draft",
+            action=(f"检测到同类历史不合格（NCR {hint['ncr_code']}，8D "
+                    f"{hint['d8_code']} 已结案）——建议评估 8D 重开"),
+            actor_id=created_by_id,
+        ))
+    # 追溯链写入（B3-09；三批复审：QmsTraceLink 曾无生产写入方，追溯恒空）：
+    # 从预警转入时把 样本键/批次/预警/NCR 串进追溯表
+    if source_alert_id is not None:
+        from app.models.quality_alerts import QualityAlert
+
+        alert = db.get(QualityAlert, source_alert_id)
+        if alert is not None and (alert.sample_key or alert.batch_no):
+            db.add(QmsTraceLink(
+                project_id=project_id,
+                sample_key=alert.sample_key or f"alert-{alert.id}",
+                batch_no=alert.batch_no,
+                alert_id=alert.id, ncr_id=ncr.id,
+            ))
     db.flush()
     return ncr
 
@@ -187,7 +244,8 @@ def create_d8(db: Session, *, project_id, code: str, title: str,
 
 def advance_d8(db: Session, *, d8_id, actor_id, step_content: dict | None = None,
                d6_passed: bool | None = None) -> QmsD8Report:
-    """D0–D8 顺序推进（跳步被拒）；D6 步允许登记验证结论。"""
+    """D0–D8 顺序推进（跳步被拒）；D6 验证结论只允许在 D6 步登记
+    （三批复审：曾可在任意步登记——测试自身在第 8 步登记仍通过）。"""
     d8 = db.get(QmsD8Report, d8_id)
     if d8 is None:
         raise QmsError("D8_NOT_FOUND")
@@ -195,6 +253,8 @@ def advance_d8(db: Session, *, d8_id, actor_id, step_content: dict | None = None
         raise QmsError("D8_STATE_FINAL")
     if d8.current_step >= D8_TOTAL_STEPS:
         raise QmsError("D8_ALREADY_AT_END")
+    if d6_passed is not None and d8.current_step != 6:
+        raise QmsError("D8_D6_STEP_MISMATCH")
     steps = dict(d8.steps or {})
     steps[str(d8.current_step)] = {
         "content": step_content or {},
@@ -202,7 +262,6 @@ def advance_d8(db: Session, *, d8_id, actor_id, step_content: dict | None = None
         "actor_id": str(actor_id) if actor_id else None,
     }
     if d6_passed is not None:
-        # D6 验证结论登记（验证结论以登记为准；步号推进独立）
         d8.d6_passed = bool(d6_passed)
     d8.current_step += 1
     d8.steps = steps
